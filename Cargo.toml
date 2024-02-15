@@ -2,5 +2,21 @@
 
 members = [
     "deft-reversi-engine",
-    "deft-reversi-for-web"
-    ]
+    "deft-reversi-web"
+]
+
+
+resolver = "2"
+
+[profile.release]
+lto = true
+opt-level = 3
+panic = 'abort'
+
+#[build]
+#rustflags = ["-Ctarget-cpu=native"]
+
+# 以上は、ビルド時に環境変数を使って設定する
+# 例: 
+#     RUSTFLAGS="-Ctarget-cpu=native" cargo build -p deft-reversi-console
+
