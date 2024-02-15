@@ -1,0 +1,104 @@
+#40 
+    num of empties: 20
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : +38
+    best move     : a2
+    time          : 1.299242274s
+    node          : 23886465
+    nps [/s]      : 18384919.793642737
+
+#41 
+    num of empties: 22
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : +0
+    best move     : h4
+    time          : 2.564770524s
+    node          : 40251211
+    nps [/s]      : 15693883.964801835
+
+#42 
+    num of empties: 22
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : +6
+    best move     : g2
+    time          : 3.243352858s
+    node          : 57260313
+    nps [/s]      : 17654666.48464186
+
+#43 
+    num of empties: 23
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : -12
+    best move     : c7
+    time          : 3.09577356s
+    node          : 43502404
+    nps [/s]      : 14052191.853463598
+
+#44 
+    num of empties: 23
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : -14
+    best move     : d2
+    time          : 2.775417843s
+    node          : 41068008
+    nps [/s]      : 14797054.109736802
+
+#45 
+    num of empties: 24
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : +6
+    best move     : b2
+    time          : 49.996129154s
+    node          : 821911307
+    nps [/s]      : 16439498.835366176
+
+#46 
+    num of empties: 24
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : -8
+    best move     : b3
+    time          : 13.29434955s
+    node          : 201615001
+    nps [/s]      : 15165465.61693197
+
+#47 
+    num of empties: 25
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : +4
+    best move     : g2
+    time          : 3.820976309s
+    node          : 56045566
+    nps [/s]      : 14667865.348442286
+
+#48 
+    num of empties: 25
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : +28
+    best move     : f6
+    time          : 38.521257242s
+    node          : 590643237
+    nps [/s]      : 15332916.921413913
+
+#49 
+    num of empties: 26
+    solver        : Perfect Solver
+    selectivity   : 100 %
+    score         : +16
+    best move     : e1
+    time          : 82.654091924s
+    node          : 1374701559
+    nps [/s]      : 16631984.297450522
+
+#50 
+    num of empties: 26
+    solver        : Perfect Solver
+    selectivity   : 100 %
