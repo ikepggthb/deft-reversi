@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "deft-reversi-engine",
+    "deft-reversi-for-web"
+    ]
