@@ -1,0 +1,2 @@
+# deft-reversi
+Othello AI
