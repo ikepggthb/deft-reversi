@@ -1,0 +1,449 @@
+O--OOOOX-OOOOOOXOOXXOOOXOOXOOOXXOOOOOOXX---OOOOX----O--X--------
+Black
+#40 
+O..OOOOX
+.OOOOOOX
+OOXXOOOX
+OOXOOOXX
+OOOOOOXX
+...OOOOX
+....O..X
+........
+depth: 20
+my_turn: Black
+* b1, move_ordering_score: 36
+* c1, move_ordering_score: 152
+* a2, move_ordering_score: 35
+* a6, move_ordering_score: 135
+* c6, move_ordering_score: 140
+* c7, move_ordering_score: 149
+* d7, move_ordering_score: 130
+* f7, move_ordering_score: 115
+* g7, move_ordering_score: 112
+* d8, move_ordering_score: 132
+move_ordering end.
+put: c1, nega scout score: 30
+put: c7, nega scout score: 36
+put: c6, nega scout score: 36
+put: a6, nega scout score: 36
+put: d8, nega scout score: 36
+put: d7, nega scout score: 36
+put: f7, nega scout score: 36
+put: g7, nega scout score: 36
+put: b1, nega scout score: 36
+put: a2, nega scout score: 38
+1.830259112秒経過しました。
+searched nodes: 41114031
+nps: 22463502.970938902
+full solver: 38
+put place: a2
+
+-OOOOO----OOOOX--OOOOOO-XXXXXOO--XXOOX--OOXOXX----OXXO---OOO--O-
+Black
+#41 
+.OOOOO..
+..OOOOX.
+.OOOOOO.
+XXXXXOO.
+.XXOOX..
+OOXOXX..
+..OXXO..
+.OOO..O.
+depth: 22
+my_turn: Black
+* g1, move_ordering_score: -28
+* a2, move_ordering_score: -79
+* b2, move_ordering_score: -89
+* h3, move_ordering_score: -13
+* h4, move_ordering_score: -6
+* g5, move_ordering_score: -35
+* a7, move_ordering_score: -68
+* b7, move_ordering_score: -54
+* g7, move_ordering_score: -32
+* f8, move_ordering_score: -55
+move_ordering end.
+put: h4, nega scout score: 0
+put: h3, nega scout score: 0
+put: g1, nega scout score: 0
+put: g7, nega scout score: 0
+put: g5, nega scout score: 0
+put: b7, nega scout score: 0
+put: f8, nega scout score: 0
+put: a7, nega scout score: 0
+put: a2, nega scout score: 0
+put: b2, nega scout score: 0
+6.199672059秒経過しました。
+searched nodes: 137502839
+nps: 22179050.39031678
+full solver: 0
+put place: h4
+
+--OOO-------XX-OOOOOOXOO-OOOOXOOX-OOOXXO---OOXOO---OOOXO--OOOO--
+Black
+#42 
+..OOO...
+....XX.O
+OOOOOXOO
+.OOOOXOO
+X.OOOXXO
+...OOXOO
+...OOOXO
+..OOOO..
+depth: 22
+my_turn: Black
+* b2, move_ordering_score: -101
+* c2, move_ordering_score: -92
+* d2, move_ordering_score: -87
+* g2, move_ordering_score: -131
+* a4, move_ordering_score: -86
+* b5, move_ordering_score: -95
+* b6, move_ordering_score: -102
+* c6, move_ordering_score: -91
+* c7, move_ordering_score: -95
+move_ordering end.
+put: a4, nega scout score: 0
+put: d2, nega scout score: 0
+put: c6, nega scout score: 0
+put: c2, nega scout score: 0
+put: b5, nega scout score: 0
+put: c7, nega scout score: 0
+put: b2, nega scout score: 0
+put: b6, nega scout score: 0
+put: g2, nega scout score: 6
+8.288336183秒経過しました。
+searched nodes: 187110679
+nps: 22575179.730737522
+full solver: 6
+put place: g2
+
+--XXXXX---XXXX---OOOXX---OOXXXX--OOXXXO-OOOOXOO----XOX----XXXXX-
+White
+#43 
+..XXXXX.
+..XXXX..
+.OOOXX..
+.OOXXXX.
+.OOXXXO.
+OOOOXOO.
+...XOX..
+..XXXXX.
+depth: 23
+my_turn: White
+* b1, move_ordering_score: -78
+* g2, move_ordering_score: -40
+* g3, move_ordering_score: -30
+* h4, move_ordering_score: -40
+* c7, move_ordering_score: -30
+* g7, move_ordering_score: -39
+move_ordering end.
+put: g3, nega scout score: -12
+put: c7, nega scout score: -12
+put: g7, nega scout score: -12
+put: g2, nega scout score: -12
+put: h4, nega scout score: -12
+put: b1, nega scout score: -12
+17.360206173秒経過しました。
+searched nodes: 356515875
+nps: 20536384.847461224
+full solver: -12
+put place: g3
+
+--O-X-O---O-XO-O-OOXXXOOOOOOXXXOOOOOXX--XXOOXO----XXXX-----XXX--
+White to move
+#44 
+..O.X.O.
+..O.XO.O
+.OOXXXOO
+OOOOXXXO
+OOOOXX..
+XXOOXO..
+..XXXX..
+...XXX..
+depth: 23
+my_turn: White
+* f1, move_ordering_score: -60
+* d2, move_ordering_score: -25
+* g2, move_ordering_score: -32
+* g5, move_ordering_score: -25
+* g6, move_ordering_score: -27
+* a7, move_ordering_score: -29
+* b7, move_ordering_score: -43
+* b8, move_ordering_score: -27
+* c8, move_ordering_score: -28
+* g8, move_ordering_score: -51
+move_ordering end.
+put: d2, nega scout score: -14
+put: g5, nega scout score: -14
+put: g6, nega scout score: -14
+put: b8, nega scout score: -14
+put: c8, nega scout score: -14
+put: a7, nega scout score: -14
+put: g2, nega scout score: -14
+put: b7, nega scout score: -14
+put: g8, nega scout score: -14
+put: f1, nega scout score: -14
+7.600448608秒経過しました。
+searched nodes: 164828487
+nps: 21686678.708215535
+full solver: -14
+put place: d2
+
+---XXXX-X-XXXO--XXOXOO--XXXOXO--XXOXXO---OXXXOO-O-OOOO------OO--
+Black
+#45 
+...XXXX.
+X.XXXO..
+XXOXOO..
+XXXOXO..
+XXOXXO..
+.OXXXOO.
+O.OOOO..
+....OO..
+depth: 24
+my_turn: Black
+* b2, move_ordering_score: -27
+* g2, move_ordering_score: 3
+* g3, move_ordering_score: 6
+* g4, move_ordering_score: 6
+* g5, move_ordering_score: 6
+* a6, move_ordering_score: -68
+* h6, move_ordering_score: 10
+* b7, move_ordering_score: -87
+* g7, move_ordering_score: -10
+* h7, move_ordering_score: -21
+* b8, move_ordering_score: -29
+* c8, move_ordering_score: 13
+* d8, move_ordering_score: -11
+* g8, move_ordering_score: -22
+move_ordering end.
+put: c8, nega scout score: -6
+put: h6, nega scout score: 0
+put: g3, nega scout score: 0
+put: g4, nega scout score: 0
+put: g5, nega scout score: 2
+put: g2, nega scout score: 2
+put: g7, nega scout score: 2
+put: d8, nega scout score: 2
+put: h7, nega scout score: 2
+put: g8, nega scout score: 2
+put: b2, nega scout score: 6
+put: b8, nega scout score: 6
+put: a6, nega scout score: 6
+put: b7, nega scout score: 6
+198.477889679秒経過しました。
+searched nodes: 4314514993
+nps: 21738013.23652676
+full solver: 6
+put place: b2
+
+---XXX----OOOX----OOOXX--OOOOXXX--OOOOXX--OXOXXX--XXOO---XXXX-O-
+Black
+#46 
+...XXX..
+..OOOX..
+..OOOXX.
+.OOOOXXX
+..OOOOXX
+..OXOXXX
+..XXOO..
+.XXXX.O.
+depth: 24
+my_turn: Black
+* b1, move_ordering_score: -61
+* c1, move_ordering_score: -23
+* b2, move_ordering_score: -42
+* a3, move_ordering_score: -15
+* b3, move_ordering_score: -14
+* a4, move_ordering_score: -14
+* a5, move_ordering_score: -35
+* b5, move_ordering_score: -11
+* b6, move_ordering_score: -14
+* b7, move_ordering_score: -7
+* g7, move_ordering_score: -100
+* f8, move_ordering_score: -58
+move_ordering end.
+put: b7, nega scout score: -10
+put: b5, nega scout score: -10
+put: b3, nega scout score: -8
+put: a4, nega scout score: -8
+put: b6, nega scout score: -8
+put: a3, nega scout score: -8
+put: c1, nega scout score: -8
+put: a5, nega scout score: -8
+put: b2, nega scout score: -8
+put: f8, nega scout score: -8
+put: b1, nega scout score: -8
+put: g7, nega scout score: -8
+64.641711766秒経過しました。
+searched nodes: 1473251778
+nps: 22791039.063648302
+full solver: -8
+put place: b3
+
+-OOOOO----OOOO---OOOOX--XXXXXX---OXOOX--OOOXOX----OOXX----XXXX--
+White
+#47 
+.OOOOO..
+..OOOO..
+.OOOOX..
+XXXXXX..
+.OXOOX..
+OOOXOX..
+..OOXX..
+..XXXX..
+depth: 25
+my_turn: White
+* g2, move_ordering_score: -18
+* g3, move_ordering_score: -31
+* g4, move_ordering_score: -30
+* a5, move_ordering_score: -34
+* g5, move_ordering_score: -30
+* g6, move_ordering_score: -32
+* g7, move_ordering_score: -61
+* g8, move_ordering_score: -73
+move_ordering end.
+put: g2, nega scout score: 4
+put: g4, nega scout score: 4
+put: g5, nega scout score: 4
+put: g3, nega scout score: 4
+put: g6, nega scout score: 4
+put: a5, nega scout score: 4
+put: g7, nega scout score: 4
+put: g8, nega scout score: 4
+37.09728837秒経過しました。
+searched nodes: 814639909
+nps: 21959554.048127856
+full solver: 4
+put place: g2
+
+-----X--X-XXX---XXXXOO--XOXOOXX-XOOXXX--XOOXX-----OOOX---XXXXXX-
+White
+#48 
+.....X..
+X.XXX...
+XXXXOO..
+XOXOOXX.
+XOOXXX..
+XOOXX...
+..OOOX..
+.XXXXXX.
+depth: 25
+my_turn: White
+* b1, move_ordering_score: -27
+* c1, move_ordering_score: -26
+* d1, move_ordering_score: -20
+* e1, move_ordering_score: -13
+* b2, move_ordering_score: -36
+* g3, move_ordering_score: -20
+* h3, move_ordering_score: -21
+* h4, move_ordering_score: -23
+* g5, move_ordering_score: -20
+* h5, move_ordering_score: -23
+* f6, move_ordering_score: -7
+* g6, move_ordering_score: -11
+* g7, move_ordering_score: -32
+move_ordering end.
+put: f6, nega scout score: 28
+put: g6, nega scout score: 28
+put: e1, nega scout score: 28
+put: d1, nega scout score: 28
+put: g3, nega scout score: 28
+put: g5, nega scout score: 28
+put: h3, nega scout score: 28
+put: h4, nega scout score: 28
+put: h5, nega scout score: 28
+put: c1, nega scout score: 28
+put: b1, nega scout score: 28
+put: g7, nega scout score: 28
+put: b2, nega scout score: 28
+157.764579479秒経過しました。
+searched nodes: 3749174416
+nps: 23764360.976216793
+full solver: 28
+put place: f6
+
+--OX-O----XXOO--OOOOOXX-OOOOOX--OOOXOXX-OOOOXX-----OOX----X-O---
+Black to move
+#49 
+..OX.O..
+..XXOO..
+OOOOOXX.
+OOOOOX..
+OOOXOXX.
+OOOOXX..
+...OOX..
+..X.O...
+depth: 26
+my_turn: Black
+* b1, move_ordering_score: 1
+* e1, move_ordering_score: 0
+* a2, move_ordering_score: -37
+* b2, move_ordering_score: -43
+* g2, move_ordering_score: -61
+* b7, move_ordering_score: -50
+* c7, move_ordering_score: -80
+* d8, move_ordering_score: -33
+move_ordering end.
+put: b1, nega scout score: 2
+put: e1, nega scout score: 16
+put: d8, nega scout score: 16
+put: a2, nega scout score: 16
+put: b2, nega scout score: 16
+put: b7, nega scout score: 16
+put: g2, nega scout score: 16
+put: c7, nega scout score: 16
+326.835863478秒経過しました。
+searched nodes: 7639633117
+nps: 23374525.16900502
+full solver: 16
+put place: e1
+
+----X-----XXX----OOOXOOO-OOOXOOO-OXOXOXO-OOXXOOO--OOXO----O--O--
+Black
+#50 
+....X...
+..XXX...
+.OOOXOOO
+.OOOXOOO
+.OXOXOXO
+.OOXXOOO
+..OOXO..
+..O..O..
+depth: 26
+my_turn: Black
+* a2, move_ordering_score: -23
+* b2, move_ordering_score: -11
+* g2, move_ordering_score: -16
+* h2, move_ordering_score: -3
+* a3, move_ordering_score: -22
+* a4, move_ordering_score: -7
+* a5, move_ordering_score: -23
+* a6, move_ordering_score: -19
+* a7, move_ordering_score: -15
+* b7, move_ordering_score: -35
+* g7, move_ordering_score: -16
+* h7, move_ordering_score: -10
+* b8, move_ordering_score: -25
+* d8, move_ordering_score: -6
+* g8, move_ordering_score: -11
+move_ordering end.
+put: h2, nega scout score: -6
+put: d8, nega scout score: 10
+put: a4, nega scout score: 10
+put: h7, nega scout score: 10
+put: b2, nega scout score: 10
+put: g8, nega scout score: 10
+put: a7, nega scout score: 10
+put: g2, nega scout score: 10
+put: g7, nega scout score: 10
+put: a6, nega scout score: 10
+put: a3, nega scout score: 10
+put: a2, nega scout score: 10
+put: a5, nega scout score: 10
+put: b8, nega scout score: 10
+put: b7, nega scout score: 10
+566.576435095秒経過しました。
+searched nodes: 12764436783
+nps: 22529064.02798016
+full solver: 10
+put place: d8

@@ -1,0 +1,328 @@
+O--OOOOX-OOOOOOXOOXXOOOXOOXOOOXXOOOOOOXX---OOOOX----O--X--------
+Black
+#40 
+my_turn: Black
+depth: 20
+O..OOOOX
+.OOOOOOX
+OOXXOOOX
+OOXOOOXX
+OOOOOOXX
+...OOOOX
+....O..X
+........
+move_ordering....OK
+put: a2, nega scout score: 38
+put: c1, nega scout score: 38
+put: d8, nega scout score: 38
+put: g7, nega scout score: 38
+put: c7, nega scout score: 38
+put: b1, nega scout score: 38
+put: a6, nega scout score: 38
+put: d7, nega scout score: 38
+put: f7, nega scout score: 38
+put: c6, nega scout score: 38
+best move: a2, score: +38
+searched nodes: 24940822
+searched leaf nodes: 6115442
+time: 1.183652096s, nps: 21071074.92504284
+
+-OOOOO----OOOOX--OOOOOO-XXXXXOO--XXOOX--OOXOXX----OXXO---OOO--O-
+Black
+#41 
+my_turn: Black
+depth: 22
+.OOOOO..
+..OOOOX.
+.OOOOOO.
+XXXXXOO.
+.XXOOX..
+OOXOXX..
+..OXXO..
+.OOO..O.
+move_ordering....OK
+put: h4, nega scout score: 0
+put: g1, nega scout score: 0
+put: h3, nega scout score: 0
+put: f8, nega scout score: 0
+put: g5, nega scout score: 0
+put: g7, nega scout score: 0
+put: a2, nega scout score: 0
+put: b7, nega scout score: 0
+put: a7, nega scout score: 0
+put: b2, nega scout score: 0
+best move: h4, score: 0
+searched nodes: 46489735
+searched leaf nodes: 11711830
+time: 2.554061577s, nps: 18202276.491159163
+
+--OOO-------XX-OOOOOOXOO-OOOOXOOX-OOOXXO---OOXOO---OOOXO--OOOO--
+Black
+#42 
+my_turn: Black
+depth: 22
+..OOO...
+....XX.O
+OOOOOXOO
+.OOOOXOO
+X.OOOXXO
+...OOXOO
+...OOOXO
+..OOOO..
+move_ordering....OK
+put: c6, nega scout score: -2
+ put: a4, null window score: 0 => reserch [0,127]
+put: a4, nega scout score: 0
+put: c7, nega scout score: 0
+ put: g2, null window score: 2 => reserch [2,127]
+put: g2, nega scout score: 6
+put: b2, nega scout score: 6
+put: c2, nega scout score: 6
+put: b5, nega scout score: 6
+put: b6, nega scout score: 6
+put: d2, nega scout score: 6
+best move: g2, score: +6
+searched nodes: 83534116
+searched leaf nodes: 20787519
+time: 4.145657234s, nps: 20149788.38937942
+
+--XXXXX---XXXX---OOOXX---OOXXXX--OOXXXO-OOOOXOO----XOX----XXXXX-
+White
+#43 
+my_turn: White
+depth: 23
+..XXXXX.
+..XXXX..
+.OOOXX..
+.OOXXXX.
+.OOXXXO.
+OOOOXOO.
+...XOX..
+..XXXXX.
+move_ordering....OK
+put: g3, nega scout score: -12
+put: c7, nega scout score: -12
+put: h4, nega scout score: -12
+put: g7, nega scout score: -12
+put: g2, nega scout score: -12
+put: b1, nega scout score: -12
+best move: g3, score: -12
+searched nodes: 151518062
+searched leaf nodes: 32041034
+time: 9.058552093s, nps: 16726521.020625984
+
+--O-X-O---O-XO-O-OOXXXOOOOOOXXXOOOOOXX--XXOOXO----XXXX-----XXX--
+White to move
+#44 
+my_turn: White
+depth: 23
+..O.X.O.
+..O.XO.O
+.OOXXXOO
+OOOOXXXO
+OOOOXX..
+XXOOXO..
+..XXXX..
+...XXX..
+move_ordering....OK
+put: d2, nega scout score: -14
+put: b8, nega scout score: -14
+put: g6, nega scout score: -14
+put: g2, nega scout score: -14
+put: a7, nega scout score: -14
+put: g5, nega scout score: -14
+put: f1, nega scout score: -14
+put: b7, nega scout score: -14
+put: c8, nega scout score: -14
+put: g8, nega scout score: -14
+best move: d2, score: -14
+searched nodes: 33732737
+searched leaf nodes: 8604993
+time: 2.023996109s, nps: 16666404.075582143
+
+---XXXX-X-XXXO--XXOXOO--XXXOXO--XXOXXO---OXXXOO-O-OOOO------OO--
+Black
+#45 
+my_turn: Black
+depth: 24
+...XXXX.
+X.XXXO..
+XXOXOO..
+XXXOXO..
+XXOXXO..
+.OXXXOO.
+O.OOOO..
+....OO..
+move_ordering....OK
+put: b2, nega scout score: 6
+put: g2, nega scout score: 6
+put: g5, nega scout score: 6
+put: g4, nega scout score: 6
+put: h6, nega scout score: 6
+put: g7, nega scout score: 6
+put: g3, nega scout score: 6
+put: a6, nega scout score: 6
+put: d8, nega scout score: 6
+put: c8, nega scout score: 6
+put: b7, nega scout score: 6
+put: h7, nega scout score: 6
+put: b8, nega scout score: 6
+put: g8, nega scout score: 6
+best move: b2, score: +6
+searched nodes: 999546599
+searched leaf nodes: 237286968
+time: 53.710817629s, nps: 18609781.84886756
+
+---XXX----OOOX----OOOXX--OOOOXXX--OOOOXX--OXOXXX--XXOO---XXXX-O-
+Black
+#46 
+my_turn: Black
+depth: 24
+...XXX..
+..OOOX..
+..OOOXX.
+.OOOOXXX
+..OOOOXX
+..OXOXXX
+..XXOO..
+.XXXX.O.
+move_ordering....OK
+put: b7, nega scout score: -10
+ put: b3, null window score: -8 => reserch [-8,127]
+put: b3, nega scout score: -8
+put: a4, nega scout score: -8
+put: a3, nega scout score: -8
+put: b5, nega scout score: -8
+put: b6, nega scout score: -8
+put: a5, nega scout score: -8
+put: c1, nega scout score: -8
+put: b1, nega scout score: -8
+put: f8, nega scout score: -8
+put: b2, nega scout score: -8
+put: g7, nega scout score: -8
+best move: b3, score: -8
+searched nodes: 230357855
+searched leaf nodes: 55881978
+time: 13.84142011s, nps: 16642645.997976288
+
+-OOOOO----OOOO---OOOOX--XXXXXX---OXOOX--OOOXOX----OOXX----XXXX--
+White
+#47 
+my_turn: White
+depth: 25
+.OOOOO..
+..OOOO..
+.OOOOX..
+XXXXXX..
+.OXOOX..
+OOOXOX..
+..OOXX..
+..XXXX..
+move_ordering....OK
+put: g2, nega scout score: 4
+put: g4, nega scout score: 4
+put: g5, nega scout score: 4
+put: g6, nega scout score: 4
+put: g3, nega scout score: 4
+put: a5, nega scout score: 4
+put: g7, nega scout score: 4
+put: g8, nega scout score: 4
+best move: g2, score: +4
+searched nodes: 70926271
+searched leaf nodes: 18810786
+time: 4.31632677s, nps: 16432090.242324263
+
+-----X--X-XXX---XXXXOO--XOXOOXX-XOOXXX--XOOXX-----OOOX---XXXXXX-
+White
+#48 
+my_turn: White
+depth: 25
+.....X..
+X.XXX...
+XXXXOO..
+XOXOOXX.
+XOOXXX..
+XOOXX...
+..OOOX..
+.XXXXXX.
+move_ordering....OK
+put: f6, nega scout score: 28
+put: g6, nega scout score: 28
+put: g5, nega scout score: 28
+put: d1, nega scout score: 28
+put: e1, nega scout score: 28
+put: g3, nega scout score: 28
+put: h3, nega scout score: 28
+put: h5, nega scout score: 28
+put: h4, nega scout score: 28
+put: b1, nega scout score: 28
+put: c1, nega scout score: 28
+put: g7, nega scout score: 28
+put: b2, nega scout score: 28
+best move: f6, score: +28
+searched nodes: 1180339035
+searched leaf nodes: 277986087
+time: 64.755443644s, nps: 18227641.85647527
+
+--OX-O----XXOO--OOOOOXX-OOOOOX--OOOXOXX-OOOOXX-----OOX----X-O---
+Black to move
+#49 
+my_turn: Black
+depth: 26
+..OX.O..
+..XXOO..
+OOOOOXX.
+OOOOOX..
+OOOXOXX.
+OOOOXX..
+...OOX..
+..X.O...
+move_ordering....OK
+put: e1, nega scout score: 16
+put: b1, nega scout score: 16
+put: d8, nega scout score: 16
+put: a2, nega scout score: 16
+put: b2, nega scout score: 16
+put: b7, nega scout score: 16
+put: g2, nega scout score: 16
+put: c7, nega scout score: 16
+best move: e1, score: +16
+searched nodes: 2243419338
+searched leaf nodes: 564495930
+time: 114.854410414s, nps: 19532722.599972025
+
+----X-----XXX----OOOXOOO-OOOXOOO-OXOXOXO-OOXXOOO--OOXO----O--O--
+Black
+#50 
+my_turn: Black
+depth: 26
+....X...
+..XXX...
+.OOOXOOO
+.OOOXOOO
+.OXOXOXO
+.OOXXOOO
+..OOXO..
+..O..O..
+move_ordering....OK
+put: a4, nega scout score: 2
+ put: d8, null window score: 4 => reserch [4,127]
+put: d8, nega scout score: 10
+put: h7, nega scout score: 10
+put: b2, nega scout score: 10
+put: a7, nega scout score: 10
+put: a2, nega scout score: 10
+put: a5, nega scout score: 10
+put: a6, nega scout score: 10
+put: g7, nega scout score: 10
+put: g8, nega scout score: 10
+put: h2, nega scout score: 10
+put: a3, nega scout score: 10
+put: g2, nega scout score: 10
+put: b8, nega scout score: 10
+put: b7, nega scout score: 10
+best move: d8, score: +10
+searched nodes: 8004485606
+searched leaf nodes: 1798072999
+time: 481.955754892s, nps: 16608341.169810703
+
