@@ -1,6 +1,8 @@
 import __wbg_init, { add, App } from "./pkg/deft_web.js";
 
-async function decompressGzip(compressedData) {
+
+// 将来的にはこちらを使うが、現在は、多くのブラウザをサポートするため、pakoを使用する。
+async function decompressGzip_new(compressedData) {
     const ds = new DecompressionStream('gzip');
     const decompressedStream = compressedData.stream().pipeThrough(ds);
 
@@ -132,8 +134,14 @@ async function initializeOthello() {
             if (!response.ok) {
                 throw new Error('ファイルの読み込みに失敗しました');
             }
-            const data = await response.blob();
-            const decompressedData = await decompressGzip(data);
+
+
+            const data = await response.arrayBuffer();
+            const decompressedData = await pako.ungzip(data, { to: 'string' });
+
+            // 将来的にこちらを使う
+            // const data = await response.blob();
+            // const decompressedData = await decompressGzip(data);
     
             console.log("set evaluator");
             app.set_evaluator(decompressedData);
