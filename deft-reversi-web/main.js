@@ -151,7 +151,7 @@ async function initializeOthello() {
         alert(error);
         console.error('エラー:', error);
     }
-    await sleep(sleep_time); // 100ms停止
+    await sleep(sleep_time);
 }
 
 function drawBoard({ showPutAblePlaces = true } = {}) {

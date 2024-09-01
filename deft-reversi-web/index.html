@@ -2,75 +2,18 @@
 <html lang="ja">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>Deft Reversi</title>
         <meta name="description" content="The simple and strong Reversi AI (Othello AI) that can be played on the web.">
         <meta name="twitter:title" content="Deft Reversi"/>
-        <link rel="stylesheet" href="style.css">
+        
+        <style>* { padding: 0; margin: 0; } canvas { background: #eee; display: block; margin: 0 auto; }</style>
+        <!-- <link rel="stylesheet" href="style.css"> -->
         <link rel="icon" href="favicon.ico">
         <script src="https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js"></script>
     </head>
     <body>
-        <div id="setup_modal" class="setup">
-            <h2 id="game-title"> Deft Reversi</h2>
-            <div>
-                <h3 class="setting-title">対局設定</h3>
-                <div class="toggle_button setting-element">
-                    <label for="toggle" class="toggle_text" > AIと対戦する</label>
-                    <input id="toggle" class="toggle_input" type='checkbox' checked/>
-                    <label for="toggle" class="toggle_label"></label>
-                </div>
-                <div id="aiSetting">
-                    <div id="first_or_last" class="toggle_button setting-element">
-                        <label id="text_first_or_last" for="toggle_first_or_last" class="toggle_text"> 先攻</label>
-                        <input id="toggle_first_or_last" class="toggle_input" type='checkbox' />
-                        <label id="toggle_label_first_or_last" for="toggle_first_or_last" class="toggle_label"></label>
-                    </div>
-                    <div id="level" class="setting-element">
-                        <label class="">AIのレベル</label>
-                        <select id="selectLevel" class="" name="level">
-                            <option value="0">Lv. 0</option>
-                            <option value="1">Lv. 1</option>
-                            <option value="2">Lv. 2</option>
-                            <option value="3">Lv. 3</option>
-                            <option value="4">Lv. 4</option>
-                            <option value="5">Lv. 5</option>
-                            <option value="6">Lv. 6</option>
-                            <option value="7">Lv. 7</option>
-                            <option value="8">Lv. 8</option>
-                            <option value="9">Lv. 9</option>
-                            <option value="10">Lv. 10</option>
-                            <option value="11">Lv. 11</option>
-                            <option value="12">Lv. 12</option>
-                            <option value="13">Lv. 13</option>
-                            <option value="14">Lv. 14</option>
-                            <option value="15">Lv. 15</option>
-                            <option value="16">Lv. 16</option>
-                            <option value="17">Lv. 17</option>
-                            <option value="18">Lv. 18</option>
-                            <option value="19">Lv. 19</option>
-                            <option value="20">Lv. 20</option>
-                            <option value="21">Lv. 21</option>
-                            <option value="22">Lv. 22</option>
-                        </select>
-                    </div>
-                </div>
-                <div id="startButtonP">
-                    <a id="startButton" >Now Loading...</a>
-                </div>
-            </div>
-        </div>
-        <div id="othello-app">
-            <div id="ai-thinking-overlay" > </div>
-            <table id="othello-board"></table>
-            <div id="othello-status">
-                <progress id="othello-status-prog"></progress>
-                <div id="count">
-                    <label id="black-count"></label>
-                    <label id="white-count"></label>
-                </div>
-            </div>
-        </div>
-        <script type="module" src="main.js?20240127"></script>
+        <canvas id="cv" width="600" height="800"></canvas>
+        <script type="module" src="index.js"></script>
+        <!-- <script type="module" src="main.js?20240127"></script> -->
     </body>
 </html>

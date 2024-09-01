@@ -22,7 +22,7 @@ pub fn ffo_test() -> Result<(),  std::io::Error> {
             },
         };
 
-        let selectivity_lv = 3;
+        let selectivity_lv = 0;
     
         println!("#{} ", i);
         // board.print_board();

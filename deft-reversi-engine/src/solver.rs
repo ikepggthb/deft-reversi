@@ -19,7 +19,6 @@ pub enum SolverErr {
 const SCORE_INF: i32 = i8::MAX as i32;
 const MOVE_ORDERING_EVAL_LEVEL: i32 = 8;
 
-
 /// オセロの盤面に対する完全な探索を行い、最適な手とその評価値を求める。
 ///
 /// 終盤の探索で使用される。
