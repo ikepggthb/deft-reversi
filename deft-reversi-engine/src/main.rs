@@ -6,9 +6,10 @@ mod search;
 mod perfect_search;
 mod eval_search;
 mod solver;
-mod board_manager;
+mod game;
+mod console;
 mod eval;
-mod learn;
+// mod learn;
 mod ffo_test;
 mod eval_for_learn;
 mod mpc;
@@ -18,15 +19,16 @@ mod mpc;
 
 
 use ffo_test::*;
-use learn::*;
+// use learn::*;
 use eval::*;
+
+use console::*;
 
 
 fn main () {
-
     // npc_perfect_learn();
     // npc_learn(10);
     // learning();
-    ffo_test();
-
+    // ffo_test();
+    console_game();
 }

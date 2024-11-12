@@ -8,350 +8,536 @@ use crate::eval::*;
 pub struct SolverResult {
     pub best_move: u64,
     pub eval: i32,
-    pub node_count: u64,
-    pub leaf_node_count: u64
+    pub solver_type: SolverType,
+    pub selectivity_lv: i32,
+    pub searched_nodes: u64,
+    pub searched_leaf_nodes: u64
 }
 
+pub struct Solver {
+    search: Search,
+    pub print_log: bool,
+    pub ai_level: i32,
+    child_boards:  Vec<PutBoard>,
+}
 pub enum SolverErr {
     NoMove,
+}
+
+#[derive(PartialEq)]
+
+#[derive(Debug)]
+pub enum SolverType {
+    PerfectSolver,
+    EvalSolver,
+    WinningSolver
+}
+
+use SolverType::*;
+
+#[derive(PartialEq, Debug)]
+pub struct SolverConfig {
+    solver_type: SolverType,
+    selectivity_lv: i32,
+    eval_solver_level: i32,
 }
 
 const SCORE_INF: i32 = i8::MAX as i32;
 const MOVE_ORDERING_EVAL_LEVEL: i32 = 8;
 
-/// オセロの盤面に対する完全な探索を行い、最適な手とその評価値を求める。
-///
-/// 終盤の探索で使用される。
-/// この関数は、Principal Variation Search (PVS)とNull Window Search (NWS)のアルゴリズムを使用して、
-/// 与えられたオセロの盤面に対して最も有利な手を決定します。
-///
-/// # 引数
-/// * `board` - 評価するオセロの盤面を表す `Board` オブジェクトの参照。
-/// * `print_log` - trueの場合、探索の進行状況と結果をコンソールに出力します。
-///
-/// # 戻り値
-/// `Result<SolverResult, SolverErr>` 型。成功した場合、`SolverResult`オブジェクトが含まれ、
-/// 最適な手とその評価値、探索したノード数、葉ノード数を含みます。
-/// 合法手が存在しない場合は、`SolverErr::NoMove`エラーが返されます。
-///
-/// # 例
-/// ```
-/// let board = Board::new(); // 初期盤面の生成
-/// match perfect_solver(&board, true) {
-///     Ok(result) => println!("Best move: {}, Score: {}", result.best_move, result.eval),
-///     Err(SolverErr::NoMove) => println!("No legal moves available."),
-///     _ => println!("An error occurred during the search.")
-/// }
-/// ```
-///
-pub fn perfect_solver(board: &Board, print_log: bool, selectivity_lv: i32, t_table: &mut TranspositionTable, evaluator: &mut Evaluator) -> Result<SolverResult, SolverErr>
-{
-    let legal_moves = board.put_able();
-    if legal_moves == 0 {
-        return Err(SolverErr::NoMove)
-    }
-    let mut search = Search::new(board, selectivity_lv, t_table, evaluator);
-    
-    if print_log {
-        println!("my_turn: {}", if board.next_turn == Board::BLACK {"Black"} else {"White"});
-        println!("depth: {}", board.empties_count());
-        board.print_board();
-    };
-
-
-    if print_log {print!("move_ordering....");};
-
-    if board.empties_count() > 8 {
-        pvs_eval(board, -SCORE_INF ,SCORE_INF, 6, &mut search);
-    }
-    if board.empties_count() > 10 {
-        pvs_eval(board, -SCORE_INF ,SCORE_INF, 8, &mut search);
-    }
-    if board.empties_count() > 12 {
-        pvs_eval(board, -SCORE_INF ,SCORE_INF, 10, &mut search);
+impl Solver {
+    pub fn new(evaluator: Evaluator) -> Self {
+        Solver {
+            search: Search::new(evaluator),
+            child_boards: Vec::new(),
+            print_log: false,
+            ai_level: 0
+        }        
     }
 
-
-    if board.empties_count() > 20 {
-        let main_selectivity_lv = selectivity_lv;
-        search.selectivity_lv = 5;
-        pvs_eval(board, -SCORE_INF, SCORE_INF,16, &mut search);
-        search.selectivity_lv = main_selectivity_lv;
+    pub fn set_ai_level(&mut self, lv: i32) {
+        self.ai_level = lv;
     }
-    if search.selectivity_lv < 3 {
-        let main_selectivity_lv = selectivity_lv;
-        search.selectivity_lv = 5;
-        pvs_perfect(board, -SCORE_INF, SCORE_INF, &mut search);
-        search.selectivity_lv = main_selectivity_lv;
-    }
+    pub fn get_solve_config(&self, level: i32, n_empties: i32) -> SolverConfig
+    {
+        let (solver_type, selectivity_lv, eval_solver_level) =
+        match level {
+            1..=10 => {
+                if n_empties <= level*2 {
+                    (PerfectSolver, 0, 0)
+                } else {
+                    (EvalSolver, 0, level)
+                }
+            },
+            11..=12 => {
+                match n_empties {
+                    44..=60 => (EvalSolver, 0, 10),
 
-    let mut put_boards = 
-        if board.empties_count() < MOVE_ORDERING_EVAL_LEVEL + 2 {
-            get_put_boards(board, legal_moves)
-        } else {
-            move_ordering_eval(board, legal_moves, 8,  &mut search)
+                    21..=22 => (PerfectSolver, 3, 0),
+                    0..=20  => (PerfectSolver, 0, 0),
+                    _ => (EvalSolver, 4, level),
+                }
+            },
+            13..=14=> {
+                match n_empties {
+                    44..=60 => (EvalSolver, 1, 12),
+
+                    21..=22 => (PerfectSolver, 2, 0),
+                    0..=20 => (PerfectSolver, 0, 0),
+                    _ => (EvalSolver, 4, level),
+                }        
+            },
+            15..=16 => {
+                match n_empties {
+                    55..=60 => (EvalSolver, 1, level - 4), 
+                    44..=54 => (EvalSolver, 1, level - 3),
+                    
+                    24 => (PerfectSolver, 3, 0),
+                    23 => (PerfectSolver, 3, 0),
+                    22 => (PerfectSolver, 1, 0),
+                    21 => (PerfectSolver, 1, 0),
+                    0..=20 => (PerfectSolver, 0, 0),
+                    _ => (EvalSolver, 4, level),
+                }
+            },
+            17..=18 => {
+                match n_empties {
+                    55..=60 => (EvalSolver, 1, level - 4), 
+                    44..=54 => (EvalSolver, 1, level - 3),
+                    
+                    // 25..=26 => (PerfectSolver, 3, 0),
+                    23..=24 => (PerfectSolver, 2, 0),
+                    0..=22 => (PerfectSolver, 0, 0),
+                    _ => (EvalSolver, 4, level),
+                }
+            },
+            19..=24 => {
+                match n_empties {
+                    55..=60 => (EvalSolver, 1, level - 5),                    
+                    44..=54 => (EvalSolver, 1, level - 4),
+                    
+                    25..=26 => (PerfectSolver, 3, 0),
+                    23..=24 => (PerfectSolver, 1, 0),
+                    0..=22 => (PerfectSolver, 0, 0),
+                    _ => (EvalSolver, 4, level),
+                }
+            },
+            25..=30 => {
+                match n_empties {
+                    55..=60 => (EvalSolver, 1, level - 5),                    
+                    44..=54 => (EvalSolver, 1, level - 4),
+
+                    27..=28 => (PerfectSolver, 3, 0),                    
+                    25..=26 => (PerfectSolver, 2, 0),
+                    23..=24 => (PerfectSolver, 1, 0),
+                    0..=22 => (PerfectSolver, 0, 0),
+                    _ => (EvalSolver, 4, level),
+                }
+            },
+            31.. => {
+                 (PerfectSolver, 0, 0)
+            },
+            _ => panic!()
         };
-    if print_log {println!("OK");};
 
-    let mut alpha = -SCORE_INF;
-    let beta = SCORE_INF;
-    let mut put_place_best_score ;
-    
-    let mut put_boards_iter = put_boards.iter_mut();
-    let first_child_board = put_boards_iter.next().unwrap();
-    alpha = -pvs_perfect(&first_child_board.board, -beta, -alpha, &mut search);
-    put_place_best_score = first_child_board.put_place;
-    if print_log { 
-        println!("put: {}, nega scout score: {}",Board::move_bit_to_str(1 << put_place_best_score).unwrap(), alpha);
-    };
+        SolverConfig{
+            solver_type,
+            selectivity_lv,
+            eval_solver_level
+        }
+    }
 
-    for put_board in put_boards_iter {
-        let current_put_board = &put_board.board;
-        let put_place = put_board.put_place;
-        let mut score = -nws_perfect(current_put_board, -alpha - 1, &mut search);
-        if score > alpha {
-            if print_log { 
-                println!(" put: {}, null window score: {} => reserch [{},{}]",Board::move_bit_to_str(1 << put_place).unwrap(), score, alpha, beta);
+    fn select_and_run_solver(&mut self, solve_config: &SolverConfig, alpha: i32, beta: i32) -> Result<SolverResult, SolverErr> {
+        println!("solver config: {:?}", solve_config);
+        self.search.selectivity_lv = solve_config.selectivity_lv;
+        match solve_config.solver_type {
+            PerfectSolver => self.perfect_solver(solve_config.selectivity_lv, alpha, beta),
+            EvalSolver => self.eval_solver(solve_config.eval_solver_level, solve_config.selectivity_lv, alpha, beta),
+            WinningSolver => self.winning_solver(),
+        }
+    }
+
+    fn aspiration_search(&mut self, predict_score: i32, solve_config: &SolverConfig) -> Result<SolverResult, SolverErr> {
+
+        if solve_config.solver_type == EvalSolver && solve_config.eval_solver_level < 12 {
+            return self.select_and_run_solver(solve_config, -SCORE_INF, SCORE_INF);
+        }
+
+        let init_width: i32 = if solve_config.solver_type == EvalSolver {
+            let tmp =  10 - solve_config.eval_solver_level;
+            if tmp < 1 {
+                1
+            } else {
+                tmp
             }
-            score = -pvs_perfect(current_put_board, -beta, -alpha, &mut search);
+        } else {
+            let mut tmp = 10 - self.search.origin_board.empties_count();
+            if tmp < 1 { tmp = 1;}
+            if predict_score % 2 == 1 {tmp += 1;}
+            tmp
+        };
+
+        let mut score = predict_score;
+
+        let mut left_width = init_width;
+        let mut right_width = init_width;
+        loop {
+            let alpha = score - left_width; 
+            let beta = score + right_width;
+            println!("aspiration window [{}, {}]", alpha, beta);
+            let result = self.select_and_run_solver(&solve_config, alpha, beta)?;
+            if result.eval <= alpha {
+                left_width *= 2;
+                // if left_width < 4 {left_width = 4};
+                // right_width = 0;
+            }else if result.eval >= beta {
+                right_width *= 2;
+                // if right_width < 4 {right_width = 4};
+                // left_width = 0;
+            } else {
+                return Ok(result);
+            }
+            score = result.eval;
+        }
+
+    }
+
+    pub fn solve_no_iter(&mut self, board: &Board) -> Result<SolverResult, SolverErr> {
+        let legal_moves = board.put_able();
+        if legal_moves == 0 {
+            let mut pass_board = board.clone();
+            pass_board.next_turn ^= 1;
+            if pass_board.put_able() == 0 {
+                return Ok(SolverResult { 
+                    best_move: 0,
+                    eval: solve_score(board),
+                    solver_type: PerfectSolver,
+                    selectivity_lv: 0,
+                    searched_nodes: 0,
+                    searched_leaf_nodes: 0
+                })
+            } else {
+                let result = self.solve_no_iter(&pass_board);
+                if let Ok(mut r) = result {
+                    r.best_move = 0;
+                    r.eval = -r.eval;
+                    return Ok(r);
+                }else {
+                    return Err(SolverErr::NoMove);
+                }
+            }
+            return Err(SolverErr::NoMove)
+        }
+
+        self.search.set_board(board);
+        self.search.clear_node_count();
+        
+        if self.print_log {
+            println!("my_turn: {}", if board.next_turn == Board::BLACK {"Black"} else {"White"});
+            println!("depth: {}", board.empties_count());
+            board.print_board();
+            println!("move_ordering....");
+        };
+
+        self.child_boards =
+            if board.empties_count() < 10 || self.ai_level < 8{
+                get_put_boards(board, legal_moves)
+            } else {
+                move_ordering_eval(board, legal_moves, 4,  &mut self.search)
+            };
+
+          
+        let solve_config = self.get_solve_config(self.ai_level, board.empties_count());
+        let result = self.select_and_run_solver(&solve_config, -SCORE_INF, SCORE_INF)?;
+        
+        if self.print_log {
+            let searched_nodes = self.search.perfect_search_node_count + self.search.eval_search_node_count;
+            let searched_leaf_nodes = self.search.perfect_search_leaf_node_count + self.search.eval_search_leaf_node_count;
+            println!("best move: {}, score: {}{}", position_bit_to_str(result.best_move).unwrap(), if result.eval > 0 {"+"} else {""}, result.eval);
+            println!("searched nodes: {}\nsearched leaf nodes: {}", searched_nodes, searched_leaf_nodes);
+        }
+
+        self.search.clear_t_table();
+
+        Ok(result)
+    }
+
+    pub fn solve(&mut self, board: &Board) -> Result<SolverResult, SolverErr> {
+        let legal_moves = board.put_able();
+        if legal_moves == 0 {
+            let mut pass_board = board.clone();
+            pass_board.next_turn ^= 1;
+            if pass_board.put_able() == 0 {
+                return Ok(SolverResult { 
+                    best_move: 0,
+                    eval: solve_score(board),
+                    solver_type: PerfectSolver,
+                    selectivity_lv: 0,
+                    searched_nodes: 0,
+                    searched_leaf_nodes: 0
+                })
+            } else {
+                let result = self.solve(&pass_board);
+                if let Ok(mut r) = result {
+                    r.best_move = 0;
+                    r.eval = -r.eval;
+                    return Ok(r);
+                }else {
+                    return Err(SolverErr::NoMove);
+                }
+            }
+            return Err(SolverErr::NoMove)
+        }
+
+        self.search.set_board(board);
+        self.search.clear_node_count();
+        
+        if self.print_log {
+            println!("my_turn: {}", if board.next_turn == Board::BLACK {"Black"} else {"White"});
+            println!("depth: {}", board.empties_count());
+            board.print_board();
+            println!("move_ordering....");
+        };
+
+        self.child_boards =
+            if board.empties_count() < 10 || self.ai_level < 8{
+                get_put_boards(board, legal_moves)
+            } else {
+                move_ordering_eval(board, legal_moves, 4,  &mut self.search)
+            };
+
+          
+        let original_solve_config = self.get_solve_config(self.ai_level, board.empties_count());
+        let mut prev_solve_config = SolverConfig{solver_type: EvalSolver, selectivity_lv: 0, eval_solver_level: 0}; // dummy
+
+        let mut predict_score: Option<i32> = None;
+        for i in (8..=self.ai_level).step_by(2) {
+            let solve_config = self.get_solve_config(i, board.empties_count());
+            if original_solve_config == solve_config {
+                break;
+            }
+            if solve_config == prev_solve_config {
+                continue;
+            }
+
+            let result = if solve_config.solver_type == PerfectSolver {
+                match predict_score {
+                Some(score) => self.aspiration_search(score, &solve_config),
+                None => self.select_and_run_solver(&solve_config, -SCORE_INF, SCORE_INF)
+                }
+            }  else {
+                self.select_and_run_solver(&solve_config, -SCORE_INF, SCORE_INF)
+            }?;
+            predict_score = Some(result.eval);
+
+            // PerfectSolverは1度しか実行しない。
+            // if solve_config.solver_type == PerfectSolver {
+            //     break;
+            // }
+
+            prev_solve_config = solve_config;
+        }
+
+        let result = match predict_score {
+            Some(score) => self.aspiration_search(score, &original_solve_config),
+            None => self.select_and_run_solver(&original_solve_config, -SCORE_INF, SCORE_INF)
+        } ?;
+        
+
+        if self.print_log {
+            let searched_nodes = self.search.perfect_search_node_count + self.search.eval_search_node_count;
+            let searched_leaf_nodes = self.search.perfect_search_leaf_node_count + self.search.eval_search_leaf_node_count;
+            println!("best move: {}, score: {}{}", position_bit_to_str(result.best_move).unwrap(), if result.eval > 0 {"+"} else {""}, result.eval);
+            println!("searched nodes: {}\nsearched leaf nodes: {}", searched_nodes, searched_leaf_nodes);
+        }
+
+        self.search.clear_t_table();
+
+        Ok(result)
+    }
+
+    pub fn perfect_solver(&mut self, selectivity_lv: i32, alpha: i32, beta: i32) -> Result<SolverResult, SolverErr>
+    {
+        // [alpha, beta]
+        let mut alpha = alpha;
+
+        let mut put_place_best_score: u8 ;
+        
+        let mut index_put_place_best_score = 0;
+        let mut put_boards_iter = self.child_boards.iter_mut();
+        let first_child_board = put_boards_iter.next().unwrap();
+        alpha = -pvs_perfect(&first_child_board.board, -beta, -alpha, &mut self.search);
+        put_place_best_score = first_child_board.put_place;
+        if self.print_log { 
+            println!("put: {}, nega scout score: {}",position_bit_to_str(1 << put_place_best_score).unwrap(), alpha);
+        };
+
+        for (i, put_board) in put_boards_iter.enumerate() {
+            let current_put_board = &put_board.board;
+            let put_place = put_board.put_place;
+            let mut score = -nws_perfect(current_put_board, -alpha - 1, &mut self.search);
             if score > alpha {
-                alpha = score;
-                put_place_best_score = put_place;
+                if self.print_log { 
+                    println!(" put: {}, null window score: {} => reserch [{},{}]",position_bit_to_str(1 << put_place).unwrap(), score, alpha, beta);
+                }
+                score = -pvs_perfect(current_put_board, -beta, -alpha, &mut self.search);
+                if score > alpha {
+                    alpha = score;
+                    put_place_best_score = put_place;
+                    index_put_place_best_score = i;
+                }
+            }
+            if self.print_log { 
+                println!("put: {}, nega scout score: {}",position_bit_to_str(1 << put_place).unwrap(), score);
             }
         }
-        if print_log { 
-            println!("put: {}, nega scout score: {}",Board::move_bit_to_str(1 << put_place).unwrap(), score);
+
+        if index_put_place_best_score > 0 {
+            self.child_boards.swap(0, index_put_place_best_score);
         }
-    }
 
-    if print_log { 
-        println!("best move: {}, score: {}{}",Board::move_bit_to_str(1 << put_place_best_score).unwrap(), if alpha > 0 {"+"} else {""},alpha);
-        println!("searched nodes: {}\nsearched leaf nodes: {}", search.perfect_search_node_count, search.perfect_search_leaf_node_count);
-    }
-
-    Ok(SolverResult{
-        best_move: 1 << put_place_best_score,
-        eval: alpha,
-        node_count: search.perfect_search_node_count,
-        leaf_node_count: search.perfect_search_leaf_node_count
-    })
-}
-
-/// オセロの盤面に対する勝利可能性を評価し、最適な手を決定する。
-///
-/// この関数は、Null Window Search (NWS) アルゴリズムを使用して、
-/// 現在の盤面から勝ち、引き分け、負けの結果をもたらす最適な手を判断します。
-/// 特に終盤の局面で有効です。
-///
-/// # 引数
-/// * `board` - 評価するオセロの盤面を表す `Board` オブジェクトの参照。
-/// * `print_log` - 真の場合、探索の進行状況と結果をコンソールに出力します。
-///
-/// # 戻り値
-/// `Result<SolverResult, SolverErr>` 型。成功した場合、`SolverResult`オブジェクトが含まれ、
-/// 最適な手とその評価値（勝ち:1、引き分け:0、負け:-1）、探索したノード数、葉ノード数を含みます。
-/// 合法手が存在しない場合は、`SolverErr::NoMove`エラーが返されます。
-///
-/// # 注記
-/// 探索過程の進行状況や結果の詳細な出力が必要な場合は、print_logパラメータをtrueに設定してください。これにより、
-/// 各手の評価値や探索したノードの数など、探索に関する詳細な情報が出力されます。
-pub fn winning_solver(board: &Board, print_log: bool, t_table: &mut TranspositionTable, evaluator : &mut Evaluator) -> Result<SolverResult, SolverErr>
-{
-    let legal_moves = board.put_able();
-    if legal_moves == 0 {
-        return Err(SolverErr::NoMove)
-    }
-
-    let mut search = Search::new(board, 0, t_table, evaluator);
-    
-    if print_log {
-        println!("my_turn: {}", if board.next_turn == Board::BLACK {"Black"} else {"White"});
-        println!("depth: {}", board.empties_count());
-        board.print_board();
-    };
-
-    if print_log {print!("move_ordering....");};
-    let mut put_boards = 
-        if board.empties_count() < MOVE_ORDERING_EVAL_LEVEL + 2 {
-            get_put_boards(board, legal_moves)
-        } else {
-            move_ordering_eval(board, legal_moves, MOVE_ORDERING_EVAL_LEVEL,  &mut search)
+        let result = SolverResult{
+            best_move: 1 << put_place_best_score,
+            eval: alpha,
+            solver_type: PerfectSolver,
+            selectivity_lv: selectivity_lv,
+            searched_nodes: self.search.perfect_search_node_count + self.search.eval_search_node_count,
+            searched_leaf_nodes : self.search.perfect_search_leaf_node_count + self.search.eval_search_leaf_node_count
         };
-    if print_log {println!("OK");};
 
-    // [alpha, beta] = [0, 1]
-    let mut put_place_best_score = 0;
-    let mut eval = -1;
-    let beta = 1;
-    let mut draw_or_lose_board_index: Vec<usize> = Vec::new();
-
-    for (i, put_board) in  put_boards.iter_mut().enumerate() {
-        let current_put_board = &mut put_board.board;
-        let put_place = put_board.put_place;
-        let score = -nws_perfect(current_put_board, -beta,&mut search);
-        if score > 0 {
-            if print_log { 
-                println!(" put: {}, Win",Board::move_bit_to_str(1 << put_place).unwrap());
-            }
-            if eval <= 0 {
-                put_place_best_score = put_place;
-                eval = 1
-            };
-            break;
-        } else if score < 0 {
-            if print_log { 
-                println!(" put: {}, Lose",Board::move_bit_to_str(1 << put_place).unwrap());
-            }
-        } else {
-            draw_or_lose_board_index.push(i);
-            if eval < 0 {
-                put_place_best_score = put_place;
-                eval = 0
-            };
-            if print_log { 
-                println!(" put: {}, Draw or Lose", Board::move_bit_to_str(1 << put_place).unwrap());
-            }
-        }
+        Ok(result)
     }
 
-    if eval == 0 {
-        // [alpha, beta] = [-1, 0]
-        let beta = 0;
+    pub fn eval_solver(&mut self, lv: i32, selectivity_lv: i32, alpha: i32, beta: i32) -> Result<SolverResult, SolverErr>
+    {
+        let mut alpha = alpha;
+        let mut put_place_best_score ;
+        
+        let mut index_put_place_best_score = 0;
+        let mut put_boards_iter = self.child_boards.iter();
+        let first_child_board = put_boards_iter.next().unwrap();
+        alpha = -pvs_eval(&first_child_board.board, -beta, -alpha, lv - 1, &mut self.search);
+        put_place_best_score = first_child_board.put_place;
+        if self.print_log { 
+            println!("put: {}, nega scout score: {}",position_bit_to_str(1 << put_place_best_score).unwrap(), alpha);
+        };
 
-        for &i in draw_or_lose_board_index.iter(){
-            let put_board = &mut put_boards[i];
+        for (i, put_board) in put_boards_iter.enumerate() {
+            let current_put_board = &put_board.board;
+            let put_place = put_board.put_place;
+            let mut score = -nws_eval(current_put_board, -alpha - 1, lv - 1, &mut self.search);
+            if score > alpha {
+                if self.print_log { 
+                    println!(" put: {}, null window score: {} => reserch [{},{}]",position_bit_to_str(1 << put_place).unwrap(), score, alpha, beta);
+                }
+                score = -pvs_eval(current_put_board, -beta, -alpha, lv - 1, &mut self.search);
+                if score > alpha {
+                    alpha = score;
+                    put_place_best_score = put_place;
+                    index_put_place_best_score = i;
+                }
+            }
+            if self.print_log { 
+                println!("put: {}, nega scout score: {}",position_bit_to_str(1 << put_place).unwrap(), score);
+            }
+        }
+
+        if index_put_place_best_score > 0 {
+            self.child_boards.swap(0, index_put_place_best_score);
+        }
+
+        let result = SolverResult{
+            best_move: 1 << put_place_best_score,
+            eval: alpha,
+            solver_type: EvalSolver,
+            selectivity_lv,
+            searched_nodes: self.search.perfect_search_node_count + self.search.eval_search_node_count,
+            searched_leaf_nodes : self.search.perfect_search_leaf_node_count + self.search.eval_search_leaf_node_count
+        };
+
+        Ok(result)
+    }
+
+    pub fn winning_solver(&mut self) -> Result<SolverResult, SolverErr>
+    {
+        // [alpha, beta] = [0, 1]
+        let mut put_place_best_score = 0;
+        let mut eval = -1;
+        let beta = 1;
+        let mut draw_or_lose_board_index: Vec<usize> = Vec::new();
+
+        for (i, put_board) in  self.child_boards.iter_mut().enumerate() {
             let current_put_board = &mut put_board.board;
             let put_place = put_board.put_place;
-            let score = -nws_perfect(current_put_board, -beta,&mut search);
-            if score == 0 {
-                if print_log { 
-                    println!(" put: {}, Draw", Board::move_bit_to_str(1 << put_place).unwrap());
+            let score = -nws_perfect(current_put_board, -beta,&mut self.search);
+            if score > 0 {
+                if self.print_log { 
+                    println!(" put: {}, Win",position_bit_to_str(1 << put_place).unwrap());
                 }
+                if eval <= 0 {
+                    put_place_best_score = put_place;
+                    eval = 1
+                };
+                break;
+            } else if score < 0 {
+                if self.print_log { 
+                    println!(" put: {}, Lose",position_bit_to_str(1 << put_place).unwrap());
+                }
+            } else {
+                draw_or_lose_board_index.push(i);
                 if eval < 0 {
                     put_place_best_score = put_place;
                     eval = 0
                 };
-                break;
-
-            } else if score < 0 {
-                if print_log { 
-                    println!(" put: {}, Lose",Board::move_bit_to_str(1 << put_place).unwrap());
+                if self.print_log { 
+                    println!(" put: {}, Draw or Lose", position_bit_to_str(1 << put_place).unwrap());
                 }
-                eval = -1;
-            } else {
-                eprintln!("Error ocurred in winning_solver");
-                panic!()
             }
-        }   
-    }
-    if eval == -1 {
-        put_place_best_score = put_boards[0].put_place;
-    }
+        }
 
-    if print_log { 
-        println!("best move: {}, score: {}",Board::move_bit_to_str(1 << put_place_best_score).unwrap(), if eval > 0 {"Win"} else if eval < 0 {"Lose"} else {"Draw"});
-        println!("searched nodes: {}\nsearched leaf nodes: {}", search.perfect_search_node_count, search.perfect_search_leaf_node_count);
-    }
+        if eval == 0 {
+            // [alpha, beta] = [-1, 0]
+            let beta = 0;
 
-    Ok(SolverResult{
-        best_move: 1 << put_place_best_score,
-        eval,
-        node_count: search.perfect_search_node_count,
-        leaf_node_count: search.perfect_search_leaf_node_count
-    })
-}
+            for &i in draw_or_lose_board_index.iter(){
+                let put_board = &mut self.child_boards[i];
+                let current_put_board = &mut put_board.board;
+                let put_place = put_board.put_place;
+                let score = -nws_perfect(current_put_board, -beta,&mut self.search);
+                if score == 0 {
+                    if self.print_log { 
+                        println!(" put: {}, Draw", position_bit_to_str(1 << put_place).unwrap());
+                    }
+                    if eval < 0 {
+                        put_place_best_score = put_place;
+                        eval = 0
+                    };
+                    break;
 
-/// オセロの盤面に対する評価関数を用いた探索を行い、最適な手を決定する。
-///
-/// この関数は、評価関数に基づいて盤面のスコアを計算し、
-/// Principal Variation Search (PVS) および Null Window Search (NWS) アルゴリズムを使用して
-/// 最適な手を探索します。探索深度は引数 `lv` で指定されます。
-///
-/// # 引数
-/// * `board` - 評価するオセロの盤面を表す `Board` オブジェクトの参照。
-/// * `lv` - 探索の深さを表す整数値。
-/// * `print_log` - 真の場合、探索の進行状況と結果をコンソールに出力します。
-///
-/// # 戻り値
-/// `Result<SolverResult, SolverErr>` 型。成功した場合、`SolverResult`オブジェクトが含まれ、
-/// 最適な手とその評価値、探索したノード数、葉ノード数を含みます。
-/// 合法手が存在しない場合は、`SolverErr::NoMove`エラーが返されます。
-///
-/// # 注記
-/// この関数は複雑なアルゴリズムを用いて盤面の探索を行うため、計算に時間がかかる可能性があります。
-/// 探索の深さ (lv) は、盤面の複雑さや求める精度に応じて適切に設定する必要があります。
-/// また、print_logパラメータをtrueに設定することで、探索の進行状況や結果の詳細がコンソールに出力されます。
-pub fn eval_solver(board: &Board, lv: i32, selectivity_lv: i32, print_log: bool, t_table: &mut TranspositionTable, evaluator : &mut Evaluator) -> Result<SolverResult, SolverErr>
-{
-    let legal_moves = board.put_able();
-    if legal_moves == 0 {
-        return Err(SolverErr::NoMove)
-    }
+                } else if score < 0 {
+                    if self.print_log { 
+                        println!(" put: {}, Lose",position_bit_to_str(1 << put_place).unwrap());
+                    }
+                    eval = -1;
+                } else {
+                    eprintln!("Error ocurred in winning_solver");
+                    panic!()
+                }
+            }   
+        }
+        if eval == -1 {
+            put_place_best_score = self.child_boards[0].put_place;
+        }
 
-    let mut search = Search::new(board, selectivity_lv, t_table, evaluator);
-    
-    if print_log {
-        println!("my_turn: {}", if board.next_turn == Board::BLACK {"Black"} else {"White"});
-        println!("depth: {}", board.empties_count());
-        // board.print_board();
-    };
-    
-    
-    if print_log {println!("move_ordering....");};
-    
-    
-    if lv > 6 {
-        pvs_eval(board, -SCORE_INF, SCORE_INF, lv - 3, &mut search);
-    }
-
-    let put_boards = 
-        if lv - 3 <= 0 {
-            get_put_boards(board, legal_moves)
-        } else {
-            move_ordering_eval(board, legal_moves, MOVE_ORDERING_EVAL_LEVEL.min(lv - 4),  &mut search)
+        let result = SolverResult{
+            best_move: 1 << put_place_best_score,
+            eval: eval,
+            solver_type: WinningSolver,
+            selectivity_lv: 0,
+            searched_nodes: self.search.perfect_search_node_count + self.search.eval_search_node_count,
+            searched_leaf_nodes : self.search.perfect_search_leaf_node_count + self.search.eval_search_leaf_node_count
         };
-    if print_log {println!("OK");};
 
-    let mut alpha = -SCORE_INF;
-    let beta = SCORE_INF;
-    let mut put_place_best_score ;
-    
-    let mut put_boards_iter = put_boards.iter();
-    let first_child_board = put_boards_iter.next().unwrap();
-    alpha = -pvs_eval(&first_child_board.board, -beta, -alpha, lv - 1, &mut search);
-    put_place_best_score = first_child_board.put_place;
-    if print_log { 
-        println!("put: {}, nega scout score: {}",Board::move_bit_to_str(1 << put_place_best_score).unwrap(), alpha);
-    };
-
-    for put_board in put_boards_iter {
-        let current_put_board = &put_board.board;
-        let put_place = put_board.put_place;
-        let mut score = -nws_eval(current_put_board, -alpha - 1, lv - 1, &mut search);
-        if score > alpha {
-            if print_log { 
-                println!(" put: {}, null window score: {} => reserch [{},{}]",Board::move_bit_to_str(1 << put_place).unwrap(), score, alpha, beta);
-            }
-            score = -pvs_eval(current_put_board, -beta, -alpha, lv - 1, &mut search);
-            if score > alpha {
-                alpha = score;
-                put_place_best_score = put_place;
-            }
-        }
-        if print_log { 
-            println!("put: {}, nega scout score: {}",Board::move_bit_to_str(1 << put_place).unwrap(), score);
-        }
+        Ok(result)
     }
-
-    if print_log { 
-        println!("best move: {}, score: {}{}",Board::move_bit_to_str(1 << put_place_best_score).unwrap(), if alpha > 0 {"+"} else {""},alpha);
-        println!("searched nodes: {}\nsearched leaf nodes: {}", search.eval_search_node_count, search.eval_search_leaf_node_count);
-    }
-    
-    Ok(SolverResult{
-        best_move: 1 << put_place_best_score,
-        eval: alpha,
-        node_count: search.eval_search_node_count,
-        leaf_node_count: search.eval_search_leaf_node_count
-    })
 }

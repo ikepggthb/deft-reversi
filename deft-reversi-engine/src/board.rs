@@ -503,34 +503,6 @@ impl Board {
         }
     }
 
-    pub fn move_bit_to_str(bit: u64) -> Result<String, String>
-    {
-        for y in 0..8 {
-            for x in 0..8 {
-                let mask = 1u64 << (y * 8 + x);
-                if mask == bit {
-                    let mut result = String::new();
-                    match x {
-                        0 => result.push('a'),
-                        1 => result.push('b'),
-                        2 => result.push('c'),
-                        3 => result.push('d'),
-                        4 => result.push('e'),
-                        5 => result.push('f'),
-                        6 => result.push('g'),
-                        7 => result.push('h'),
-                        _ => {}
-                    }
-                    result.push_str((y+1).to_string().as_str());
-                    return Ok(result);
-                }
-            }
-        }
-
-        let error_message = format!("put_place is undefind. (bit = {:0x})", bit);
-        Err(error_message)
-    }
-
     #[inline(always)]
     pub fn piece_count(&self) -> i32
     {
@@ -543,4 +515,96 @@ impl Board {
         (self.bit_board[0] | self.bit_board[1]).count_zeros() as i32
     }
 
+}
+
+pub fn position_bit_to_num(bit: u64) -> Result<u8, &'static str> {
+    for i in 0..64 {
+        let mask = 1u64 << i;
+        if bit == mask {
+            return Ok(i);
+        }
+    }
+
+    Err("Invalid position bit")
+}
+
+#[inline(always)]
+pub fn position_num_to_bit(num: i32) -> Result<u64, &'static str> {
+    if !(0..64).contains(&num) {
+        return Err("Invalid position string");
+    }
+
+    Ok(1u64 << num)
+}
+
+pub fn position_str_to_bit(s: &str) -> Result<u64, &'static str> {
+    if s.len() != 2 {
+        return Err("Invalid position string");
+    }
+
+    let mut chars = s.chars();
+
+    let col = match chars.next() {
+        Some('A') => 0,
+        Some('B') => 1,
+        Some('C') => 2,
+        Some('D') => 3,
+        Some('E') => 4,
+        Some('F') => 5,
+        Some('G') => 6,
+        Some('H') => 7,
+        _ => return Err("Invalid column letter"),
+    };
+
+    let row = match chars.next() {
+        Some('1') => 0,
+        Some('2') => 1,
+        Some('3') => 2,
+        Some('4') => 3,
+        Some('5') => 4,
+        Some('6') => 5,
+        Some('7') => 6,
+        Some('8') => 7,
+        _ => return Err("Invalid row number"),
+    };
+
+    let position = row * 8 + col;
+    Ok(1u64 << position)
+}
+
+pub fn position_bit_to_str(bit: u64) -> Result<String, &'static str> {
+    if bit.count_ones() != 1 {
+        return Err("Invalid bit position");
+    }
+
+    let pos = position_bit_to_num(bit)?;
+    
+    let col = (pos % 8) as u8;
+    let row = (pos / 8) as u8;
+
+    let col_char = match col {
+        0 => 'A',
+        1 => 'B',
+        2 => 'C',
+        3 => 'D',
+        4 => 'E',
+        5 => 'F',
+        6 => 'G',
+        7 => 'H',
+        _ => return Err("Invalid column"),
+    };
+
+    let row_char = match row {
+        0 => '1',
+        1 => '2',
+        2 => '3',
+        3 => '4',
+        4 => '5',
+        5 => '6',
+        6 => '7',
+        7 => '8',
+        _ => return Err("Invalid row"),
+    };
+
+    Ok(format!("{}{}", col_char, row_char))
 }

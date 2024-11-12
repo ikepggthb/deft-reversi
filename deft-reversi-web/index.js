@@ -1,12 +1,11 @@
-import { Board } from "./board.js";
+import { render } from "./render.js";
+
+const status_init = {
+  black:       "0000000000000000000000000000000000000000000000000000000000000000",
+  white:       "0000000000000000000000000000000000000000000000000000000000000000",
+  legal_moves : "0000000000000000000000000000000000000000000000000000000000000000",
+  fliping:     "0000000000000000000000000000000000000000000000000000000000000000",
+}
+render(status_init);
 
 
-const worker = new Worker('engine.js', { type: 'module' });
-
-// メッセージを受信してコンソールに表示する
-worker.addEventListener('message', (message) => {
-   console.log(message.data);
-});
-
-
-let board = new Board();

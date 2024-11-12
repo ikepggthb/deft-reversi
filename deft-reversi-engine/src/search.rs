@@ -6,7 +6,6 @@ use crate::t_table::*;
 const SCORE_INF: i32 = i8::MAX as i32;
 
 
-/// 
 pub struct PutBoard {
     eval: i32,
     pub board: Board,
@@ -149,28 +148,42 @@ pub fn t_table_cut_off(
     None
 }
 
-pub struct Search<'a> {
+pub struct Search {
     pub eval_search_node_count: u64,
     pub eval_search_leaf_node_count: u64,
     pub perfect_search_node_count: u64,
     pub perfect_search_leaf_node_count: u64,
-    pub t_table: &'a mut TranspositionTable,
+    pub t_table: TranspositionTable,
     pub origin_board: Board,
-    pub eval_func: &'a mut Evaluator,
+    pub eval_func: Evaluator,
     pub selectivity_lv: i32,
 }
 
-impl Search<'_> {
-    pub fn new<'a>(board :&Board, selectivity_lv: i32, t_table: &'a mut TranspositionTable, evaluator: &'a mut Evaluator) -> Search <'a>{
+impl Search {
+    pub fn new(evaluator: Evaluator) -> Search{
         Search{
             eval_search_node_count: 0,
             eval_search_leaf_node_count: 0,
             perfect_search_node_count: 0,
             perfect_search_leaf_node_count: 0,
-            t_table,
-            origin_board: board.clone(),
+            t_table: TranspositionTable::new(),
+            origin_board: Board::new(),
             eval_func: evaluator,
-            selectivity_lv
+            selectivity_lv: 0
         }
+    }
+    pub fn clear_node_count(&mut self){
+        self.eval_search_node_count = 0;
+        self.eval_search_leaf_node_count = 0;
+        self.perfect_search_node_count = 0;
+        self.perfect_search_leaf_node_count = 0;
+    }
+    pub fn clear_t_table(&mut self){
+        self.t_table = TranspositionTable::new();
+    }
+
+    pub fn set_board(&mut self, board :&Board) {
+        self.origin_board = board.clone();
+        self.clear_node_count();
     }
 }

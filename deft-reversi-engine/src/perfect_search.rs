@@ -61,11 +61,11 @@ const MOVE_ORDERING_EVAL_LEVEL_T: [i32; 61] = [
 #[inline(always)]
 pub fn solve_score(board: &Board) -> i32 {
     let n_player: i32 = board.bit_board[board.next_turn].count_ones() as i32;
-    let n_opponent: i32 = board.bit_board[board.next_turn^1].count_ones() as i32;
+    let n_opponent: i32 = board.bit_board[board.next_turn ^1].count_ones() as i32;
     let diff: i32 = n_player - n_opponent;
 
     // https://github.com/rust-lang/rust-clippy/issues/5354
-    // 速度重視のため、match分ではなく、if文を使用
+    // 速度重視のため、match文ではなく、if文を使用
     #[allow(clippy::comparison_chain)]
     if diff > 0 {
         let n_empties: i32 = 64 - n_player - n_opponent;
@@ -363,7 +363,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32
         return -nws_perfect(&passed_board, -beta, search);
     }
 
-    if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta,60, search.selectivity_lv, search.t_table) {
+    if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta,60, search.selectivity_lv, &mut search.t_table) {
         return score;
     }
 
@@ -466,7 +466,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32,mut beta: i32, search: &mut Sea
     }
 
     // TranspositionTable Cut off
-    if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta,60, search.selectivity_lv, search.t_table) {
+    if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta,60, search.selectivity_lv, &mut search.t_table) {
         return score;
     }
 

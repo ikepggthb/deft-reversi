@@ -70,7 +70,7 @@ impl EvaluatorForLearn {
         self.feature_bit = [[0; N_ROTATION]; N_PATTERN];
         
         let p = board.bit_board[board.next_turn];
-        let o = board.bit_board[board.next_turn^1];
+        let o = board.bit_board[board.next_turn ^1];
         
         for pattern in 0..N_PATTERN {
             for rotation in 0..N_ROTATION {
@@ -152,7 +152,7 @@ impl EvaluatorForLearn {
                 ei16.const_eval = (ef64.const_eval * (SCORE_RATE as f64)) as i16;
             }
         }
-        e.write_file();
+        e.write_file( "res/eval.json");
         
 
         Ok(())
