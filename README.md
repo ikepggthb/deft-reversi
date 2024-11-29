@@ -1,4 +1,5 @@
 # Deft Reversi
+![image](https://github.com/user-attachments/assets/269bb110-41af-43a3-bac4-d9ad281f163b)
 
 Deft Reversi is a strong Othello program. It consists of the following two parts:
 
