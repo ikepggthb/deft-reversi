@@ -18,7 +18,7 @@ Deft Reversi is a strong Othello program. It consists of the following two parts
 
 - About the Levels
 
-  There are levels from 0 to 22. Level 0 plays randomly. It is thought that most people cannot win even around level 3. Levels above 20 are not recommended because they are heavy.
+  There are levels from 0 to 24. It is thought that most people cannot win even around level 3. Levels above 20 are not recommended because they are heavy.
 
 - Build
   - Rust and wasm-pack are required.
