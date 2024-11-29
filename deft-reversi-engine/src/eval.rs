@@ -388,7 +388,7 @@ impl Evaluator {
         self.feature_bit = [[0; N_ROTATION]; N_PATTERN];
         
         let p: u64 = board.bit_board[board.next_turn];
-        let o: u64 = board.bit_board[board.next_turn^1];
+        let o: u64 = board.bit_board[board.next_turn ^1];
         
         for pattern in 0..N_PATTERN {
             let fbit = &mut self.feature_bit[pattern];
@@ -442,7 +442,7 @@ impl Evaluator {
     pub fn clac_features_eval(&mut self, board: &Board) -> i32{
 
         self.clac_features(board);
-        let mut e = self.clac_eval(board) as i32;
+        let mut e = self.clac_eval(board);
 
         if e > 0 {e += SCORE_RATE/2;} else if e < 0 {e -= SCORE_RATE/2;}
         e /= SCORE_RATE;
@@ -451,21 +451,20 @@ impl Evaluator {
         e
     }
 
-    const EVAL_FILE_PATH: &str = "res/eval.json";
-    pub fn write_file(&self) -> std::io::Result<()>
+    pub fn write_file(&self, path: &str) -> std::io::Result<()>
     {
         // serialized
         let serialized: String = serde_json::to_string(self).unwrap();
 
         // write
-        let mut file = File::create(Self::EVAL_FILE_PATH)?;
+        let mut file = File::create(path)?;
         file.write_all(serialized.as_bytes())?;
         Ok(())
     }
 
-    pub fn read_file() -> std::io::Result<Evaluator>
+    pub fn read_file(path : &str) -> std::io::Result<Evaluator>
     {
-        let input = fs::read_to_string(Self::EVAL_FILE_PATH)?;
+        let input = fs::read_to_string(path)?;
         let deserialized: Evaluator = serde_json::from_str(&input).unwrap();
         Ok(deserialized)
     }

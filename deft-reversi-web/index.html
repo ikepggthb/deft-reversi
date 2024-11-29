@@ -1,76 +1,399 @@
 <!DOCTYPE html>
 <html lang="ja">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>Deft Reversi</title>
-        <meta name="description" content="The simple and strong Reversi AI (Othello AI) that can be played on the web.">
-        <meta name="twitter:title" content="Deft Reversi"/>
-        <link rel="stylesheet" href="style.css">
-        <link rel="icon" href="favicon.ico">
-        <script src="https://cdn.jsdelivr.net/npm/pako@1.0.11/dist/pako.min.js"></script>
-    </head>
-    <body>
-        <div id="setup_modal" class="setup">
-            <h2 id="game-title"> Deft Reversi</h2>
-            <div>
-                <h3 class="setting-title">対局設定</h3>
-                <div class="toggle_button setting-element">
-                    <label for="toggle" class="toggle_text" > AIと対戦する</label>
-                    <input id="toggle" class="toggle_input" type='checkbox' checked/>
-                    <label for="toggle" class="toggle_label"></label>
+<head>
+    <meta charset="UTF-8">
+    <title>Deft Reversi</title>
+    <meta name="description" content="強いオセロAI（リバーシAI）">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        * { 
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            height: 100%;
+            background: radial-gradient(circle, #135e2e 0%, #061f13 50%, #000000 100%);
+            color: white;
+        }
+        canvas {
+            display: block;
+            margin: auto;
+        }
+        #modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.85);
+            z-index: 10;
+        }
+        #modal {
+            background: linear-gradient(135deg, #222 0%, #444 100%);
+            border-radius: 12px;
+            box-shadow: 0px 6px 20px rgba(0, 0, 0, 0.8);
+            width: 90%;
+            max-width: 500px;
+            padding: 20px;
+            text-align: center;
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+        @keyframes fadeOut {
+            from {
+                opacity: 1;
+                transform: scale(1);
+            }
+            to {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+        }
+        .fade-out {
+            animation: fadeOut 0.5s ease-in-out;
+        }
+        #title {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #ffffff;
+        }
+        #settings {
+            margin-top: 10px;
+            transition: height 0.3s ease-in-out;
+        }
+        .setting-content {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        .setting-content.hidden {
+            display: none;
+        }
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 25px;
+            background: #555;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: background-color 0.3s ease-in-out;
+        }
+        .toggle-switch::before {
+            content: '';
+            position: absolute;
+            top: 2.5px;
+            left: 3px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s ease-in-out;
+        }
+        .toggle-switch.active {
+            background: #4CAF50;
+        }
+        .toggle-switch.active::before {
+            transform: translateX(25px);
+        }
+        #ai-level {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        #ai-level-slider {
+            -webkit-appearance: none;
+            width: 60%;
+            height: 8px;
+            margin-top: 30px;
+            margin-bottom: 30px;
+            margin-left: 20px;
+            margin-right: 20px;
+            background: #555;
+            border-radius: 5px;
+            outline: none;
+            transition: background 0.2s ease-in-out;
+        }
+        #ai-level-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: background 0.2s ease-in-out;
+        }
+        #level-display {
+            font-size: 18px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .toggle-button-group {
+            display: flex;
+            justify-content: center;
+            border: 2px solid #555;
+            border-radius: 20px;
+            overflow: hidden;
+            margin-top: 30px;
+            margin-bottom: 30px;
+            margin-left: 20px;
+            margin-right: 20px;
+        }
+        .toggle-button {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            font-size: 16px;
+            cursor: pointer;
+            background: #777;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.3s ease-in-out, color 0.3s ease-in-out;
+        }
+        .toggle-button.active {
+            background: #4CAF50;
+            color: white;
+        }
+        #start-button {
+            background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+            border: none;
+            padding: 12px 20px;
+            font-size: 18px;
+            font-weight: bold;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.5);
+            margin-top: 20px;
+            transition: transform 0.3s ease-in-out;
+        }
+        #start-button.moved {
+            transform: translateY(0);
+        }
+        #start-button.reset {
+            transform: translateY(0);
+        }
+        #end-game-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.85);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+        }
+
+        #end-game-modal {
+            background: linear-gradient(135deg, #222 0%, #444 100%);
+            border-radius: 12px;
+            box-shadow: 0px 6px 20px rgba(0, 0, 0, 0.8);
+            width: 90%;
+            max-width: 500px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        #end-game-title {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #4CAF50;
+        }
+
+        #result-card {
+            background: #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            box-shadow: 0px 4px 15px rgba(0, 0, 0, 0.5);
+        }
+
+        #score-container {
+            display: flex;
+            align-items: center;
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .player-score {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stone {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0px 2px 6px rgba(0, 0, 0, 0.5);
+        }
+
+        .stone.black {
+            background: black;
+        }
+
+        .stone.white {
+            background: white;
+            border: 1px solid black;
+        }
+
+        .versus {
+            margin: 0 15px;
+            font-size: 28px;
+            color: #4CAF50;
+        }
+
+        #winner-text {
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 10px;
+            color: #FFD700; /* ゴールドで強調 */
+        }
+
+        #history-container {
+            margin: 10px 0;
+            padding: 10px;
+            background: #333;
+            border-radius: 8px;
+            box-shadow: inset 0px 2px 6px rgba(0, 0, 0, 0.5);
+        }
+
+        #game-history {
+            width: 100%;
+            height: 100px;
+            background: transparent;
+            color: white;
+            border: none;
+            resize: none;
+            font-family: monospace;
+            font-size: 14px;
+            overflow: auto;
+        }
+
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+        }
+
+        #copy-history-button {
+            background: #4CAF50;
+            color: white;
+        }
+
+        #close-end-game-modal {
+            background: #F44336;
+            color: white;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="cv" width="600" height="800"></canvas>
+    <script type="module" src="index.js"></script>
+    <div id="modal-overlay">
+        <div id="modal">
+            <div id="title">Deft Reversi</div>
+            <form id="settings">
+                <div class="setting-content toggle-container">
+                    <span>AIと対戦する</span>
+                    <div id="ai-toggle" class="toggle-switch"></div>
                 </div>
-                <div id="aiSetting">
-                    <div id="first_or_last" class="toggle_button setting-element">
-                        <label id="text_first_or_last" for="toggle_first_or_last" class="toggle_text"> 先攻</label>
-                        <input id="toggle_first_or_last" class="toggle_input" type='checkbox' />
-                        <label id="toggle_label_first_or_last" for="toggle_first_or_last" class="toggle_label"></label>
-                    </div>
-                    <div id="level" class="setting-element">
-                        <label class="">AIのレベル</label>
-                        <select id="selectLevel" class="" name="level">
-                            <option value="0">Lv. 0</option>
-                            <option value="1">Lv. 1</option>
-                            <option value="2">Lv. 2</option>
-                            <option value="3">Lv. 3</option>
-                            <option value="4">Lv. 4</option>
-                            <option value="5">Lv. 5</option>
-                            <option value="6">Lv. 6</option>
-                            <option value="7">Lv. 7</option>
-                            <option value="8">Lv. 8</option>
-                            <option value="9">Lv. 9</option>
-                            <option value="10">Lv. 10</option>
-                            <option value="11">Lv. 11</option>
-                            <option value="12">Lv. 12</option>
-                            <option value="13">Lv. 13</option>
-                            <option value="14">Lv. 14</option>
-                            <option value="15">Lv. 15</option>
-                            <option value="16">Lv. 16</option>
-                            <option value="17">Lv. 17</option>
-                            <option value="18">Lv. 18</option>
-                            <option value="19">Lv. 19</option>
-                            <option value="20">Lv. 20</option>
-                            <option value="21">Lv. 21</option>
-                            <option value="22">Lv. 22</option>
-                        </select>
+                <div class="setting-content hidden" id="ai-level-setting">
+                    <label for="ai-level-slider">
+                        <i class="fas fa-sliders-h"></i> AIのレベル
+                    </label>
+                    <div id="ai-level">
+                        <input type="range" id="ai-level-slider" min="1" max="24" value="5">
+                        <span id="level-display">5</span>
                     </div>
                 </div>
-                <div id="startButtonP">
-                    <a id="startButton" >Now Loading...</a>
+                <div class="setting-content hidden" id="turn-setting">  
+                    <p style="color: white; font-size: 16px; margin-bottom: 10px;">
+                        先攻: 黒 / 後攻: 白
+                    </p>
+                    <div class="toggle-button-group">
+                        <div id="first-button" class="toggle-button active" data-value="先攻">
+                            <div style="width: 20px; height: 20px; background: black; border-radius: 50%; margin-right: 8px;"></div>
+                            先攻
+                        </div>
+                        <div id="second-button" class="toggle-button" data-value="後攻">
+                            <div style="width: 20px; height: 20px; background: white; border-radius: 50%; margin-right: 8px; border: 1px solid black;"></div>
+                            後攻
+                        </div>
+                    </div>
+                </div>
+                <button type="button" id="start-button" class="reset">ゲームスタート</button>
+            </form>
+        </div>
+    </div>
+    <div id="end-game-modal-overlay" style="display: none;">
+        <div id="end-game-modal">
+            <div id="end-game-content">
+                <h2 id="end-game-title">試合終了</h2>
+                <div id="result-card">
+                    <div id="score-container">
+                        <span class="player-score">
+                            <span class="stone black"></span>
+                            <span id="black-score"></span>
+                        </span>
+                        <span class="versus">:</span>
+                        <span class="player-score">
+                            <span class="stone white"></span>
+                            <span id="white-score"></span>
+                        </span>
+                    </div>
+                    <p id="winner-text"></p>
+                </div>
+                <div id="history-container">
+                    <h3>棋譜</h3>
+                    <textarea id="game-history" readonly></textarea>
+                </div>
+                <div id="modal-buttons">
+                    <button id="copy-history-button">棋譜をコピー</button>
+                    <button id="close-end-game-modal">閉じる</button>
                 </div>
             </div>
         </div>
-        <div id="othello-app">
-            <div id="ai-thinking-overlay" > </div>
-            <table id="othello-board"></table>
-            <div id="othello-status">
-                <progress id="othello-status-prog"></progress>
-                <div id="count">
-                    <label id="black-count"></label>
-                    <label id="white-count"></label>
-                </div>
-            </div>
-        </div>
-        <script type="module" src="main.js?20240127"></script>
-    </body>
+    </div>
+
+
+</body>
 </html>

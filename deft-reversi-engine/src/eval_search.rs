@@ -59,10 +59,10 @@ pub fn negaalpha_eval(board: &Board, mut alpha: i32, beta: i32, lv: i32, search:
     // 探索範囲: [alpha, beta]
     search.eval_search_node_count += 1;
 
-    match eval_search_mpc(board, alpha, beta, lv, search) {
-        ProbCutResult::Cut(score) => {return score},
-        ProbCutResult::FAIL => ()
-    }
+    // match eval_search_mpc(board, alpha, beta, lv, search) {
+    //     ProbCutResult::Cut(score) => {return score},
+    //     ProbCutResult::FAIL => ()
+    // }
 
     let mut best_score = -SCORE_INF;
     
@@ -294,7 +294,7 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut Search) -> 
     search.eval_search_node_count += 1;
 
 
-    if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta, lv, search.selectivity_lv, search.t_table) {
+    if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta, lv, search.selectivity_lv, &mut search.t_table) {
         return score;
     }
 
@@ -402,7 +402,7 @@ pub fn pvs_eval ( board     : &Board,
     search.eval_search_node_count += 1;
 
     // TranspositionTable Cut off
-    if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta,lv, search.selectivity_lv, search.t_table) {
+    if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta,lv, search.selectivity_lv, &mut search.t_table) {
         return score;
     }
 

@@ -1,9 +1,8 @@
+use rand::Rng;
 use crate::board::*;
-use rand::{Rng};
 
 #[derive(Clone)]
 pub struct TableData {
-    exists: bool,
     pub board: Board,
     pub max: i8,
     pub min: i8,
@@ -12,23 +11,9 @@ pub struct TableData {
     pub best_move: u8
 }
 
-impl TableData {
-    fn make_blank() -> Self{
-        Self {
-            exists: false,
-            board: Board {bit_board: [0, 0],next_turn: 0},
-            max: 0,
-            min: 0,
-            lv: 0,
-            selectivity_lv: 0,
-            best_move: u8::MAX,
-        }
-    }
-}
-
-const TABLE_SIZE: usize = 1 << 20;
+const TABLE_SIZE: usize = 1 << 22;
 pub struct TranspositionTable {
-    table: Vec::<TableData>,
+    table: Vec::<Option<TableData>>,
     rand_table: [u32; 1<<16]
 }
 
@@ -36,7 +21,7 @@ impl Default for TranspositionTable {
     fn default() -> Self {
         let rand_table: [u32; 1<<16] = Self::gen_rand_table();
         Self {
-            table: vec![TableData::make_blank(); TABLE_SIZE],
+            table: vec![None; TABLE_SIZE],
             rand_table
         }
     }
@@ -76,7 +61,6 @@ impl TranspositionTable {
 
     #[inline(always)]
     pub fn add(&mut self, board: &Board, min: i32, max: i32, lv: i32, selectivity_lv: i32,best_move: u8 ) {
-
     #[cfg(debug_assertions)]
     {
         const MAX:i32 = i8::MAX as i32;
@@ -85,30 +69,34 @@ impl TranspositionTable {
             " in function t_table::add() , min: {min}, max: {min}, Lv: {lv}, best move: {best_move}");
     }
         let index = self.hash_board(board);
-        self.table[index] = TableData {
-            exists: true,
+        self.table[index] = Some(TableData {
             board: board.clone(),
             max: max as i8,
             min: min as i8,
             lv: lv as u8,
             selectivity_lv: selectivity_lv as u8,
             best_move
-        }
+        });
     }
 
     #[inline(always)]
     pub fn get(&self, board: &Board) -> Option<&TableData>{
         let index = self.hash_board(board);
-        let x = &self.table[index];
-        if !x.exists {return None;}
 
-        if x.board.bit_board[Board::BLACK] == board.bit_board[Board::BLACK] &&
-           x.board.bit_board[Board::WHITE] == board.bit_board[Board::WHITE] &&
-           x.board.next_turn == board.next_turn {
-            Some(x)
-        } else {
-            None
+        self.table[index].as_ref().filter(
+            |&x| 
+                x.board.bit_board[Board::BLACK] == board.bit_board[Board::BLACK]
+                && x.board.bit_board[Board::WHITE] == board.bit_board[Board::WHITE]
+                && x.board.next_turn == board.next_turn
+        )
+    }
+
+    pub fn count_used_tt(&self) -> usize {
+        let mut i = 0;
+        for e in self.table.iter() {
+            if e.is_some() { i += 1; }
         }
+        i
     }
 
 }

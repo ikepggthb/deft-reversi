@@ -1,54 +1,115 @@
-use crate::board::Board;
+use crate::board::*;
+use crate::eval::*;
+use crate::t_table::*;
 
-
-#[derive(Clone)]
-pub struct RecordElement {
-    put_place: u64,
-}
-
-#[derive(Clone)]
 pub struct Game {
-    pub record: Vec<RecordElement>,
-    pub current_index: usize
+    state: State,
+    undo_stack: Vec<State>,
+    redo_stack: Vec<State>, 
 }
 
-impl Default for Game {
-    fn default() -> Self {    
-        let mut r = Self { record: Vec::new(), current_index: 0 };
-        r.record.push(RecordElement {board: Board::new(), put_place: 0});
-        r
-    }
+pub struct State {
+    board: Board,
+    put_place: u8,
 }
+
 
 impl Game {
     pub fn new() -> Self {
-        Self::default()
+        let initial_board = Board::new();  // Boardの初期状態を作成        
+        Game {
+            state: State {
+                board: initial_board,
+                put_place: NO_COORD,
+            },
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+        }
     }
-    
-    pub fn current_board(&self) -> &Board {
-        &self.record[self.current_index].board
+
+    pub fn get_board(&self) -> &Board {
+        &self.state.board
+    }
+
+    fn update_new_state(&mut self, new_board: Board, put_place: u8) {
+        self.undo_stack.push(State { board: self.get_board().clone(), put_place: put_place});
+        self.redo_stack.clear();
+        self.state.board = new_board;
+        self.state.put_place = NO_COORD;
     }
 
     pub fn undo(&mut self) {
-        if self.current_index > 0 {
-            self.current_index -= 1;
-        }
-    }
-    
-    pub fn redo(&mut self) {
-        if self.current_index < (self.record.len()-1) {
-            self.current_index += 1;
+        if let Some(prev_state) = self.undo_stack.pop() {
+            let current_state = std::mem::replace(&mut self.state, prev_state);
+            self.redo_stack.push(current_state);
         }
     }
 
-    pub fn add(&mut self, board: Board, put_place: u64){
-        self.current_index += 1;
-        self.record[self.current_index] = RecordElement{board, put_place};
+    pub fn put(&mut self, positon: &str) -> Result<(), &'static str> {
+        let mut b = self.get_board().clone();
+
+        let position_bit = position_str_to_bit(positon)?;
+
+        match b.put_piece(position_bit) {
+            Ok(()) => {
+                self.update_new_state(b.clone(), position_bit_to_num(position_bit)?);
+            },
+            Err(_) => return Err("Invalid position")
+        };
+        Ok(())       
     }
 
-    pub fn reset(&mut self) {
-        self.record.clear();
-        self.record.push(RecordElement {board: Board::new(), put_place: 0});
-        self.current_index = 0;
+    pub fn is_pass(&self) -> bool {
+        let b = self.get_board();
+        b.put_able().count_ones() == 0 && b.opponent_put_able().count_ones() != 0
     }
+
+    pub fn pass(&mut self) {
+        if !self.is_pass() {return;}
+
+        let mut b = self.get_board().clone();
+        b.next_turn ^= 1;
+        self.update_new_state(b, NO_COORD);
+    }
+
+    pub fn is_end(&self) -> bool {
+        let b = self.get_board();
+        b.put_able().count_ones() == 0 && b.opponent_put_able().count_ones() == 0
+    }
+
+    pub fn record(&self) -> String {
+        let mut s = String::new();
+        for r in self.undo_stack.iter() {
+            if r.put_place != NO_COORD {
+                if let Ok(bit_p) = position_num_to_bit(r.put_place as i32) {
+                    let str_p = position_bit_to_str(bit_p).unwrap();
+                    s.push_str(&str_p);
+                }
+            }
+        }
+
+        if let Ok(bit_p) = position_num_to_bit(self.state.put_place as i32) {
+            let str_p = position_bit_to_str(bit_p).unwrap();
+            s.push_str(&str_p);
+        }
+        
+        s
+    }
+
+    pub fn get_last_move(&self) -> Option<i32> {
+        self.undo_stack.last().map(|p| p.put_place as i32)
+    }
+
+    pub fn do_over(&mut self) {
+        let next_turn = self.state.board.next_turn;
+        loop {
+            self.undo();
+            if (self.state.board.next_turn == next_turn && self.state.put_place != NO_COORD) || self.undo_stack.is_empty() {
+                break;
+            }
+        }
+    }
+
 }
+
+

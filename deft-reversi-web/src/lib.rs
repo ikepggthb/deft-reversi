@@ -1,5 +1,11 @@
 use wasm_bindgen::prelude::*;
 
+use deft_reversi_engine::*;
+use serde::{Serialize, Deserialize};
+use serde_wasm_bindgen::*;
+use rand::Rng;
+
+// use js_sys::{Promise, Error};
 // wasm console.log()を実行
 // https://rustwasm.github.io/wasm-bindgen/examples/console-log.html
 
@@ -43,24 +49,24 @@ pub fn add(a: i32, b: i32) -> i32 {
     a + b
 }
 
-use deft_reversi_engine::*;
-use serde::{Serialize, Deserialize};
-
-// Rust から Javascript に、structを渡す。
-//https://rustwasm.github.io/docs/wasm-bindgen/reference/arbitrary-data-with-serde.html
-// https://rustwasm.github.io/wasm-bindgen/reference/arbitrary-data-with-serde.html#serializing-and-deserializing-arbitrary-data-into-and-from-jsvalue-with-serde
-#[derive(Serialize, Deserialize)]
-struct JsBoard {
-    board: Vec<Vec<i32>>,
-    next_turn: i32
+#[wasm_bindgen]
+struct App {
+    game: Game,
+    solver: Solver,
+    rng: rand::rngs::ThreadRng,
+    first_move_played: bool
 }
 
-#[wasm_bindgen]
-pub struct App {
-    bm: BoardManager,
-    level: i32,
-    evaluator: Option<Evaluator>,
-    t_table: Option<TranspositionTable>
+
+#[derive(Serialize, Deserialize)]
+pub struct StateForJS {
+    black: String,
+    white: String,
+    legal_moves: String,
+    flipping: String,
+    next_turn: String,
+    eval: Option<Vec<i32>>,
+    last_move: Option<i32>
 }
 
 
@@ -68,211 +74,202 @@ pub struct App {
 #[wasm_bindgen]
 impl App {
     #[allow(clippy::new_without_default)]
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
-        let t_table = TranspositionTable::new();
-        Self {
-            bm: BoardManager::new(),
-            level: 1,
-            evaluator: None,
-            t_table: Some(t_table)
-        }
-    }
-    #[wasm_bindgen]
-    pub fn set_evaluator(&mut self, eval_string: &str) {
-        match Evaluator::read_string(eval_string) {
-            Ok(e) => {
-                self.evaluator = Some(e);
-            }
+    // #[wasm_bindgen(constructor)]
+    pub async fn new(eval_string: &str) -> Self {
+        let evaluator = match Evaluator::read_string(eval_string) {
+            Ok(e) => e,
             Err(e) => {
-                console_log!("Evaluatorを読み込む際にエラーが置きました。{}",e)
+                console_log!("Evaluatorを読み込む際にエラーが置きました。{}",e);
+                panic!();
             }
-        }
-    }
-
-
-    #[wasm_bindgen]
-    pub fn get_board(&self) -> Result<JsValue, serde_wasm_bindgen::Error> {
-        let b = self.bm.current_board();
-        let put_able = b.put_able();
-        let mut js_b = JsBoard{
-            board: vec![vec![0;8]; 8],
-            next_turn: 0
         };
-        for y in 0..8 {
-            for x in 0..8 {
-                let mask = 1u64 << (y * 8 + x);
-                if mask & b.bit_board[Board::BLACK] != 0 {
-                    js_b.board[y][x] = 1;
-                } else if mask & b.bit_board[Board::WHITE] != 0{
-                    js_b.board[y][x] = 2;
-                } else if put_able & mask != 0 {
-                    js_b.board[y][x] = 3;
-                }
+        Self {
+            game: Game::new(),
+            solver: Solver::new(evaluator),
+            rng: rand::thread_rng(),
+            first_move_played: false
+        }
+    }
+
+    pub fn new_game(&mut self) {
+        self.game = Game::new();
+        self.first_move_played = false;
+    }
+
+    #[wasm_bindgen]
+    pub fn set_ai_level(&mut self, lv: i32){
+        self.solver.set_ai_level(lv);
+    }
+
+
+    fn get_eval_score(&mut self) -> Result<i32, &'static str> {
+        match self.solver.solve(self.game.get_board()) {
+            Ok(d) => {
+                Ok(d.eval)
+            },
+            Err(_) => {
+                Err("Invalid position")
             }
         }
-
-        //https://rustwasm.github.io/wasm-bindgen/reference/arbitrary-data-with-serde.html#serializing-and-deserializing-arbitrary-data-into-and-from-jsvalue-with-serde
-        serde_wasm_bindgen::to_value(&js_b)
     }
 
-    #[wasm_bindgen]
-    pub fn put(&mut self, y: i32, x: i32) -> bool {
-        let mut b = self.bm.current_board();
-        let re = b.put_piece_from_coord(y, x);
-        if re.is_err() {
-            return false;
+    fn get_move_scores(&mut self, lv: i32) -> [i32; 64] {
+        let mut scores = [0; 64];
+        self.set_ai_level(lv);
+        let b = self.game.get_board();
+        let legal_moves =  b.put_able();
+        for i in 0..64 {
+            let mask = 1u64 << i;
+            if mask & legal_moves != 0 {
+                let position = position_bit_to_num(mask).unwrap();
+                let mut b = b.clone();
+                b.put_piece(mask);
+                let result = 
+                match self.solver.solve_no_iter(&b) {
+                    Ok(r) => {
+                        // console_log!("    score         : {:+}", r.eval);
+                        // console_log!("    best move     : {  }", position_bit_to_str(r.best_move).unwrap());
+                        // console_log!("    node          : {  }", r.searched_nodes);
+                        r
+                    },
+                    Err(e) => {
+                        if let SolverErr::NoMove = e {
+                            console_log!("solve err: No move");
+                            return [-100; 64];
+                        }
+                        return [0; 64];
+                    }
+                };
+                
+                scores[position as usize] = -result.eval;
+                
+            }
         }
-        self.bm.add(b);
-        true
+        scores
     }
 
-
     #[wasm_bindgen]
-    pub fn ai_put(&mut self) {
-        let mut b = self.bm.current_board();
+    pub fn get_state(&mut self, eval_level: Option<i32>) -> JsValue  {
+        let eval= eval_level.map(|lv| self.get_move_scores(lv).to_vec());
 
-        let evaluator = self.evaluator.as_mut().unwrap();
-        let t_table = self.t_table.as_mut().unwrap();
+        let b = self.game.get_board();
+        let legal_moves =  b.put_able();
 
-        let re = 
-            if self.level == 0 {
-                put_random_piece(&mut b)
+        let next_turn = {
+            if b.next_turn == Board::BLACK {
+                "Black"
             } else {
-                let put_place_mask = solve_put_place(&b,self.level, evaluator,t_table);
-                b.put_piece(put_place_mask)
-            };
-
-        if re.is_ok() {
-            self.bm.add(b);
-        }
-    }
-
-    #[wasm_bindgen]
-    pub fn is_no_put_place(&self) -> bool {
-        let b = self.bm.current_board();
-        b.put_able() == 0
-    }
-
-    #[wasm_bindgen]
-    pub fn is_end_game(&self) -> bool {
-        let mut b = self.bm.current_board();
-        let is_player_cant_put = b.put_able() == 0;
-        b.next_turn ^= 1;
-        let is_opponent_cant_put = b.put_able() == 0;
-        is_player_cant_put && is_opponent_cant_put
-    }
-
-    #[wasm_bindgen]
-    pub fn pass(&mut self){
-        let mut b = self.bm.current_board();
-        b.next_turn ^= 1;
-        self.bm.undo();
-        self.bm.add(b);
-        console_log!("passed");
-    }
-
-    pub fn set_level(&mut self, l: i32){
-        self.level = l;
-        console_log!("set level {}", l);
-    }
-}
-
-fn solve_put_place(
-    b                     : &Board,
-    level                 : i32,
-    evaluator             : &mut Evaluator,
-    t_table               : &mut TranspositionTable,
-) -> u64
-{
-    let n_empties = b.empties_count();
-    let switch_winning_solver = 0;
-    let (eval_solver_lv, switch_perfect_solver, selectivity_lv)  = 
-        match level {
-            1..=10 => {
-                (level, level*2, 0)
-            },
-            11..=12 => {
-                match n_empties {
-                    0..=20 => (level, 22, 0),
-                    21 => (level, 22, 3),
-                    22 => (level, 22, 3),
-                    44..=60 => (10, 22, 0),
-                    _ => (level, 22, 4),
-                }
-            },
-            13..=14=> {
-                match n_empties {
-                    0..=20 => ( level, 22, 0),
-                    21 => ( level, 22, 2),
-                    22 => ( level, 22, 2),
-                    44..=60 => (12, 22, 1),
-                    _ => ( level, 22, 4)
-                }                
-            },
-            15..=16 => {
-                match n_empties {
-                    0..=20 => (level, 24, 0),
-                    21 => (level, 24, 1),
-                    22 => (level, 24, 1),
-                    23 => (level, 24, 3),
-                    24 => (level, 24, 3),
-                    44..=54 => (level - 3, 24, 1),
-                    55..=60 => (level - 4, 24, 1), 
-                    _ => (level, 24, 4)
-                }
-            },
-            17..=18 => {
-                 match n_empties {
-                    0..=20 => (level, 24, 0),
-                    21..=22 => (level, 24, 2),
-                    23..=24 => (level, 24, 2),
-                    44..=54 => (level - 3, 24, 1),
-                    55..=60 => (level - 4, 24, 1), 
-                    _ => (level, 24, 4)
-                }
-            },
-            19..=24 => {
-                match n_empties {
-                    0..=22 => (level, 26, 0),
-                    23 => (level, 26, 1),
-                    24 => (level, 26, 1),
-                    25 => (level, 26, 3),
-                    26 => (level, 26, 3),
-                    44..=54 => (level - 4, 26, 1),
-                    55..=60 => (level - 5, 26, 1),                    
-                    _ => (level, 26, 4),
-                }
-            },
-            _ => (level, level*2, 0)
+                "White"
+            }
         };
 
-    let solver_result = 
-        if n_empties <= switch_perfect_solver {
-            console_log!("perfect solver");
-            console_log!("n_empties: {}", b.empties_count());
-            console_log!("selectivity: {}", selectivity_lv);
-            perfect_solver(b, false, selectivity_lv,t_table, evaluator)
-        } else if n_empties <= switch_winning_solver {
-            console_log!("winning solver");
-            winning_solver(b, false,t_table, evaluator)
+        let s = StateForJS { 
+            black: format!("{:064b}", b.bit_board[Board::BLACK]),
+            white: format!("{:064b}", b.bit_board[Board::WHITE]),
+            legal_moves: format!("{:064b}", legal_moves),
+            flipping: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            next_turn: next_turn.to_string(),
+            eval,
+            last_move: self.game.get_last_move()
+        };
+
+        serde_wasm_bindgen::to_value(&s).unwrap()
+    }
+
+    #[wasm_bindgen]
+    pub fn get_eval_scores(&mut self) -> i32 {
+        if !self.is_pass() && !self.is_end() {
+            self.get_eval_score().unwrap()
         } else {
-            console_log!("eval solver");
-            console_log!("move count: {}", b.move_count()+1);
-            console_log!("n_empties: {}", b.empties_count());
-            console_log!("Lv: {}", eval_solver_lv);
-            console_log!("selectivity: {}", selectivity_lv);
-            eval_solver(b, eval_solver_lv, selectivity_lv, false,t_table, evaluator)
-        };
-    match solver_result {
-        Ok(solve_result) => {
-            console_log!("評価値: {}", solve_result.eval);
-            console_log!("-----------------");
-            solve_result.best_move
-        },
-        Err(_) => {
-            console_log!("Err: solver is stoped");
-            panic!()
+            0
         }
+    }
+
+    #[wasm_bindgen]
+    pub fn put(&mut self, i: i32) {
+        self.first_move_played = true;
+        let position_bit = position_num_to_bit(i).unwrap();
+        let position_str = position_bit_to_str(position_bit).unwrap();
+        self.game.put(position_str.as_str());
+    }
+
+    #[wasm_bindgen]
+    pub fn is_legal_move(&mut self, i: i32) -> bool {
+        let position_bit = position_num_to_bit(i).unwrap();
+        return self.game.get_board().put_able() & position_bit != 0
+    }
+
+    #[wasm_bindgen]
+    pub fn is_pass(&self) -> bool {
+        self.game.is_pass()
+    }
+
+    #[wasm_bindgen]
+    pub fn is_end(&self) -> bool {
+        self.game.is_end()
+    }
+    
+    #[wasm_bindgen]
+    pub fn pass(&mut self) {
+        self.game.pass();
+    }
+
+    #[wasm_bindgen]
+    pub fn undo(&mut self) {
+        self.game.undo();
+    }
+
+    #[wasm_bindgen]
+    pub fn redo(&mut self) {
+        self.game.undo();
+    }
+
+    #[wasm_bindgen]
+    pub fn ai_put(&mut self, lv: i32) {
+
+        if !self.first_move_played {
+            let first_moves = ["f5", "e6", "d3", "c4"];
+            let x: i32 = self.rng.gen();
+            let positon = first_moves[x as usize % first_moves.len()];
+            console_log!("{}", positon);
+            let put = self.game.put(positon);
+            match put {
+                Ok(_) => (),
+                Err(e) => console_log!("{}", e)
+            };
+            
+            self.first_move_played = true;
+            return;
+        }
+        
+        self.set_ai_level(lv);
+        let b = self.game.get_board();
+        let solver_result = self.solver.solve(b);
+        match solver_result {
+            Ok(r) => {
+                let p = position_bit_to_str(r.best_move).unwrap();
+                let put = self.game.put(p.as_str());
+                match put {
+                    Ok(_) => (),
+                    Err(e) => console_log!("{}", e)
+                };
+                console_log!("    lv            : {}", lv);
+                console_log!("    score         : {:+}", r.eval);
+                console_log!("    best move     : {  }", position_bit_to_str(r.best_move).unwrap());
+                console_log!("    node          : {  }", r.searched_nodes);
+            },
+            Err(_) => {
+                console_log!("Solver Err");
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn get_record(&self) -> String {
+        self.game.record()
+    }
+
+    pub fn do_over(&mut self) {
+        self.game.do_over();
     }
 }
