@@ -1,14 +1,11 @@
 use crate::board::*;
 use crate::eval::*;
 use crate::t_table::*;
-use crate::solver::*;
 
 pub struct Game {
     state: State,
     undo_stack: Vec<State>,
     redo_stack: Vec<State>, 
-    level: i32,
-    solver: Solver,
 }
 
 pub struct State {
@@ -18,7 +15,7 @@ pub struct State {
 
 
 impl Game {
-    pub fn new(evaluator: Evaluator) -> Self {
+    pub fn new() -> Self {
         let initial_board = Board::new();  // Boardの初期状態を作成        
         Game {
             state: State {
@@ -27,14 +24,7 @@ impl Game {
             },
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            level: 0,
-            solver: Solver::new(evaluator),
         }
-    }
-
-    pub fn set_ai_level(&mut self, lv: i32) {
-        self.solver.set_ai_level(lv);
-        self.level = lv;
     }
 
     pub fn get_board(&self) -> &Board {
@@ -87,64 +77,6 @@ impl Game {
         b.put_able().count_ones() == 0 && b.opponent_put_able().count_ones() == 0
     }
 
-    pub fn ai_put(&mut self) -> Result<(), &'static str> {
-        let a = self.solver.solve(&self.state.board);
-        let result = match a {
-            Ok(d) => {
-                position_bit_to_str(d.best_move).unwrap()
-            },
-            Err(e) => {
-                return Err("Invalid position");
-            }
-        };
-
-        self.put(result.as_str())
-    }
-
-    pub fn get_eval_score(&mut self) -> Result<i32, &'static str> {
-        match self.solver.solve(&self.state.board) {
-            Ok(d) => {
-                Ok(d.eval)
-            },
-            Err(e) => {
-                Err("Invalid position")
-            }
-        }
-    }
-
-    pub fn get_move_scores(&mut self, ai_lv: i32) -> [i32; 64] {
-        let mut scores = [0; 64];
-        self.set_ai_level(ai_lv);
-        let b = &self.state.board;
-        let legal_moves =  b.put_able();
-        for i in 0..64 {
-            let mask = 1u64 << i;
-            if mask & legal_moves != 0 {
-                let position = position_bit_to_num(mask).unwrap();
-                let mut b = b.clone();
-                b.put_piece(mask);
-                let result = 
-                match self.solver.solve_no_iter(&b) {
-                    Ok(r) => {
-                        r
-                    },
-                    Err(e) => {
-                        if let SolverErr::NoMove = e {
-                            eprint!("solve err: No move");
-                            return [-100; 64];
-                        }
-                        return [0; 64];
-                    }
-                };
-                
-                scores[position as usize] = -result.eval;
-                
-            }
-        }
-        self.set_ai_level(self.level);
-        scores
-    }
-
     pub fn record(&self) -> String {
         let mut s = String::new();
         for r in self.undo_stack.iter() {
@@ -162,6 +94,20 @@ impl Game {
         }
         
         s
+    }
+
+    pub fn get_last_move(&self) -> Option<i32> {
+        self.undo_stack.last().map(|p| p.put_place as i32)
+    }
+
+    pub fn do_over(&mut self) {
+        let next_turn = self.state.board.next_turn;
+        loop {
+            self.undo();
+            if (self.state.board.next_turn == next_turn && self.state.put_place != NO_COORD) || self.undo_stack.is_empty() {
+                break;
+            }
+        }
     }
 
 }

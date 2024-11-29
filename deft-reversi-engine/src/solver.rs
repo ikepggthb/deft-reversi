@@ -165,8 +165,8 @@ impl Solver {
 
         let init_width: i32 = if solve_config.solver_type == EvalSolver {
             let tmp =  10 - solve_config.eval_solver_level;
-            if tmp < 1 {
-                1
+            if tmp < 2 {
+                2
             } else {
                 tmp
             }
@@ -226,7 +226,6 @@ impl Solver {
                     return Err(SolverErr::NoMove);
                 }
             }
-            return Err(SolverErr::NoMove)
         }
 
         self.search.set_board(board);
@@ -240,10 +239,10 @@ impl Solver {
         };
 
         self.child_boards =
-            if board.empties_count() < 10 || self.ai_level < 8{
-                get_put_boards(board, legal_moves)
+            if board.empties_count() < 12 || self.ai_level < 6{
+                move_ordering_ffs(board, legal_moves,  &mut self.search)
             } else {
-                move_ordering_eval(board, legal_moves, 4,  &mut self.search)
+                move_ordering_eval(board, legal_moves, 3,  &mut self.search)
             };
 
           
@@ -256,8 +255,6 @@ impl Solver {
             println!("best move: {}, score: {}{}", position_bit_to_str(result.best_move).unwrap(), if result.eval > 0 {"+"} else {""}, result.eval);
             println!("searched nodes: {}\nsearched leaf nodes: {}", searched_nodes, searched_leaf_nodes);
         }
-
-        self.search.clear_t_table();
 
         Ok(result)
     }
@@ -300,12 +297,11 @@ impl Solver {
         };
 
         self.child_boards =
-            if board.empties_count() < 10 || self.ai_level < 8{
-                get_put_boards(board, legal_moves)
+            if board.empties_count() < 12 || self.ai_level < 6{
+                move_ordering_ffs(board, legal_moves,  &mut self.search)
             } else {
-                move_ordering_eval(board, legal_moves, 4,  &mut self.search)
+                move_ordering_eval(board, legal_moves, 3,  &mut self.search)
             };
-
           
         let original_solve_config = self.get_solve_config(self.ai_level, board.empties_count());
         let mut prev_solve_config = SolverConfig{solver_type: EvalSolver, selectivity_lv: 0, eval_solver_level: 0}; // dummy
@@ -350,8 +346,6 @@ impl Solver {
             println!("best move: {}, score: {}{}", position_bit_to_str(result.best_move).unwrap(), if result.eval > 0 {"+"} else {""}, result.eval);
             println!("searched nodes: {}\nsearched leaf nodes: {}", searched_nodes, searched_leaf_nodes);
         }
-
-        self.search.clear_t_table();
 
         Ok(result)
     }

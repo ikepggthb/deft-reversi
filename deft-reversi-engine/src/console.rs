@@ -1,4 +1,4 @@
-use crate::{board::*, eval::*, game::*};
+use crate::{board::*, eval::*, game::*, solver::Solver};
 
 
 fn print_board(game_state: &Game) {
@@ -43,11 +43,11 @@ fn input() -> String{
     return buf.trim().parse().unwrap();
 }
 
-pub fn console_game() {
+pub fn console_game() -> ! {
 
     let evaluator: Evaluator = Evaluator::read_file("res/eval.json").unwrap();
-    let mut game_state = Game::new(evaluator);
-    game_state.set_ai_level(2);
+    let mut game_state = Game::new();
+    let mut solver = Solver::new(evaluator);
 
     loop {
         if game_state.get_board().next_turn == Board::BLACK {
@@ -62,7 +62,17 @@ pub fn console_game() {
             }
             continue;
         } else {
-            game_state.ai_put();
+            match solver.solve(game_state.get_board()) {
+                Ok(r) => {
+                    let p = position_bit_to_str(r.best_move);
+                    
+                    game_state.put(&p.unwrap());
+                },
+                Err(_) => {
+                    eprintln!("err");
+                }
+            }
+            
         }
     }
 

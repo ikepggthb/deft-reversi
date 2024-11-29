@@ -503,6 +503,32 @@ impl Board {
         }
     }
 
+    pub fn print_board_string(&self)  -> String {
+        let mut s = String::new();
+         s += "next turn: ";
+        if self.next_turn == Board::BLACK {
+            s += "X";
+        } else {
+            s += "O";
+        }
+        s += "\n";
+        for y in 0..8 {
+            for x in 0..8 {
+                let mask = 1u64 << (y * 8 + x);
+                if self.bit_board[Board::BLACK] & mask != 0 {
+                    s += "X";
+                } else if self.bit_board[Board::WHITE] & mask != 0 {
+                    s += "O";
+                } else {
+                    s += ".";
+                }
+            }
+            s += "\n";
+        }
+
+        s
+    }
+
     #[inline(always)]
     pub fn piece_count(&self) -> i32
     {
@@ -545,14 +571,19 @@ pub fn position_str_to_bit(s: &str) -> Result<u64, &'static str> {
     let mut chars = s.chars();
 
     let col = match chars.next() {
-        Some('A') => 0,
-        Some('B') => 1,
-        Some('C') => 2,
-        Some('D') => 3,
-        Some('E') => 4,
-        Some('F') => 5,
-        Some('G') => 6,
-        Some('H') => 7,
+        Some(c) => {
+            match c.to_ascii_uppercase() {
+                'A' => 0,
+                'B' => 1,
+                'C' => 2,
+                'D' => 3,
+                'E' => 4,
+                'F' => 5,
+                'G' => 6,
+                'H' => 7,
+                _ => return Err("Invalid column letter")
+            }
+        }
         _ => return Err("Invalid column letter"),
     };
 
