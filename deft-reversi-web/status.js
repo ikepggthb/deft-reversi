@@ -112,7 +112,7 @@ export class StatusUI {
         this.ctx.strokeRect(x, y, width, height);
 
         // ボタンのラベル
-        this.ctx.font = "16px Arial";
+        this.ctx.font = "20px Arial";
         this.ctx.fillStyle = "#FFFFFF";
         this.ctx.textAlign = "center";
         this.ctx.textBaseline = "middle";
@@ -131,7 +131,7 @@ export class StatusUI {
         const blackCount = count(status.black);
         const whiteCount = count(status.white);
 
-        this.ctx.font = "18px Arial";
+        this.ctx.font = "20px Arial";
         this.ctx.fillStyle = "#000000";
         this.ctx.textAlign = "center";
         this.ctx.textBaseline = "middle";

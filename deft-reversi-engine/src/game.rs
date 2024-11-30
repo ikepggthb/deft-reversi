@@ -13,6 +13,7 @@ pub struct State {
     put_place: u8,
 }
 
+const PASS: u8 = 64;
 
 impl Game {
     pub fn new() -> Self {
@@ -69,7 +70,7 @@ impl Game {
 
         let mut b = self.get_board().clone();
         b.next_turn ^= 1;
-        self.update_new_state(b, NO_COORD);
+        self.update_new_state(b, PASS);
     }
 
     pub fn is_end(&self) -> bool {
@@ -104,7 +105,8 @@ impl Game {
         let next_turn = self.state.board.next_turn;
         loop {
             self.undo();
-            if (self.state.board.next_turn == next_turn && self.state.put_place != NO_COORD) || self.undo_stack.is_empty() {
+            if (self.state.board.next_turn == next_turn && self.state.put_place != PASS) 
+                || self.undo_stack.is_empty() {
                 break;
             }
         }

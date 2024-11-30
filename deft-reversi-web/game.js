@@ -399,7 +399,10 @@ export class Game {
             if (aiTurn == "black" && this.enableAi) { 
                 this.isThinking = true;
                 setTimeout((() => {
-                    this.aiPut().then(this.draw());
+                    this.aiPut().then(async () => {
+                        await this.draw();
+                        this.isThinking = false;
+                    });
                 }).bind(this), 600);
             }
         }).bind(this));
@@ -410,13 +413,18 @@ export class Game {
     }
 
     async draw_no_score() {
+        this.drawId++;
         this.ui.render(await this.engine.getState(null), this.blackPlayerName, this.whitePlayerName);
     }
 
+    async waitAI() {
+        while (this.isThinking) {
+            await sleep(100);
+        }
+    }
+
     async aiPut() {
-        this.isThinking = true;
         await this.engine.aiPut(this.putAILv);
-        this.drawId++;
         this.draw_no_score();
         if (await this.engine.isEnd()) { return; }
         if (await this.engine.isPass()) {
@@ -425,17 +433,14 @@ export class Game {
             await this.engine.pass();
             await this.aiPut();
         }
-        this.isThinking = false;
     }
 
     async put(position) {
-        this.isThinking = true;
         if (!await this.engine.isLegalMove(position)) {
             return;
         }
         await this.engine.put(position);
 
-        this.drawId++;
         this.draw_no_score();
 
         if (await this.engine.isEnd()) {return;}
@@ -445,7 +450,6 @@ export class Game {
             await this.engine.pass();
             return;
         }
-        this.isThinking = false;
 
         if (this.enableAi == true) {
             await this.aiPut();
@@ -453,13 +457,15 @@ export class Game {
     }
 
     async draw() {
+        this.drawId++;
         if (this.enableDrawEval) {
             const lv = this.draw_move_scores_lv;
             const id = this.drawId;
             const step = 3;
             const start = lv % step == 0 ? step : lv % step;
             for (let i = start; i <= lv; i += step) {
-                if (this.isThinking) break;
+                console.log("draw");
+                await this.waitAI();
                 if (id != this.drawId) break;
                 this.ui.render(await this.engine.getState(i), this.blackPlayerName, this.whitePlayerName);
                 await new Promise(resolve => setTimeout(resolve, 0));
@@ -488,6 +494,7 @@ export class Game {
             console.log("AI is Thinking !");
             return;
         }
+        this.isThinking = true;
         this.put(position).then(async () => { 
             console.log(await this.engine.getRecord());
             if (await this.engine.isEnd()) {
@@ -495,21 +502,36 @@ export class Game {
             } else {
                 this.draw();
             }
+
+            this.isThinking = false;
         });
     }
     async doOverClick() {
+        await this.waitAI();
         this.isThinking = true;
         if (this.enableAi){
+            if (this.aiTurn == "white"){
+                const record = await this.engine.getRecord();
+                if (record.length == 2){
+                    this.isThinking = false;
+                    return;
+                }
+            }
             await this.engine.doOver();
         } else {
             await this.engine.undo();
         }
         this.isThinking = false;
-        this.drawId++;
         this.draw();
     }
 
     async newGameClick() {
+        while (this.isThinking) {
+            // AIが応答するまで、何もない盤面を出し続ける
+            await sleep(20);
+            this.ui.render(undefined, this.blackPlayerName, this.whitePlayerName);
+        }
+
         this.isThinking = true;
         await this.engine.newGame();
         this.isThinking = false;
@@ -519,7 +541,7 @@ export class Game {
 
     async switchEnableDrawEvalClick() {
         this.enableDrawEval = !this.enableDrawEval;
-        this.draw();
+        await this.draw();
     }
 
 }
