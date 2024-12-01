@@ -44,6 +44,9 @@ impl Game {
             let current_state = std::mem::replace(&mut self.state, prev_state);
             self.redo_stack.push(current_state);
         }
+        if self.state.put_place != PASS {
+            self.state.put_place = NO_COORD;
+        }
     }
 
     pub fn put(&mut self, positon: &str) -> Result<(), &'static str> {
@@ -81,7 +84,7 @@ impl Game {
     pub fn record(&self) -> String {
         let mut s = String::new();
         for r in self.undo_stack.iter() {
-            if r.put_place != NO_COORD {
+            if r.put_place != NO_COORD && r.put_place != PASS {
                 if let Ok(bit_p) = position_num_to_bit(r.put_place as i32) {
                     let str_p = position_bit_to_str(bit_p).unwrap();
                     s.push_str(&str_p);
