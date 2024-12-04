@@ -156,16 +156,25 @@ impl App {
         let legal_moves =  b.put_able();
 
         let next_turn = {
-            if b.next_turn == Board::BLACK {
+            if self.game.get_turn() == Board::BLACK {
                 "Black"
             } else {
                 "White"
             }
         };
 
+        let (black, white) = {
+            if self.game.get_turn() == Board::BLACK {
+                (b.player, b.opponent)
+            } else { 
+                (b.opponent, b.player)
+            }
+        };
+
+
         let s = StateForJS { 
-            black: format!("{:064b}", b.bit_board[Board::BLACK]),
-            white: format!("{:064b}", b.bit_board[Board::WHITE]),
+            black: format!("{:064b}", black),
+            white: format!("{:064b}", white),
             legal_moves: format!("{:064b}", legal_moves),
             flipping: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             next_turn: next_turn.to_string(),

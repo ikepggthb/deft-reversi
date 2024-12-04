@@ -44,8 +44,8 @@ impl TranspositionTable {
 
     #[inline(always)]
     pub fn hash_board(&self, board: &Board) -> usize{
-        let player_board_bit = board.bit_board[board.next_turn];
-        let opponent_board_bit = board.bit_board[board.next_turn ^ 1];
+        let player_board_bit = board.player;
+        let opponent_board_bit = board.opponent;
 
         (
             self.rand_table[(player_board_bit & 0xFFFF) as usize] ^
@@ -85,9 +85,8 @@ impl TranspositionTable {
 
         self.table[index].as_ref().filter(
             |&x| 
-                x.board.bit_board[Board::BLACK] == board.bit_board[Board::BLACK]
-                && x.board.bit_board[Board::WHITE] == board.bit_board[Board::WHITE]
-                && x.board.next_turn == board.next_turn
+                x.board.player == board.player
+                && x.board.opponent == board.opponent
         )
     }
 

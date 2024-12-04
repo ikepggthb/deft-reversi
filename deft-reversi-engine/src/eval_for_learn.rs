@@ -69,8 +69,8 @@ impl EvaluatorForLearn {
     {
         self.feature_bit = [[0; N_ROTATION]; N_PATTERN];
         
-        let p = board.bit_board[board.next_turn];
-        let o = board.bit_board[board.next_turn ^1];
+        let p = board.player;
+        let o = board.opponent;
         
         for pattern in 0..N_PATTERN {
             for rotation in 0..N_ROTATION {
@@ -95,7 +95,8 @@ impl EvaluatorForLearn {
 
         let mut evaluation  = 0.0;
         
-        let eval_scores = &self.eval[board.next_turn][phase];
+        // todo: evalの見直し（）
+        let eval_scores = &self.eval[0][phase];
         for pattern in 0..N_PATTERN {
             let e = &eval_scores.pattern_eval[pattern];
             let f = &self.feature_bit[pattern];

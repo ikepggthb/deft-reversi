@@ -387,8 +387,8 @@ impl Evaluator {
     {
         self.feature_bit = [[0; N_ROTATION]; N_PATTERN];
         
-        let p: u64 = board.bit_board[board.next_turn];
-        let o: u64 = board.bit_board[board.next_turn ^1];
+        let p: u64 = board.player;
+        let o: u64 = board.opponent;
         
         for pattern in 0..N_PATTERN {
             let fbit = &mut self.feature_bit[pattern];
@@ -414,7 +414,10 @@ impl Evaluator {
 
         let mut evaluation  = 0;
         
-        let eval_scores = &self.eval[board.next_turn][phase];
+        // todo: eval の実装を見直す。
+        // let eval_scores = &self.eval[board.next_turn][phase];
+        
+        let eval_scores = &self.eval[board.empties_count() as usize % 2][phase];
         for pattern in 0..N_PATTERN {
             // let e = &eval_scores.pattern_eval[pattern];
             // let f = &self.feature_bit[pattern];

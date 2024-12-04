@@ -1,24 +1,24 @@
 use crate::{board::*, eval::*, game::*, solver::Solver};
 
 
-fn print_board(game_state: &Game) {
-    let b = game_state.get_board();
-    println!(" ABCDEFGH");
-    for y in 0..8 {
-        print!("{}", y+1);
-        for x in 0..8 {
-            let mask = 1u64 << (y * 8 + x);
-            if b.bit_board[Board::BLACK] & mask != 0 {
-                print!("X");
-            } else if b.bit_board[Board::WHITE] & mask != 0 {
-                print!("O");
-            } else {
-                print!(".");
-            }
-        }
-        println!();
-    }
-}
+// fn print_board(game_state: &Game) {
+//     let b = game_state.get_board();
+//     println!(" ABCDEFGH");
+//     for y in 0..8 {
+//         print!("{}", y+1);
+//         for x in 0..8 {
+//             let mask = 1u64 << (y * 8 + x);
+//             if b.bit_board[Board::BLACK] & mask != 0 {
+//                 print!("X");
+//             } else if b.bit_board[Board::WHITE] & mask != 0 {
+//                 print!("O");
+//             } else {
+//                 print!(".");
+//             }
+//         }
+//         println!();
+//     }
+// }
 
 fn print_record (game_state: &Game) {
     let record = game_state.record();
@@ -43,15 +43,15 @@ fn input() -> String{
     return buf.trim().parse().unwrap();
 }
 
-pub fn console_game() -> ! {
+pub fn console_game() {
 
     let evaluator: Evaluator = Evaluator::read_file("res/eval.json").unwrap();
     let mut game_state = Game::new();
     let mut solver = Solver::new(evaluator);
 
     loop {
-        if game_state.get_board().next_turn == Board::BLACK {
-            print_board(&game_state);
+        if game_state.get_turn() == Board::BLACK {
+            // print_board(&game_state);
             print_record(&game_state);
             print_move(&game_state);
 

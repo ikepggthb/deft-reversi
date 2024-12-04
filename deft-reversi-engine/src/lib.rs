@@ -9,6 +9,8 @@ mod search;
 mod t_table;
 mod eval;
 mod mpc;
+mod book;
+mod ffo_test;
 // ---
 
 pub use board::*;
@@ -19,4 +21,11 @@ pub use eval::*;
 pub use t_table::*;
 
 
-
+#[cfg(test)]
+mod tests {
+    use crate::ffo_test::*;
+    #[test]
+    fn it_works() {
+        ffo_test();
+    }
+}

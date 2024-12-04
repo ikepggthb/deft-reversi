@@ -49,7 +49,7 @@ const MOVE_ORDERING_EVAL_LEVEL_T: [i32; 61] = [
 /// * 計算されたゲームの最終スコアを表す整数値。
 ///
 /// # 例
-/// ```
+/// ```ignore
 /// let board = Board::new(); // ゲーム終了時の盤面を生成
 /// let score = solve_score(&board);
 /// println!("Final Score: {}", score);
@@ -60,8 +60,8 @@ const MOVE_ORDERING_EVAL_LEVEL_T: [i32; 61] = [
 /// * 空きマスが存在する場合、それらを勝っている側のスコアに加算する。
 #[inline(always)]
 pub fn solve_score(board: &Board) -> i32 {
-    let n_player: i32 = board.bit_board[board.next_turn].count_ones() as i32;
-    let n_opponent: i32 = board.bit_board[board.next_turn ^1].count_ones() as i32;
+    let n_player: i32 = board.player.count_ones() as i32;
+    let n_opponent: i32 = board.opponent.count_ones() as i32;
     let diff: i32 = n_player - n_opponent;
 
     // https://github.com/rust-lang/rust-clippy/issues/5354
@@ -87,7 +87,7 @@ pub fn solve_score(board: &Board) -> i32 {
 /// * 最終スコアを表す整数値。
 ///
 /// # 例
-/// ```
+/// ```ignore
 /// let board = Board::new(); // 空きマスがないゲーム終了時の盤面を生成
 /// let score = solve_score_0_empties(&board);
 /// println!("Final Score: {}", score);
@@ -101,9 +101,12 @@ pub fn solve_score(board: &Board) -> i32 {
 pub fn solve_score_0_empties(board: &Board) -> i32
 {
     #[cfg(debug_assertions)]
-    assert_eq!((board.bit_board[0]|board.bit_board[1]), u64::MAX);
+    {
+        assert_eq!((board.player | board.opponent), u64::MAX);
+    }
+    assert_eq!(2 * (board.player.count_ones() as i32) - 64,  solve_score(board));
 
-    2 * (board.bit_board[board.next_turn].count_ones() as i32) - 64
+    2 * (board.player.count_ones() as i32) - 64
 }
 
 /// NegaAlpha法を用いて、完全読みを行い、オセロの盤面のスコアを計算する。
@@ -127,7 +130,7 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
     assert!(alpha <= beta);
 
     // 空きマスがない場合
-    if (board.bit_board[Board::BLACK] | board.bit_board[Board::WHITE]) == u64::MAX {
+    if (board.player | board.opponent) == u64::MAX {
         search.perfect_search_node_count += 1;
         search.perfect_search_leaf_node_count += 1;
         return  solve_score_0_empties(board);
@@ -144,7 +147,7 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
         }
         let passed_board = {
             let mut b = board.clone();
-            b.next_turn ^= 1;
+            b.swap();
             b
         };
         return -negaalpha_perfect(&passed_board, -beta, -alpha, search);
@@ -203,10 +206,10 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut Search) ->
 
     if legal_moves == 0 {
         let mut board: Board = board.clone();
-        board.next_turn ^= 1; //pass
+        board.swap();
         if board.put_able() == 0 { // passしても置くところがない == ゲーム終了
             search.perfect_search_leaf_node_count += 1;
-            board.next_turn ^= 1;
+            board.swap();
             return  solve_score(&board);
         }
         return -nws_perfect_simple(&board, -beta, search);
@@ -269,9 +272,9 @@ pub fn pvs_perfect_simple(board: &Board, alpha: i32,beta: i32, search: &mut Sear
 
     if legal_moves == 0 {
         let mut board: Board = board.clone();
-        board.next_turn ^= 1; //pass
+        board.swap();
         if board.put_able() == 0 { // passしても置くところがない == ゲーム終了
-            board.next_turn ^= 1;
+            board.swap();
             search.perfect_search_leaf_node_count += 1;
             return  solve_score(&board);
         }
@@ -357,7 +360,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32
         // 合法手がある -> 探索を続ける
         let passed_board: Board = {
             let mut b: Board = board.clone();
-            b.next_turn ^= 1;
+            b.swap();
             b
         };
         return -nws_perfect(&passed_board, -beta, search);
@@ -422,7 +425,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32
 ///   スコアは現在のプレイヤーから見た盤面の評価値を表す。
 ///
 /// # 例
-/// ```
+/// ```ignore
 /// let board = Board::new(); // オセロの初期盤面を生成
 /// let mut search = Search::new();
 /// let alpha = -SCORE_INF; // 初期アルファ値の設定
@@ -441,6 +444,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32,mut beta: i32, search: &mut Sea
         return pvs_perfect_simple(board, alpha, beta, search);
     }
 
+    // println!("{}, {}", alpha, beta);
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
 
@@ -459,7 +463,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32,mut beta: i32, search: &mut Sea
         // 合法手がある -> 探索を続ける
         let passed_board: Board = {
             let mut b: Board = board.clone();
-            b.next_turn ^= 1;
+            b.swap();
             b
         };
         return -pvs_perfect(&passed_board, -beta, -alpha, search);

@@ -22,6 +22,7 @@ pub struct Solver {
 }
 pub enum SolverErr {
     NoMove,
+    FailHi(i32)
 }
 
 #[derive(PartialEq)]
@@ -159,12 +160,12 @@ impl Solver {
 
     fn aspiration_search(&mut self, predict_score: i32, solve_config: &SolverConfig) -> Result<SolverResult, SolverErr> {
 
-        if solve_config.solver_type == EvalSolver && solve_config.eval_solver_level < 12 {
+        if solve_config.solver_type == EvalSolver && solve_config.eval_solver_level < 8 {
             return self.select_and_run_solver(solve_config, -SCORE_INF, SCORE_INF);
         }
 
         let init_width: i32 = if solve_config.solver_type == EvalSolver {
-            let tmp =  10 - solve_config.eval_solver_level;
+            let tmp =  16 - solve_config.eval_solver_level;
             if tmp < 2 {
                 2
             } else {
@@ -185,19 +186,31 @@ impl Solver {
             let alpha = score - left_width; 
             let beta = score + right_width;
             println!("aspiration window [{}, {}]", alpha, beta);
-            let result = self.select_and_run_solver(&solve_config, alpha, beta)?;
-            if result.eval <= alpha {
-                left_width *= 2;
-                // if left_width < 4 {left_width = 4};
-                // right_width = 0;
-            }else if result.eval >= beta {
-                right_width *= 2;
-                // if right_width < 4 {right_width = 4};
-                // left_width = 0;
-            } else {
-                return Ok(result);
-            }
-            score = result.eval;
+            let result = 
+            match self.select_and_run_solver(solve_config, alpha, beta) {
+                Ok(result) => {
+                    if result.eval <= alpha {
+                        left_width *= 2;
+                        // if left_width < 4 {left_width = 4};
+                        // right_width = 0;
+                        result.eval - 2
+                    } else {
+                        return Ok(result);
+                    }
+                },
+                Err(e) => {
+                    match e {
+                        SolverErr::NoMove => {
+                            return Err(SolverErr::NoMove);
+                        },
+                        SolverErr::FailHi(score) => {
+                            right_width *= 2;
+                            score + 2
+                        }
+                    }
+                }
+            };
+            score = result;
         }
 
     }
@@ -206,7 +219,7 @@ impl Solver {
         let legal_moves = board.put_able();
         if legal_moves == 0 {
             let mut pass_board = board.clone();
-            pass_board.next_turn ^= 1;
+            pass_board.swap();
             if pass_board.put_able() == 0 {
                 return Ok(SolverResult { 
                     best_move: 0,
@@ -232,7 +245,6 @@ impl Solver {
         self.search.clear_node_count();
         
         if self.print_log {
-            println!("my_turn: {}", if board.next_turn == Board::BLACK {"Black"} else {"White"});
             println!("depth: {}", board.empties_count());
             board.print_board();
             println!("move_ordering....");
@@ -263,7 +275,7 @@ impl Solver {
         let legal_moves = board.put_able();
         if legal_moves == 0 {
             let mut pass_board = board.clone();
-            pass_board.next_turn ^= 1;
+            pass_board.swap();
             if pass_board.put_able() == 0 {
                 return Ok(SolverResult { 
                     best_move: 0,
@@ -290,7 +302,6 @@ impl Solver {
         self.search.clear_node_count();
         
         if self.print_log {
-            println!("my_turn: {}", if board.next_turn == Board::BLACK {"Black"} else {"White"});
             println!("depth: {}", board.empties_count());
             board.print_board();
             println!("move_ordering....");
@@ -327,9 +338,9 @@ impl Solver {
             predict_score = Some(result.eval);
 
             // PerfectSolverは1度しか実行しない。
-            // if solve_config.solver_type == PerfectSolver {
-            //     break;
-            // }
+            if solve_config.solver_type == PerfectSolver {
+                break;
+            }
 
             prev_solve_config = solve_config;
         }
@@ -370,9 +381,15 @@ impl Solver {
             let current_put_board = &put_board.board;
             let put_place = put_board.put_place;
             let mut score = -nws_perfect(current_put_board, -alpha - 1, &mut self.search);
+            if score >= beta {
+                return Err(SolverErr::FailHi(score));
+            }
             if score > alpha {
                 if self.print_log { 
                     println!(" put: {}, null window score: {} => reserch [{},{}]",position_bit_to_str(1 << put_place).unwrap(), score, alpha, beta);
+                }
+                if score >= beta {
+                    return Err(SolverErr::FailHi(score));
                 }
                 score = -pvs_perfect(current_put_board, -beta, -alpha, &mut self.search);
                 if score > alpha {

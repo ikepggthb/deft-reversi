@@ -16,7 +16,7 @@ pub fn ffo_test() -> Result<(),  std::io::Error> {
     solver.set_ai_level(60);
     // solver.print_log = true;
     
-    for i in 40..41 {
+    for i in 40..50 {
         let filename = format!("data/ffo_test/end{}.pos", i);
         let board = match read_ffo_test_files(&filename) {
             Ok(it) => it,
@@ -56,7 +56,7 @@ pub fn ffo_test() -> Result<(),  std::io::Error> {
 fn read_ffo_test_files<P: AsRef<Path>>(filename: P) -> io::Result<Board> {
     let file = File::open(filename)?;
     let reader = io::BufReader::new(file);
-    let mut board = Board { bit_board: [0;2], next_turn: Board::BLACK};
+    let mut board = Board { player: 0, opponent: 0};
 
     let mut lines = reader.lines();
 
@@ -64,10 +64,10 @@ fn read_ffo_test_files<P: AsRef<Path>>(filename: P) -> io::Result<Board> {
     for (i,c) in first_line.chars().enumerate() {
         match c {
             'O' => {
-                board.bit_board[Board::WHITE] |= 1 << i;
+                board.opponent |= 1 << i;
             },
             'X' => {
-                board.bit_board[Board::BLACK] |= 1 << i;
+                board.player |= 1 << i;
             }
             _ => ()
         }
@@ -76,10 +76,8 @@ fn read_ffo_test_files<P: AsRef<Path>>(filename: P) -> io::Result<Board> {
     let second_line = lines.next().unwrap().unwrap();
     // println!("{}",first_line);
     // println!("{}",second_line);
-    if second_line.contains("Black") {
-        board.next_turn = Board::BLACK;
-    }else {
-        board.next_turn = Board::WHITE;
+    if !second_line.contains("Black") {
+        board.swap();
     }
 
     Ok(board)

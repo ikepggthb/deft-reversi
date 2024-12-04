@@ -71,8 +71,8 @@ pub const TERMINATED: u8 = u8::MAX;
 
 #[derive(Clone)]
 pub struct Board {
-    pub bit_board: [u64; 2],
-    pub next_turn: usize
+    pub player: u64,
+    pub opponent: u64
 }
 
 pub enum PutPieceErr {
@@ -83,8 +83,8 @@ pub enum PutPieceErr {
 impl Default for Board {
     fn default() -> Self {
         Board {
-            bit_board: [0x0000000810000000u64,0x0000001008000000u64],
-            next_turn: Board::BLACK
+            player: 0x0000000810000000u64,
+            opponent: 0x0000001008000000u64
         }
     }
 }
@@ -99,9 +99,14 @@ impl Board {
         Self::default()
     }
 
+    #[inline(always)]
+    pub fn swap(&mut self) {
+        (self.player, self.opponent) = (self.opponent, self.player);
+    }
+
     pub fn clear(&mut self) {
-        self.bit_board = [0x0000000810000000u64,0x0000001008000000u64];
-        self.next_turn = Board::BLACK;
+        self.player = 0x0000000810000000u64;
+        self.opponent = 0x0000001008000000u64;
     }
 
     pub fn put_piece_from_coord(&mut self, y: i32, x: i32) -> Result<(), PutPieceErr>
@@ -122,8 +127,8 @@ impl Board {
     #[inline(always)]
     pub fn flip_bit(&self, x: u64) -> u64
     {
-        let p: u64 = self.bit_board[self.next_turn];
-        let o: u64 = self.bit_board[self.next_turn ^ 1];
+        let p: u64 = self.player;
+        let o: u64 = self.opponent;
         let mut flip = 0u64;
 
         let maskd = o & 0x7e7e7e7e7e7e7e7e;
@@ -234,114 +239,38 @@ impl Board {
         let reverse_bit = self.flip_bit(put_mask);
         
         // 石を置く
-        self.bit_board[self.next_turn] |= put_mask;
+        self.player |= put_mask;
 
         // ひっくり返す
-        self.bit_board[0] ^= reverse_bit; // BLACK
-        self.bit_board[1] ^= reverse_bit; // WHITE
+        self.player ^= reverse_bit; // BLACK
+        self.opponent ^= reverse_bit; // WHITE
 
         // 次のターンにする
-        self.next_turn ^= 1;
+        self.swap();
     }
 
     #[inline(always)]
     pub fn opponent_put_able(&self) -> u64 {
-        let blank = !(self.bit_board[Board::BLACK] | self.bit_board[Board::WHITE]);
+        unsafe {
+            let pb = self as *const Board as *mut Board;
 
-        let p: u64 = self.bit_board[self.next_turn ^ 1];
-        let o: u64 = self.bit_board[self.next_turn];
+            // (*pb).swap();だとうまく動作しません(原因不明)
+            std::ptr::swap(&mut (*pb).player, &mut (*pb).opponent);
+            let legal_moves = (*pb).put_able();
+            std::ptr::swap(&mut (*pb).player, &mut (*pb).opponent);
 
-        let mut legal_moves = 0u64;
-
-        // 左右
-        let maskd = 0x7e7e7e7e7e7e7e7e & o;
-        let mut flip =  (p << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        legal_moves |=  (flip << 1) & blank;
-        
-        // 逆方向
-        let mut flip =  (p >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        legal_moves |=  (flip >> 1) & blank;
-
-
-        // 上下
-        let maskd = 0xffffffffffffff00 & o;
-        let mut flip =  (p << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        legal_moves |=  (flip << 8) & blank;
-        
-        // 逆方向
-        let mut flip =  (p >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        legal_moves |=  (flip >> 8) & blank;
-
-
-        // 斜め
-        let maskd = 0x007e7e7e7e7e7e00 & o;
-        let mut flip =  (p << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        legal_moves |=  (flip << 7) & blank;
-        
-        // 逆方向
-        let mut flip =  (p >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        legal_moves |=  (flip >> 7) & blank;
-
-
-        // 斜め 2
-        let mut flip =  (p << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        legal_moves |=  (flip << 9) & blank;
-        
-        // 逆方向
-        let mut flip =  (p >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        legal_moves |=  (flip >> 9) & blank;
-
-        legal_moves
-
+            legal_moves
+        }
     }
+
 
     #[inline(always)]
     pub fn put_able(&self) -> u64
     {
-        let blank = !(self.bit_board[Board::BLACK] | self.bit_board[Board::WHITE]);
+        let blank = !(self.player | self.opponent);
 
-        let p: u64 = self.bit_board[self.next_turn];
-        let o: u64 = self.bit_board[self.next_turn ^ 1];
+        let p: u64 = self.player;
+        let o: u64 = self.opponent;
 
         let mut legal_moves = 0u64;
 
@@ -435,16 +364,16 @@ impl Board {
         for i in 0b0000..0b1000 { // 2^3 = 8 different combinations
             let mut sym_board = self.clone();
             if (i & 0b0001) != 0 {
-                sym_board.bit_board[Board::BLACK] = horizontal_mirror(sym_board.bit_board[Board::BLACK]);
-                sym_board.bit_board[Board::WHITE] = horizontal_mirror(sym_board.bit_board[Board::WHITE]);
+                sym_board.player = horizontal_mirror(sym_board.player);
+                sym_board.opponent = horizontal_mirror(sym_board.opponent);
             }
             if (i & 0b0010) != 0 {
-                sym_board.bit_board[Board::BLACK] = vertical_mirror(sym_board.bit_board[Board::BLACK]);
-                sym_board.bit_board[Board::WHITE] = vertical_mirror(sym_board.bit_board[Board::WHITE]);
+                sym_board.player = vertical_mirror(sym_board.player);
+                sym_board.opponent = vertical_mirror(sym_board.opponent);
             }
             if (i & 0b0100) != 0 {
-                sym_board.bit_board[Board::BLACK] = transpose(sym_board.bit_board[Board::BLACK]);
-                sym_board.bit_board[Board::WHITE] = transpose(sym_board.bit_board[Board::WHITE]);
+                sym_board.player = transpose(sym_board.player);
+                sym_board.opponent = transpose(sym_board.opponent);
             }
             symmetries.push(sym_board);
         }
@@ -458,24 +387,24 @@ impl Board {
         rotations.push(no_rotation);
 
         let mut rotate_90_degrees = self.clone();
-        rotate_90_degrees.bit_board[Board::BLACK] = vertical_mirror(rotate_90_degrees.bit_board[Board::BLACK]);
-        rotate_90_degrees.bit_board[Board::WHITE] = vertical_mirror(rotate_90_degrees.bit_board[Board::WHITE]);
-        rotate_90_degrees.bit_board[Board::BLACK] = transpose(rotate_90_degrees.bit_board[Board::BLACK]);
-        rotate_90_degrees.bit_board[Board::WHITE] = transpose(rotate_90_degrees.bit_board[Board::WHITE]);
+        rotate_90_degrees.player = vertical_mirror(rotate_90_degrees.player);
+        rotate_90_degrees.opponent = vertical_mirror(rotate_90_degrees.opponent);
+        rotate_90_degrees.player = transpose(rotate_90_degrees.player);
+        rotate_90_degrees.opponent = transpose(rotate_90_degrees.opponent);
         rotations.push(rotate_90_degrees);
 
         let mut rotate_180_degrees = self.clone();
-        rotate_180_degrees.bit_board[Board::BLACK] = vertical_mirror(rotate_180_degrees.bit_board[Board::BLACK]);
-        rotate_180_degrees.bit_board[Board::WHITE] = vertical_mirror(rotate_180_degrees.bit_board[Board::WHITE]);
-        rotate_180_degrees.bit_board[Board::BLACK] = horizontal_mirror(rotate_180_degrees.bit_board[Board::BLACK]);
-        rotate_180_degrees.bit_board[Board::WHITE] = horizontal_mirror(rotate_180_degrees.bit_board[Board::WHITE]);
+        rotate_180_degrees.player = vertical_mirror(rotate_180_degrees.player);
+        rotate_180_degrees.opponent = vertical_mirror(rotate_180_degrees.opponent);
+        rotate_180_degrees.player = horizontal_mirror(rotate_180_degrees.player);
+        rotate_180_degrees.opponent = horizontal_mirror(rotate_180_degrees.opponent);
         rotations.push(rotate_180_degrees);
 
         let mut rotate_270_degrees = self.clone();
-        rotate_270_degrees.bit_board[Board::BLACK] = horizontal_mirror(rotate_270_degrees.bit_board[Board::BLACK]);
-        rotate_270_degrees.bit_board[Board::WHITE] = horizontal_mirror(rotate_270_degrees.bit_board[Board::WHITE]);
-        rotate_270_degrees.bit_board[Board::BLACK] = transpose(rotate_270_degrees.bit_board[Board::BLACK]);
-        rotate_270_degrees.bit_board[Board::WHITE] = transpose(rotate_270_degrees.bit_board[Board::WHITE]);
+        rotate_270_degrees.player = horizontal_mirror(rotate_270_degrees.player);
+        rotate_270_degrees.opponent = horizontal_mirror(rotate_270_degrees.opponent);
+        rotate_270_degrees.player = transpose(rotate_270_degrees.player);
+        rotate_270_degrees.opponent = transpose(rotate_270_degrees.opponent);
         rotations.push(rotate_270_degrees);
 
         rotations
@@ -484,16 +413,16 @@ impl Board {
     #[inline(always)]
     pub fn move_count(&self) -> i32
     { // 現在何手目まで打たれたか(0~60)
-        (self.bit_board[Board::BLACK] | self.bit_board[Board::WHITE]).count_ones() as i32 - 4
+        (self.player | self.opponent).count_ones() as i32 - 4
     }
 
     pub fn print_board(&self) {
         for y in 0..8 {
             for x in 0..8 {
                 let mask = 1u64 << (y * 8 + x);
-                if self.bit_board[Board::BLACK] & mask != 0 {
+                if self.player & mask != 0 {
                     print!("X");
-                } else if self.bit_board[Board::WHITE] & mask != 0 {
+                } else if self.opponent & mask != 0 {
                     print!("O");
                 } else {
                     print!(".");
@@ -503,10 +432,11 @@ impl Board {
         }
     }
 
-    pub fn print_board_string(&self)  -> String {
+    pub fn print_board_string(&self, player: usize)  -> String {
         let mut s = String::new();
          s += "next turn: ";
-        if self.next_turn == Board::BLACK {
+        
+        if player == Board::BLACK {
             s += "X";
         } else {
             s += "O";
@@ -515,10 +445,18 @@ impl Board {
         for y in 0..8 {
             for x in 0..8 {
                 let mask = 1u64 << (y * 8 + x);
-                if self.bit_board[Board::BLACK] & mask != 0 {
-                    s += "X";
-                } else if self.bit_board[Board::WHITE] & mask != 0 {
-                    s += "O";
+                if self.player & mask != 0 {
+                    if player == Board::BLACK {
+                        s += "X";
+                    } else {
+                        s += "O";
+                    }
+                } else if self.opponent & mask != 0 {
+                    if player == Board::BLACK {
+                        s += "O";
+                    } else {
+                        s += "X";
+                    }
                 } else {
                     s += ".";
                 }
@@ -532,13 +470,13 @@ impl Board {
     #[inline(always)]
     pub fn piece_count(&self) -> i32
     {
-        (self.bit_board[0] | self.bit_board[1]).count_ones() as i32
+        (self.player | self.opponent).count_ones() as i32
     }
 
     #[inline(always)]
     pub fn empties_count(&self) -> i32
     {
-        (self.bit_board[0] | self.bit_board[1]).count_zeros() as i32
+        (self.player | self.opponent).count_zeros() as i32
     }
 
 }

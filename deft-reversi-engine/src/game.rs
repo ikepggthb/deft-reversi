@@ -11,6 +11,7 @@ pub struct Game {
 pub struct State {
     board: Board,
     put_place: u8,
+    turn: usize
 }
 
 const PASS: u8 = 64;
@@ -22,6 +23,7 @@ impl Game {
             state: State {
                 board: initial_board,
                 put_place: NO_COORD,
+                turn: Board::BLACK
             },
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -32,11 +34,16 @@ impl Game {
         &self.state.board
     }
 
-    fn update_new_state(&mut self, new_board: Board, put_place: u8) {
-        self.undo_stack.push(State { board: self.get_board().clone(), put_place: put_place});
+    pub fn get_turn(&self) -> usize {
+        self.state.turn
+    }
+
+    fn update_new_state(&mut self, new_board: Board, put_place: u8, turn: usize) {
+        self.undo_stack.push(State { board: self.get_board().clone(), put_place: put_place, turn: self.state.turn});
         self.redo_stack.clear();
         self.state.board = new_board;
         self.state.put_place = NO_COORD;
+        self.state.turn = turn;
     }
 
     pub fn undo(&mut self) {
@@ -56,7 +63,7 @@ impl Game {
 
         match b.put_piece(position_bit) {
             Ok(()) => {
-                self.update_new_state(b.clone(), position_bit_to_num(position_bit)?);
+                self.update_new_state(b.clone(), position_bit_to_num(position_bit)?, self.state.turn^1);
             },
             Err(_) => return Err("Invalid position")
         };
@@ -72,8 +79,8 @@ impl Game {
         if !self.is_pass() {return;}
 
         let mut b = self.get_board().clone();
-        b.next_turn ^= 1;
-        self.update_new_state(b, PASS);
+        b.swap();
+        self.update_new_state(b, PASS, self.state.turn^1);
     }
 
     pub fn is_end(&self) -> bool {
@@ -105,10 +112,10 @@ impl Game {
     }
 
     pub fn do_over(&mut self) {
-        let next_turn = self.state.board.next_turn;
+        let turn = self.state.turn;
         loop {
             self.undo();
-            if (self.state.board.next_turn == next_turn && self.state.put_place != PASS) 
+            if (self.state.turn == turn && self.state.put_place != PASS) 
                 || self.undo_stack.is_empty() {
                 break;
             }
