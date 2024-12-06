@@ -2,6 +2,7 @@ use crate::board::*;
 use crate::eval::Evaluator;
 use crate::eval_search::*;
 use crate::t_table::*;
+use crate::mpc::NO_MPC;
 
 const SCORE_INF: i32 = i8::MAX as i32;
 
@@ -59,9 +60,7 @@ pub fn move_ordering_eval(board: &Board, mut legal_moves: u64, lv: i32, search: 
         put_boards.push(PutBoard{eval: eval, board: put_board, put_place: put_place.trailing_zeros() as u8});
     }
 
-    if put_boards.len() > 2 {
-        put_boards.sort_unstable_by(|a, b| b.eval.partial_cmp(&a.eval).unwrap());
-    }
+    sort_put_boards(&mut put_boards);
 
     put_boards
 }
@@ -100,14 +99,58 @@ pub fn move_ordering_ffs(board: &Board, mut legal_moves: u64, _search: &mut Sear
         let mut put_board = board.clone();
         put_board.put_piece_fast(put_place);
 
-        let eval = -(put_board.put_able().count_ones() as i32);
+        const mc: u64 = 0b1000000100000000000000000000000000000000000000000000000010000001_u64;
+        const mx: u64 = 0b0000000001000010000000000000000000000000000000000100001000000000_u64;
+        let ec = (board.player | mc).count_ones() as i32 - (board.opponent | mc).count_ones() as i32;
+        let ex = (board.player | mx).count_ones() as i32 - (board.opponent | mx).count_ones() as i32;
+        let eval = -(put_board.put_able().count_ones() as i32) + 2*ec - ex;
         put_boards.push(PutBoard{eval: eval, board: put_board, put_place: put_place.trailing_zeros() as u8})
     }
 
-    if put_boards.len() > 2{
-        put_boards.sort_unstable_by(|a, b| b.eval.partial_cmp(&a.eval).unwrap());
-    }
+    sort_put_boards(&mut put_boards);
+    
     put_boards
+}
+
+#[inline(always)]
+fn sort_put_boards(put_boards: &mut [PutBoard]) {
+    let n_boards = put_boards.len();
+
+    if n_boards < 2 {
+        return;
+    }
+
+    if n_boards == 2 && put_boards[0].eval < put_boards[1].eval {
+        put_boards.swap(0, 1);
+        return;
+    }
+    
+    if n_boards == 3 {
+        if put_boards[1].eval < put_boards[2].eval {
+            put_boards.swap(1, 2);
+        }
+        if put_boards[0].eval < put_boards[1].eval {
+            put_boards.swap(0, 1);
+        }
+        return;
+    }
+
+    if n_boards <= 5 {
+        put_boards.sort_unstable_by(|a, b| b.eval.partial_cmp(&a.eval).unwrap());
+        return;
+    }
+
+    let top_n = 5; // 最大で上位5つをソート
+    for i in 0..top_n {
+        let mut max_idx = i;
+        for j in (i + 1)..n_boards {
+            if put_boards[j].eval > put_boards[max_idx].eval {
+                max_idx = j;
+            }
+        }
+        put_boards.swap(i, max_idx);
+    }
+
 }
 
 #[inline(always)]
@@ -125,6 +168,7 @@ pub fn get_put_boards(board: &Board, mut legal_moves: u64) -> Vec<PutBoard>
 
     put_boards
 }
+
 
 #[inline(always)]
 pub fn t_table_cut_off(
@@ -169,7 +213,7 @@ impl Search {
             t_table: TranspositionTable::new(),
             origin_board: Board::new(),
             eval_func: evaluator,
-            selectivity_lv: 0
+            selectivity_lv: NO_MPC
         }
     }
     pub fn clear_node_count(&mut self){

@@ -69,6 +69,13 @@ impl TranspositionTable {
             " in function t_table::add() , min: {min}, max: {min}, Lv: {lv}, best move: {best_move}");
     }
         let index = self.hash_board(board);
+        if let Some(p) = &self.table[index] {
+            if lv < p.lv as i32  {
+                return;
+            } else if lv == p.lv as i32 && selectivity_lv < p.selectivity_lv as i32 { 
+                return;
+            }
+        }
         self.table[index] = Some(TableData {
             board: board.clone(),
             max: max as i8,

@@ -13,10 +13,9 @@ pub fn ffo_test() -> Result<(),  std::io::Error> {
 
     let evaluator = Evaluator::read_file("res/eval.json").unwrap();
     let mut solver = Solver::new(evaluator);
-    solver.set_ai_level(60);
     // solver.print_log = true;
     
-    for i in 40..50 {
+    for i in 40..59 {
         let filename = format!("data/ffo_test/end{}.pos", i);
         let board = match read_ffo_test_files(&filename) {
             Ok(it) => it,
@@ -31,13 +30,7 @@ pub fn ffo_test() -> Result<(),  std::io::Error> {
         println!("    num of empties: {}", board.empties_count());
         
         let now = time::Instant::now();
-        let solver_result = match solver.solve(&board) {
-            Ok(result) => result,
-            Err(e) => {
-                eprintln!("Error occurred in perfect solver.");
-                panic!();
-            }
-        };
+        let solver_result = solver.solve(&board, 25);
         
         let end = now.elapsed();
         println!("    selectivity   : {} %", crate::mpc::SELECTIVITY[solver_result.selectivity_lv as usize].percent);

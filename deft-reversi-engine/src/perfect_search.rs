@@ -103,8 +103,8 @@ pub fn solve_score_0_empties(board: &Board) -> i32
     #[cfg(debug_assertions)]
     {
         assert_eq!((board.player | board.opponent), u64::MAX);
+        assert_eq!(2 * (board.player.count_ones() as i32) - 64,  solve_score(board));
     }
-    assert_eq!(2 * (board.player.count_ones() as i32) - 64,  solve_score(board));
 
     2 * (board.player.count_ones() as i32) - 64
 }

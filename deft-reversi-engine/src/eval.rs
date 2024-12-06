@@ -407,7 +407,7 @@ impl Evaluator {
     }
 
     #[inline(always)]
-    pub fn clac_eval(&self, board: &Board) -> i32
+    pub fn calc_eval(&self, board: &Board) -> i32
     {
         let move_count = board.move_count();
         let phase = move_count as usize / 2;
@@ -445,7 +445,7 @@ impl Evaluator {
     pub fn clac_features_eval(&mut self, board: &Board) -> i32{
 
         self.clac_features(board);
-        let mut e = self.clac_eval(board);
+        let mut e = self.calc_eval(board);
 
         if e > 0 {e += SCORE_RATE/2;} else if e < 0 {e -= SCORE_RATE/2;}
         e /= SCORE_RATE;

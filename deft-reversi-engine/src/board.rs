@@ -69,7 +69,7 @@ pub const TERMINATED: u8 = u8::MAX;
 
 
 
-#[derive(Clone)]
+#[derive(Clone,PartialEq,Eq,PartialOrd,Ord)]
 pub struct Board {
     pub player: u64,
     pub opponent: u64
@@ -125,112 +125,124 @@ impl Board {
     }
 
     #[inline(always)]
-    pub fn flip_bit(&self, x: u64) -> u64
-    {
+    pub fn flip_bit(&self, x: u64) -> u64 {
         let p: u64 = self.player;
         let o: u64 = self.opponent;
         let mut flip = 0u64;
 
-        let maskd = o & 0x7e7e7e7e7e7e7e7e;
-        let mut flip1 =  (x << 1) & maskd;
-        flip1 |=  (flip1 << 1) & maskd;
-        flip1 |=  (flip1 << 1) & maskd;
-        flip1 |=  (flip1 << 1) & maskd;
-        flip1 |=  (flip1 << 1) & maskd;
-        flip1 |=  (flip1 << 1) & maskd;
-        flip1 |=  (flip1 << 1) & maskd;
-        let outflank = p & (flip1 << 1);
-        if outflank == 0 {flip1 = 0};
-        flip |= flip1;
-        
-        // 逆方向
-        let mut flip2 =  (x >> 1) & maskd;
-        flip2 |=  (flip2 >> 1) & maskd;
-        flip2 |=  (flip2 >> 1) & maskd;
-        flip2 |=  (flip2 >> 1) & maskd;
-        flip2 |=  (flip2 >> 1) & maskd;
-        flip2 |=  (flip2 >> 1) & maskd;
-        flip2 |=  (flip2 >> 1) & maskd;
-        let outflank = p & (flip2 >> 1);
-        if outflank == 0 {flip2 = 0};
-        flip |= flip2;
+        // 左方向 (x << 1)
+        {
+            let m_o = o & 0x7e7e7e7e7e7e7e7e;
+            let mut f = (x << 1) & m_o;
+            f |= (f << 1) & m_o;
+            let pre = m_o & (m_o << 1);
+            f |= (f << 2) & pre;
+            f |= (f << 2) & pre;
+            let outflank = p & (f << 1);
+            f &= -((outflank != 0) as i64) as u64;
+            flip |= f;
+        }
 
-        // 上下
-        let maskd = o & 0xffffffffffffff00;
-        let mut flip1 =  (x << 8) & maskd;
-        flip1 |=  (flip1 << 8) & maskd;
-        flip1 |=  (flip1 << 8) & maskd;
-        flip1 |=  (flip1 << 8) & maskd;
-        flip1 |=  (flip1 << 8) & maskd;
-        flip1 |=  (flip1 << 8) & maskd;
-        flip1 |=  (flip1 << 8) & maskd;
-        let outflank = p & (flip1 << 8);
-        if outflank == 0 {flip1 = 0};
-        flip |= flip1;
-        
-        // 逆方向
-        let mut flip2 =  (x >> 8) & maskd;
-        flip2 |=  (flip2 >> 8) & maskd;
-        flip2 |=  (flip2 >> 8) & maskd;
-        flip2 |=  (flip2 >> 8) & maskd;
-        flip2 |=  (flip2 >> 8) & maskd;
-        flip2 |=  (flip2 >> 8) & maskd;
-        flip2 |=  (flip2 >> 8) & maskd;
-        let outflank = p & (flip2 >> 8);
-        if outflank == 0 {flip2 = 0};
-        flip |= flip2;
+        // 右方向 (x >> 1)
+        {
+            let m_o = o & 0x7e7e7e7e7e7e7e7e;
+            let mut f = (x >> 1) & m_o;
+            f |= (f >> 1) & m_o;
+            let pre = m_o & (m_o >> 1);
+            f |= (f >> 2) & pre;
+            f |= (f >> 2) & pre;
+            let outflank = p & (f >> 1);
+            f &= -((outflank != 0) as i64) as u64;
+            flip |= f;
+        }
 
-        // 斜め
-        let maskd = o & 0x007e7e7e7e7e7e00;
-        let mut flip1 =  (x << 7) & maskd;
-        flip1 |=  (flip1 << 7) & maskd;
-        flip1 |=  (flip1 << 7) & maskd;
-        flip1 |=  (flip1 << 7) & maskd;
-        flip1 |=  (flip1 << 7) & maskd;
-        flip1 |=  (flip1 << 7) & maskd;
-        flip1 |=  (flip1 << 7) & maskd;
-        let outflank = p & (flip1 << 7);
-        if outflank == 0 {flip1 = 0};
-        flip |= flip1;
-        
-        // 逆方向
-        let mut flip2 =  (x >> 7) & maskd;
-        flip2 |=  (flip2 >> 7) & maskd;
-        flip2 |=  (flip2 >> 7) & maskd;
-        flip2 |=  (flip2 >> 7) & maskd;
-        flip2 |=  (flip2 >> 7) & maskd;
-        flip2 |=  (flip2 >> 7) & maskd;
-        flip2 |=  (flip2 >> 7) & maskd;
-        let outflank = p & (flip2 >> 7);
-        if outflank == 0 {flip2 = 0};
-        flip |= flip2;
+        // 上方向 (x << 8)
+        {
+            let m_o = o & 0xffffffffffffff00;
+            let mut f = (x << 8) & m_o;
+            f |= (f << 8) & m_o;
+            let pre = m_o & (m_o << 8);
+            f |= (f << 16) & pre;
+            f |= (f << 16) & pre;
+            let outflank = p & (f << 8);
+            f &= -((outflank != 0) as i64) as u64;
+            flip |= f;
+        }
 
-        // 斜め 2
-        let mut flip1 =  (x << 9) & maskd;
-        flip1 |=  (flip1 << 9) & maskd;
-        flip1 |=  (flip1 << 9) & maskd;
-        flip1 |=  (flip1 << 9) & maskd;
-        flip1 |=  (flip1 << 9) & maskd;
-        flip1 |=  (flip1 << 9) & maskd;
-        flip1 |=  (flip1 << 9) & maskd;
-        let outflank = p & (flip1 << 9);
-        if outflank == 0 {flip1 = 0};
-        flip |= flip1;
-        
-        // 逆方向
-        let mut flip2 =  (x >> 9) & maskd;
-        flip2 |=  (flip2 >> 9) & maskd;
-        flip2 |=  (flip2 >> 9) & maskd;
-        flip2 |=  (flip2 >> 9) & maskd;
-        flip2 |=  (flip2 >> 9) & maskd;
-        flip2 |=  (flip2 >> 9) & maskd;
-        flip2 |=  (flip2 >> 9) & maskd;
-        let outflank = p & (flip2 >> 9);
-        if outflank == 0 {flip2 = 0};
-        flip |= flip2;
+        // 下方向 (x >> 8)
+        {
+            let m_o = o & 0xffffffffffffff00;
+            let mut f = (x >> 8) & m_o;
+            f |= (f >> 8) & m_o;
+            let pre = m_o & (m_o >> 8);
+            f |= (f >> 16) & pre;
+            f |= (f >> 16) & pre;
+            let outflank = p & (f >> 8);
+            f &= -((outflank != 0) as i64) as u64;
+            flip |= f;
+        }
+
+        // 斜め左上・右下方向 (x << 7, x >> 7)
+        {
+            let m_o = o & 0x007e7e7e7e7e7e00;
+
+            // 左上方向 (x << 7)
+            {
+                let mut f = (x << 7) & m_o;
+                f |= (f << 7) & m_o;
+                let pre = m_o & (m_o << 7);
+                f |= (f << 14) & pre;
+                f |= (f << 14) & pre;
+                let outflank = p & (f << 7);
+                f &= -((outflank != 0) as i64) as u64;
+                flip |= f;
+            }
+
+            // 右下方向 (x >> 7)
+            {
+                let mut f = (x >> 7) & m_o;
+                f |= (f >> 7) & m_o;
+                let pre = m_o & (m_o >> 7);
+                f |= (f >> 14) & pre;
+                f |= (f >> 14) & pre;
+                let outflank = p & (f >> 7);
+                f &= -((outflank != 0) as i64) as u64;
+                flip |= f;
+            }
+        }
+
+        // 斜め左下・右上方向 (x << 9, x >> 9)
+        {
+            let m_o = o & 0x007e7e7e7e7e7e00;
+
+            // 左下方向 (x << 9)
+            {
+                let mut f = (x << 9) & m_o;
+                f |= (f << 9) & m_o;
+                let pre = m_o & (m_o << 9);
+                f |= (f << 18) & pre;
+                f |= (f << 18) & pre;
+                let outflank = p & (f << 9);
+                f &= -((outflank != 0) as i64) as u64;
+                flip |= f;
+            }
+
+            // 右上方向 (x >> 9)
+            {
+                let mut f = (x >> 9) & m_o;
+                f |= (f >> 9) & m_o;
+                let pre = m_o & (m_o >> 9);
+                f |= (f >> 18) & pre;
+                f |= (f >> 18) & pre;
+                let outflank = p & (f >> 9);
+                f &= -((outflank != 0) as i64) as u64;
+                flip |= f;
+            }
+        }
 
         flip
     }
+
 
     #[inline(always)]
     pub fn put_piece_fast(&mut self, put_mask: u64)
@@ -265,95 +277,84 @@ impl Board {
 
 
     #[inline(always)]
-    pub fn put_able(&self) -> u64
-    {
-        let blank = !(self.player | self.opponent);
+    pub fn put_able(&self) -> u64 {
+        let P = self.player;
+        let O = self.opponent;
 
-        let p: u64 = self.player;
-        let o: u64 = self.opponent;
+        let mut moves: u64;
+        let mut mO: u64;
+        let mut flip1: u64;
+        let mut flip7: u64;
+        let mut flip9: u64;
+        let mut flip8: u64;
+        let mut pre1: u64;
+        let mut pre7: u64;
+        let mut pre9: u64;
+        let mut pre8: u64;
 
-        let mut legal_moves = 0u64;
-
-        // 左右
-        let maskd = 0x7e7e7e7e7e7e7e7e & o;
-        let mut flip =  (p << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        flip |=  (flip << 1) & maskd;
-        legal_moves |=  (flip << 1) & blank;
+        // 水平方向マスク処理用(7,9,1方向)のo
+        mO = O & 0x7e7e7e7e7e7e7e7e_u64;
         
-        // 逆方向
-        let mut flip =  (p >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        flip |=  (flip >> 1) & maskd;
-        legal_moves |=  (flip >> 1) & blank;
+        // 正方向（左上7、左下9、下8、右1）
+        flip7  = mO & (P << 7);
+        flip9  = mO & (P << 9);
+        flip8  = O & (P << 8);
+        flip1  = mO & (P << 1);
 
+        flip7 |= mO & (flip7 << 7);
+        flip9 |= mO & (flip9 << 9);
+        flip8 |= O  & (flip8 << 8);
+        moves  = mO + flip1; 
 
-        // 上下
-        let maskd = 0xffffffffffffff00 & o;
-        let mut flip =  (p << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        flip |=  (flip << 8) & maskd;
-        legal_moves |=  (flip << 8) & blank;
-        
-        // 逆方向
-        let mut flip =  (p >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        flip |=  (flip >> 8) & maskd;
-        legal_moves |=  (flip >> 8) & blank;
+        pre7 = mO & (mO << 7);
+        pre9 = mO & (mO << 9);
+        pre8 = O & (O << 8);
 
+        flip7 |= pre7 & (flip7 << 14);
+        flip9 |= pre9 & (flip9 << 18);
+        flip8 |= pre8 & (flip8 << 16);
 
-        // 斜め
-        let maskd = 0x007e7e7e7e7e7e00 & o;
-        let mut flip =  (p << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        flip |=  (flip << 7) & maskd;
-        legal_moves |=  (flip << 7) & blank;
-        
-        // 逆方向
-        let mut flip =  (p >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        flip |=  (flip >> 7) & maskd;
-        legal_moves |=  (flip >> 7) & blank;
+        flip7 |= pre7 & (flip7 << 14);
+        flip9 |= pre9 & (flip9 << 18);
+        flip8 |= pre8 & (flip8 << 16);
 
+        moves |= flip7 << 7;
+        moves |= flip9 << 9;
+        moves |= flip8 << 8;
 
-        // 斜め 2
-        let mut flip =  (p << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        flip |=  (flip << 9) & maskd;
-        legal_moves |=  (flip << 9) & blank;
-        
-        // 逆方向
-        let mut flip =  (p >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        flip |=  (flip >> 9) & maskd;
-        legal_moves |=  (flip >> 9) & blank;
+        // 逆方向（右下7、右上9、上8、左1）
+        flip7 = mO & (P >> 7);
+        flip9 = mO & (P >> 9);
+        flip8 = O & (P >> 8);
+        flip1 = mO & (P >> 1);
 
-        legal_moves
+        flip7 |= mO & (flip7 >> 7);
+        flip9 |= mO & (flip9 >> 9);
+        flip8 |= O  & (flip8 >> 8);
+        flip1 |= mO & (flip1 >> 1);
 
+        pre7 >>= 7;
+        pre9 >>= 9;
+        pre8 >>= 8;
+        pre1 = mO & (mO >> 1);
+
+        flip7 |= pre7 & (flip7 >> 14);
+        flip9 |= pre9 & (flip9 >> 18);
+        flip8 |= pre8 & (flip8 >> 16);
+        flip1 |= pre1 & (flip1 >> 2);
+
+        flip7 |= pre7 & (flip7 >> 14);
+        flip9 |= pre9 & (flip9 >> 18);
+        flip8 |= pre8 & (flip8 >> 16);
+        flip1 |= pre1 & (flip1 >> 2);
+
+        moves |= flip7 >> 7;
+        moves |= flip9 >> 9;
+        moves |= flip8 >> 8;
+        moves |= flip1 >> 1;
+
+        // 空きマスでマスク
+        moves & !(P | O)
     }
 
 
