@@ -390,9 +390,9 @@ impl Evaluator {
         let p: u64 = board.player;
         let o: u64 = board.opponent;
         
-        for pattern in 0..N_PATTERN {
+        (0..N_PATTERN).for_each(|pattern| {
             let fbit = &mut self.feature_bit[pattern];
-            for rotation in 0..N_ROTATION {
+            (0..N_ROTATION).for_each(|rotation| {
                 for coord_i in 0..FEATURE_COORD[pattern].n_pattern_square {
                     let coord = FEATURE_COORD[pattern].feature_coord[rotation][coord_i as usize];
                     
@@ -402,8 +402,8 @@ impl Evaluator {
                     let color = 2 * (1 & p >> coord) + (1 & o >> coord);
                     fbit[rotation] = fbit[rotation] * 3u16 + color as u16;
                 }
-            }
-        }
+            });
+        });
     }
 
     #[inline(always)]
@@ -416,7 +416,6 @@ impl Evaluator {
         
         // todo: eval の実装を見直す。
         // let eval_scores = &self.eval[board.next_turn][phase];
-        
         let eval_scores = &self.eval[board.empties_count() as usize % 2][phase];
         for pattern in 0..N_PATTERN {
             // let e = &eval_scores.pattern_eval[pattern];

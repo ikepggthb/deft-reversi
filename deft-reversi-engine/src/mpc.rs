@@ -15,8 +15,8 @@ pub struct Selectivity {
     pub percent: i32
 }
 
-pub const NO_MPC: i32 = 6;
 pub const SELECTIVITY_LV_MAX: i32 = 6;
+pub const NO_MPC: i32 = SELECTIVITY_LV_MAX;
 pub const N_SELECTIVITY_LV: usize = 7;
 
 // 0 ~ 6

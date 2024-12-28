@@ -1,8 +1,12 @@
 use std::cmp;
 
+use evaluator_const::SCORE_INF;
+
 use crate::board::*;
+use crate::mpc::NO_MPC;
 use crate::mpc::N_SELECTIVITY_LV;
 use crate::mpc::SELECTIVITY;
+use crate::mpc::SELECTIVITY_LV_MAX;
 use crate::perfect_search::*;
 use crate::eval_search::*;
 use crate::search::*;
@@ -87,9 +91,12 @@ impl Solver {
         let mut predict_score = predict_score;
 
         loop {
-            let alpha = predict_score - left_width; 
-            let beta = predict_score + right_width;
-            if alpha >= beta {panic!();}
+            let alpha = cmp::min(predict_score - left_width, -SCORE_INF); 
+            let beta = cmp::min(predict_score + right_width, SCORE_INF);
+            
+            
+            #[cfg(debug_assertions)]
+            assert!(alpha <= beta);
             predict_score = match solver {
                 SolverType::Eval(depth) => {
                     self.eval_solver(depth, alpha, beta)
@@ -144,17 +151,18 @@ impl Solver {
                 new_board
             };
             if passed_board.put_able() == 0 {
-                // todo: ゲーム終了の場合
                 return SolverResult { 
                     best_move: 0,
                     eval: solve_score(board),
                     solver_type: SolverType::Perfect,
-                    selectivity_lv:0,
+                    selectivity_lv: 0,
                     searched_nodes: 0,
                     searched_leaf_nodes: 0 
                 }
             } else {
-                return self.solve(&passed_board, lv);
+                let mut r = self.solve(&passed_board, lv);
+                r.eval = -r.eval;
+                return  r;
             }
         }
     
@@ -168,7 +176,7 @@ impl Solver {
         let (
             perfect_solver_use,
             selectivity_lv_perfect_search,
-            max_depth_eval_solver
+            mut max_depth_eval_solver
         ) = self.get_ai_rules(board, lv);
             
         
@@ -176,20 +184,28 @@ impl Solver {
         
         // Eval Solver
         self.search.selectivity_lv =  if lv > 10 { 0 } else { 6 };
-        for depth in 1..=max_depth_eval_solver {                        
-            let init_width: i32 = (16 - depth).clamp(1, 6);        
+
+        // 序盤の評価関数の学習データが良くないので
+        if board.move_count() < 20 && max_depth_eval_solver > 14 {
+            max_depth_eval_solver -= 4;
+            if self.search.selectivity_lv != NO_MPC {
+                self.search.selectivity_lv = 3;
+            }
+        }
+        let step = 2;
+        let start = max_depth_eval_solver.rem_euclid(step);
+        for depth in (start..=max_depth_eval_solver).step_by(step as usize) {
+            let init_width: i32 = if depth > 16 {4} else {64};
             predict_score = self.aspiration_search(init_width, predict_score,SolverType::Eval(depth) );        
         }
 
-        // perfect solver
-        let calc_init_width = |predict_score: i32 | { 
-            cmp::max(10 - board.empties_count(), 1 + predict_score.rem_euclid(2) )
-        };
-
+        // Perfect solver
         if perfect_solver_use {
             for selectivity_lv in 1..=selectivity_lv_perfect_search {
                 self.search.selectivity_lv = selectivity_lv;
-                let init_width = calc_init_width(predict_score);                        
+                let init_width = cmp::max(
+                    10 - board.empties_count(), 
+                    1 + predict_score.rem_euclid(2) );                        
                 predict_score = self.aspiration_search(init_width, predict_score,SolverType::Perfect );            
             }
         }

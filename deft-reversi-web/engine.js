@@ -23,13 +23,30 @@ async function fetch_eval_data() {
     }
 }
 
+
+async function fetch_opening_data() {
+
+    try {
+        const response = await fetch('./opening.txt');
+        if (!response.ok) {
+            throw new Error(response.statusText);
+        }
+        const text = await response.text();
+        return text;
+
+    } catch (error) {
+        console.log("評価データの読み込みに失敗しました\n" + error);
+    }
+}
+
 async function init() {
     await __wbg_init();
     console.log("fetch eval data");
     const eval_data = await fetch_eval_data();
+    const oopening_data = await fetch_opening_data();
 
     console.log("set evaluator");
-    const app = await App.new(eval_data);
+    const app = await App.new(eval_data, oopening_data);
     
     self.postMessage("ready");
     return app;
@@ -65,8 +82,8 @@ self.addEventListener('message', (event) => {
                 return app.get_record(...payload);
             case 'newGame' :
                 return app.new_game();
-            case 'doOver':
-                return app.do_over(); 
+            case 'setHumanOpening':
+                return app.set_human_opening(...payload);
             default:
                 console.warn(`Unknown message type: ${type}`);
                 return;

@@ -124,7 +124,7 @@
         #ai-level-slider {
             -webkit-appearance: none;
             width: 60%;
-            height: 8px;
+            height: 20px;
             margin-top: 30px;
             margin-bottom: 30px;
             margin-left: 20px;
@@ -137,13 +137,24 @@
         #ai-level-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 20px;
-            height: 20px;
+            width: 40px;
+            height: 40px;
             background: #4CAF50;
             border-radius: 50%;
             cursor: pointer;
             transition: background 0.2s ease-in-out;
         }
+
+        #ai-level-slider::-moz-range-thumb {
+            width: 40px;
+            height: 40px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: background 0.2s ease-in-out;
+        }
+
+
         #level-display {
             font-size: 18px;
             font-weight: bold;
@@ -363,6 +374,14 @@
                             後攻
                         </div>
                     </div>
+                </div>
+                <div class="setting-content" id="opening-setting">  
+                    <p style="color: white; font-size: 16px; margin-bottom: 10px;">
+                        定石
+                    </p>
+                    <select id="opening-strategy" style="width: 100%; padding: 10px; font-size: 16px; border-radius: 8px; background: #444; color: white;">
+                        <option value="none">定石を使わない</option>
+                    </select>
                 </div>
                 <button type="button" id="start-button" class="reset">ゲームスタート</button>
             </form>

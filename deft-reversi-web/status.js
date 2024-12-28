@@ -48,17 +48,19 @@ export class StatusUI {
     setButtons() {
         this.buttons = [
             {
-                clickEvent: null,
                 label: "New Game",
             },
             {
-                clickEvent: null,
-                label: "待った"
+                label: "Undo"
             },
             {
-                name: "switchShowEval",
-                clickEvent: null,
-                label: "評価値の表示"
+                label: "Redo"
+            },
+            {
+                label: "Hint"
+            },
+            {
+                label: "Hint\n(Deep)"
             },
             // {
             //     name: "open setting window",
@@ -112,7 +114,7 @@ export class StatusUI {
         this.ctx.strokeRect(x, y, width, height);
 
         // ボタンのラベル
-        this.ctx.font = "20px Arial";
+        this.ctx.font = "16px Arial";
         this.ctx.fillStyle = "#FFFFFF";
         this.ctx.textAlign = "center";
         this.ctx.textBaseline = "middle";
@@ -131,7 +133,7 @@ export class StatusUI {
         const blackCount = count(status.black);
         const whiteCount = count(status.white);
 
-        this.ctx.font = "20px Arial";
+        this.ctx.font = "16px Arial";
         this.ctx.fillStyle = "#000000";
         this.ctx.textAlign = "center";
         this.ctx.textBaseline = "middle";
@@ -147,17 +149,27 @@ export class StatusUI {
         this.drawStoneIcon(this.X + this.padding + (this.W - this.padding * 2) * 0.25, statusY, "Black");
 
         // 黒石の数
-        this.ctx.fillText(blackCount, this.X + this.padding + (this.W - this.padding * 2) * 0.35, statusY);
+        this.ctx.fillText(blackCount, this.X + this.padding + (this.W - this.padding * 2) * 0.325, statusY);
+
+
+        // 白石の数
+        this.ctx.fillStyle = "black";
+        this.ctx.fillText(whiteCount, this.X + this.padding + (this.W - this.padding * 2) * 0.675, statusY);
 
         // 白石のアイコン
-        this.drawStoneIcon(this.X + this.padding + (this.W - this.padding * 2) * 0.65, statusY, "White");
-
-        this.ctx.fillStyle = "black";
-        // 白石の数
-        this.ctx.fillText(whiteCount, this.X + this.padding + (this.W - this.padding * 2) * 0.75, statusY);
+        this.drawStoneIcon(this.X + this.padding + (this.W - this.padding * 2) * 0.75, statusY, "White");
 
         // 「AI Lv16」のテキスト
+        this.ctx.fillStyle = "black";
         this.ctx.fillText(whitePlayerName, this.X + this.padding + (this.W - this.padding * 2) * 0.9, statusY);
+
+        this.ctx.font = "14px san-serif";
+        this.ctx.fillStyle = "#000000";
+        this.ctx.textAlign = "center";
+        this.ctx.textBaseline = "middle";
+        if (status.current_human_opening) {
+            this.ctx.fillText(status.current_human_opening, this.X + this.padding + (this.W - this.padding * 2) * 0.5, statusY);
+        }
     }
 
     drawStoneIcon(x, y, color) {

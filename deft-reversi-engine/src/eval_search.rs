@@ -59,10 +59,6 @@ pub fn negaalpha_eval(board: &Board, mut alpha: i32, beta: i32, lv: i32, search:
     // 探索範囲: [alpha, beta]
     search.eval_search_node_count += 1;
 
-    // match eval_search_mpc(board, alpha, beta, lv, search) {
-    //     ProbCutResult::Cut(score) => {return score},
-    //     ProbCutResult::FAIL => ()
-    // }
 
     let mut best_score = -SCORE_INF;
     

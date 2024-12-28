@@ -66,6 +66,7 @@ pub const G8: u8 = 62;
 pub const H8: u8 = 63;
 pub const NO_COORD: u8 = u8::MAX;
 pub const TERMINATED: u8 = u8::MAX;
+pub const PASS: u8 = 64;
 
 
 
@@ -73,6 +74,37 @@ pub const TERMINATED: u8 = u8::MAX;
 pub struct Board {
     pub player: u64,
     pub opponent: u64
+}
+use std::fmt;
+impl fmt::Display for Board {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = String::new();
+
+        // 列番号の表示
+        s.push_str("  "); // インデント
+        for col in 0..Board::SIZE {
+            s.push((b'A' + col as u8) as char); // A, B, C...
+        }
+        s.push('\n');
+
+        for row in 0..Board::SIZE {
+            // 行番号の表示
+            s.push_str(&format!("{:2} ", row + 1)); // 1, 2, 3...
+
+            for col in 0..Board::SIZE {
+                let mask = 1 << (row * Board::SIZE + col);
+                if (self.player & mask) != 0 {
+                    s.push('o');
+                } else if (self.opponent & mask) != 0 {
+                    s.push('x');
+                } else {
+                    s.push('.');
+                }
+            }
+            s.push('\n');
+        }
+        write!(f, "{}", s)
+    }
 }
 
 pub enum PutPieceErr {
@@ -91,7 +123,7 @@ impl Default for Board {
 
 impl Board {
 
-    pub const BOARD_SIZE: i32 = 8;
+    pub const SIZE: i32 = 8;
     pub const BLACK: usize = 0;
     pub const WHITE: usize = 1;
 
@@ -111,7 +143,7 @@ impl Board {
 
     pub fn put_piece_from_coord(&mut self, y: i32, x: i32) -> Result<(), PutPieceErr>
     {
-        let mask = 1 << (y * Board::BOARD_SIZE + x);
+        let mask = 1 << (y * Board::SIZE + x);
         self.put_piece(mask)
     }
 
@@ -248,14 +280,14 @@ impl Board {
     pub fn put_piece_fast(&mut self, put_mask: u64)
     {
         // ひっくり返す箇所を計算
-        let reverse_bit = self.flip_bit(put_mask);
+        let flip_bit = self.flip_bit(put_mask);
         
         // 石を置く
         self.player |= put_mask;
 
         // ひっくり返す
-        self.player ^= reverse_bit; // BLACK
-        self.opponent ^= reverse_bit; // WHITE
+        self.player ^= flip_bit; // BLACK
+        self.opponent ^= flip_bit; // WHITE
 
         // 次のターンにする
         self.swap();
@@ -433,6 +465,13 @@ impl Board {
         }
     }
 
+    pub fn get_unique_board(&self) -> Board{
+        self.get_all_symmetries()
+                    .into_iter()
+                    .min()
+                    .unwrap()
+    }
+
     pub fn print_board_string(&self, player: usize)  -> String {
         let mut s = String::new();
          s += "next turn: ";
@@ -577,4 +616,181 @@ pub fn position_bit_to_str(bit: u64) -> Result<String, &'static str> {
     };
 
     Ok(format!("{}{}", col_char, row_char))
+}
+
+
+//cargo test --lib --release -- board::perft --nocapture
+#[cfg(test)]
+mod perft {
+    use crate::search::{get_put_boards, get_put_boards_fast, get_put_boards_fast2};
+    use super::*;
+    use std::time;
+
+    struct Perft {
+        max_depth     : u64,
+        is_count_pass : bool,
+        n_node        : u64,
+        n_leaf_node   : u64,
+        n_passed      : u64,
+        n_end         : u64, // leaf node を含む
+    }
+
+    impl Perft {        
+        fn new(depth: u64) -> Self{
+            Self {
+                max_depth     : depth,
+                is_count_pass : false,
+                n_node        : 0,
+                n_leaf_node   : 0,
+                n_passed      : 0,
+                n_end         : 0
+            }
+        }
+
+        fn clear(&mut self) {
+            *self = Self::new(self.max_depth);
+        }
+
+
+        
+        fn search(&mut self, board: &Board, depth: u64) {
+            self.n_node += 1;
+
+            let legal_moves = board.put_able();
+            if legal_moves == 0 {
+                if board.opponent_put_able() == 0 {
+                    // End
+                    self.n_leaf_node += 1;
+                    self.n_end += 1;
+                    return;
+                }
+
+                if depth >= self.max_depth {
+                    self.n_leaf_node += 1;
+                    return;
+                }
+
+                let passed_board = {
+                    let mut b = board.clone();
+                    b.swap();
+                    b
+                };
+
+                let depth=  depth + if self.is_count_pass {1} else {0};
+                self.n_passed += 1;
+                return self.search(&passed_board, depth);
+            }
+
+            if depth >= self.max_depth {
+                self.n_leaf_node += 1;
+                return;
+            }
+
+            let mut legal_moves = legal_moves;
+            while legal_moves != 0 {
+                let put_place = (!legal_moves + 1) & legal_moves;
+                legal_moves &= legal_moves - 1;
+                let mut put_board = board.clone();
+                put_board.put_piece_fast(put_place);
+                self.search(&put_board, depth + 1);
+            }
+
+            // let boards = get_put_boards(board, legal_moves);
+            // for b in boards.iter() {
+            //     self.search(&b.board, depth + 1);
+            // }
+
+            // let (move_list, n_moves) = get_put_boards_fast(board, legal_moves);
+            // for move_cand in move_list.iter().take(n_moves) {
+            //     let mut put_board = board.clone();
+            //     put_board.player |= move_cand.legal_move;
+            //     put_board.player ^= move_cand.flip;
+            //     put_board.opponent ^= move_cand.flip;
+            //     put_board.swap();
+            //     self.search(&put_board, depth + 1);
+            // }
+
+            // let move_list = get_put_boards_fast2(board, legal_moves);
+            // for move_cand in move_list.iter() {
+            //     let mut put_board = board.clone();
+            //     put_board.player |= move_cand.legal_move;
+            //     put_board.player ^= move_cand.flip;
+            //     put_board.opponent ^= move_cand.flip;
+            //     put_board.swap();
+            //     self.search(&put_board, depth + 1);
+            // }
+        }
+        fn search2(&mut self, board: &mut Board, depth: u64) {
+            self.n_node += 1;
+
+            let legal_moves = board.put_able();
+            if legal_moves == 0 {
+                if board.opponent_put_able() == 0 {
+                    // End
+                    self.n_leaf_node += 1;
+                    self.n_end += 1;
+                    return;
+                }
+
+                if depth >= self.max_depth {
+                    self.n_leaf_node += 1;
+                    return;
+                }
+
+                let passed_board = {
+                    let mut b = board.clone();
+                    b.swap();
+                    b
+                };
+
+                let depth=  depth + if self.is_count_pass {1} else {0};
+                self.n_passed += 1;
+                return self.search(&passed_board, depth);
+            }
+
+            if depth >= self.max_depth {
+                self.n_leaf_node += 1;
+                return;
+            }
+
+            let mut legal_moves = legal_moves;
+            while legal_moves != 0 {
+                let position = (!legal_moves + 1) & legal_moves;
+                legal_moves &= legal_moves - 1;
+                let flip_bit = board.flip_bit(position);
+                let tmp = board.player ^ (flip_bit | position);
+                board.player = board.opponent ^ flip_bit;
+                board.opponent = tmp;
+                self.search(board, depth + 1);
+                let tmp = board.opponent ^ (flip_bit | position);
+                board.opponent = board.player ^ flip_bit;
+                board.player = tmp;
+            }
+
+        }
+        
+        fn run(&mut self) {
+            let mut board = Board::new();
+            self.search(&board, 0);
+            
+            // self.search2(&mut board, 0);
+        }
+
+    }
+    
+    #[test]
+    fn run_perft() {
+        let mut perft = Perft::new(1);
+        perft.is_count_pass = false;
+
+        let now = time::Instant::now();
+        println!(" depth | node       | leaf       | end        | passed     | time / s   ");
+        for i in 1..=15 {
+            perft.clear();
+            perft.max_depth = i;
+            perft.run();
+            println!(" {: >5} | {: >10} | {: >10} | {: >10} | {: >10} | {}",
+                        i, perft.n_node, perft.n_leaf_node, perft.n_end, perft.n_passed, now.elapsed().as_secs_f64());
+        }
+    }
 }

@@ -1,3 +1,5 @@
+use smallvec::SmallVec;
+
 use crate::board::*;
 use crate::eval::Evaluator;
 use crate::eval_search::*;
@@ -52,10 +54,7 @@ pub fn move_ordering_eval(board: &Board, mut legal_moves: u64, lv: i32, search: 
         if tt_best_move == put_place {
             SCORE_INF
         } else {
-            let main_search_selectivity_lv = search.selectivity_lv;
-            let e = -pvs_eval(&put_board, -SCORE_INF, SCORE_INF, lv-1, search);
-            search.selectivity_lv = main_search_selectivity_lv;
-            e
+            -negaalpha_eval(&put_board, -SCORE_INF, SCORE_INF, lv-1, search)
         };
         put_boards.push(PutBoard{eval: eval, board: put_board, put_place: put_place.trailing_zeros() as u8});
     }
@@ -99,11 +98,11 @@ pub fn move_ordering_ffs(board: &Board, mut legal_moves: u64, _search: &mut Sear
         let mut put_board = board.clone();
         put_board.put_piece_fast(put_place);
 
-        const mc: u64 = 0b1000000100000000000000000000000000000000000000000000000010000001_u64;
-        const mx: u64 = 0b0000000001000010000000000000000000000000000000000100001000000000_u64;
-        let ec = (board.player | mc).count_ones() as i32 - (board.opponent | mc).count_ones() as i32;
-        let ex = (board.player | mx).count_ones() as i32 - (board.opponent | mx).count_ones() as i32;
-        let eval = -(put_board.put_able().count_ones() as i32) + 2*ec - ex;
+        const MC: u64 = 0b1000000100000000000000000000000000000000000000000000000010000001_u64;
+        const MX: u64 = 0b0000000001000010000000000000000000000000000000000100001000000000_u64;
+        let ec = (board.player | MC).count_ones() as i32 - (board.opponent | MC).count_ones() as i32;
+        let ex = (board.player | MX).count_ones() as i32 - (board.opponent | MX).count_ones() as i32;
+        let eval = -(put_board.put_able().count_ones() as i32) + 2 * ec - ex;
         put_boards.push(PutBoard{eval: eval, board: put_board, put_place: put_place.trailing_zeros() as u8})
     }
 
@@ -140,6 +139,7 @@ fn sort_put_boards(put_boards: &mut [PutBoard]) {
         return;
     }
 
+    // n_board > 5
     let top_n = 5; // 最大で上位5つをソート
     for i in 0..top_n {
         let mut max_idx = i;
@@ -168,6 +168,52 @@ pub fn get_put_boards(board: &Board, mut legal_moves: u64) -> Vec<PutBoard>
 
     put_boards
 }
+
+#[derive(Copy, Clone)]
+pub struct PutBoardFast {
+    eval: i32,
+    pub legal_move: u64,
+    pub flip      : u64
+}
+
+const MAX_MOVES: usize = 35;
+#[inline(always)]
+pub fn get_put_boards_fast(board: &Board, mut legal_moves: u64) -> ([PutBoardFast; MAX_MOVES], usize)
+{
+    let mut put_boards: [PutBoardFast; MAX_MOVES] = [PutBoardFast{eval: 0, legal_move: 0, flip: 0}; MAX_MOVES];
+
+    let mut i = 0;
+    while legal_moves != 0 {
+        let legal_move = (!legal_moves + 1) & legal_moves;
+        legal_moves &= legal_moves - 1;
+        put_boards[i].legal_move = legal_move;
+        put_boards[i].flip = board.flip_bit(legal_move);
+        i+=1;
+    }
+
+    (put_boards, i)
+}
+
+const LIM_MOVES: usize = 2;
+#[inline(always)]
+pub fn get_put_boards_fast2(board: &Board, mut legal_moves: u64) -> SmallVec<[PutBoardFast; LIM_MOVES]>
+{
+    let mut put_boards = SmallVec::<[PutBoardFast; LIM_MOVES]>::with_capacity(legal_moves.count_ones() as usize);
+    
+    while legal_moves != 0 {
+        let legal_move = (!legal_moves + 1) & legal_moves;
+        legal_moves &= legal_moves - 1;
+        put_boards.push(PutBoardFast {
+            eval: 0,
+            legal_move,
+            flip: board.flip_bit(legal_move)
+        });
+    }
+
+    put_boards
+}
+
+
 
 
 #[inline(always)]

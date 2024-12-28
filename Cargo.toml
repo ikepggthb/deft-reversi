@@ -1,7 +1,7 @@
 [workspace]
 
-members = [
-    "deft-reversi-engine",
+members = [ "deft-reversi-cli",
+    "deft-reversi-engine", "deft-reversi-learn",
     "deft-reversi-web"
 ]
 

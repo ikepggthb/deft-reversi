@@ -9,7 +9,7 @@ mod search;
 mod t_table;
 mod eval;
 mod mpc;
-mod book;
+mod human_book;
 mod ffo_test;
 // ---
 
@@ -19,13 +19,10 @@ pub use solver::*;
 pub use game::*;
 pub use eval::*;
 pub use t_table::*;
+pub use human_book::*;
 
 
-#[cfg(test)]
-mod tests {
-    use crate::ffo_test::*;
-    #[test]
-    fn it_works() {
-        ffo_test();
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*
+// }

@@ -24,3 +24,24 @@ pub fn horizontal_mirror(bit: u64) -> u64 {
     let bit = ((bit >> 2) & 0x3333333333333333u64) | ((bit << 2) & 0xCCCCCCCCCCCCCCCCu64);
 				   ((bit >> 4) & 0x0F0F0F0F0F0F0F0Fu64) | ((bit << 4) & 0xF0F0F0F0F0F0F0F0u64)
 }
+
+#[test]
+fn test_transpose() {
+    let bit: u64 = 0b10000001_01000000_00100000_00010000_00001000_00000100_00000010_00000001; // 対角線が立っている盤面
+    let expected: u64 = 0b10000000_01000000_00100000_00010000_00001000_00000100_00000010_10000001; // 転置後
+    assert_eq!(transpose(bit), expected);
+}
+
+#[test]
+fn test_vertical_mirror() {
+    let bit: u64 = 0x00000000FFFFFFFF; // 上半分が空、下半分が埋まった盤面
+    let expected: u64 = 0xFFFFFFFF00000000; // 上下反転
+    assert_eq!(vertical_mirror(bit), expected);
+}
+
+#[test]
+fn test_horizontal_mirror() {
+    let bit: u64 = 0x8000000000000001; // 左端と右端が埋まった盤面
+    let expected: u64 = 0x0100000000000080; // 左右反転
+    assert_eq!(horizontal_mirror(bit), expected);
+}
