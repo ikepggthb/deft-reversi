@@ -27,6 +27,7 @@ export class BoardUI {
         if (status) {
             this.drawStones(status);
             this.drawMoves(status);
+            this.drawHumanOpeningNextPosition(status);
             this.drawScores(status);
             this.drawLastMoveMarker(status.last_move);
         }
@@ -108,6 +109,7 @@ export class BoardUI {
                 );
             }
         }
+
     }
 
     drawScore(position, score, color) {
@@ -124,9 +126,21 @@ export class BoardUI {
         );
     }
 
+    drawHumanOpeningNextPosition(status) {
+        if (status.human_opening_next_position !== undefined && status.human_opening_next_position !== null && status.eval) {
+            const row = status.human_opening_next_position % 8;
+            const col = Math.floor(status.human_opening_next_position / 8);
+            this.ctx.fillStyle = "#F07050";
+            this.ctx.fillRect(
+                this.X + this.padding + row * (this.cellSize + this.cellMargin),
+                this.Y + this.padding + col * (this.cellSize + this.cellMargin),
+                this.cellSize,
+                this.cellSize
+            );
+        }
+    }
     drawScores(status) {
         if (!status.eval || !status.legal_moves) return;
-
         const legal_moves = status.legal_moves.split("").reverse().join("");
 
         let max_score = -64;

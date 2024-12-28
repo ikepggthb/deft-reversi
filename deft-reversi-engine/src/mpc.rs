@@ -15,55 +15,58 @@ pub struct Selectivity {
     pub percent: i32
 }
 
-pub const NO_MPC: i32 = 0;
 pub const SELECTIVITY_LV_MAX: i32 = 6;
-const N_SELECTIVITY_LV: usize = 7;
+pub const NO_MPC: i32 = SELECTIVITY_LV_MAX;
+pub const N_SELECTIVITY_LV: usize = 7;
 
 // 0 ~ 6
-// 0 : No MPC
-// 1 : 99%
-// 2 : 98%
+// 0 : 68%
+// 1 : 77%
+// 2 : 85%
 // 3 : 95%
-// 4 : 85%
-// 5 : 77%
-// 6 : 68%
+// 4 : 98%
+// 5 : 99%
+// 6 : No MPC
 pub const SELECTIVITY: [Selectivity;N_SELECTIVITY_LV] =
-[
+[    
     Selectivity {
         // level: 0,
-        value: 0.0,
-        percent: 100
+        value: 1.0,
+        percent: 68
     },
-    Selectivity {
+    Selectivity{
         // level: 1,
-        value: 2.576,
-        percent: 99
+        value: 1.20,
+        percent: 77
     },
+
     Selectivity {
-       //  level: 2,
-        value: 2.326,
-        percent: 98
+        // level: 2,
+        value: 1.43953,
+        percent: 85
     },
+
     Selectivity {
         // level: 3,
         value: 1.960,
         percent: 95
     },
     Selectivity {
-        // level: 4,
-        value: 1.43953,
-        percent: 85
+       //  level: 4,
+        value: 2.326,
+        percent: 98
     },
-    Selectivity{
+    Selectivity {
         // level: 5,
-        value: 1.20,
-        percent: 77
+        value: 2.576,
+        percent: 99
     },
     Selectivity {
         // level: 6,
         value: 0.0,
-        percent: 68
+        percent: 100
     },
+
 ];
 
 pub struct MpcParams {
@@ -234,10 +237,6 @@ pub fn multi_prob_cut(
         {panic!();}
     }
     
-    if search.selectivity_lv > SELECTIVITY_LV_MAX {
-        search.selectivity_lv = SELECTIVITY_LV_MAX;
-    }
-
     let mpc_search_lv : i32 = mpc_params.lv;
     let a             : f64 = mpc_params.a;
     let b             : f64 = mpc_params.b;
@@ -275,7 +274,7 @@ pub fn multi_prob_cut(
 fn nws_eval_0_selectivity_lv(board: &Board, alpha: i32, lv: i32, search : &mut Search) -> i32
 {
     let main_search_selectivity_lv = search.selectivity_lv;
-    search.selectivity_lv = 0;
+    search.selectivity_lv = NO_MPC;
     let score = nws_eval(board, alpha, lv, search);
     search.selectivity_lv = main_search_selectivity_lv;
     score

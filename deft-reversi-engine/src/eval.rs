@@ -387,12 +387,12 @@ impl Evaluator {
     {
         self.feature_bit = [[0; N_ROTATION]; N_PATTERN];
         
-        let p: u64 = board.bit_board[board.next_turn];
-        let o: u64 = board.bit_board[board.next_turn ^1];
+        let p: u64 = board.player;
+        let o: u64 = board.opponent;
         
-        for pattern in 0..N_PATTERN {
+        (0..N_PATTERN).for_each(|pattern| {
             let fbit = &mut self.feature_bit[pattern];
-            for rotation in 0..N_ROTATION {
+            (0..N_ROTATION).for_each(|rotation| {
                 for coord_i in 0..FEATURE_COORD[pattern].n_pattern_square {
                     let coord = FEATURE_COORD[pattern].feature_coord[rotation][coord_i as usize];
                     
@@ -402,19 +402,21 @@ impl Evaluator {
                     let color = 2 * (1 & p >> coord) + (1 & o >> coord);
                     fbit[rotation] = fbit[rotation] * 3u16 + color as u16;
                 }
-            }
-        }
+            });
+        });
     }
 
     #[inline(always)]
-    pub fn clac_eval(&self, board: &Board) -> i32
+    pub fn calc_eval(&self, board: &Board) -> i32
     {
         let move_count = board.move_count();
         let phase = move_count as usize / 2;
 
         let mut evaluation  = 0;
         
-        let eval_scores = &self.eval[board.next_turn][phase];
+        // todo: eval の実装を見直す。
+        // let eval_scores = &self.eval[board.next_turn][phase];
+        let eval_scores = &self.eval[board.empties_count() as usize % 2][phase];
         for pattern in 0..N_PATTERN {
             // let e = &eval_scores.pattern_eval[pattern];
             // let f = &self.feature_bit[pattern];
@@ -442,7 +444,7 @@ impl Evaluator {
     pub fn clac_features_eval(&mut self, board: &Board) -> i32{
 
         self.clac_features(board);
-        let mut e = self.clac_eval(board);
+        let mut e = self.calc_eval(board);
 
         if e > 0 {e += SCORE_RATE/2;} else if e < 0 {e -= SCORE_RATE/2;}
         e /= SCORE_RATE;

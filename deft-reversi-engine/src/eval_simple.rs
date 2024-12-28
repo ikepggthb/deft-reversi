@@ -20,8 +20,8 @@ pub fn simplest_eval (board: &Board) -> i32
 
     let mut place_score = 0;
 
-    let player_board = board.bit_board[board.next_turn];
-    let opponent_board = board.bit_board[board.next_turn ^1];
+    let player_board = board.player;
+    let opponent_board = board.opponent;
 
     for i in 0..4 {
         if ((player_board & m1[i]) | (opponent_board & m2[i])) == m1[i] {
@@ -59,7 +59,7 @@ pub fn simplest_eval (board: &Board) -> i32
     
     let player_mobility = board.put_able().count_ones() as i32;
     let mut board = board.clone();
-    board.next_turn ^= 1;
+    board.swap();
     let opponent_mobility = board.put_able().count_ones() as i32;
 
     let mobility_score = player_mobility - opponent_mobility;

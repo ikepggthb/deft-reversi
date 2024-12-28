@@ -9,6 +9,8 @@ mod search;
 mod t_table;
 mod eval;
 mod mpc;
+mod human_book;
+mod ffo_test;
 // ---
 
 pub use board::*;
@@ -17,6 +19,10 @@ pub use solver::*;
 pub use game::*;
 pub use eval::*;
 pub use t_table::*;
+pub use human_book::*;
 
 
-
+// #[cfg(test)]
+// mod tests {
+//     use super::*
+// }

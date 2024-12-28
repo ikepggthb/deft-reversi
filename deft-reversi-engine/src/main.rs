@@ -22,13 +22,13 @@ use ffo_test::*;
 // use learn::*;
 use eval::*;
 
-use console::*;
+// use console::*;
 
 
 fn main () {
     // npc_perfect_learn();
     // npc_learn(10);
     // learning();
-    // ffo_test();
-    console_game();
+    ffo_test();
+    // console_game();
 }

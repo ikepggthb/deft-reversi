@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use wasm_bindgen::prelude::*;
 
 use deft_reversi_engine::*;
@@ -5,25 +7,12 @@ use serde::{Serialize, Deserialize};
 use serde_wasm_bindgen::*;
 use rand::Rng;
 
-// use js_sys::{Promise, Error};
-// wasm console.log()を実行
 // https://rustwasm.github.io/wasm-bindgen/examples/console-log.html
-
-// First up let's take a look of binding `console.log` manually, without the
-// help of `web_sys`. Here we're writing the `#[wasm_bindgen]` annotations
-// manually ourselves, and the correctness of our program relies on the
-// correctness of these annotations!
-
 #[wasm_bindgen]
 extern "C" {
-    // Use `js_namespace` here to bind `console.log(..)` instead of just
-    // `log(..)`
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
 
-    // The `console.log` is quite polymorphic, so we can bind it with multiple
-    // signatures. Note that we need to use `js_name` to ensure we always call
-    // `log` in JS.
     #[wasm_bindgen(js_namespace = console, js_name = log)]
     fn log_u32(a: u32);
 
@@ -32,14 +21,7 @@ extern "C" {
     fn log_many(a: &str, b: &str);
 }
 
-// Next let's define a macro that's like `println!`, only it works for
-// `console.log`. Note that `println!` doesn't actually work on the wasm target
-// because the standard library currently just eats all output. To get
-// `println!`-like behavior in your app you'll likely want a macro like this.
-
 macro_rules! console_log {
-    // Note that this is using the `log` function imported above during
-    // `bare_bones`
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
@@ -53,8 +35,11 @@ pub fn add(a: i32, b: i32) -> i32 {
 struct App {
     game: Game,
     solver: Solver,
+    opening_book: OpeningBook,
     rng: rand::rngs::ThreadRng,
-    first_move_played: bool
+    lv: i32,
+    human_opening: Option<usize>,
+    
 }
 
 
@@ -66,7 +51,9 @@ pub struct StateForJS {
     flipping: String,
     next_turn: String,
     eval: Option<Vec<i32>>,
-    last_move: Option<i32>
+    last_move: Option<i32>,
+    human_opening_next_position: Option<i32>,
+    current_human_opening: Option<String>
 }
 
 
@@ -75,8 +62,16 @@ pub struct StateForJS {
 impl App {
     #[allow(clippy::new_without_default)]
     // #[wasm_bindgen(constructor)]
-    pub async fn new(eval_string: &str) -> Self {
+    pub async fn new(eval_string: &str, opening_string: &str) -> Self {
+        console_log!("{}", opening_string);
         let evaluator = match Evaluator::read_string(eval_string) {
+            Ok(e) => e,
+            Err(e) => {
+                console_log!("Evaluatorを読み込む際にエラーが置きました。{}",e);
+                panic!();
+            }
+        };
+        let opening_book = match OpeningBook::from_str(opening_string) {
             Ok(e) => e,
             Err(e) => {
                 console_log!("Evaluatorを読み込む際にエラーが置きました。{}",e);
@@ -86,37 +81,38 @@ impl App {
         Self {
             game: Game::new(),
             solver: Solver::new(evaluator),
+            opening_book,
             rng: rand::thread_rng(),
-            first_move_played: false
+            lv: 1,
+            human_opening: None
         }
     }
 
     pub fn new_game(&mut self) {
         self.game = Game::new();
-        self.first_move_played = false;
     }
 
     #[wasm_bindgen]
     pub fn set_ai_level(&mut self, lv: i32){
-        self.solver.set_ai_level(lv);
+        self.lv = lv;
     }
 
+    #[wasm_bindgen]
+    pub fn set_human_opening(&mut self, index: i32){
+        self.human_opening = Some(index as usize);
+    }
 
-    fn get_eval_score(&mut self) -> Result<i32, &'static str> {
-        match self.solver.solve(self.game.get_board()) {
-            Ok(d) => {
-                Ok(d.eval)
-            },
-            Err(_) => {
-                Err("Invalid position")
-            }
+    fn get_eval_score(&mut self) -> i32 {
+        if !self.is_pass() && !self.is_end() {
+            self.solver.solve(&self.game.current.board, self.lv).eval
+        } else {
+            0
         }
     }
 
     fn get_move_scores(&mut self, lv: i32) -> [i32; 64] {
         let mut scores = [0; 64];
-        self.set_ai_level(lv);
-        let b = self.game.get_board();
+        let b = &self.game.current.board;
         let legal_moves =  b.put_able();
         for i in 0..64 {
             let mask = 1u64 << i;
@@ -124,23 +120,7 @@ impl App {
                 let position = position_bit_to_num(mask).unwrap();
                 let mut b = b.clone();
                 b.put_piece(mask);
-                let result = 
-                match self.solver.solve_no_iter(&b) {
-                    Ok(r) => {
-                        // console_log!("    score         : {:+}", r.eval);
-                        // console_log!("    best move     : {  }", position_bit_to_str(r.best_move).unwrap());
-                        // console_log!("    node          : {  }", r.searched_nodes);
-                        r
-                    },
-                    Err(e) => {
-                        if let SolverErr::NoMove = e {
-                            console_log!("solve err: No move");
-                            return [-100; 64];
-                        }
-                        return [0; 64];
-                    }
-                };
-                
+                let result = self.solver.solve(&b, lv);                
                 scores[position as usize] = -result.eval;
                 
             }
@@ -152,51 +132,78 @@ impl App {
     pub fn get_state(&mut self, eval_level: Option<i32>) -> JsValue  {
         let eval= eval_level.map(|lv| self.get_move_scores(lv).to_vec());
 
-        let b = self.game.get_board();
+        let b = &self.game.current.board;
         let legal_moves =  b.put_able();
 
         let next_turn = {
-            if b.next_turn == Board::BLACK {
+            if self.game.current.turn == Board::BLACK {
                 "Black"
             } else {
                 "White"
             }
         };
 
+        let (black, white) = {
+            if self.game.current.turn == Board::BLACK {
+                (b.player, b.opponent)
+            } else { 
+                (b.opponent, b.player)
+            }
+        };
+
+        let human_opening_next_position = {
+            if let Some(name_index) = self.human_opening {
+                if self.game.current.board == Board::new() {
+                    Some(37) // f5
+                } else if let Ok(Some(p)) = self.opening_book.opening_move(&self.game.current.board, name_index) {
+                    match position_bit_to_num(p) {
+                        Ok(p) => {
+                            Some(p as i32)
+                        },
+                        Err(_) => {
+                            console_log!("Err: human_opening_next_position can not get");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        let current_human_opening = self.opening_book.name_str_from_board(&self.game.current.board).map(|s| s.to_string());
+
         let s = StateForJS { 
-            black: format!("{:064b}", b.bit_board[Board::BLACK]),
-            white: format!("{:064b}", b.bit_board[Board::WHITE]),
+            black: format!("{:064b}", black),
+            white: format!("{:064b}", white),
             legal_moves: format!("{:064b}", legal_moves),
             flipping: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             next_turn: next_turn.to_string(),
             eval,
-            last_move: self.game.get_last_move()
+            last_move: self.game.get_last_move(),
+            human_opening_next_position,
+            current_human_opening
         };
 
         serde_wasm_bindgen::to_value(&s).unwrap()
     }
 
     #[wasm_bindgen]
-    pub fn get_eval_scores(&mut self) -> i32 {
-        if !self.is_pass() && !self.is_end() {
-            self.get_eval_score().unwrap()
-        } else {
-            0
-        }
-    }
-
-    #[wasm_bindgen]
     pub fn put(&mut self, i: i32) {
-        self.first_move_played = true;
         let position_bit = position_num_to_bit(i).unwrap();
         let position_str = position_bit_to_str(position_bit).unwrap();
         self.game.put(position_str.as_str());
+        if let Some(s) = self.opening_book.name_str_from_board(&self.game.current.board) {
+            console_log!("opening: {}", s);
+        }
     }
 
     #[wasm_bindgen]
     pub fn is_legal_move(&mut self, i: i32) -> bool {
         let position_bit = position_num_to_bit(i).unwrap();
-        return self.game.get_board().put_able() & position_bit != 0
+        return self.game.current.board.put_able() & position_bit != 0
     }
 
     #[wasm_bindgen]
@@ -215,53 +222,49 @@ impl App {
     }
 
     #[wasm_bindgen]
-    pub fn undo(&mut self) {
-        self.game.undo();
+    pub fn undo(&mut self) -> bool {
+        self.game.undo()
+                 .is_ok()
     }
 
     #[wasm_bindgen]
-    pub fn redo(&mut self) {
-        self.game.undo();
+    pub fn redo(&mut self) -> bool{
+        self.game.redo()
+                 .is_ok()
     }
 
     #[wasm_bindgen]
     pub fn ai_put(&mut self, lv: i32) {
-
-        if !self.first_move_played {
-            let first_moves = ["f5", "e6", "d3", "c4"];
-            let x: i32 = self.rng.gen();
-            let positon = first_moves[x as usize % first_moves.len()];
+        if self.game.current.board == Board::new() {
+            const FIRST_MOVES: [&str; 4] = ["f5", "e6", "d3", "c4"];
+            let i = self.rng.gen_range(0..FIRST_MOVES.len());
+            let positon = FIRST_MOVES[i];
             console_log!("{}", positon);
-            let put = self.game.put(positon);
-            match put {
-                Ok(_) => (),
-                Err(e) => console_log!("{}", e)
-            };
-            
-            self.first_move_played = true;
+            self.game.put(positon).unwrap_or_else(|e| {console_log!("{}", e);});
             return;
         }
-        
-        self.set_ai_level(lv);
-        let b = self.game.get_board();
-        let solver_result = self.solver.solve(b);
-        match solver_result {
-            Ok(r) => {
-                let p = position_bit_to_str(r.best_move).unwrap();
-                let put = self.game.put(p.as_str());
-                match put {
-                    Ok(_) => (),
-                    Err(e) => console_log!("{}", e)
-                };
-                console_log!("    lv            : {}", lv);
-                console_log!("    score         : {:+}", r.eval);
-                console_log!("    best move     : {  }", position_bit_to_str(r.best_move).unwrap());
-                console_log!("    node          : {  }", r.searched_nodes);
-            },
-            Err(_) => {
-                console_log!("Solver Err");
+
+        if let Some(opening_name_index) = self.human_opening {
+            if let Some(n) = self.opening_book.opening_names.get(opening_name_index){
+                console_log!("human opening name: {}", n);
+            } else {
+                console_log!("Err: invalid human opening index");
+            };
+            if let Ok(Some(p)) = self.opening_book.opening_move(&self.game.current.board, opening_name_index) {
+                console_log!("ai: human opening move");
+                self.game.put(&position_bit_to_str(p).unwrap()).unwrap_or_else(|e| {console_log!("{}", e);});
+                return;
             }
         }
+
+        
+        let r = self.solver.solve( &self.game.current.board, lv);
+        let p = position_bit_to_str(r.best_move).unwrap();
+        self.game.put(p.as_str()).unwrap_or_else(|e| {console_log!("{}", e);});
+        console_log!("    lv            : {}", lv);
+        console_log!("    score         : {:+}", r.eval);
+        console_log!("    best move     : {  }", position_bit_to_str(r.best_move).unwrap());
+        console_log!("    node          : {  }", r.searched_nodes);
     }
 
     #[wasm_bindgen]
@@ -269,7 +272,4 @@ impl App {
         self.game.record()
     }
 
-    pub fn do_over(&mut self) {
-        self.game.do_over();
-    }
 }

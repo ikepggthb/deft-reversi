@@ -44,8 +44,8 @@ impl TranspositionTable {
 
     #[inline(always)]
     pub fn hash_board(&self, board: &Board) -> usize{
-        let player_board_bit = board.bit_board[board.next_turn];
-        let opponent_board_bit = board.bit_board[board.next_turn ^ 1];
+        let player_board_bit = board.player;
+        let opponent_board_bit = board.opponent;
 
         (
             self.rand_table[(player_board_bit & 0xFFFF) as usize] ^
@@ -66,9 +66,18 @@ impl TranspositionTable {
         const MAX:i32 = i8::MAX as i32;
         const MIN:i32 = i8::MIN as i32;
         assert!(MIN <= min && min <= max && max <= MAX, 
-            " in function t_table::add() , min: {min}, max: {min}, Lv: {lv}, best move: {best_move}");
+            " in function t_table::add() , min: {min}, max: {max}, Lv: {lv}, best move: {best_move}");
     }
         let index = self.hash_board(board);
+        if self.table[index].is_some() {
+            let index = (index + 1) % (1 << 22);
+            if let Some(p) = &self.table[index] {
+                let registered_lv = p.lv as i32;
+                if lv < registered_lv || (lv == registered_lv && selectivity_lv < p.selectivity_lv as i32)  {
+                    return;
+                }
+            }
+        }
         self.table[index] = Some(TableData {
             board: board.clone(),
             max: max as i8,
@@ -83,12 +92,23 @@ impl TranspositionTable {
     pub fn get(&self, board: &Board) -> Option<&TableData>{
         let index = self.hash_board(board);
 
-        self.table[index].as_ref().filter(
+        let mut td = self.table[index].as_ref().filter(
             |&x| 
-                x.board.bit_board[Board::BLACK] == board.bit_board[Board::BLACK]
-                && x.board.bit_board[Board::WHITE] == board.bit_board[Board::WHITE]
-                && x.board.next_turn == board.next_turn
-        )
+                x.board.player == board.player
+                && x.board.opponent == board.opponent
+        );
+
+
+        if td.is_none() {
+            let index = (index + 1) % (1 << 22);
+            td = self.table[index].as_ref().filter(
+                |&x| 
+                    x.board.player == board.player
+                    && x.board.opponent == board.opponent
+            );
+        }
+
+        td
     }
 
     pub fn count_used_tt(&self) -> usize {

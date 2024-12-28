@@ -3,7 +3,7 @@
 
 Deft Reversi is a strong Othello program. It consists of the following two parts:
 
-- [Deft Reversi Web](https://az.recazbowl.net/deft_web/)
+- [Deft Reversi Web](https://az.recazbowl.net/deft-reversi-web/index.html)
 
   This is the implementation of the Othello UI part.
 

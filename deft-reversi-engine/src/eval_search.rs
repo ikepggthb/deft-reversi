@@ -44,12 +44,12 @@ pub fn negaalpha_eval(board: &Board, mut alpha: i32, beta: i32, lv: i32, search:
     // 合法手がない
     if legal_moves == 0 {
         let mut board = board.clone();
-        board.next_turn ^= 1; //pass
+        board.swap();
         if board.put_able() == 0 { // passしても置くところがない == ゲーム終了
             search.eval_search_node_count += 1;
             search.eval_search_leaf_node_count += 1;
             
-            board.next_turn ^= 1;
+            board.swap();
             return solve_score(&board);
             //return  -implest_eval(&board);
         }
@@ -59,10 +59,6 @@ pub fn negaalpha_eval(board: &Board, mut alpha: i32, beta: i32, lv: i32, search:
     // 探索範囲: [alpha, beta]
     search.eval_search_node_count += 1;
 
-    // match eval_search_mpc(board, alpha, beta, lv, search) {
-    //     ProbCutResult::Cut(score) => {return score},
-    //     ProbCutResult::FAIL => ()
-    // }
 
     let mut best_score = -SCORE_INF;
     
@@ -113,9 +109,9 @@ pub fn nws_eval_simple(board: &Board, alpha: i32, lv: i32, search: &mut Search) 
 
     if legal_moves == 0 {
         let mut board = board.clone();
-        board.next_turn ^= 1; //pass
+        board.swap(); //pass
         if board.put_able() == 0 { // passしても置くところがない == ゲーム終了
-            board.next_turn ^= 1;
+            board.swap();
             search.eval_search_node_count += 1;
             search.eval_search_leaf_node_count += 1;
             return solve_score(&board);
@@ -187,9 +183,9 @@ pub fn pvs_eval_simple(board: &Board, alpha: i32,beta: i32, lv: i32, search: &mu
     // pass or end ?
     if legal_moves == 0 { // 合法手がないならば
         let mut board = board.clone();
-        board.next_turn ^= 1; //pass
+        board.swap(); //pass
         if board.put_able() == 0 { // passしても合法手がない -> ゲーム終了
-            board.next_turn ^= 1;
+            board.swap();
             search.eval_search_node_count += 1;
             search.eval_search_leaf_node_count += 1;
             return solve_score(&board);
@@ -279,9 +275,9 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut Search) -> 
 
     if legal_moves == 0 {
         let mut board = board.clone();
-        board.next_turn ^= 1; //pass
+        board.swap(); //pass
         if board.put_able() == 0 { // passしても置くところがない == ゲーム終了
-            board.next_turn ^= 1;
+            board.swap();
             search.eval_search_node_count += 1;
             search.eval_search_leaf_node_count += 1;
             return solve_score(&board);
@@ -349,7 +345,7 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut Search) -> 
 ///   スコアは現在のプレイヤーから見た盤面の評価値を表す。
 ///
 /// # 例
-/// ```
+/// ```ignore
 /// let board = Board::new(); // オセロの初期盤面を生成
 /// let mut search = Search::new();
 /// let alpha = -SCORE_INF; // 初期アルファ値の設定
@@ -385,9 +381,9 @@ pub fn pvs_eval ( board     : &Board,
     // pass or end ?
     if legal_moves == 0 { // 合法手がないならば
         let mut board = board.clone();
-        board.next_turn ^= 1; //pass
+        board.swap(); //pass
         if board.put_able() == 0 { // passしても合法手がない -> ゲーム終了
-            board.next_turn ^= 1;
+            board.swap();
             search.eval_search_node_count += 1;
             search.eval_search_leaf_node_count += 1;
             return solve_score(&board);
