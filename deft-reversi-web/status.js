@@ -14,8 +14,6 @@ export class StatusUI {
 
         this.drawBackground();
         this.drawStatusArea();
-        this.drawButtons();
-        this.setButtons();
     }
 
 
@@ -45,29 +43,8 @@ export class StatusUI {
         );
     }
 
-    setButtons() {
-        this.buttons = [
-            {
-                label: "New Game",
-            },
-            {
-                label: "Undo"
-            },
-            {
-                label: "Redo"
-            },
-            {
-                label: "Hint"
-            },
-            {
-                label: "Hint\n(Deep)"
-            },
-            // {
-            //     name: "open setting window",
-            //     clickEvent: null,
-            //     label: "設定"
-            // }
-        ];
+    setButtons(buttons) {
+        this.buttons = buttons;
 
         // ボタンの描画
         this.buttonAreaX = this.X + this.padding;
@@ -79,6 +56,7 @@ export class StatusUI {
         this.buttonCount = this.buttons.length;
         this.buttonWidth = (this.buttonAreaW - (this.buttonCount + 1) * this.buttonPadding) / this.buttonCount;
         this.buttonHeight = this.buttonAreaH - this.buttonPadding * 2;
+        this.drawButtons();
     }
 
     drawButtons() {
@@ -89,7 +67,7 @@ export class StatusUI {
         }
     }
 
-    isClickButton(x, y) {
+    clickButton(x, y) {
         for (let i = 0; i < this.buttonCount; i++) {
             const buttonX = this.buttonAreaX + this.buttonPadding + (this.buttonWidth + this.buttonPadding) * i;
             const buttonY = this.buttonAreaY + this.buttonPadding;
@@ -97,7 +75,7 @@ export class StatusUI {
             const inX = buttonX <= x && x <= buttonX + this.buttonWidth;
             const inY = buttonY <= y && y <= buttonY + this.buttonHeight;
             if(inX && inY){
-                return i;
+                this.buttons[i].onClick();
             }
         }
         return null;

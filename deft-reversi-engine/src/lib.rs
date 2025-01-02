@@ -11,6 +11,7 @@ mod eval;
 mod mpc;
 mod human_book;
 mod ffo_test;
+mod count_last_flip;
 // ---
 
 pub use board::*;
@@ -22,7 +23,17 @@ pub use t_table::*;
 pub use human_book::*;
 
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    pub use ffo_test::*;
+    
+    #[test]
+    fn run () {
+        // npc_perfect_learn();
+        // npc_learn(10);
+        // learning();
+        ffo_test();
+        // console_game();
+    }
+}

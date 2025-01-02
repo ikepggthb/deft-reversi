@@ -134,7 +134,7 @@ impl EvaluatorForLearn {
         let mut e = eval::Evaluator::new();
         for i in 0..2 {
             for j in 0..N_PHASE {
-                let ei16: &mut crate::EvaluationScores = &mut e.eval[i][j];
+                let ei16= &mut e.eval[i][j];
                 let ef64: &EvaluationScoresForLearn = &self.eval[i][j];
 
                 debug_assert_eq!(ei16.pattern_eval.len(), ef64.pattern_eval.len(), "ei16.pattern_eval and ef64.pattern_eval have different lengths");

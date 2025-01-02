@@ -2,7 +2,7 @@
 ![image](https://github.com/ikepggthb/deft_web/assets/61868325/4c8cfa95-0b81-42c8-b24c-cb7c4855c0a1)
 
 ## AIと遊ぶ
-https://az.recazbowl.net/deft_web/
+https://az.recazbowl.net/deft-reversi-web/index.html
 
 ## AI部分のソースコード
 [Deft Reversi Engine (Github)](https://github.com/ikepggthb/deft-reversi-engine)

@@ -4,7 +4,6 @@ use wasm_bindgen::prelude::*;
 
 use deft_reversi_engine::*;
 use serde::{Serialize, Deserialize};
-use serde_wasm_bindgen::*;
 use rand::Rng;
 
 // https://rustwasm.github.io/wasm-bindgen/examples/console-log.html
@@ -63,7 +62,6 @@ impl App {
     #[allow(clippy::new_without_default)]
     // #[wasm_bindgen(constructor)]
     pub async fn new(eval_string: &str, opening_string: &str) -> Self {
-        console_log!("{}", opening_string);
         let evaluator = match Evaluator::read_string(eval_string) {
             Ok(e) => e,
             Err(e) => {

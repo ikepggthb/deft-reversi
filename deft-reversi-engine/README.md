@@ -8,7 +8,7 @@ Rustで書かれたオセロAI。
 ## Deft Reversi Web
 Deft Reversi Engineを搭載したオセロゲームは、以下のウェブサイトでプレイできます
 
-[ Deft Reversi](https://az.recazbowl.net/deft_web/)
+[ Deft Reversi](https://az.recazbowl.net/deft-reversi-web/index.html)
 
 ソースコード: 
 [ Deft Reversi (Github)](https://github.com/ikepggthb/deft_web)
