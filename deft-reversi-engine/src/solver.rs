@@ -1,6 +1,6 @@
 use std::cmp;
 
-use evaluator_const::SCORE_INF;
+use crate::eval::evaluator_const::SCORE_INF;
 
 use crate::board::*;
 use crate::mpc::NO_MPC;
@@ -10,7 +10,7 @@ use crate::mpc::SELECTIVITY_LV_MAX;
 use crate::perfect_search::*;
 use crate::eval_search::*;
 use crate::search::*;
-use crate::eval::*;
+use crate::eval::Evaluator;
 
 
 pub enum SolverType {
@@ -183,7 +183,7 @@ impl Solver {
         let mut predict_score = self.search.eval_func.clac_features_eval(board);    
         
         // Eval Solver
-        self.search.selectivity_lv =  if lv > 10 { 0 } else { 6 };
+        self.search.selectivity_lv =  if lv > 10 { 0 } else { SELECTIVITY_LV_MAX };
 
         // 序盤の評価関数の学習データが良くないので
         if board.move_count() < 20 && max_depth_eval_solver > 14 {

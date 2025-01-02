@@ -310,6 +310,21 @@ function count(str){
     return c;
 };
 
+
+class Modal {
+    constructor() {
+        this.aiToggle = document.getElementById('ai-toggle');
+        this.aiLevelSetting = document.getElementById('ai-level-setting');
+        this.turnSetting = document.getElementById('turn-setting');
+        this.modal = document.getElementById('modal');
+        this.startButton = document.getElementById('start-button');
+        this.aiLevelSlider = document.getElementById('ai-level-slider');
+        this.levelDisplay = document.getElementById('level-display');
+        this.openingSetting = document.getElementById('opening-setting');
+        this.openingSelect = document.getElementById('opening-strategy');
+    }   
+}
+
 class EventDispatcher {
     constructor() {
         this.listeners = {};
@@ -342,6 +357,7 @@ class UI {
 
         this.board = new BoardUI();
         this.statusUI = new StatusUI();
+        this.setButtons();
 
         this.eventDispatcher = eventDispatcher;
         this.cv.addEventListener('click', this.handleClick.bind(this));
@@ -591,6 +607,32 @@ class UI {
         this.ctx.fillText("パス", centerX, centerY);
     }
 
+    setButtons() {
+        const buttons = [
+            {
+                label: "New Game",
+                onClick: (() => { this.showModalWindow();}).bind(this)
+            },
+            {
+                label: "Undo",
+                onClick: (() => { this.eventDispatcher.dispatchEvent('doOverClick'); }).bind(this)
+            },
+            {
+                label: "Redo",
+                onClick: (() => { this.eventDispatcher.dispatchEvent('redoClick'); }).bind(this)
+            },
+            {
+                label: "Hint",
+                onClick: (() => { this.eventDispatcher.dispatchEvent('switchShowEvalClick'); }).bind(this)
+            },
+            {
+                label: "Hint\n(Deep)",
+                onClick: (() => { this.eventDispatcher.dispatchEvent('deepHintClick'); }).bind(this)
+            },
+        ];
+
+        this.statusUI.setButtons(buttons);
+    }
     handleClick(event) {
         const rect = this.cv.getBoundingClientRect();
 
@@ -607,28 +649,8 @@ class UI {
             return;
         }
 
-        const clickedButton = this.statusUI.isClickButton(x, y);
-        if (clickedButton !== undefined) {
-            switch (clickedButton) {
-                case 0:
-                    this.showModalWindow();
-                    break;
-                case 1:
-                    this.eventDispatcher.dispatchEvent('doOverClick');
-                    break;
-                case 2:
-                    this.eventDispatcher.dispatchEvent('redoClick');
-                    break;
-                case 3:
-                    this.eventDispatcher.dispatchEvent('switchShowEvalClick');
-                    break;
-                case 4:
-                    this.eventDispatcher.dispatchEvent('deepHintClick');
-                    break;
-                default:
-                    break;
-            }
-        }
+        // buttonClick
+        this.statusUI.clickButton(x, y);
     }
 
     render(status, blackPlayerName, whitePlayerName) {
@@ -636,7 +658,6 @@ class UI {
         this.board.update(status);
         this.statusUI.update(status, blackPlayerName, whitePlayerName);
     }
-
 
 }
 
@@ -738,15 +759,12 @@ export class Game {
         }).bind(this));
         this.eventDispatcher.addEventListener('setHumanOpening', (async (f) => { 
             this.isThinking = true;
-
-            console.log("opening index: ", f);
             if (f !== "none") {
                 const name_index =  Number(f);
                 if (!isNaN(name_index)) {
                     await this.engine.setHumanOpening(f);
                 }
             }
-            
             this.isThinking = false;
          }).bind(this));
         

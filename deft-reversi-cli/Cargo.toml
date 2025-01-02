@@ -4,3 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+deft_reversi_engine = { path = "../deft-reversi-engine" } 

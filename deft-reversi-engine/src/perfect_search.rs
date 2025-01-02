@@ -1,8 +1,11 @@
+use crate::board;
 use crate::board::*;
+use crate::count_last_flip::count_last_flip;
 use crate::search::*;
 
 
 use crate::mpc::*;
+
 
 const SCORE_INF: i32 = i8::MAX as i32;
 
@@ -27,8 +30,8 @@ const SWITCH_EMPTIES_MOVE_ORDER: i32 = 14;
 /// `pvs_perfect`, `nws_perfect`でのmove orderingにおいて、評価関数とalpha-beta探索を用いた`move_ordering_eval`を使用する場合の、探索の深さ
 const MOVE_ORDERING_EVAL_LEVEL_T: [i32; 61] = [
     0,
-    0,  0,  0,  0,  0,  0,  0,  0,  1,  1,
-    1,  1,  2,  2,  2,  2,  2,  2,  2,  2,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+    0,  0,  0,  0,  0,  1,  1,  2,  2,  2,
     2,  2,  3,  3,  3,  3,  3,  3,  3,  3,
     3,  3,  3,  3,  3,  3,  3,  3,  4,  4,
     4,  4,  4,  4,  4,  4,  4,  4,  4,  4,
@@ -109,6 +112,47 @@ pub fn solve_score_0_empties(board: &Board) -> i32
     2 * (board.player.count_ones() as i32) - 64
 }
 
+#[inline(always)]
+pub fn solve_score_1_empties(board: &Board, alpha: i32) -> i32
+{
+    let x = (board.player | board.opponent).trailing_ones();
+    let n_flips  = count_last_flip(x as usize, board.player);
+	let mut score = 2 * board.player.count_ones() as i32 - 64 + 2 + n_flips;
+
+	if n_flips == 0 {
+		if score <= 0 {
+			score -= 2;
+			if score > alpha { // lazy cut-off
+				let n_flips = count_last_flip(x as usize, !board.player);
+				score -= n_flips;
+			}
+		} else if score > alpha { // lazy cut-off
+            let n_flips = count_last_flip(x as usize, !board.player);
+            if n_flips != 0 {
+                score -= n_flips + 2;
+            }
+        }
+	}
+	score
+}
+
+#[test]
+fn s1(){
+    let board = Board{
+        player: 0x40003812220a0400,
+
+        opponent: 0x3fffc7edddf5fbff,
+
+    };    
+    let x = (board.player | board.opponent).trailing_ones();
+    println!("pos: {}", x);
+    
+    // let n = solve_score_1_empties(&board, 0);
+    let n = count_last_flip( 63, board.player);
+    println!("result: {}", n);
+}
+
+
 /// NegaAlpha法を用いて、完全読みを行い、オセロの盤面のスコアを計算する。
 ///
 /// 探索速度を向上させるため、葉に近いノードで使用される。
@@ -134,6 +178,13 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
         search.perfect_search_node_count += 1;
         search.perfect_search_leaf_node_count += 1;
         return  solve_score_0_empties(board);
+    }
+
+    // 空きマスが残り1のとき
+    if (board.player | board.opponent).count_zeros() == 1{
+        search.perfect_search_node_count += 2;
+        search.perfect_search_leaf_node_count += 1;
+        return  solve_score_1_empties(board, alpha);
     }
     
     let mut legal_moves = board.put_able();
@@ -366,6 +417,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32
         return -nws_perfect(&passed_board, -beta, search);
     }
 
+    let td = search.t_table.get(board);
     if let Some(score) = t_table_cut_off(board, &mut alpha, &mut beta,60, search.selectivity_lv, &mut search.t_table) {
         return score;
     }

@@ -2,7 +2,7 @@ use crate::{
     board::*,
     search::*,
     eval_search::*,
-    evaluator_const::*
+    eval::evaluator_const::*
 };
 
 pub enum ProbCutResult {
@@ -82,13 +82,13 @@ pub const PERFECT_SEARCH_MPC_SEARCH_PARAMS: [Option<MpcParams>; 61] = [
     None, // 2
     None, // 3
     None, // 4
-    Some(MpcParams {lv: 0, a: 1.0074043224061988, b: 0.1117791373894379, e_std: 5.0233053841493716 }),
-    Some(MpcParams {lv: 0, a: 1.0112166361063544, b: -0.14253698534316595, e_std: 5.297556997020212 }),
-    Some(MpcParams {lv: 1, a: 1.005571548442915, b: -1.126906934250505, e_std: 5.25480233054599 }),
-    Some(MpcParams {lv: 2, a: 1.0062276059335247, b: -0.014437236487932381, e_std: 4.941724779937074 }),
-    Some(MpcParams {lv: 1, a: 1.0065756943172985, b: -1.682073302318966, e_std: 5.725485180912335 }),
-    Some(MpcParams {lv: 2, a: 1.0097842599977092, b: 0.2906818429547857, e_std: 5.396171804842368 }),
-    Some(MpcParams {lv: 3, a: 1.0093185115319934, b: -1.6145334082191898, e_std: 5.22706268772541 }),
+    None, // Some(MpcParams {lv: 0, a: 1.0074043224061988, b: 0.1117791373894379, e_std: 5.0233053841493716 }),
+    None, // Some(MpcParams {lv: 0, a: 1.0112166361063544, b: -0.14253698534316595, e_std: 5.297556997020212 }),
+    None, //Some(MpcParams {lv: 1, a: 1.005571548442915, b: -1.126906934250505, e_std: 5.25480233054599 }),
+    None, //Some(MpcParams {lv: 2, a: 1.0062276059335247, b: -0.014437236487932381, e_std: 4.941724779937074 }),
+    None, //Some(MpcParams {lv: 1, a: 1.0065756943172985, b: -1.682073302318966, e_std: 5.725485180912335 }),
+    None, //Some(MpcParams {lv: 2, a: 1.0097842599977092, b: 0.2906818429547857, e_std: 5.396171804842368 }),
+    None, // Some(MpcParams {lv: 3, a: 1.0093185115319934, b: -1.6145334082191898, e_std: 5.22706268772541 }),
     Some(MpcParams {lv: 4, a: 1.0124526095640112, b: 0.48931748030193045, e_std: 4.914869788936018 }),
     Some(MpcParams {lv: 3, a: 1.0133739578163794, b: -1.7543169526476112, e_std: 5.389238400539998 }),
     Some(MpcParams {lv: 4, a: 1.0139957691780979, b: 0.44804332300410943, e_std: 5.086939241974191 }),
@@ -143,10 +143,10 @@ pub const PERFECT_SEARCH_MPC_SEARCH_PARAMS: [Option<MpcParams>; 61] = [
 ];
 
 
-const MPC_START_LEVEL_EVAL_SEARCH: i32 = 5;
+const MPC_START_LEVEL_EVAL_SEARCH: i32 = 4;
 pub const EVAL_SEARCH_MPC_SEARCH_LV: [i32; 61] = [
     0,
-    0, 0, 0, 0, 1, 2, 1, 2, 3, 4,
+    0, 0, 0, 0, 1, 2, 1, 2, 1, 2,
     3, 4, 3, 4, 5, 6, 5, 6, 5, 6,
     5, 6, 5, 6, 7, 8, 7, 8, 7, 8,
     7, 8, 7, 8, 7, 8, 7, 8, 7, 8,

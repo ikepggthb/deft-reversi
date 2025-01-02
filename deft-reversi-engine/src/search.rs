@@ -1,9 +1,9 @@
 use smallvec::SmallVec;
 
-use crate::board::*;
+use crate::{board::*, simplest_eval, TableData};
 use crate::eval::Evaluator;
-use crate::eval_search::*;
-use crate::t_table::*;
+use crate::eval_search::negaalpha_eval;
+use crate::t_table::TranspositionTable;
 use crate::mpc::NO_MPC;
 
 const SCORE_INF: i32 = i8::MAX as i32;
@@ -53,6 +53,8 @@ pub fn move_ordering_eval(board: &Board, mut legal_moves: u64, lv: i32, search: 
         let eval = 
         if tt_best_move == put_place {
             SCORE_INF
+        } else if lv < 1 {
+            -simplest_eval(&put_board)
         } else {
             -negaalpha_eval(&put_board, -SCORE_INF, SCORE_INF, lv-1, search)
         };
@@ -215,6 +217,27 @@ pub fn get_put_boards_fast2(board: &Board, mut legal_moves: u64) -> SmallVec<[Pu
 
 
 
+
+#[inline(always)]
+pub fn t_table_cut_off_td(
+    alpha   :       &mut i32,
+    beta    :       &mut i32,
+    lv      :       i32,
+    selectivity_lv: i32,
+    table_data :       Option<TableData> ) -> Option<i32>
+{
+    if let Some(t) = table_data {
+        if t.lv as i32 != lv || t.selectivity_lv as i32 != selectivity_lv {return None;}
+        let max = t.max as i32;
+        let min = t.min as i32;
+        if max <= *alpha {return Some(max);}
+        else if min >= *beta {return Some(min);}
+        else if max == min {return Some(max);}
+        if min > *alpha {*alpha = min};
+        if max < *beta {*beta = max};
+    }
+    None
+}
 
 #[inline(always)]
 pub fn t_table_cut_off(

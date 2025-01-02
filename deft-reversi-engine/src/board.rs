@@ -75,37 +75,6 @@ pub struct Board {
     pub player: u64,
     pub opponent: u64
 }
-use std::fmt;
-impl fmt::Display for Board {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut s = String::new();
-
-        // 列番号の表示
-        s.push_str("  "); // インデント
-        for col in 0..Board::SIZE {
-            s.push((b'A' + col as u8) as char); // A, B, C...
-        }
-        s.push('\n');
-
-        for row in 0..Board::SIZE {
-            // 行番号の表示
-            s.push_str(&format!("{:2} ", row + 1)); // 1, 2, 3...
-
-            for col in 0..Board::SIZE {
-                let mask = 1 << (row * Board::SIZE + col);
-                if (self.player & mask) != 0 {
-                    s.push('o');
-                } else if (self.opponent & mask) != 0 {
-                    s.push('x');
-                } else {
-                    s.push('.');
-                }
-            }
-            s.push('\n');
-        }
-        write!(f, "{}", s)
-    }
-}
 
 pub enum PutPieceErr {
     NoValidPlacement,
@@ -279,17 +248,11 @@ impl Board {
     #[inline(always)]
     pub fn put_piece_fast(&mut self, put_mask: u64)
     {
-        // ひっくり返す箇所を計算
         let flip_bit = self.flip_bit(put_mask);
         
-        // 石を置く
-        self.player |= put_mask;
-
-        // ひっくり返す
-        self.player ^= flip_bit; // BLACK
+        self.player ^= (flip_bit | put_mask); // BLACK
         self.opponent ^= flip_bit; // WHITE
 
-        // 次のターンにする
         self.swap();
     }
 
@@ -521,15 +484,18 @@ impl Board {
 
 }
 
+
+#[inline(always)]
+pub fn pos_b_2_n_fast(bit: u64) -> i32 {
+    bit.trailing_zeros() as i32
+}
+
 pub fn position_bit_to_num(bit: u64) -> Result<u8, &'static str> {
-    for i in 0..64 {
-        let mask = 1u64 << i;
-        if bit == mask {
-            return Ok(i);
-        }
+    if bit.count_ones() != 1 {
+        return Err("Invalid position bit")
     }
 
-    Err("Invalid position bit")
+    Ok(bit.trailing_zeros() as u8)
 }
 
 #[inline(always)]

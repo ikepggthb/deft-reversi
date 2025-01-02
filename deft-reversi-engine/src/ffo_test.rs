@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::board::*;
 use crate::solver::*;
-use crate::eval::*;
+use crate::eval::Evaluator;
 
 pub fn ffo_test() -> Result<(),  std::io::Error> {
 

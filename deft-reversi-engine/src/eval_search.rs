@@ -39,6 +39,11 @@ pub fn negaalpha_eval(board: &Board, mut alpha: i32, beta: i32, lv: i32, search:
         return search.eval_func.clac_features_eval(board);
     }
 
+    match eval_search_mpc(board, alpha, beta, lv, search) {
+        ProbCutResult::Cut(score) => {return score},
+        ProbCutResult::FAIL => ()
+    }
+
     let mut legal_moves = board.put_able();
 
     // 合法手がない

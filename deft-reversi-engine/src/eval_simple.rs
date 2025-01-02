@@ -58,9 +58,7 @@ pub fn simplest_eval (board: &Board) -> i32
         } else {0};
     
     let player_mobility = board.put_able().count_ones() as i32;
-    let mut board = board.clone();
-    board.swap();
-    let opponent_mobility = board.put_able().count_ones() as i32;
+    let opponent_mobility = board.opponent_put_able().count_ones() as i32;
 
     let mobility_score = player_mobility - opponent_mobility;
 
