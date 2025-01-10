@@ -257,6 +257,15 @@ impl Board {
     }
 
     #[inline(always)]
+    pub fn put_piece_fast_from_flip_bit(&mut self, put_mask: u64, flip_bit: u64)
+    {
+        self.player ^= (flip_bit | put_mask); // BLACK
+        self.opponent ^= flip_bit; // WHITE
+
+        self.swap();
+    }
+
+    #[inline(always)]
     pub fn opponent_put_able(&self) -> u64 {
         unsafe {
             let pb = self as *const Board as *mut Board;

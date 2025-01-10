@@ -5,7 +5,7 @@ pub mod eval_search;
 pub mod solver;
 pub mod game;
 mod bit;
-mod search;
+pub mod search;
 mod t_table;
 mod eval;
 mod mpc;
@@ -21,6 +21,7 @@ pub use game::*;
 pub use eval::*;
 pub use t_table::*;
 pub use human_book::*;
+pub use search::*;
 
 
 #[cfg(test)]
