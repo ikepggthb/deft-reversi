@@ -1,6 +1,8 @@
 use rand::Rng;
 use crate::board::*;
 
+const TABLE_SIZE: usize = 1 << 23;
+
 #[derive(Clone)]
 pub struct TableData {
     pub board: Board,
@@ -8,18 +10,18 @@ pub struct TableData {
     pub min: i8,
     pub lv: u8,
     pub selectivity_lv : u8,
-    pub best_move: u8
+    pub best_move: u8,
+    is_old: bool,
 }
 
-const TABLE_SIZE: usize = 1 << 22;
 pub struct TranspositionTable {
     table: Vec::<Option<TableData>>,
-    rand_table: [u32; 1<<16]
+    rand_table: Box<[u32; 1<<16]>
 }
 
 impl Default for TranspositionTable {
     fn default() -> Self {
-        let rand_table: [u32; 1<<16] = Self::gen_rand_table();
+        let rand_table: Box<[u32; 1<<16]> = Self::gen_rand_table();
         Self {
             table: vec![None; TABLE_SIZE],
             rand_table
@@ -31,9 +33,9 @@ impl TranspositionTable {
     pub fn new() -> Self{
         Self::default()
     }
-    fn gen_rand_table() -> [u32; 1<<16] {
+    fn gen_rand_table() -> Box<[u32; 1<<16]> {
         let mut rng = rand::thread_rng();
-        let mut table = [0; 1<<16];
+        let mut table = Box::new([0; 1<<16]);
     
         for ti in table.iter_mut() {
             *ti = rng.gen_range(0..TABLE_SIZE as u32);
@@ -68,12 +70,12 @@ impl TranspositionTable {
         assert!(MIN <= min && min <= max && max <= MAX, 
             " in function t_table::add() , min: {min}, max: {max}, Lv: {lv}, best move: {best_move}");
     }
-        let index = self.hash_board(board);
+        let mut index = self.hash_board(board);
         if self.table[index].is_some() {
-            let index = (index + 1) % (1 << 22);
+            index = (index + 1) % TABLE_SIZE;
             if let Some(p) = &self.table[index] {
                 let registered_lv = p.lv as i32;
-                if lv < registered_lv || (lv == registered_lv && selectivity_lv < p.selectivity_lv as i32)  {
+                if (!p.is_old) && ( lv < registered_lv || (lv == registered_lv && selectivity_lv < p.selectivity_lv as i32) ) {
                     return;
                 }
             }
@@ -84,7 +86,8 @@ impl TranspositionTable {
             min: min as i8,
             lv: lv as u8,
             selectivity_lv: selectivity_lv as u8,
-            best_move
+            best_move,
+            is_old: false
         });
     }
 
@@ -100,7 +103,7 @@ impl TranspositionTable {
 
 
         if td.is_none() {
-            let index = (index + 1) % (1 << 22);
+            let index = (index + 1) % TABLE_SIZE;
             td = self.table[index].as_ref().filter(
                 |&x| 
                     x.board.player == board.player
@@ -109,6 +112,12 @@ impl TranspositionTable {
         }
 
         td
+    }
+
+    pub fn set_old(&mut self) {
+        for t in self.table.iter_mut().flatten() {
+            t.is_old = true;
+        }
     }
 
     pub fn count_used_tt(&self) -> usize {

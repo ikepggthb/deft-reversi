@@ -121,7 +121,7 @@ pub const MASK_D: [[u64; 64]; 2] = [
 	]
 ];
 
-
+#[inline(always)]
 pub fn count_last_flip(pos: usize, p: u64) -> i32 {
     let x = pos & 0x07;
     let y = pos >> 3;

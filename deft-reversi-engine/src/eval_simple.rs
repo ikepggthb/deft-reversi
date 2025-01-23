@@ -57,8 +57,8 @@ pub fn simplest_eval (board: &Board) -> i32
             opponent_piece_count - player_piece_count
         } else {0};
     
-    let player_mobility = board.put_able().count_ones() as i32;
-    let opponent_mobility = board.opponent_put_able().count_ones() as i32;
+    let player_mobility = board.moves().count_ones() as i32;
+    let opponent_mobility = board.opponent_moves().count_ones() as i32;
 
     let mobility_score = player_mobility - opponent_mobility;
 
@@ -76,7 +76,7 @@ pub fn simplest_eval (board: &Board) -> i32
 
 #[allow(dead_code)]
 pub fn put_random_piece(board: &mut Board) -> Result<(), PutPieceErr> {
-    let legal_moves = board.put_able();
+    let legal_moves = board.moves();
     if legal_moves == 0 {
         return Err(PutPieceErr::NoValidPlacement);
     }
@@ -95,30 +95,5 @@ pub fn put_random_piece(board: &mut Board) -> Result<(), PutPieceErr> {
     let random_index = rng.gen_range(0..count);
     let selected_bit_index = bit_indices[random_index as usize];
 
-    board.put_piece(1 << selected_bit_index)
+    board.put(1 << selected_bit_index)
 }
-
-pub fn put_eval_one_simple (board: &mut Board) -> Result<(), PutPieceErr> {
-    let legal_moves = board.put_able();
-    if legal_moves == 0 {
-        return Err(PutPieceErr::NoValidPlacement);
-    }
-
-    let mut max_score = i32::MIN;
-    let mut max_score_put_place = 0;
-    let mut moves = legal_moves;
-    while  moves != 0 {
-        let mut virt_board = board.clone();
-        let put_place = (!moves + 1) & moves; //最も小さい位のbitをマスクする
-        moves &= moves - 1; // 最も小さい位のbitを消す
-        virt_board.put_piece(put_place)?;   
-        let current_score: i32 = -simplest_eval(&virt_board);
-        if current_score > max_score {
-            max_score = current_score;
-            max_score_put_place = put_place;
-        }
-    }
-
-    board.put_piece(max_score_put_place)
-}
-

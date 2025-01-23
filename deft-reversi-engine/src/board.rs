@@ -68,8 +68,6 @@ pub const NO_COORD: u8 = u8::MAX;
 pub const TERMINATED: u8 = u8::MAX;
 pub const PASS: u8 = 64;
 
-
-
 #[derive(Clone,PartialEq,Eq,PartialOrd,Ord)]
 pub struct Board {
     pub player: u64,
@@ -110,15 +108,9 @@ impl Board {
         self.opponent = 0x0000001008000000u64;
     }
 
-    pub fn put_piece_from_coord(&mut self, y: i32, x: i32) -> Result<(), PutPieceErr>
+    pub fn put(&mut self, put_mask: u64) -> Result<(), PutPieceErr>
     {
-        let mask = 1 << (y * Board::SIZE + x);
-        self.put_piece(mask)
-    }
-
-    pub fn put_piece(&mut self, put_mask: u64) -> Result<(), PutPieceErr>
-    {
-        if self.put_able() & put_mask == 0 {
+        if self.moves() & put_mask == 0 {
             return Err(PutPieceErr::NoValidPlacement);
         }
         self.put_piece_fast(put_mask);
@@ -250,29 +242,28 @@ impl Board {
     {
         let flip_bit = self.flip_bit(put_mask);
         
-        self.player ^= (flip_bit | put_mask); // BLACK
-        self.opponent ^= flip_bit; // WHITE
-
+        self.player ^= flip_bit | put_mask;
+        self.opponent ^= flip_bit; 
         self.swap();
     }
 
     #[inline(always)]
     pub fn put_piece_fast_from_flip_bit(&mut self, put_mask: u64, flip_bit: u64)
     {
-        self.player ^= (flip_bit | put_mask); // BLACK
-        self.opponent ^= flip_bit; // WHITE
+        self.player ^= flip_bit | put_mask;
+        self.opponent ^= flip_bit;
 
         self.swap();
     }
 
     #[inline(always)]
-    pub fn opponent_put_able(&self) -> u64 {
+    pub fn opponent_moves(&self) -> u64 {
         unsafe {
             let pb = self as *const Board as *mut Board;
 
             // (*pb).swap();だとうまく動作しません(原因不明)
             std::ptr::swap(&mut (*pb).player, &mut (*pb).opponent);
-            let legal_moves = (*pb).put_able();
+            let legal_moves = (*pb).moves();
             std::ptr::swap(&mut (*pb).player, &mut (*pb).opponent);
 
             legal_moves
@@ -281,38 +272,38 @@ impl Board {
 
 
     #[inline(always)]
-    pub fn put_able(&self) -> u64 {
-        let P = self.player;
-        let O = self.opponent;
+    pub fn moves(&self) -> u64 {
+        let p = self.player;
+        let o = self.opponent;
 
         let mut moves: u64;
-        let mut mO: u64;
+        
         let mut flip1: u64;
         let mut flip7: u64;
         let mut flip9: u64;
         let mut flip8: u64;
-        let mut pre1: u64;
+        
         let mut pre7: u64;
         let mut pre9: u64;
         let mut pre8: u64;
 
         // 水平方向マスク処理用(7,9,1方向)のo
-        mO = O & 0x7e7e7e7e7e7e7e7e_u64;
+        let m_o: u64 = o & 0x7e7e7e7e7e7e7e7e_u64;
         
         // 正方向（左上7、左下9、下8、右1）
-        flip7  = mO & (P << 7);
-        flip9  = mO & (P << 9);
-        flip8  = O & (P << 8);
-        flip1  = mO & (P << 1);
+        flip7  = m_o & (p << 7);
+        flip9  = m_o & (p << 9);
+        flip8  = o & (p << 8);
+        flip1  = m_o & (p << 1);
 
-        flip7 |= mO & (flip7 << 7);
-        flip9 |= mO & (flip9 << 9);
-        flip8 |= O  & (flip8 << 8);
-        moves  = mO + flip1; 
+        flip7 |= m_o & (flip7 << 7);
+        flip9 |= m_o & (flip9 << 9);
+        flip8 |= o  & (flip8 << 8);
+        moves  = m_o + flip1; 
 
-        pre7 = mO & (mO << 7);
-        pre9 = mO & (mO << 9);
-        pre8 = O & (O << 8);
+        pre7 = m_o & (m_o << 7);
+        pre9 = m_o & (m_o << 9);
+        pre8 = o & (o << 8);
 
         flip7 |= pre7 & (flip7 << 14);
         flip9 |= pre9 & (flip9 << 18);
@@ -327,20 +318,20 @@ impl Board {
         moves |= flip8 << 8;
 
         // 逆方向（右下7、右上9、上8、左1）
-        flip7 = mO & (P >> 7);
-        flip9 = mO & (P >> 9);
-        flip8 = O & (P >> 8);
-        flip1 = mO & (P >> 1);
+        flip7 = m_o & (p >> 7);
+        flip9 = m_o & (p >> 9);
+        flip8 = o & (p >> 8);
+        flip1 = m_o & (p >> 1);
 
-        flip7 |= mO & (flip7 >> 7);
-        flip9 |= mO & (flip9 >> 9);
-        flip8 |= O  & (flip8 >> 8);
-        flip1 |= mO & (flip1 >> 1);
+        flip7 |= m_o & (flip7 >> 7);
+        flip9 |= m_o & (flip9 >> 9);
+        flip8 |= o  & (flip8 >> 8);
+        flip1 |= m_o & (flip1 >> 1);
 
         pre7 >>= 7;
         pre9 >>= 9;
         pre8 >>= 8;
-        pre1 = mO & (mO >> 1);
+        let pre1: u64 = m_o & (m_o >> 1);
 
         flip7 |= pre7 & (flip7 >> 14);
         flip9 |= pre9 & (flip9 >> 18);
@@ -358,11 +349,11 @@ impl Board {
         moves |= flip1 >> 1;
 
         // 空きマスでマスク
-        moves & !(P | O)
+        moves & !(p | o)
     }
 
 
-    pub fn get_all_symmetries(&self) -> Vec<Board>
+    pub fn all_symmetries(&self) -> Vec<Board>
     {
         let mut symmetries = Vec::new();
 
@@ -384,7 +375,7 @@ impl Board {
         }
         symmetries
     }
-    pub fn get_all_rotations(&self) -> Vec<Board>
+    pub fn all_rotations(&self) -> Vec<Board>
     {
         let mut rotations = Vec::new();
 
@@ -438,45 +429,10 @@ impl Board {
     }
 
     pub fn get_unique_board(&self) -> Board{
-        self.get_all_symmetries()
+        self.all_symmetries()
                     .into_iter()
                     .min()
                     .unwrap()
-    }
-
-    pub fn print_board_string(&self, player: usize)  -> String {
-        let mut s = String::new();
-         s += "next turn: ";
-        
-        if player == Board::BLACK {
-            s += "X";
-        } else {
-            s += "O";
-        }
-        s += "\n";
-        for y in 0..8 {
-            for x in 0..8 {
-                let mask = 1u64 << (y * 8 + x);
-                if self.player & mask != 0 {
-                    if player == Board::BLACK {
-                        s += "X";
-                    } else {
-                        s += "O";
-                    }
-                } else if self.opponent & mask != 0 {
-                    if player == Board::BLACK {
-                        s += "O";
-                    } else {
-                        s += "X";
-                    }
-                } else {
-                    s += ".";
-                }
-            }
-            s += "\n";
-        }
-
-        s
     }
 
     #[inline(always)]
@@ -591,181 +547,4 @@ pub fn position_bit_to_str(bit: u64) -> Result<String, &'static str> {
     };
 
     Ok(format!("{}{}", col_char, row_char))
-}
-
-
-//cargo test --lib --release -- board::perft --nocapture
-#[cfg(test)]
-mod perft {
-    use crate::search::{get_put_boards, get_put_boards_fast, get_put_boards_fast2};
-    use super::*;
-    use std::time;
-
-    struct Perft {
-        max_depth     : u64,
-        is_count_pass : bool,
-        n_node        : u64,
-        n_leaf_node   : u64,
-        n_passed      : u64,
-        n_end         : u64, // leaf node を含む
-    }
-
-    impl Perft {        
-        fn new(depth: u64) -> Self{
-            Self {
-                max_depth     : depth,
-                is_count_pass : false,
-                n_node        : 0,
-                n_leaf_node   : 0,
-                n_passed      : 0,
-                n_end         : 0
-            }
-        }
-
-        fn clear(&mut self) {
-            *self = Self::new(self.max_depth);
-        }
-
-
-        
-        fn search(&mut self, board: &Board, depth: u64) {
-            self.n_node += 1;
-
-            let legal_moves = board.put_able();
-            if legal_moves == 0 {
-                if board.opponent_put_able() == 0 {
-                    // End
-                    self.n_leaf_node += 1;
-                    self.n_end += 1;
-                    return;
-                }
-
-                if depth >= self.max_depth {
-                    self.n_leaf_node += 1;
-                    return;
-                }
-
-                let passed_board = {
-                    let mut b = board.clone();
-                    b.swap();
-                    b
-                };
-
-                let depth=  depth + if self.is_count_pass {1} else {0};
-                self.n_passed += 1;
-                return self.search(&passed_board, depth);
-            }
-
-            if depth >= self.max_depth {
-                self.n_leaf_node += 1;
-                return;
-            }
-
-            let mut legal_moves = legal_moves;
-            while legal_moves != 0 {
-                let put_place = (!legal_moves + 1) & legal_moves;
-                legal_moves &= legal_moves - 1;
-                let mut put_board = board.clone();
-                put_board.put_piece_fast(put_place);
-                self.search(&put_board, depth + 1);
-            }
-
-            // let boards = get_put_boards(board, legal_moves);
-            // for b in boards.iter() {
-            //     self.search(&b.board, depth + 1);
-            // }
-
-            // let (move_list, n_moves) = get_put_boards_fast(board, legal_moves);
-            // for move_cand in move_list.iter().take(n_moves) {
-            //     let mut put_board = board.clone();
-            //     put_board.player |= move_cand.legal_move;
-            //     put_board.player ^= move_cand.flip;
-            //     put_board.opponent ^= move_cand.flip;
-            //     put_board.swap();
-            //     self.search(&put_board, depth + 1);
-            // }
-
-            // let move_list = get_put_boards_fast2(board, legal_moves);
-            // for move_cand in move_list.iter() {
-            //     let mut put_board = board.clone();
-            //     put_board.player |= move_cand.legal_move;
-            //     put_board.player ^= move_cand.flip;
-            //     put_board.opponent ^= move_cand.flip;
-            //     put_board.swap();
-            //     self.search(&put_board, depth + 1);
-            // }
-        }
-        fn search2(&mut self, board: &mut Board, depth: u64) {
-            self.n_node += 1;
-
-            let legal_moves = board.put_able();
-            if legal_moves == 0 {
-                if board.opponent_put_able() == 0 {
-                    // End
-                    self.n_leaf_node += 1;
-                    self.n_end += 1;
-                    return;
-                }
-
-                if depth >= self.max_depth {
-                    self.n_leaf_node += 1;
-                    return;
-                }
-
-                let passed_board = {
-                    let mut b = board.clone();
-                    b.swap();
-                    b
-                };
-
-                let depth=  depth + if self.is_count_pass {1} else {0};
-                self.n_passed += 1;
-                return self.search(&passed_board, depth);
-            }
-
-            if depth >= self.max_depth {
-                self.n_leaf_node += 1;
-                return;
-            }
-
-            let mut legal_moves = legal_moves;
-            while legal_moves != 0 {
-                let position = (!legal_moves + 1) & legal_moves;
-                legal_moves &= legal_moves - 1;
-                let flip_bit = board.flip_bit(position);
-                let tmp = board.player ^ (flip_bit | position);
-                board.player = board.opponent ^ flip_bit;
-                board.opponent = tmp;
-                self.search(board, depth + 1);
-                let tmp = board.opponent ^ (flip_bit | position);
-                board.opponent = board.player ^ flip_bit;
-                board.player = tmp;
-            }
-
-        }
-        
-        fn run(&mut self) {
-            let mut board = Board::new();
-            self.search(&board, 0);
-            
-            // self.search2(&mut board, 0);
-        }
-
-    }
-    
-    #[test]
-    fn run_perft() {
-        let mut perft = Perft::new(1);
-        perft.is_count_pass = false;
-
-        let now = time::Instant::now();
-        println!(" depth | node       | leaf       | end        | passed     | time / s   ");
-        for i in 1..=15 {
-            perft.clear();
-            perft.max_depth = i;
-            perft.run();
-            println!(" {: >5} | {: >10} | {: >10} | {: >10} | {: >10} | {}",
-                        i, perft.n_node, perft.n_leaf_node, perft.n_end, perft.n_passed, now.elapsed().as_secs_f64());
-        }
-    }
 }

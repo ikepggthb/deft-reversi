@@ -10,7 +10,6 @@ mod t_table;
 mod eval;
 mod mpc;
 mod human_book;
-mod ffo_test;
 mod count_last_flip;
 // ---
 
@@ -22,19 +21,18 @@ pub use eval::*;
 pub use t_table::*;
 pub use human_book::*;
 pub use search::*;
+pub use mpc::{SELECTIVITY, SELECTIVITY_LV_MAX, N_SELECTIVITY_LV, NO_MPC};
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    pub use ffo_test::*;
     
     #[test]
     fn run () {
         // npc_perfect_learn();
         // npc_learn(10);
         // learning();
-        ffo_test();
         // console_game();
     }
 }

@@ -1,6 +1,4 @@
 use crate::board::*;
-use crate::eval::*;
-use crate::t_table::*;
 
 
 pub struct Game {
@@ -39,7 +37,7 @@ where
     Ok(())
 }
 
-fn count_record(record: &str) -> Result<usize, &'static str> {
+pub fn count_record(record: &str) -> Result<usize, &'static str> {
     if !record.is_ascii() {
         return Err("Record contains non-ASCII characters");
     }
@@ -74,7 +72,7 @@ impl Game {
     }
     
     fn update_new_state(&mut self, new_board: Board, put_place: u8, turn: usize) {
-        self.undo_stack.push(State { board: self.current.board.clone(), put_place: put_place, turn: self.current.turn});
+        self.undo_stack.push(State { board: self.current.board.clone(), put_place, turn: self.current.turn});
         self.redo_stack.clear();
         self.current.board = new_board;
         self.current.put_place = NO_COORD;
@@ -113,7 +111,7 @@ impl Game {
 
         let position_bit = position_str_to_bit(positon)?;
 
-        match b.put_piece(position_bit) {
+        match b.put(position_bit) {
             Ok(()) => {
                 self.update_new_state(b.clone(), position_bit_to_num(position_bit)?, self.current.turn^1);
             },
@@ -124,7 +122,7 @@ impl Game {
 
     pub fn is_pass(&self) -> bool {
         let b = &self.current.board;
-        b.put_able().count_ones() == 0 && b.opponent_put_able().count_ones() != 0
+        b.moves().count_ones() == 0 && b.opponent_moves().count_ones() != 0
     }
 
     pub fn pass(&mut self) {
@@ -137,7 +135,7 @@ impl Game {
 
     pub fn is_end(&self) -> bool {
         let b = &self.current.board;
-        b.put_able().count_ones() == 0 && b.opponent_put_able().count_ones() == 0
+        b.moves().count_ones() == 0 && b.opponent_moves().count_ones() == 0
     }
 
     pub fn record(&self) -> String {
