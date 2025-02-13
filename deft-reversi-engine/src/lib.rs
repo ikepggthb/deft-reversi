@@ -11,6 +11,8 @@ mod eval;
 mod mpc;
 mod human_book;
 mod count_last_flip;
+mod get_moves;
+mod flip;
 // ---
 
 pub use board::*;

@@ -48,4 +48,6 @@ Deft Reversi is a strong Othello program. It consists of the following two parts
     - Used board patterns and the difference in the number of legal moves as features.
 
 ## License
-[MIT License](https://opensource.org/license/mit/).
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
+
+For more details, please refer to the [LICENSE](LICENSE) file.

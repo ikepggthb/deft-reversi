@@ -1,4 +1,4 @@
-use crate::bit::*;
+use crate::{bit::*, flip, get_moves::get_moves};
 
 pub const A1: u8 = 0;
 pub const B1: u8 = 1;
@@ -64,9 +64,9 @@ pub const E8: u8 = 60;
 pub const F8: u8 = 61;
 pub const G8: u8 = 62;
 pub const H8: u8 = 63;
-pub const NO_COORD: u8 = u8::MAX;
-pub const TERMINATED: u8 = u8::MAX;
 pub const PASS: u8 = 64;
+pub const NO_COORD: u8 = 65;
+
 
 #[derive(Clone,PartialEq,Eq,PartialOrd,Ord)]
 pub struct Board {
@@ -91,8 +91,6 @@ impl Default for Board {
 impl Board {
 
     pub const SIZE: i32 = 8;
-    pub const BLACK: usize = 0;
-    pub const WHITE: usize = 1;
 
     pub fn new() -> Self {
         Self::default()
@@ -101,6 +99,14 @@ impl Board {
     #[inline(always)]
     pub fn swap(&mut self) {
         (self.player, self.opponent) = (self.opponent, self.player);
+    }
+
+    
+    #[inline(always)]
+    pub fn swapped_board(&self) -> Board {
+        let mut b = self.clone();
+        b.swap();
+        b
     }
 
     pub fn clear(&mut self) {
@@ -121,121 +127,15 @@ impl Board {
     pub fn flip_bit(&self, x: u64) -> u64 {
         let p: u64 = self.player;
         let o: u64 = self.opponent;
-        let mut flip = 0u64;
-
-        // 左方向 (x << 1)
-        {
-            let m_o = o & 0x7e7e7e7e7e7e7e7e;
-            let mut f = (x << 1) & m_o;
-            f |= (f << 1) & m_o;
-            let pre = m_o & (m_o << 1);
-            f |= (f << 2) & pre;
-            f |= (f << 2) & pre;
-            let outflank = p & (f << 1);
-            f &= -((outflank != 0) as i64) as u64;
-            flip |= f;
+        
+        #[cfg(target_feature = "avx2")]
+        unsafe {
+            flip::flip_avx2(x.trailing_zeros() as usize, p, o)
         }
-
-        // 右方向 (x >> 1)
-        {
-            let m_o = o & 0x7e7e7e7e7e7e7e7e;
-            let mut f = (x >> 1) & m_o;
-            f |= (f >> 1) & m_o;
-            let pre = m_o & (m_o >> 1);
-            f |= (f >> 2) & pre;
-            f |= (f >> 2) & pre;
-            let outflank = p & (f >> 1);
-            f &= -((outflank != 0) as i64) as u64;
-            flip |= f;
-        }
-
-        // 上方向 (x << 8)
-        {
-            let m_o = o & 0xffffffffffffff00;
-            let mut f = (x << 8) & m_o;
-            f |= (f << 8) & m_o;
-            let pre = m_o & (m_o << 8);
-            f |= (f << 16) & pre;
-            f |= (f << 16) & pre;
-            let outflank = p & (f << 8);
-            f &= -((outflank != 0) as i64) as u64;
-            flip |= f;
-        }
-
-        // 下方向 (x >> 8)
-        {
-            let m_o = o & 0xffffffffffffff00;
-            let mut f = (x >> 8) & m_o;
-            f |= (f >> 8) & m_o;
-            let pre = m_o & (m_o >> 8);
-            f |= (f >> 16) & pre;
-            f |= (f >> 16) & pre;
-            let outflank = p & (f >> 8);
-            f &= -((outflank != 0) as i64) as u64;
-            flip |= f;
-        }
-
-        // 斜め左上・右下方向 (x << 7, x >> 7)
-        {
-            let m_o = o & 0x007e7e7e7e7e7e00;
-
-            // 左上方向 (x << 7)
-            {
-                let mut f = (x << 7) & m_o;
-                f |= (f << 7) & m_o;
-                let pre = m_o & (m_o << 7);
-                f |= (f << 14) & pre;
-                f |= (f << 14) & pre;
-                let outflank = p & (f << 7);
-                f &= -((outflank != 0) as i64) as u64;
-                flip |= f;
-            }
-
-            // 右下方向 (x >> 7)
-            {
-                let mut f = (x >> 7) & m_o;
-                f |= (f >> 7) & m_o;
-                let pre = m_o & (m_o >> 7);
-                f |= (f >> 14) & pre;
-                f |= (f >> 14) & pre;
-                let outflank = p & (f >> 7);
-                f &= -((outflank != 0) as i64) as u64;
-                flip |= f;
-            }
-        }
-
-        // 斜め左下・右上方向 (x << 9, x >> 9)
-        {
-            let m_o = o & 0x007e7e7e7e7e7e00;
-
-            // 左下方向 (x << 9)
-            {
-                let mut f = (x << 9) & m_o;
-                f |= (f << 9) & m_o;
-                let pre = m_o & (m_o << 9);
-                f |= (f << 18) & pre;
-                f |= (f << 18) & pre;
-                let outflank = p & (f << 9);
-                f &= -((outflank != 0) as i64) as u64;
-                flip |= f;
-            }
-
-            // 右上方向 (x >> 9)
-            {
-                let mut f = (x >> 9) & m_o;
-                f |= (f >> 9) & m_o;
-                let pre = m_o & (m_o >> 9);
-                f |= (f >> 18) & pre;
-                f |= (f >> 18) & pre;
-                let outflank = p & (f >> 9);
-                f &= -((outflank != 0) as i64) as u64;
-                flip |= f;
-            }
-        }
-
-        flip
+        
+        #[cfg(not(target_feature = "avx2"))]
+        flip::flip_std(x, p, o)
     }
-
 
     #[inline(always)]
     pub fn put_piece_fast(&mut self, put_mask: u64)
@@ -258,100 +158,17 @@ impl Board {
 
     #[inline(always)]
     pub fn opponent_moves(&self) -> u64 {
-        unsafe {
-            let pb = self as *const Board as *mut Board;
-
-            // (*pb).swap();だとうまく動作しません(原因不明)
-            std::ptr::swap(&mut (*pb).player, &mut (*pb).opponent);
-            let legal_moves = (*pb).moves();
-            std::ptr::swap(&mut (*pb).player, &mut (*pb).opponent);
-
-            legal_moves
-        }
+        let p = self.player;
+        let o = self.opponent;
+        get_moves(o, p)
     }
-
 
     #[inline(always)]
     pub fn moves(&self) -> u64 {
         let p = self.player;
         let o = self.opponent;
-
-        let mut moves: u64;
-        
-        let mut flip1: u64;
-        let mut flip7: u64;
-        let mut flip9: u64;
-        let mut flip8: u64;
-        
-        let mut pre7: u64;
-        let mut pre9: u64;
-        let mut pre8: u64;
-
-        // 水平方向マスク処理用(7,9,1方向)のo
-        let m_o: u64 = o & 0x7e7e7e7e7e7e7e7e_u64;
-        
-        // 正方向（左上7、左下9、下8、右1）
-        flip7  = m_o & (p << 7);
-        flip9  = m_o & (p << 9);
-        flip8  = o & (p << 8);
-        flip1  = m_o & (p << 1);
-
-        flip7 |= m_o & (flip7 << 7);
-        flip9 |= m_o & (flip9 << 9);
-        flip8 |= o  & (flip8 << 8);
-        moves  = m_o + flip1; 
-
-        pre7 = m_o & (m_o << 7);
-        pre9 = m_o & (m_o << 9);
-        pre8 = o & (o << 8);
-
-        flip7 |= pre7 & (flip7 << 14);
-        flip9 |= pre9 & (flip9 << 18);
-        flip8 |= pre8 & (flip8 << 16);
-
-        flip7 |= pre7 & (flip7 << 14);
-        flip9 |= pre9 & (flip9 << 18);
-        flip8 |= pre8 & (flip8 << 16);
-
-        moves |= flip7 << 7;
-        moves |= flip9 << 9;
-        moves |= flip8 << 8;
-
-        // 逆方向（右下7、右上9、上8、左1）
-        flip7 = m_o & (p >> 7);
-        flip9 = m_o & (p >> 9);
-        flip8 = o & (p >> 8);
-        flip1 = m_o & (p >> 1);
-
-        flip7 |= m_o & (flip7 >> 7);
-        flip9 |= m_o & (flip9 >> 9);
-        flip8 |= o  & (flip8 >> 8);
-        flip1 |= m_o & (flip1 >> 1);
-
-        pre7 >>= 7;
-        pre9 >>= 9;
-        pre8 >>= 8;
-        let pre1: u64 = m_o & (m_o >> 1);
-
-        flip7 |= pre7 & (flip7 >> 14);
-        flip9 |= pre9 & (flip9 >> 18);
-        flip8 |= pre8 & (flip8 >> 16);
-        flip1 |= pre1 & (flip1 >> 2);
-
-        flip7 |= pre7 & (flip7 >> 14);
-        flip9 |= pre9 & (flip9 >> 18);
-        flip8 |= pre8 & (flip8 >> 16);
-        flip1 |= pre1 & (flip1 >> 2);
-
-        moves |= flip7 >> 7;
-        moves |= flip9 >> 9;
-        moves |= flip8 >> 8;
-        moves |= flip1 >> 1;
-
-        // 空きマスでマスク
-        moves & !(p | o)
+        get_moves(p, o)
     }
-
 
     pub fn all_symmetries(&self) -> Vec<Board>
     {
@@ -406,26 +223,12 @@ impl Board {
         rotations
     }
 
+    /// Returns the current move count (number of moves played so far).
+    /// The count starts at 0 and ends at 60 (excluding passes).
     #[inline(always)]
     pub fn move_count(&self) -> i32
-    { // 現在何手目まで打たれたか(0~60)
+    {
         (self.player | self.opponent).count_ones() as i32 - 4
-    }
-
-    pub fn print_board(&self) {
-        for y in 0..8 {
-            for x in 0..8 {
-                let mask = 1u64 << (y * 8 + x);
-                if self.player & mask != 0 {
-                    print!("X");
-                } else if self.opponent & mask != 0 {
-                    print!("O");
-                } else {
-                    print!(".");
-                }
-            }
-            println!();
-        }
     }
 
     pub fn get_unique_board(&self) -> Board{
@@ -463,7 +266,6 @@ pub fn position_bit_to_num(bit: u64) -> Result<u8, &'static str> {
     Ok(bit.trailing_zeros() as u8)
 }
 
-#[inline(always)]
 pub fn position_num_to_bit(num: i32) -> Result<u64, &'static str> {
     if !(0..64).contains(&num) {
         return Err("Invalid position string");

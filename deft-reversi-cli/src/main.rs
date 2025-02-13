@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         run_perft(*depth, args.perft_count_pass);
     }else {
         // 通常プレイモード
-        let mut game = CUIOthello::new(
+        let mut game = OthelloCLI::new(
             level,
             eval_path
         );

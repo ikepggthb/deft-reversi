@@ -153,16 +153,23 @@ impl Perft {
 
 }
 
+fn format_duration(duration: time::Duration) -> String {
+    let millis = duration.as_millis() % 1000; // ミリ秒
+    let seconds = duration.as_secs() % 60; // 秒
+    let minutes = duration.as_secs() / 60 % 60; // 分
+    let hours = duration.as_secs() / 3600; // 時
 
+    format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
+}
 pub fn run_perft(depth: u64, count_pass: bool) {
     let mut perft = Perft::new(count_pass);
 
     let now = time::Instant::now();
-    println!(" depth | leaf       | end        | passed     | time / s   ");
+    println!(" depth | leaf                 | end        | passed     | time       ");
     for i in 1..=depth {
         perft.clear();
         perft.run(i);
-        println!(" {: >5} | {: >10} | {: >10} | {: >10} | {}",
-                    i, perft.n_leaf_node, perft.n_end, perft.n_passed, now.elapsed().as_secs_f64());
+        println!(" {: >5} | {: >20} | {: >10} | {: >10} | {:>14}",
+                    i, perft.n_leaf_node, perft.n_end, perft.n_passed, format_duration(now.elapsed()));
     }
 }

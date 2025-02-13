@@ -5,7 +5,6 @@ use std::io::{self, BufRead};
 
 use deft_reversi_engine::*;
 
-
 // hh:mm:ss.mmm の形式にフォーマット
 fn format_duration(duration: time::Duration) -> String {
     let millis = duration.as_millis() % 1000; // ミリ秒
@@ -31,8 +30,10 @@ pub fn solve(path: &str, eval_path: &str, level: i32) {
     let total_solve_start_time = time::Instant::now();
     let mut total_nodes = 0;
 
-    let table_header = format!("{:5} | {:5} | {:4} | {:9} | {:28} | {:12} | {:15} | {:14}",
-               " #", "score", "move", "n_empties", "solver", "node", "nps", "time");
+    let table_header = format!(
+        "{:5} | {:5} | {:4} | {:9} | {:28} | {:12} | {:15} | {:14}",
+        " #", "score", "move", "n_empties", "solver", "node", "nps", "time"
+    );
     let table_separator_line = "-".repeat(table_header.len());
 
     println!("{}", table_separator_line);
@@ -43,31 +44,39 @@ pub fn solve(path: &str, eval_path: &str, level: i32) {
         let solver_result = solver.solve(board, level);
         let solve_time = solve_start_time.elapsed();
 
-        println!("{:>5}   {:+5}   {:>4}   {:>9}   {:28}   {:>12}   {:>15.3}   {:>14} ",
+        println!(
+            "{:>5}   {:+5}   {:>4}   {:>9}   {:28}   {:>12}   {:>15.3}   {:>14} ",
             i + 1,
-            solver_result.eval, 
-            position_bit_to_str(solver_result.best_move).unwrap(), 
+            solver_result.eval,
+            position_bit_to_str(solver_result.best_move).unwrap(),
             board.empties_count(),
-            solver_result.solver_type.description(solver_result.selectivity_lv),
+            solver_result
+                .solver_type
+                .description(solver_result.selectivity_lv),
             solver_result.searched_nodes,
             solver_result.searched_nodes as f64 / solve_time.as_secs_f64(),
-            format_duration(solve_time));
+            format_duration(solve_time)
+        );
         total_nodes += solver_result.searched_nodes;
     }
-    
+
     let total_solve_time = total_solve_start_time.elapsed();
-    
+
     println!("{}", table_separator_line);
-    println!("{:>5}   {:+5}   {:>4}   {:>9}   {:28}   {:>12}   {:>15.3}   {:>14} ",
+    println!(
+        "{:>5}   {:+5}   {:>4}   {:>9}   {:28}   {:>12}   {:>15.3}   {:>14} ",
         "total",
-        "", "", "", "",
+        "",
+        "",
+        "",
+        "",
         total_nodes,
         total_nodes as f64 / total_solve_time.as_secs_f64(),
-        format_duration(total_solve_time));
+        format_duration(total_solve_time)
+    );
 
     println!("{}", table_separator_line);
 }
-
 
 fn read_solve_file(path: &str) -> Result<Vec<Board>, std::io::Error> {
     let mut boards = Vec::new();
@@ -87,7 +96,10 @@ fn read_solve_file(path: &str) -> Result<Vec<Board>, std::io::Error> {
         if parts.len() < 2 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Line must contain a board and a turn separated by a space: {}", trimmed_line),
+                format!(
+                    "Line must contain a board and a turn separated by a space: {}",
+                    trimmed_line
+                ),
             ));
         }
 
@@ -97,11 +109,17 @@ fn read_solve_file(path: &str) -> Result<Vec<Board>, std::io::Error> {
         if board_data.len() != 64 || turn_char.len() != 1 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Board must be 64 characters and turn must be 1 character: {}", trimmed_line),
+                format!(
+                    "Board must be 64 characters and turn must be 1 character: {}",
+                    trimmed_line
+                ),
             ));
         }
 
-        let mut board = Board { player: 0, opponent: 0 };
+        let mut board = Board {
+            player: 0,
+            opponent: 0,
+        };
         for (i, c) in board_data.chars().enumerate() {
             let c = c.to_ascii_uppercase();
             match c {
@@ -119,12 +137,15 @@ fn read_solve_file(path: &str) -> Result<Vec<Board>, std::io::Error> {
 
         // 手番を解析
         match turn_char.to_ascii_uppercase().chars().next().unwrap() {
-            'X' => (), // 手番がXならそのまま
+            'X' => (),           // 手番がXならそのまま
             'O' => board.swap(), // 手番がOならプレイヤーと相手をスワップ
             _ => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid turn character '{}' in line: {}", turn_char, trimmed_line),
+                    format!(
+                        "Invalid turn character '{}' in line: {}",
+                        turn_char, trimmed_line
+                    ),
                 ));
             }
         }

@@ -133,19 +133,16 @@ impl App {
         let b = &self.game.current.board;
         let legal_moves =  b.moves();
 
-        let next_turn = {
-            if self.game.current.turn == Board::BLACK {
-                "Black"
-            } else {
-                "White"
-            }
-        };
+        let next_turn = self.game.current.turn.get_str();
 
         let (black, white) = {
-            if self.game.current.turn == Board::BLACK {
-                (b.player, b.opponent)
-            } else { 
-                (b.opponent, b.player)
+            match self.game.current.turn {
+                Color::Black => {
+                    (b.player, b.opponent)
+                },
+                Color::White => {
+                    (b.opponent, b.player)
+                }
             }
         };
 

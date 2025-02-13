@@ -1,8 +1,9 @@
-use crate::{board::*, simplest_eval, TableData};
 use crate::eval::Evaluator;
 use crate::eval_search::negaalpha_eval;
-use crate::t_table::TranspositionTable;
 use crate::mpc::NO_MPC;
+use crate::t_table::TranspositionTable;
+use crate::t_table::N_TT_MOVES;
+use crate::{board::*, simplest_eval, TableData};
 
 const SCORE_INF: i32 = i8::MAX as i32;
 pub struct MoveIterator {
@@ -29,7 +30,6 @@ impl Iterator for MoveIterator {
     }
 }
 
-
 /// 盤面を4×4に分割し、さらにコーナーを優先するMove Ordering
 pub struct MoveIteratorParity {
     corner_odd: u64,
@@ -45,15 +45,15 @@ impl MoveIteratorParity {
 
     /// 4つの小盤面（左下・右下・左上・右上）に分割するマスク
     const QUADRANT_MASKS: [u64; 4] = [
-        0x0000_0000_0f0f_0f0f, 
-        0x0000_0000_f0f0_f0f0, 
-        0xf0f0_f0f0_0000_0000, 
-        0x0f0f_0f0f_0000_0000, 
+        0x0000_0000_0f0f_0f0f,
+        0x0000_0000_f0f0_f0f0,
+        0xf0f0_f0f0_0000_0000,
+        0x0f0f_0f0f_0000_0000,
     ];
 
     pub fn new(legal_moves: u64, board: &Board) -> Self {
         let empties = !(board.player | board.opponent);
-        
+
         let corner_move = legal_moves & Self::CORNER_MASK;
         let other_move = legal_moves & !Self::CORNER_MASK;
 
@@ -88,7 +88,7 @@ impl MoveIteratorParity {
 
     pub fn divide(legal_moves: u64, board: &Board) -> (u64, u64) {
         let empties = !(board.player | board.opponent);
-        
+
         // 4つの小盤面をそれぞれ見て「空きマスが奇数ならodd, 偶数ならeven」に振り分ける。
         let mut odd = 0u64;
         let mut even = 0u64;
@@ -105,7 +105,7 @@ impl MoveIteratorParity {
                 even |= legal_moves & mask;
             }
         }
-        
+
         (odd, even)
     }
 }
@@ -142,97 +142,200 @@ impl Iterator for MoveIteratorParity {
     }
 }
 
-
 pub struct PutBoard {
     pub board: Board,
-    pub put_place: u8
+    pub put_place: u8,
 }
 
 #[inline(always)]
-pub fn get_put_boards(board: &Board, legal_moves: u64) -> Vec<PutBoard>
-{
+pub fn get_put_boards(board: &Board, legal_moves: u64) -> Vec<PutBoard> {
     let mut put_boards: Vec<PutBoard> = Vec::with_capacity(legal_moves.count_ones() as usize);
     for pos in MoveIterator::new(legal_moves) {
         let mut board = board.clone();
         board.put_piece_fast(pos);
-        put_boards.push(PutBoard{board, put_place: pos.trailing_zeros() as u8})
-    }    
+        put_boards.push(PutBoard {
+            board,
+            put_place: pos.trailing_zeros() as u8,
+        })
+    }
     put_boards
 }
 
-
 #[inline(always)]
 pub fn t_table_cut_off_td(
-    alpha   :       &mut i32,
-    beta    :       &mut i32,
-    lv      :       i32,
+    alpha: &mut i32,
+    beta: &mut i32,
+    lv: i32,
     selectivity_lv: i32,
-    table_data :       &Option<&TableData> ) -> Option<i32>
-{
+    table_data: &Option<&TableData>,
+) -> Option<i32> {
     if let Some(t) = table_data {
-        if t.lv as i32 != lv || t.selectivity_lv as i32 != selectivity_lv {return None;}
+        if t.lv as i32 != lv || t.selectivity_lv as i32 != selectivity_lv {
+            return None;
+        }
         let max = t.max as i32;
         let min = t.min as i32;
-        if max <= *alpha {return Some(max);}
-        else if min >= *beta {return Some(min);}
-        else if max == min {return Some(max);}
-        if min > *alpha {*alpha = min};
-        if max < *beta {*beta = max};
+        if max <= *alpha {
+            return Some(max);
+        } else if min >= *beta {
+            return Some(min);
+        } else if max == min {
+            return Some(max);
+        }
+        if min > *alpha {
+            *alpha = min
+        };
+        if max < *beta {
+            *beta = max
+        };
     }
     None
 }
 
 #[inline(always)]
 pub fn t_table_cut_off(
-    board   :       & Board,
-    alpha   :       &mut i32,
-    beta    :       &mut i32,
-    lv      :       i32,
+    board: &Board,
+    alpha: &mut i32,
+    beta: &mut i32,
+    lv: i32,
     selectivity_lv: i32,
-    t_table :       & TranspositionTable ) -> Option<i32>
-{
+    t_table: &TranspositionTable,
+) -> Option<i32> {
     if let Some(t) = t_table.get(board) {
-        if t.lv as i32 != lv || t.selectivity_lv as i32 != selectivity_lv {return None;}
+        if t.lv as i32 != lv || t.selectivity_lv as i32 != selectivity_lv {
+            return None;
+        }
         let max = t.max as i32;
         let min = t.min as i32;
-        if max <= *alpha {return Some(max);}
-        else if min >= *beta {return Some(min);}
-        else if max == min {return Some(max);}
-        if min > *alpha {*alpha = min};
-        if max < *beta {*beta = max};
+        if max <= *alpha {
+            return Some(max);
+        } else if min >= *beta {
+            return Some(min);
+        } else if max == min {
+            return Some(max);
+        }
+        if min > *alpha {
+            *alpha = min
+        };
+        if max < *beta {
+            *beta = max
+        };
     }
     None
 }
 
 pub struct MoveBoard {
-    eval: i32,
+    pub eval: i32,
     pub board: Board,
     pub put_place: u8,
-    pub skip: bool
+    pub skip: bool,
 }
-pub const MOVE_MAX: usize = 36;
 
+// https://eukaryote.hateblo.jp/entry/2023/05/17/163629
+// オセロの最大分岐数は33
+pub const MOVE_MAX: usize = 33;
 
 #[inline(always)]
-pub fn set_move_list(board: &Board, moves_bit: u64, moves_list : &mut [MoveBoard]) {
-    for (i, move_bit) in MoveIterator::new(moves_bit).enumerate(){
+pub fn set_move_list(board: &Board, moves_bit: u64, moves_list: &mut [MoveBoard]) {
+    for (i, move_bit) in MoveIterator::new(moves_bit).enumerate() {
         let mut b = board.clone();
         b.put_piece_fast(move_bit);
-        moves_list[i] = MoveBoard { eval: 0, board: b, put_place: move_bit.trailing_zeros() as u8 , skip: false};
+        moves_list[i] = MoveBoard {
+            eval: 0,
+            board: b,
+            put_place: move_bit.trailing_zeros() as u8,
+            skip: false,
+        };
     }
 }
 
+#[inline(always)]
+pub fn gen_tt_move_list(board: &Board, tt_move: &[u8]) -> [MoveBoard; N_TT_MOVES] {
+    // N_TT_MOVE = 2
+    let moves_list_0 = if tt_move[0] != NO_COORD {
+        let move_bit = 1u64 << tt_move[0];
+        let mut b = board.clone();
+        b.put_piece_fast(move_bit);
+        MoveBoard {
+            eval: 0,
+            board: b,
+            put_place: tt_move[0],
+            skip: false,
+        }
+    } else {
+        MoveBoard {
+            eval: 0,
+            board: Board {
+                // dummy
+                player: 0,
+                opponent: 0,
+            },
+            put_place: 0,
+            skip: true,
+        }
+    };
+
+    let moves_list_1 = if tt_move[1] != NO_COORD {
+        let move_bit = 1u64 << tt_move[1];
+        let mut b = board.clone();
+        b.put_piece_fast(move_bit);
+        MoveBoard {
+            eval: 0,
+            board: b,
+            put_place: tt_move[1],
+            skip: false,
+        }
+    } else {
+        MoveBoard {
+            eval: 0,
+            board: Board {
+                // dummy
+                player: 0,
+                opponent: 0,
+            },
+            put_place: 0,
+            skip: true,
+        }
+    };
+
+    [moves_list_0, moves_list_1]
+}
 
 #[inline(always)]
-pub fn set_move_eval(move_list: &mut [MoveBoard], lv: i32, search: &mut Search) {
+pub fn set_move_eval(move_list: &mut [MoveBoard], lv: i32, alpha: i32, search: &mut Search) {
     for move_board in move_list.iter_mut() {
-        if move_board.skip { continue;} 
-        move_board.eval = 
-        if lv < 1 {
+        if move_board.skip {
+            continue;
+        }
+        move_board.eval = if lv < 1 {
             -simplest_eval(&move_board.board)
         } else {
-            -negaalpha_eval(&move_board.board, -SCORE_INF, SCORE_INF, lv-1, search)
-        };   
+            -negaalpha_eval(&move_board.board, -alpha - 6, -alpha + 6, lv - 1, search)
+        };
+    }
+}
+
+#[inline(always)]
+pub fn set_move_eval_for_end_nws(move_list: &mut [MoveBoard], lv: i32, alpha: i32, search: &mut Search) {
+    for move_board in move_list.iter_mut() {
+        if move_board.skip {
+            continue;
+        }
+        move_board.eval = if lv < 1 {
+            -simplest_eval(&move_board.board)
+        } else {
+            -negaalpha_eval(&move_board.board, -alpha - 6, -alpha + 6, lv - 1, search)
+        };
+
+        // 終盤で検討
+        let em = -(move_board.board.moves().count_ones() as i32);
+        let ec = -((move_board.board.player & MC).count_ones() as i32);
+        // let emc = 40 - (em + ec);
+        move_board.eval += (em + ec) * 4;
+
+        if move_board.board.moves().count_ones() as i32 <= 1 {
+            move_board.eval += 60;
+        }
     }
 }
 
@@ -242,44 +345,56 @@ const MX: u64 = 0b00000000010000100000000000000000000000000000000001000010000000
 #[inline(always)]
 pub fn set_move_eval_ffs(move_list: &mut [MoveBoard]) {
     for move_board in move_list.iter_mut() {
-        if move_board.skip {continue;}
-        let ec = (move_board.board.player & MC).count_ones() as i32 - (move_board.board.opponent & MC).count_ones() as i32;
-        let ex = (move_board.board.player & MX).count_ones() as i32 - (move_board.board.opponent & MX).count_ones() as i32;
-        move_board.eval = -(move_board.board.moves().count_ones() as i32) - (2 * ec - ex);
+        if move_board.skip {
+            continue;
+        }
+        let em = -(move_board.board.moves().count_ones() as i32);
+        let ec = -((move_board.board.player & MC).count_ones() as i32);
+        // let ex = -((move_board.board.opponent & MX).count_ones() as i32);
+        move_board.eval = em + ec; //(2 * ec - ex);
     }
 }
 
-
 #[inline(always)]
 pub fn et_cut_off(
-    alpha   :       &mut i32,
-    beta    :       &mut i32,
+    alpha: &mut i32,
+    beta: &mut i32,
     move_list: &mut [MoveBoard],
-    lv      :       i32,
+    lv: i32,
     selectivity_lv: i32,
-    n_skip  : &mut i32,
-    t_table :       & TranspositionTable ) -> Option<i32>
-{
+    n_skip: &mut i32,
+    t_table: &TranspositionTable,
+) -> Option<i32> {
     for move_board in move_list.iter_mut() {
+        if move_board.skip {
+            continue;
+        }
         if let Some(t) = t_table.get(&move_board.board) {
-            if t.lv as i32 != (if lv == 60 {60} else {lv  - 1}) || t.selectivity_lv as i32 != selectivity_lv {continue;}
+            if t.lv as i32 != (if lv == 60 { 60 } else { lv - 1 })
+                || t.selectivity_lv as i32 != selectivity_lv
+            {
+                continue;
+            }
             let u: i32 = t.max as i32;
             let l = t.min as i32;
             move_board.eval += 10; // 置換表に登録されている手を優先
-            
+
             // 1手進めた手: [l, u]
             // 親ノード [-u, -l]
-            if -u >= *beta {// alpha < beta <= -u <= -l
+            if -u >= *beta {
+                // alpha < beta <= -u <= -l
                 // println!("fail high !");
                 return Some(-u); // fail high
-            } else if *alpha <= -u { // alpha <= -u <= beta <= -l or alpha <= -u <= -l <= beta
+            } else if *alpha <= -u {
+                // alpha <= -u <= beta <= -l or alpha <= -u <= -l <= beta
                 *alpha = -u; // update alpha (alpha <= -u)
-                if -l <= *alpha || u == l { //この条件ならば、この子ノードは探索する必要がない
+                if -l <= *alpha || u == l {
+                    //この条件ならば、この子ノードは探索する必要がない
                     move_board.skip = true;
                     *n_skip += 1;
-                } 
-            } 
-            else if -l <= *alpha { // -u <= -l <= alpha < beta
+                }
+            } else if -l <= *alpha {
+                // -u <= -l <= alpha < beta
                 move_board.skip = true;
                 *n_skip += 1;
             }
@@ -288,51 +403,18 @@ pub fn et_cut_off(
     None
 }
 
-
-
 #[inline(always)]
 pub fn sort_move_list(move_list: &mut [MoveBoard]) {
-    let n_boards = move_list.len();
+    const TOP_N: usize = 7;
+    let n = move_list.len();
 
-    if n_boards < 2 {
-        return;
-    }
-
-    if n_boards == 2 && move_list[0].eval < move_list[1].eval {
-        move_list.swap(0, 1);
-        return;
-    }
-    
-    if n_boards == 3 {
-        if move_list[1].eval < move_list[2].eval {
-            move_list.swap(1, 2);
-        }
-        if move_list[0].eval < move_list[1].eval {
-            move_list.swap(0, 1);
-        }
-        return;
-    }
-
-    if n_boards <= 5 {
+    if n <= TOP_N {
         move_list.sort_unstable_by(|a, b| b.eval.partial_cmp(&a.eval).unwrap());
-        return;
+    } else {
+        move_list.select_nth_unstable_by(TOP_N - 1, |a, b| b.eval.partial_cmp(&a.eval).unwrap());
+        move_list[..TOP_N].sort_unstable_by(|a, b| b.eval.partial_cmp(&a.eval).unwrap());
     }
-
-    // n_board > 5
-    let top_n = 5; // 最大で上位5つをソート
-    for i in 0..top_n {
-        let mut max_idx = i;
-        for j in (i + 1)..n_boards {
-            if move_list[j].eval > move_list[max_idx].eval {
-                max_idx = j;
-            }
-        }
-        move_list.swap(i, max_idx);
-    }
-
 }
-
-
 pub struct Search {
     pub eval_search_node_count: u64,
     pub eval_search_leaf_node_count: u64,
@@ -345,8 +427,8 @@ pub struct Search {
 }
 
 impl Search {
-    pub fn new(evaluator: Evaluator) -> Search{
-        Search{
+    pub fn new(evaluator: Evaluator) -> Search {
+        Search {
             eval_search_node_count: 0,
             eval_search_leaf_node_count: 0,
             perfect_search_node_count: 0,
@@ -357,104 +439,15 @@ impl Search {
             selectivity_lv: NO_MPC,
         }
     }
-    pub fn clear_node_count(&mut self){
+    pub fn clear_node_count(&mut self) {
         self.eval_search_node_count = 0;
         self.eval_search_leaf_node_count = 0;
         self.perfect_search_node_count = 0;
         self.perfect_search_leaf_node_count = 0;
     }
 
-    pub fn set_board(&mut self, board :&Board) {
+    pub fn set_board(&mut self, board: &Board) {
         self.origin_board = board.clone();
         self.clear_node_count();
     }
 }
-
-
-/// テスト用
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_move_iterator_parity_ordering() {
-        // 4つの小盤面のマスクを1つずつ作り、
-        //   Q0 (左下): 3マス空き → 奇数
-        //   Q1 (右下): 2マス空き → 偶数
-        //   Q2 (左上): 5マス空き → 奇数
-        //   Q3 (右上): 4マス空き → 偶数
-        // とするため、適当に下位ビットだけ操作します。
-        
-        // 左下16マス (Q0)
-        let q0 = 0b111u64; // 下位3ビットが空き
-        // 右下16マス (Q1)
-        let q1 = 0b11u64 << 16; // 16～17ビットが空き
-        // 左上16マス (Q2)
-        let q2 = 0b1_1111u64 << 32; // 32～36ビットが空き (5ビット)
-        // 右上16マス (Q3)
-        let q3 = 0b1111u64 << 48; // 48～51ビットが空き (4ビット)
-
-        // 全空きマス
-        let empties = q0 | q1 | q2 | q3;
-
-        // 今回は簡単のため、player=!(empties), opponent=0 とし
-        // "empties 以外は全部 player の石" という仮の状態にします。
-        let board = Board {
-            player: !empties,
-            opponent: 0,
-        };
-
-        // 全ての空きマスが合法手と仮定 (単純化のため)
-        let legal_moves = empties;
-
-        // イテレータを作る
-        let iter = MoveIteratorParity::new(legal_moves, &board);
-
-        // まず odd (Q0, Q2) が先に返ってきて、次に even (Q1, Q3) が返ってくるはず。
-        // odd は q0(3ビット) + q2(5ビット) = 計8ビット
-        // even は q1(2ビット) + q3(4ビット) = 計6ビット
-        let mut result = Vec::new();
-        for m in iter {
-            result.push(m);
-        }
-
-        // 期待する個数: odd 8手 + even 6手 = 14手
-        assert_eq!(result.len(), 14, "合計手数が想定(14)と一致しない");
-
-        // odd に含まれるビット
-        let expected_odd = q0 | q2;
-        // even に含まれるビット
-        let expected_even = q1 | q3;
-
-        // テスト方針：
-        //   - イテレータから取り出した順で、最初に出てくるのはすべて odd に属しているはず
-        //   - odd に属する手が尽きたあとは、even に属する手のみが返るはず
-        let mut in_odd_phase = true;
-
-        for (i, &bit) in result.iter().enumerate() {
-            let is_odd = (bit & expected_odd) != 0;
-            let is_even = (bit & expected_even) != 0;
-            // どちらかには属しているはず
-            assert!(is_odd ^ is_even, "どちらの集合にも属さない / 両方に属するビットが混在している");
-
-            if in_odd_phase {
-                // odd フェーズ中に even が来たら、その後は odd が来てはいけない
-                if is_even {
-                    in_odd_phase = false;
-                }
-            } else {
-                // even フェーズに入ったら odd は登場しないはず
-                assert!(is_even, "odd 手が終わった後に odd ビットが返ってきた");
-            }
-
-            eprintln!("{}番目: 0x{:x} (is_odd={})", i, bit, is_odd);
-        }
-
-        // 実際に8個分 odd、あとの6個分 even になっているか
-        let odd_moves: Vec<u64> = result.iter().copied().filter(|m| (expected_odd & m) != 0).collect();
-        let even_moves: Vec<u64> = result.iter().copied().filter(|m| (expected_even & m) != 0).collect();
-        assert_eq!(odd_moves.len(), 8, "奇数マス空きの手(odd)が8手でなかった");
-        assert_eq!(even_moves.len(), 6, "偶数マス空きの手(even)が6手でなかった");
-    }
-}
-
