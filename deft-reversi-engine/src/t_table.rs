@@ -35,7 +35,10 @@ impl TranspositionTable {
         Self::default()
     }
     fn gen_rand_table() -> Box<[u32; 1 << 16]> {
-        let mut rng = rand::thread_rng();
+        // let mut rng = rand::thread_rng();
+        let seed: [u8; 32] = [13; 32];
+        let mut rng: rand::rngs::StdRng = rand::SeedableRng::from_seed(seed);
+        // let mut rng = rand::SeedableRng::from_seed(10);
         let mut table = Box::new([0; 1 << 16]);
 
         for ti in table.iter_mut() {

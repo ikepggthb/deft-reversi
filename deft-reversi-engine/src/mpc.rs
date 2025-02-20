@@ -1,8 +1,9 @@
 use crate::{
     board::*,
-    search::*,
+    cut_off::*,
     eval_search::*,
     eval::evaluator_const::SCORE_MAX,
+    solver::SearchEngine,
 };
 
 pub enum ProbCutResult {
@@ -188,7 +189,7 @@ pub fn eval_search_mpc(
     alpha          : i32,
     beta           : i32,
     lv             : i32,
-    search         : &mut Search
+    search         : &mut SearchEngine
 ) -> ProbCutResult
 {
     if lv < MPC_START_LEVEL_EVAL_SEARCH {
@@ -205,7 +206,7 @@ pub fn perfect_search_mpc(
     board          : &Board,
     alpha          : i32,
     beta           : i32,
-    search         : &mut Search
+    search         : &mut SearchEngine
 ) -> ProbCutResult
 {
     let n_empties = board.empties_count();
@@ -222,7 +223,7 @@ pub fn multi_prob_cut(
     alpha            : i32,
     beta             : i32,
     mpc_params       : &MpcParams, 
-    search           : &mut Search
+    search           : &mut SearchEngine
 ) -> ProbCutResult 
 {
     if alpha >= SCORE_MAX {return ProbCutResult::Cut(alpha)}
@@ -271,7 +272,7 @@ pub fn multi_prob_cut(
 }
 
 #[inline(always)]
-fn nws_eval_0_selectivity_lv(board: &Board, alpha: i32, lv: i32, search : &mut Search) -> i32
+fn nws_eval_0_selectivity_lv(board: &Board, alpha: i32, lv: i32, search : &mut SearchEngine) -> i32
 {
     let main_search_selectivity_lv = search.selectivity_lv;
     search.selectivity_lv = NO_MPC;

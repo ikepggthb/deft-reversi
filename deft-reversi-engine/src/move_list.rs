@@ -1,11 +1,17 @@
-use crate::eval::Evaluator;
+
+use crate::board::Board;
+use std::cmp;
+
 use crate::eval_search::negaalpha_eval;
-use crate::mpc::NO_MPC;
-use crate::t_table::TranspositionTable;
+use crate::evaluator_const::SCORE_MAX;
 use crate::t_table::N_TT_MOVES;
-use crate::{board::*, simplest_eval, TableData};
+use crate::{board::*, simplest_eval};
+
+use crate::solver::SearchEngine;
 
 const SCORE_INF: i32 = i8::MAX as i32;
+
+
 pub struct MoveIterator {
     bits: u64, // 対象となるビット列
 }
@@ -142,88 +148,6 @@ impl Iterator for MoveIteratorParity {
     }
 }
 
-pub struct PutBoard {
-    pub board: Board,
-    pub put_place: u8,
-}
-
-#[inline(always)]
-pub fn get_put_boards(board: &Board, legal_moves: u64) -> Vec<PutBoard> {
-    let mut put_boards: Vec<PutBoard> = Vec::with_capacity(legal_moves.count_ones() as usize);
-    for pos in MoveIterator::new(legal_moves) {
-        let mut board = board.clone();
-        board.put_piece_fast(pos);
-        put_boards.push(PutBoard {
-            board,
-            put_place: pos.trailing_zeros() as u8,
-        })
-    }
-    put_boards
-}
-
-#[inline(always)]
-pub fn t_table_cut_off_td(
-    alpha: &mut i32,
-    beta: &mut i32,
-    lv: i32,
-    selectivity_lv: i32,
-    table_data: &Option<&TableData>,
-) -> Option<i32> {
-    if let Some(t) = table_data {
-        if t.lv as i32 != lv || t.selectivity_lv as i32 != selectivity_lv {
-            return None;
-        }
-        let max = t.max as i32;
-        let min = t.min as i32;
-        if max <= *alpha {
-            return Some(max);
-        } else if min >= *beta {
-            return Some(min);
-        } else if max == min {
-            return Some(max);
-        }
-        if min > *alpha {
-            *alpha = min
-        };
-        if max < *beta {
-            *beta = max
-        };
-    }
-    None
-}
-
-#[inline(always)]
-pub fn t_table_cut_off(
-    board: &Board,
-    alpha: &mut i32,
-    beta: &mut i32,
-    lv: i32,
-    selectivity_lv: i32,
-    t_table: &TranspositionTable,
-) -> Option<i32> {
-    if let Some(t) = t_table.get(board) {
-        if t.lv as i32 != lv || t.selectivity_lv as i32 != selectivity_lv {
-            return None;
-        }
-        let max = t.max as i32;
-        let min = t.min as i32;
-        if max <= *alpha {
-            return Some(max);
-        } else if min >= *beta {
-            return Some(min);
-        } else if max == min {
-            return Some(max);
-        }
-        if min > *alpha {
-            *alpha = min
-        };
-        if max < *beta {
-            *beta = max
-        };
-    }
-    None
-}
-
 pub struct MoveBoard {
     pub eval: i32,
     pub board: Board,
@@ -247,6 +171,21 @@ pub fn set_move_list(board: &Board, moves_bit: u64, moves_list: &mut [MoveBoard]
             skip: false,
         };
     }
+}
+
+pub fn get_move_list(board: &Board, moves_bit: u64) -> Vec<MoveBoard>{
+    let mut move_list = Vec::with_capacity(moves_bit as usize);
+    for move_bit in MoveIterator::new(moves_bit) {
+        let mut b = board.clone();
+        b.put_piece_fast(move_bit);
+        move_list.push(MoveBoard {
+            eval: 0,
+            board: b,
+            put_place: move_bit.trailing_zeros() as u8,
+            skip: false,
+        });
+    }
+    move_list
 }
 
 #[inline(always)]
@@ -302,40 +241,25 @@ pub fn gen_tt_move_list(board: &Board, tt_move: &[u8]) -> [MoveBoard; N_TT_MOVES
 }
 
 #[inline(always)]
-pub fn set_move_eval(move_list: &mut [MoveBoard], lv: i32, alpha: i32, search: &mut Search) {
+pub fn set_move_eval(move_list: &mut [MoveBoard], lv: i32, alpha: i32, search: &mut SearchEngine) {
     for move_board in move_list.iter_mut() {
         if move_board.skip {
             continue;
         }
-        move_board.eval = if lv < 1 {
+        let search_eval = if lv < 1 {
             -simplest_eval(&move_board.board)
         } else {
-            -negaalpha_eval(&move_board.board, -alpha - 6, -alpha + 6, lv - 1, search)
-        };
-    }
-}
-
-#[inline(always)]
-pub fn set_move_eval_for_end_nws(move_list: &mut [MoveBoard], lv: i32, alpha: i32, search: &mut Search) {
-    for move_board in move_list.iter_mut() {
-        if move_board.skip {
-            continue;
-        }
-        move_board.eval = if lv < 1 {
-            -simplest_eval(&move_board.board)
-        } else {
-            -negaalpha_eval(&move_board.board, -alpha - 6, -alpha + 6, lv - 1, search)
+            -negaalpha_eval(&move_board.board, cmp::max(-alpha - 6, -SCORE_MAX), cmp::min(-alpha + 16, SCORE_MAX), lv - 1, search)
         };
 
-        // 終盤で検討
-        let em = -(move_board.board.moves().count_ones() as i32);
-        let ec = -((move_board.board.player & MC).count_ones() as i32);
-        // let emc = 40 - (em + ec);
-        move_board.eval += (em + ec) * 4;
-
-        if move_board.board.moves().count_ones() as i32 <= 1 {
-            move_board.eval += 60;
-        }
+        let opponent_mobility_score = {
+            let moves_bit = move_board.board.moves();
+            let n_move = -(moves_bit.count_ones() as i32);
+            let n_coner_moves = -((moves_bit & MC).count_ones() as i32);
+            // let emc = 40 - (em + ec);
+            n_move * 2 + n_coner_moves
+        };
+        move_board.eval += search_eval + opponent_mobility_score;
     }
 }
 
@@ -348,60 +272,14 @@ pub fn set_move_eval_ffs(move_list: &mut [MoveBoard]) {
         if move_board.skip {
             continue;
         }
-        let em = -(move_board.board.moves().count_ones() as i32);
-        let ec = -((move_board.board.player & MC).count_ones() as i32);
-        // let ex = -((move_board.board.opponent & MX).count_ones() as i32);
+
+        let moves_bit = move_board.board.moves();
+        let em = -(moves_bit.count_ones() as i32);
+        let ec = -((moves_bit & MC).count_ones() as i32);
         move_board.eval = em + ec; //(2 * ec - ex);
     }
 }
 
-#[inline(always)]
-pub fn et_cut_off(
-    alpha: &mut i32,
-    beta: &mut i32,
-    move_list: &mut [MoveBoard],
-    lv: i32,
-    selectivity_lv: i32,
-    n_skip: &mut i32,
-    t_table: &TranspositionTable,
-) -> Option<i32> {
-    for move_board in move_list.iter_mut() {
-        if move_board.skip {
-            continue;
-        }
-        if let Some(t) = t_table.get(&move_board.board) {
-            if t.lv as i32 != (if lv == 60 { 60 } else { lv - 1 })
-                || t.selectivity_lv as i32 != selectivity_lv
-            {
-                continue;
-            }
-            let u: i32 = t.max as i32;
-            let l = t.min as i32;
-            move_board.eval += 10; // 置換表に登録されている手を優先
-
-            // 1手進めた手: [l, u]
-            // 親ノード [-u, -l]
-            if -u >= *beta {
-                // alpha < beta <= -u <= -l
-                // println!("fail high !");
-                return Some(-u); // fail high
-            } else if *alpha <= -u {
-                // alpha <= -u <= beta <= -l or alpha <= -u <= -l <= beta
-                *alpha = -u; // update alpha (alpha <= -u)
-                if -l <= *alpha || u == l {
-                    //この条件ならば、この子ノードは探索する必要がない
-                    move_board.skip = true;
-                    *n_skip += 1;
-                }
-            } else if -l <= *alpha {
-                // -u <= -l <= alpha < beta
-                move_board.skip = true;
-                *n_skip += 1;
-            }
-        }
-    }
-    None
-}
 
 #[inline(always)]
 pub fn sort_move_list(move_list: &mut [MoveBoard]) {
@@ -413,41 +291,5 @@ pub fn sort_move_list(move_list: &mut [MoveBoard]) {
     } else {
         move_list.select_nth_unstable_by(TOP_N - 1, |a, b| b.eval.partial_cmp(&a.eval).unwrap());
         move_list[..TOP_N].sort_unstable_by(|a, b| b.eval.partial_cmp(&a.eval).unwrap());
-    }
-}
-pub struct Search {
-    pub eval_search_node_count: u64,
-    pub eval_search_leaf_node_count: u64,
-    pub perfect_search_node_count: u64,
-    pub perfect_search_leaf_node_count: u64,
-    pub t_table: TranspositionTable,
-    pub origin_board: Board,
-    pub eval_func: Evaluator,
-    pub selectivity_lv: i32,
-}
-
-impl Search {
-    pub fn new(evaluator: Evaluator) -> Search {
-        Search {
-            eval_search_node_count: 0,
-            eval_search_leaf_node_count: 0,
-            perfect_search_node_count: 0,
-            perfect_search_leaf_node_count: 0,
-            t_table: TranspositionTable::new(),
-            origin_board: Board::new(),
-            eval_func: evaluator,
-            selectivity_lv: NO_MPC,
-        }
-    }
-    pub fn clear_node_count(&mut self) {
-        self.eval_search_node_count = 0;
-        self.eval_search_leaf_node_count = 0;
-        self.perfect_search_node_count = 0;
-        self.perfect_search_leaf_node_count = 0;
-    }
-
-    pub fn set_board(&mut self, board: &Board) {
-        self.origin_board = board.clone();
-        self.clear_node_count();
     }
 }

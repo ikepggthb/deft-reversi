@@ -3,8 +3,8 @@ use crate::eval_search::*;
 use crate::evaluator_const::SCORE_MAX;
 use crate::mpc::{NO_MPC, N_SELECTIVITY_LV, SELECTIVITY, SELECTIVITY_LV_MAX};
 use crate::perfect_search::*;
-use crate::search::*;
 use crate::{board::*, TranspositionTable};
+use crate::move_list::*;
 
 use std::cmp;
 use std::collections::VecDeque;
@@ -104,6 +104,74 @@ pub const AI_RULES: [[i32; N_SELECTIVITY_LV]; AI_LEVEL_MAX + 1] = [
     [0, 0, 0, 0, 0, 0, 60], // 60
 ];
 
+
+
+pub struct SearchEngine {
+    pub t_table: TranspositionTable,
+    pub origin_board: Board,
+    pub eval_func: Evaluator,
+    pub selectivity_lv: i32,
+    pub status: SearchStats
+}
+
+#[derive(Default)]
+pub struct SearchStats {
+    pub eval_search_node_count: u64,
+    pub eval_search_leaf_node_count: u64,
+    pub perfect_search_node_count: u64,
+    pub perfect_search_leaf_node_count: u64,
+    pub start_empty_count: i32,
+    pub start_depth: i32
+}
+
+impl SearchStats {
+    pub fn clear(&mut self) {
+        self.eval_search_node_count = 0;
+        self.eval_search_leaf_node_count = 0;
+        self.perfect_search_node_count = 0;
+        self.perfect_search_leaf_node_count = 0;
+    }
+}
+
+impl SearchEngine {
+    pub fn new(evaluator: Evaluator) -> SearchEngine {
+        SearchEngine {
+            t_table: TranspositionTable::new(),
+            origin_board: Board::new(),
+            eval_func: evaluator,
+            selectivity_lv: NO_MPC,
+            status: SearchStats::default()
+        }
+    }
+    pub fn clear_node_count(&mut self) {
+        self.status.clear();
+    }
+
+    pub fn set_board(&mut self, board: &Board) {
+        self.origin_board = board.clone();
+        self.clear_node_count();
+    }
+}
+
+pub struct PutBoard {
+    pub board: Board,
+    pub put_place: u8,
+}
+
+#[inline(always)]
+pub fn get_put_boards(board: &Board, legal_moves: u64) -> Vec<PutBoard> {
+    let mut put_boards: Vec<PutBoard> = Vec::with_capacity(legal_moves.count_ones() as usize);
+    for pos in MoveIterator::new(legal_moves) {
+        let mut board = board.clone();
+        board.put_piece_fast(pos);
+        put_boards.push(PutBoard {
+            board,
+            put_place: pos.trailing_zeros() as u8,
+        })
+    }
+    put_boards
+}
+
 pub struct SolverResult {
     pub best_move: u64,
     pub eval: i32,
@@ -113,8 +181,9 @@ pub struct SolverResult {
     pub searched_leaf_nodes: u64,
 }
 
+
 pub struct Solver {
-    pub search: Search,
+    pub search: SearchEngine,
     candidate_boards: VecDeque<PutBoard>,
     pub print_log: String,
 }
@@ -122,7 +191,7 @@ pub struct Solver {
 impl Solver {
     pub fn new(evaluator: Evaluator) -> Self {
         Self {
-            search: Search::new(evaluator),
+            search: SearchEngine::new(evaluator),
             candidate_boards: VecDeque::new(),
             print_log: String::new(),
         }
@@ -146,13 +215,12 @@ impl Solver {
 
             #[cfg(debug_assertions)]
             assert!(alpha <= beta);
-            predict_score = match solver {
-                SolverType::Eval(depth) => self.eval_solver(depth, alpha, beta),
-                SolverType::Perfect => self.perfect_solver(alpha, beta),
-            };
 
-            if (predict_score == -SCORE_MAX && alpha == -SCORE_MAX)
-                || (predict_score == SCORE_MAX && beta == SCORE_MAX)
+            // println!("{}: i = {}, [{}, {}]", solver.description(self.search.selectivity_lv),n , alpha, beta);
+            predict_score = self.search_root(alpha, beta, &solver);            
+
+            if (predict_score <= -SCORE_MAX && alpha <= -SCORE_MAX)
+                || (predict_score >= SCORE_MAX && beta >= SCORE_MAX)
             {
                 break;
             }
@@ -197,7 +265,7 @@ impl Solver {
             selectivity_lv_perfect_search,
             if perfect_solver_use {
                 std::cmp::min(// perfect solver を使用する際は、反復深化でのEvalSolverレベルを制限
-                    (n_empties - 7 - (2 - selectivity_lv_perfect_search * 2)).max(2),
+                    (n_empties - 7 - (2 - selectivity_lv_perfect_search/2 )).clamp(2, 24),
                     lv,
                 )
             } else {
@@ -212,8 +280,10 @@ impl Solver {
         } else {
             lv
         };
-        self.search.set_board(board);
-        self.search.clear_node_count();
+        
+        self.search.origin_board = board.clone();
+        self.search.status.clear();
+
         let legal_moves = board.moves();
 
         if legal_moves == 0 {
@@ -259,14 +329,27 @@ impl Solver {
         let start = max_depth_eval_solver.rem_euclid(step);
         for depth in (start..=max_depth_eval_solver).step_by(step as usize) {
             let init_width: i32 = if depth > 16 { 2 } else { 6 };
+            
             predict_score =
                 self.aspiration_search(init_width, predict_score, SolverType::Eval(depth));
         }
 
         // Perfect solver
         if perfect_solver_use {
+            // if max_depth_eval_solver >= 18 && selectivity_lv_perfect_search > 3{
+            //     self.search.selectivity_lv = selectivity_lv_perfect_search - 3;
+            //     let init_width = cmp::max(10 - board.empties_count(), 2 + predict_score.rem_euclid(2));
+            //     predict_score = self.aspiration_search(init_width, predict_score, SolverType::Perfect);
+            // }
+            if max_depth_eval_solver >= 18 && selectivity_lv_perfect_search > 5{
+                self.search.selectivity_lv = selectivity_lv_perfect_search - 4;
+                let init_width = cmp::max(10 - board.empties_count(), 2 + predict_score.rem_euclid(2));
+                predict_score = self.aspiration_search(init_width, predict_score, SolverType::Perfect);
+            }
+
             self.search.selectivity_lv = selectivity_lv_perfect_search;
             let init_width = cmp::max(10 - board.empties_count(), 2 + predict_score.rem_euclid(2));
+            
             predict_score = self.aspiration_search(init_width, predict_score, SolverType::Perfect);
         }
 
@@ -281,28 +364,36 @@ impl Solver {
                 SolverType::Eval(lv)
             },
             selectivity_lv: self.search.selectivity_lv,
-            searched_nodes: self.search.eval_search_node_count
-                + self.search.perfect_search_node_count,
-            searched_leaf_nodes: self.search.eval_search_leaf_node_count
-                + self.search.perfect_search_leaf_node_count,
+            searched_nodes: self.search.status.eval_search_node_count
+                + self.search.status.perfect_search_node_count,
+            searched_leaf_nodes: self.search.status.eval_search_leaf_node_count
+                + self.search.status.perfect_search_leaf_node_count,
         }
     }
+    
+    fn search_root(&mut self, alpha: i32, beta: i32, solver_type: &SolverType) -> i32 {
+        
+        fn pvs_search(board: &Board, alpha: i32, beta: i32, search: &mut SearchEngine, solver_type: &SolverType) -> i32{
+            match solver_type {
+                SolverType::Eval(lv) => pvs_eval(board, alpha, beta, *lv - 1, search),
+                SolverType::Perfect => pvs_perfect(board, alpha, beta, search)
+            }
+        }
 
-    fn eval_solver(&mut self, depth: i32, alpha: i32, beta: i32) -> i32 {
+        fn nws_search(board: &Board, alpha: i32, search: &mut SearchEngine, solver_type: &SolverType) -> i32{
+            match solver_type {
+                SolverType::Eval(lv) => nws_eval(board, alpha, *lv - 1, search),
+                SolverType::Perfect => nws_perfect(board, alpha, search)
+            }
+        }
+
         let mut alpha = alpha;
-
         let mut best_cand_index = 0;
         let mut candidate_iter = self.candidate_boards.iter();
 
         // first move
         let primary_board = candidate_iter.next().unwrap();
-        let mut best_score = -pvs_eval(
-            &primary_board.board,
-            -beta,
-            -alpha,
-            depth - 1,
-            &mut self.search,
-        );
+        let mut best_score = -pvs_search(&primary_board.board, -beta, -alpha, &mut self.search, solver_type);
         alpha = cmp::max(alpha, best_score);
         if best_score >= beta {
             return best_score;
@@ -311,56 +402,13 @@ impl Solver {
         // other move
         for (i, candidate) in candidate_iter.enumerate() {
             let candidate_index = i + 1;
-            let mut score = -nws_eval(&candidate.board, -alpha - 1, depth - 1, &mut self.search);
+            let mut score = -nws_search(&candidate.board, -alpha - 1, &mut self.search, solver_type);
             if score >= beta {
                 self.candidate_boards.swap(0, candidate_index);
                 return score;
             }
             if score > alpha {
-                score = -pvs_eval(&candidate.board, -beta, -alpha, depth - 1, &mut self.search);
-                if score >= beta {
-                    self.candidate_boards.swap(0, candidate_index);
-                    return score;
-                }
-                if score > alpha {
-                    best_score = score;
-                    alpha = score;
-                    best_cand_index = candidate_index;
-                }
-            }
-        }
-
-        if best_cand_index > 0 {
-            let best_cand = self.candidate_boards.remove(best_cand_index).unwrap();
-            self.candidate_boards.push_front(best_cand);
-        }
-
-        best_score
-    }
-
-    fn perfect_solver(&mut self, alpha: i32, beta: i32) -> i32 {
-        let mut alpha = alpha;
-        let mut best_cand_index = 0;
-        let mut candidate_iter = self.candidate_boards.iter();
-
-        // first move
-        let primary_board = candidate_iter.next().unwrap();
-        let mut best_score = -pvs_perfect(&primary_board.board, -beta, -alpha, &mut self.search);
-        alpha = cmp::max(alpha, best_score);
-        if best_score >= beta {
-            return best_score;
-        }
-
-        // other move
-        for (i, candidate) in candidate_iter.enumerate() {
-            let candidate_index = i + 1;
-            let mut score = -nws_perfect(&candidate.board, -alpha - 1, &mut self.search);
-            if score >= beta {
-                self.candidate_boards.swap(0, candidate_index);
-                return score;
-            }
-            if score > alpha {
-                score = -pvs_perfect(&candidate.board, -beta, -alpha, &mut self.search);
+                score = -pvs_search(&candidate.board, -beta, -alpha, &mut self.search, solver_type);
                 if score >= beta {
                     self.candidate_boards.swap(0, candidate_index);
                     return score;

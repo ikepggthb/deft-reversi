@@ -2,13 +2,17 @@ use std::mem;
 
 use crate::board::*;
 use crate::count_last_flip::count_last_flip;
-use crate::search::*;
+use crate::cut_off::*;
 
+use crate::evaluator_const::SCORE_MAX;
+use crate::move_list::*;
 use crate::eval::evaluator_const::SCORE_INF;
 
+use crate::solver::SearchEngine;
 use crate::mpc::*;
 use crate::t_table::N_TT_MOVES;
 
+use crate::eval_search::{negaalpha_eval, negaalpha_eval_no_mo};
 /// 空きマスが残り`SWITCH_EMPTIES_SIMPLE_NWS`以下である場合、
 /// `nws_perfect`から、`nws_perfect_simple`へ切り替える
 const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 10;
@@ -18,11 +22,14 @@ const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 10;
 const SWITCH_EMPTIES_NEGA_ALPHA: i32 = 5;
 
 
-/// `pvs_perfect`, `nws_perfect`でのmove orderingにおいて、評価関数とalpha-beta探索を用いた`move_ordering_eval`を使用する場合の、探索の深さ
-const MOVE_ORDERING_EVAL_LEVEL_T: [i32; 61] = [
-    0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6,
-    6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-];
+const MC: u64 = 0b1000000100000000000000000000000000000000000000000000000010000001_u64;
+const MX: u64 = 0b0000000001000010000000000000000000000000000000000100001000000000_u64;
+
+
+
+// evaluation of move ordering
+
+
 
 /// オセロの盤面に基づいて最終スコアを計算
 ///
@@ -201,8 +208,8 @@ const NEIGHBOUR: [u64; 66] = [
 ];
 
 #[inline(always)]
-pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut Search) -> i32 {
-    search.perfect_search_node_count += 1;
+pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut SearchEngine) -> i32 {
+    search.status.perfect_search_node_count += 1;
     let empties = !(board.player | board.opponent);
 
     let first = empties & (!empties + 1);
@@ -215,8 +222,8 @@ pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut 
         let flip = board.flip_bit(first);
         if flip != 0 {
             no_move = false;
-            search.perfect_search_node_count += 2;
-            search.perfect_search_leaf_node_count += 1;
+            search.status.perfect_search_node_count += 2;
+            search.status.perfect_search_leaf_node_count += 1;
             let first_score = -solve_score_1_empties(
                 board.opponent ^ flip,
                 -beta,
@@ -235,8 +242,8 @@ pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut 
         let flip = board.flip_bit(second);
         if flip != 0 {
             no_move = false;
-            search.perfect_search_node_count += 2;
-            search.perfect_search_leaf_node_count += 1;
+            search.status.perfect_search_node_count += 2;
+            search.status.perfect_search_leaf_node_count += 1;
             let second_score = -solve_score_1_empties(
                 board.opponent ^ flip,
                 -beta,
@@ -250,7 +257,7 @@ pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut 
 
     if no_move {
         if board.opponent_moves() == 0 {
-            search.perfect_search_leaf_node_count += 1;
+            search.status.perfect_search_leaf_node_count += 1;
             return solve_score(board);
         } else {
             return -solve_score_2_empties(&board.swapped_board(), -beta, -alpha, search);
@@ -273,11 +280,11 @@ pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut 
 /// * 探索結果として計算された盤面のスコアを表す整数値。
 ///   スコアは現在のプレイヤーから見た盤面のスコアを表す。
 ///
-pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut Search) -> i32 {
+pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut SearchEngine) -> i32 {
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
 
-    search.perfect_search_node_count += 1;
+    search.status.perfect_search_node_count += 1;
 
     // 空きマスが残り2のとき
     let n_empties = board.empties_count();
@@ -291,7 +298,7 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
     if legal_moves == 0 {
         if board.opponent_moves() == 0 {
             // passしても置くところがない == ゲーム終了
-            search.perfect_search_leaf_node_count += 1;
+            search.status.perfect_search_leaf_node_count += 1;
             return solve_score(board);
         }
         let passed_board = {
@@ -342,7 +349,7 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
 ///
 /// # 注記
 /// * 終盤の局面では、`negaalpha_perfect` 関数に切り替わります。
-pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut Search) -> i32 {
+pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> i32 {
     // 探索範囲: [alpha, beta]
     let beta: i32 = alpha + 1;
 
@@ -351,14 +358,14 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut Search) ->
         return negaalpha_perfect(board, alpha, beta, search);
     }
 
-    search.perfect_search_node_count += 1;
+    search.status.perfect_search_node_count += 1;
 
     let moves_bit: u64 = board.moves();
 
     if moves_bit == 0 {
         if board.opponent_moves() == 0 {
             // passしても置くところがない == ゲーム終了
-            search.perfect_search_leaf_node_count += 1;
+            search.status.perfect_search_leaf_node_count += 1;
             
             return solve_score(&board);
         }        
@@ -428,14 +435,14 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut Search) ->
 //         return negaalpha_perfect(board, alpha, beta, search);
 //     }
 
-//     search.perfect_search_node_count += 1;
+//     search.status.perfect_search_node_count += 1;
 
 //     // 探索範囲: [alpha, beta]
 //     let moves_bit: u64 = board.moves();
 
 //     if moves_bit == 0 {
 //         if board.opponent_moves() == 0 {
-//             search.perfect_search_leaf_node_count += 1;
+//             search.status.perfect_search_leaf_node_count += 1;
 //             return solve_score(board);
 //         } else {
 //             let mut board: Board = board.clone();
@@ -515,7 +522,7 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut Search) ->
 /// # 注記
 /// * 終盤の局面では、`negaalpha_perfect` 関数に切り替わります。
 
-pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32 {
+pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> i32 {
     let mut beta = alpha + 1;
 
     let n_empties: i32 = board.empties_count();
@@ -523,14 +530,14 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32 {
         return nws_perfect_simple(board, alpha, search);
     }
 
-    search.perfect_search_node_count += 1;
+    search.status.perfect_search_node_count += 1;
 
     // 探索範囲: [alpha, beta]
     let mut moves_bit: u64 = board.moves();
 
     if moves_bit == 0 {
         if board.opponent_moves() == 0 {
-            search.perfect_search_leaf_node_count += 1;
+            search.status.perfect_search_leaf_node_count += 1;
             return solve_score(board);
         } else {
             let passed_board: Board = {
@@ -545,7 +552,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32 {
     let td = search.t_table.get(board);
     let tt_moves: Option<[u8; 2]> = {
         match td {
-            Some(t) if n_empties >= 10 => {
+            Some(t) if n_empties >= 14 => {
                 let f = t.moves[0];
                 let s = t.moves[1];
                 if f != NO_COORD {
@@ -645,12 +652,50 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32 {
 
     // move ordering
     if move_list_len - n_skip >= 2 {
-        if n_empties > 13 {
-            let lv = MOVE_ORDERING_EVAL_LEVEL_T[n_empties as usize];
-            set_move_eval_for_end_nws(move_list, lv, alpha, search);
-        }else {
-            set_move_eval_ffs(move_list);
-        }
+
+        /* 
+        move ordering evalution 
+        - legal moves
+        - evalation of shallow search
+        */
+        {
+            let lv = {
+                match n_empties {
+                    15..17 => 1,
+                    17..20 => 2,
+                    20..24 => 2,
+                    24..60 => n_empties / 3,
+                    _ => 0,
+                }
+            };
+            let alpha = std::cmp::max(alpha - 6, -SCORE_MAX);
+            let beta = std::cmp::min(alpha + 12, SCORE_MAX);
+            for move_board in move_list.iter_mut() {
+                if move_board.skip {
+                    continue;
+                }
+                if move_board.board.moves().count_ones() as i32 <= 1  && n_empties < 16 {
+                    move_board.eval += 160;
+                }
+                // let node_count_tmp = search.status.eval_search_node_count;
+                let search_eval = match lv - 1 {
+                    0 => -search.eval_func.clac_features_eval(&move_board.board),
+                    1 | 2 => -negaalpha_eval_no_mo(&move_board.board, alpha, beta, lv - 1, search),
+                    3..=60 => -negaalpha_eval(&move_board.board, alpha, beta, lv - 1, search),
+                    _ => 0
+                };
+                // let node_count = search.status.eval_search_node_count - node_count_tmp;
+
+                let opponent_mobility_score = {
+                    let moves_bit = move_board.board.moves();
+                    let n_move = -(moves_bit.count_ones() as i32);
+                    let n_coner_moves = -((moves_bit & MC).count_ones() as i32);
+                    n_move * 2 + n_coner_moves
+                };
+                move_board.eval += search_eval + opponent_mobility_score * 2;
+
+            }
+        };
 
         sort_move_list(move_list);
     }
@@ -721,7 +766,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut Search) -> i32 {
 ///
 /// # Returns
 /// The best score for the current player given the board state and the search window.
-pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Search) -> i32 {
+pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut SearchEngine) -> i32 {
     let n_empties = board.empties_count();
     if n_empties < SWITCH_EMPTIES_NEGA_ALPHA {
         return negaalpha_perfect(board, alpha, beta, search);
@@ -730,7 +775,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
 
-    search.perfect_search_node_count += 1;
+    search.status.perfect_search_node_count += 1;
 
     // 探索範囲: [alpha, beta]
     let mut moves_bit: u64 = board.moves();
@@ -739,7 +784,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
     if moves_bit == 0 {
         // 合法手がないならば
         if board.opponent_moves() == 0 {
-            search.perfect_search_leaf_node_count += 1;
+            search.status.perfect_search_leaf_node_count += 1;
             return solve_score(board);
         }
 
@@ -894,8 +939,49 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
     }
     // move ordering
     if move_list_len - n_skip >= 2 {
-        let lv = MOVE_ORDERING_EVAL_LEVEL_T[n_empties as usize];
-        set_move_eval(move_list, lv, alpha, search);
+        {
+            let lv = {
+                match n_empties {
+                    13..16 => 1,
+                    16..24 => 2,
+                    24..60 => n_empties / 3,
+                    _ => 0,
+                }
+            };
+            let alpha = std::cmp::max(alpha - 6, -SCORE_MAX);
+            let beta = std::cmp::min(alpha + 12, SCORE_MAX);
+            let (mut max_eval, mut max_eval_index) = (-SCORE_MAX, 0);
+
+            for (i, move_board) in move_list.iter_mut().enumerate() {
+                if move_board.skip {
+                    continue;
+                }
+                // let node_count_tmp = search.status.eval_search_node_count;
+                let search_eval = if lv > 0 {-negaalpha_eval(&move_board.board, -beta, -alpha, lv - 1, search)} else {0};
+                // let node_count = search.status.eval_search_node_count - node_count_tmp;
+
+                if search_eval > max_eval {
+                    (max_eval, max_eval_index) = (search_eval, i);
+                }
+
+                let opponent_mobility_score = {
+                    let moves_bit = move_board.board.moves();
+                    let n_move = -(moves_bit.count_ones() as i32);
+                    let n_coner_moves = -((moves_bit & MC).count_ones() as i32);
+                    // let emc = 40 - (em + ec);
+                    n_move * 2 + n_coner_moves
+                };
+                move_board.eval += search_eval + opponent_mobility_score;
+
+            }
+
+            if !pvs_ok {
+                move_list[max_eval_index].eval += 1000;
+            }
+        }
+
+
+        
         sort_move_list(move_list);
     }
 

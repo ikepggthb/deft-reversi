@@ -2,7 +2,9 @@ use std::mem;
 
 use crate::board::*;
 use crate::perfect_search::solve_score;
-use crate::search::*;
+use crate::cut_off::*;
+use crate::move_list::*;
+use crate::solver::SearchEngine;
 
 use crate::mpc::*;
 use crate::N_TT_MOVES;
@@ -20,14 +22,14 @@ pub fn negaalpha_eval_no_mo(
     mut alpha: i32,
     beta: i32,
     lv: i32,
-    search: &mut Search,
+    search: &mut SearchEngine,
 ) -> i32 {
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
 
-    search.eval_search_node_count += 1;
+    search.status.eval_search_node_count += 1;
     if lv <= 0 {
-        search.eval_search_leaf_node_count += 1;
+        search.status.eval_search_leaf_node_count += 1;
         return search.eval_func.clac_features_eval(board);
     }
 
@@ -39,7 +41,7 @@ pub fn negaalpha_eval_no_mo(
         board.swap();
         if board.moves() == 0 {
             // passしても置くところがない == ゲーム終了
-            search.eval_search_leaf_node_count += 1;
+            search.status.eval_search_leaf_node_count += 1;
             board.swap();
             return solve_score(&board);
         }
@@ -87,7 +89,7 @@ pub fn negaalpha_eval(
     mut alpha: i32,
     beta: i32,
     lv: i32,
-    search: &mut Search,
+    search: &mut SearchEngine,
 ) -> i32 {
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
@@ -96,7 +98,7 @@ pub fn negaalpha_eval(
         return negaalpha_eval_no_mo(board, alpha, beta, lv, search);
     }
 
-    search.eval_search_node_count += 1;
+    search.status.eval_search_node_count += 1;
     let moves_bit = board.moves();
 
     // 合法手がない
@@ -105,7 +107,7 @@ pub fn negaalpha_eval(
         board.swap();
         if board.moves() == 0 {
             // passしても置くところがない == ゲーム終了
-            search.eval_search_leaf_node_count += 1;
+            search.status.eval_search_leaf_node_count += 1;
 
             board.swap();
             return solve_score(&board);
@@ -168,13 +170,13 @@ pub fn negaalpha_eval(
 /// * 置換表を使用しない。
 /// * 最後の残り数手は、`negaalpha_eval`関数を使用した探索結果を用いる。
 ///     * 最後の残り数手は、`SWITCH_NEGAALPHA_SEARCH_LEVEL`で定義される。
-pub fn nws_eval_simple(board: &Board, alpha: i32, lv: i32, search: &mut Search) -> i32 {
+pub fn nws_eval_simple(board: &Board, alpha: i32, lv: i32, search: &mut SearchEngine) -> i32 {
     let beta = alpha + 1;
 
     if lv < SWITCH_NEGAALPHA_SEARCH_LEVEL {
         return negaalpha_eval(board, alpha, beta, lv, search);
     }
-    search.eval_search_node_count += 1;
+    search.status.eval_search_node_count += 1;
 
     // 探索範囲: [alpha, beta]
     let moves_bit: u64 = board.moves();
@@ -185,7 +187,7 @@ pub fn nws_eval_simple(board: &Board, alpha: i32, lv: i32, search: &mut Search) 
         if board.moves() == 0 {
             // passしても置くところがない == ゲーム終了
             board.swap();
-            search.eval_search_leaf_node_count += 1;
+            search.status.eval_search_leaf_node_count += 1;
             return solve_score(&board);
         }
         return -nws_eval_simple(&board, -beta, lv, search);
@@ -245,7 +247,7 @@ pub fn nws_eval_simple(board: &Board, alpha: i32, lv: i32, search: &mut Search) 
 /// * 最後の残り数手は、`negaalpha_eval`関数を使用した探索結果を用いる。
 ///     * 最後の残り数手は、`SWITCH_NEGAALPHA_SEARCH_LEVEL`で定義される。
 ///
-pub fn pvs_eval_simple(board: &Board, alpha: i32, beta: i32, lv: i32, search: &mut Search) -> i32 {
+pub fn pvs_eval_simple(board: &Board, alpha: i32, beta: i32, lv: i32, search: &mut SearchEngine) -> i32 {
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
 
@@ -253,7 +255,7 @@ pub fn pvs_eval_simple(board: &Board, alpha: i32, beta: i32, lv: i32, search: &m
         return negaalpha_eval(board, alpha, beta, lv, search);
     }
 
-    search.eval_search_node_count += 1;
+    search.status.eval_search_node_count += 1;
     // 探索範囲: [alpha, beta]
     let moves_bit = board.moves();
 
@@ -265,7 +267,7 @@ pub fn pvs_eval_simple(board: &Board, alpha: i32, beta: i32, lv: i32, search: &m
         if board.moves() == 0 {
             // passしても合法手がない -> ゲーム終了
             board.swap();
-            search.eval_search_leaf_node_count += 1;
+            search.status.eval_search_leaf_node_count += 1;
             return solve_score(&board);
             // return simplest_eval(&mut board);
         }
@@ -348,14 +350,14 @@ pub fn pvs_eval_simple(board: &Board, alpha: i32, beta: i32, lv: i32, search: &m
 /// * `nws_eval_simple` と大きく異なるところは、置換表を使用していることである。
 /// * 最後の残り数手は、`nws_eval_simple`関数を使用した探索結果を用いる。
 ///     * 最後の残り数手は、`SWITCH_SIMPLE_SEARCH_LEVEL`で定義される。
-pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut Search) -> i32 {
+pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut SearchEngine) -> i32 {
     let mut beta = alpha + 1;
 
     if lv < SWITCH_SIMPLE_SEARCH_LEVEL {
         return nws_eval_simple(board, alpha, lv, search);
     }
 
-    search.eval_search_node_count += 1;
+    search.status.eval_search_node_count += 1;
     // 探索範囲: [alpha, beta]
     let mut moves_bit: u64 = board.moves();
 
@@ -365,7 +367,7 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut Search) -> 
         if board.moves() == 0 {
             // passしても置くところがない == ゲーム終了
             board.swap();
-            search.eval_search_leaf_node_count += 1;
+            search.status.eval_search_leaf_node_count += 1;
             return solve_score(&board);
             // return simplest_eval(&board);
         }
@@ -562,12 +564,12 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut Search) -> 
 /// * 最後の残り数手は、`pvs_eval_simple`関数を使用した探索結果を用いる。
 ///     * 最後の残り数手は、`SWITCH_SIMPLE_SEARCH_LEVEL`で定義される。
 ///
-pub fn pvs_eval(board: &Board, mut alpha: i32, mut beta: i32, lv: i32, search: &mut Search) -> i32 {
+pub fn pvs_eval(board: &Board, mut alpha: i32, mut beta: i32, lv: i32, search: &mut SearchEngine) -> i32 {
     if lv < SWITCH_SIMPLE_SEARCH_LEVEL {
         return pvs_eval_simple(board, alpha, beta, lv, search);
     }
 
-    search.eval_search_node_count += 1;
+    search.status.eval_search_node_count += 1;
 
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
@@ -583,7 +585,7 @@ pub fn pvs_eval(board: &Board, mut alpha: i32, mut beta: i32, lv: i32, search: &
         if board.moves() == 0 {
             // passしても合法手がない -> ゲーム終了
             board.swap();
-            search.eval_search_leaf_node_count += 1;
+            search.status.eval_search_leaf_node_count += 1;
             return solve_score(&board);
             // return simplest_eval(&board);
         }

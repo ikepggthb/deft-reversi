@@ -1,6 +1,5 @@
 use deft_reversi_engine::*;
 use std::{
-    backtrace,
     io::{self, Write},
     process::exit,
 };
@@ -78,17 +77,6 @@ impl OthelloCLI {
                     print!(".");
                 }
             }
-
-            // print!("   ");
-            // match i {
-            //     1 => {
-            //         print!("Black: {}", black_score);
-            //     }
-            //     2 => {
-            //         print!("White: {}", white_score);
-            //     }
-            //     _ => (),
-            // }
             println!();
         }
 
@@ -308,9 +296,7 @@ impl OthelloCLI {
     /// Displays a help message showing the available commands.
     fn display_help(&self) {
         println!("Available commands:");
-        println!(
-            "  new | init                - Start a new game with the standard initial position."
-        );
+        println!("  new | init                - Start a new game with the standard initial position.");
         println!("  level | l <number>        - Set AI level (1-60).");
         println!("  play <record>             - Play a game record (e.g., f5f6...).");
         println!("  undo                      - Undo the last move.");
