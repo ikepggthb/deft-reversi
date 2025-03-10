@@ -731,7 +731,7 @@ export class Game {
         this.enableAi = true;
         this.putAILv = 10;
         this.drawId = 0;
-        this.draw_move_scores_lv = 7;
+        this.draw_move_scores_lv = 8;
         this.enableDrawEval = false;
         this.aiTurn = "white";
         this.setupEventListeners();

@@ -1,7 +1,7 @@
 use crate::eval::Evaluator;
-use crate::eval_search::*;
+use crate::{eval_search::*, perfect_search};
 use crate::evaluator_const::SCORE_MAX;
-use crate::mpc::{NO_MPC, N_SELECTIVITY_LV, SELECTIVITY, SELECTIVITY_LV_MAX};
+use crate::mpc::{Selectivity, NO_MPC, N_SELECTIVITY_LV, SELECTIVITY, SELECTIVITY_LV_MAX};
 use crate::perfect_search::*;
 use crate::{board::*, TranspositionTable};
 use crate::move_list::*;
@@ -10,20 +10,22 @@ use std::cmp;
 use std::collections::VecDeque;
 
 const AI_LEVEL_MAX: usize = 60;
+
+#[derive(Clone, Copy)]
 pub enum SolverType {
-    Eval(i32), // depth
-    Perfect,
+    Eval(i32, i32), // depth, selectivity_lv
+    Perfect(i32),  // selectivity_lv
 }
 
 impl SolverType {
     /// ソルバーの説明文字列を生成
-    pub fn description(&self, selectivity_lv: i32) -> String {
+    pub fn description(&self) -> String {
         match *self {
-            SolverType::Perfect => format!(
+            SolverType::Perfect(selectivity_lv) => format!(
                 "Perfect solver ({}%)",
                 SELECTIVITY[selectivity_lv as usize].percent
             ),
-            SolverType::Eval(lv) => format!(
+            SolverType::Eval(lv, selectivity_lv) => format!(
                 "Eval solver (Lv.{}, {}%)",
                 lv, SELECTIVITY[selectivity_lv as usize].percent
             ),
@@ -31,80 +33,7 @@ impl SolverType {
     }
 }
 
-// AI_RULES: AI レベルごとの探索ルール
-// - [i32; N_SELECTIVITY_LV]: Selectivity LvごとのPerfect Solver開始条件（空きマス数）
-//   -> 各インデックスがSelectivity Lvに対応。
-//
-// 例: [30, 29, 28, 27, 26, 25, 24]
-// - 空きマスが"30"個以下でPerfect Solver(Selectivity Lv.0 (68%))を開始
-// - ...
-// - 空きマスが"25"個以下でPerfect Solver(Selectivity Lv.5 (99%))を開始
-// - 空きマスが"24"個以下でPerfect Solver(Selectivity Lv.6 (100%))を開始
-pub const AI_RULES: [[i32; N_SELECTIVITY_LV]; AI_LEVEL_MAX + 1] = [
-    [0, 0, 0, 0, 0, 0, 1], // Lv. 0
-    [0, 0, 0, 0, 0, 0, 2], // Lv. 1
-    [0, 0, 0, 0, 0, 0, 4],
-    [0, 0, 0, 0, 0, 0, 6],
-    [0, 0, 0, 0, 0, 0, 8],
-    [0, 0, 0, 0, 0, 0, 10],
-    [0, 0, 0, 0, 0, 0, 12],
-    [0, 0, 0, 0, 0, 0, 14],
-    [0, 0, 0, 0, 0, 0, 16],
-    [0, 0, 0, 0, 0, 0, 18],
-    [0, 0, 0, 0, 0, 0, 20], // 10
-    [0, 0, 24, 0, 22, 0, 21],
-    [0, 0, 24, 0, 22, 0, 21],
-    [0, 0, 0, 24, 0, 22, 21],
-    [0, 0, 0, 24, 0, 22, 21],
-    [0, 0, 0, 00, 24, 22, 21], // 15
-    [0, 0, 0, 00, 24, 22, 21],
-    [0, 0, 26, 0, 24, 0, 23],
-    [0, 0, 26, 0, 24, 0, 23],
-    [0, 0, 28, 0, 26, 0, 24],
-    [0, 0, 28, 0, 26, 0, 24], // 20
-    [0, 0, 29, 0, 27, 0, 25],
-    [0, 0, 29, 0, 27, 0, 25],
-    [0, 0, 30, 0, 28, 0, 26],
-    [0, 0, 30, 0, 28, 0, 26],
-    [0, 0, 31, 0, 29, 0, 27], // 25
-    [0, 0, 31, 0, 29, 0, 27],
-    [0, 0, 32, 0, 30, 0, 28],
-    [0, 0, 32, 0, 30, 0, 28],
-    [0, 0, 0, 32, 0, 30, 28],
-    [0, 0, 0, 32, 0, 30, 28], // 30
-    [0, 0, 33, 0, 31, 0, 29],
-    [0, 0, 33, 0, 31, 0, 29],
-    [0, 0, 00, 33, 0, 31, 29],
-    [0, 0, 00, 33, 0, 31, 29],
-    [0, 0, 34, 0, 32, 0, 30], // 35
-    [0, 0, 34, 0, 32, 0, 30],
-    [0, 0, 0, 34, 0, 32, 30],
-    [0, 0, 0, 34, 0, 32, 30],
-    [0, 0, 35, 0, 33, 0, 31],
-    [0, 0, 35, 0, 33, 0, 31], // 40
-    [0, 0, 36, 0, 34, 0, 32],
-    [0, 0, 36, 0, 34, 0, 32],
-    [0, 0, 38, 0, 36, 0, 34],
-    [0, 0, 38, 0, 36, 0, 34],
-    [0, 0, 40, 0, 38, 0, 36], // 45
-    [0, 0, 40, 0, 38, 0, 36],
-    [0, 0, 42, 0, 40, 0, 38],
-    [0, 0, 42, 0, 40, 0, 38],
-    [0, 0, 44, 0, 42, 0, 40],
-    [0, 50, 48, 46, 44, 42, 40], // 50
-    [0, 52, 50, 48, 46, 44, 42],
-    [0, 54, 52, 50, 48, 46, 44],
-    [0, 56, 54, 52, 50, 48, 46],
-    [0, 58, 56, 54, 52, 50, 48],
-    [0, 60, 58, 56, 54, 52, 50], // 55
-    [0, 0, 60, 58, 56, 54, 52],
-    [0, 0, 0, 60, 58, 56, 54],
-    [0, 0, 0, 0, 60, 58, 56],
-    [0, 0, 0, 0, 0, 60, 58],
-    [0, 0, 0, 0, 0, 0, 60], // 60
-];
-
-
+const EVAL_SOLVER_SELECTIVITY: i32 = 1;
 
 pub struct SearchEngine {
     pub t_table: TranspositionTable,
@@ -176,7 +105,6 @@ pub struct SolverResult {
     pub best_move: u64,
     pub eval: i32,
     pub solver_type: SolverType,
-    pub selectivity_lv: i32,
     pub searched_nodes: u64,
     pub searched_leaf_nodes: u64,
 }
@@ -249,40 +177,143 @@ impl Solver {
         predict_score
     }
 
-    fn get_ai_rules(&self, board: &Board, lv: i32) -> (bool, i32, i32) {
-        let n_empties = board.empties_count();
-        let thresholds = AI_RULES[lv as usize];
-        let mut perfect_solver_use = false;
-        let mut selectivity_lv_perfect_search = 0;
-        for (i, &e) in thresholds.iter().enumerate() {
-            if 0 != e && n_empties <= e {
-                selectivity_lv_perfect_search = i as i32;
-                perfect_solver_use = true;
+    fn get_config(&self, n_empties: i32, level: i32) -> SolverType {
+        use SolverType::*;
+
+        {
+            if level == 0 {
+                Eval(0, SELECTIVITY_LV_MAX)
+            } else if level <= 10 {
+                if n_empties <= 2 * level {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else {
+                    Eval(level, SELECTIVITY_LV_MAX)
+                }
+            } else if level <= 12 {
+                if n_empties <= 21 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= 24 {
+                    Perfect(4)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else if level <= 18 {
+                if n_empties <= 21 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= 24 {
+                    Perfect(4)
+                } else if n_empties <= 27 {
+                    Perfect(2)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else if level <= 21 {
+                if n_empties <= 24 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= 27 {
+                    Perfect(4)
+                } else if n_empties <= 30 {
+                    Perfect(2)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else if level <= 24 {
+                if n_empties <= 24 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= 27 {
+                    Perfect(5)
+                } else if n_empties <= 30 {
+                    Perfect(3)
+                } else if n_empties <= 33 {
+                    Perfect(1)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            }
+            else if level <= 27 {
+                if n_empties <= 27 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= 30 {
+                    Perfect(4) 
+                } else if n_empties <= 33 {
+                    Perfect(2)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else if level < 30 {
+                if n_empties <= 27 {
+                    Perfect(6)
+                } else if n_empties <= 30 {
+                    Perfect(5)
+                } else if n_empties <= 33 {
+                    Perfect(3)
+                } else if n_empties <= 36 {
+                    Perfect(1)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else if level <= 31 {
+                if n_empties <= 30 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= 33 {
+                    Perfect(4)
+                } else if n_empties <= 36 {
+                    Perfect(2)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else if level <= 33 {
+                if n_empties <= 30 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= 33 {
+                    Perfect(5)
+                } else if n_empties <= 36 {
+                    Perfect(3)
+                } else if n_empties <= 39 {
+                    Perfect(1)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else if level <= 35 {
+                if n_empties <= 30 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= 33 {
+                    Perfect(5)
+                } else if n_empties <= 36 {
+                    Perfect(4)
+                } else if n_empties <= 39 {
+                    Perfect(2)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else if level < 60 {
+                if n_empties <= (level) - 6 {
+                    Perfect(SELECTIVITY_LV_MAX)
+                } else if n_empties <= (level) - 3 {
+                    Perfect(5)
+                } else if n_empties <= level {
+                    Perfect(4)
+                } else if n_empties <= (level) + 3 {
+                    Perfect(3)
+                } else if n_empties <= (level) + 6 {
+                    Perfect(2)
+                } else if n_empties <= (level) + 9 {
+                    Perfect(1)
+                } else {
+                    Eval(level, EVAL_SOLVER_SELECTIVITY)
+                }
+            } else {
+                Perfect(SELECTIVITY_LV_MAX)
             }
         }
-        (
-            perfect_solver_use,
-            selectivity_lv_perfect_search,
-            if perfect_solver_use {
-                std::cmp::min(// perfect solver を使用する際は、反復深化でのEvalSolverレベルを制限
-                    (n_empties - 7 - (2 - selectivity_lv_perfect_search/2 )).clamp(2, 24),
-                    lv,
-                )
-            } else {
-                lv
-            }, 
-        )
     }
 
     pub fn solve(&mut self, board: &Board, lv: i32) -> SolverResult {
-        let lv = if lv > AI_LEVEL_MAX as i32 {
-            AI_LEVEL_MAX as i32
-        } else {
-            lv
-        };
+        let lv = lv.clamp(1, 60);
         
         self.search.origin_board = board.clone();
         self.search.status.clear();
+        self.search.t_table.set_old();
 
         let legal_moves = board.moves();
 
@@ -296,8 +327,7 @@ impl Solver {
                 return SolverResult {
                     best_move: 0,
                     eval: solve_score(board),
-                    solver_type: SolverType::Perfect,
-                    selectivity_lv: NO_MPC,
+                    solver_type: SolverType::Perfect(NO_MPC),
                     searched_nodes: 1,
                     searched_leaf_nodes: 1,
                 };
@@ -310,60 +340,62 @@ impl Solver {
 
         self.candidate_boards = get_put_boards(board, legal_moves).into_iter().collect();
 
-        let (perfect_solver_use, selectivity_lv_perfect_search, mut max_depth_eval_solver) =
-            self.get_ai_rules(board, lv);
+        let mut solver_type = self.get_config(board.empties_count(), lv);
 
         let mut predict_score = self.search.eval_func.clac_features_eval(board);
 
         // Eval Solver
         self.search.selectivity_lv = if lv > 10 { 1 } else { SELECTIVITY_LV_MAX };
+        
+        match &mut solver_type {
+            SolverType::Eval(lv,selectivity ) => {
+                
+                // 序盤の評価関数の学習データが良くないので
+                if board.move_count() < 20 && *lv > 14 {
+                    *lv -= 4;
+                    if *selectivity != NO_MPC {
+                        *selectivity = 3;
+                    }
+                }
+                let step = 4;
+                let start = lv.rem_euclid(step);
+                for depth in (start..=*lv).step_by(step as usize) {
+                    let init_width: i32 = if depth > 16 { 2 } else { 6 };
+                    
+                    predict_score =
+                        self.aspiration_search(init_width, predict_score, SolverType::Eval(depth, *selectivity));
+                }
+            },
+            SolverType::Perfect(selectivity) => {        
+                let selectivity = *selectivity;
+                let eval_solver_lv = std::cmp::min(// perfect solver を使用する際は、反復深化でのEvalSolverレベルを制限
+                    (board.empties_count() - 7 - (2 - selectivity/2 )).clamp(2, 24),
+                    lv,
+                );
+                let step = 4; let start = eval_solver_lv.rem_euclid(step);
+                for depth in (start..=eval_solver_lv).step_by(step as usize) {
+                    let init_width: i32 = if depth > 16 { 2 } else { 6 };
+                    predict_score =
+                        self.aspiration_search(init_width, predict_score, SolverType::Eval(depth, EVAL_SOLVER_SELECTIVITY));
+                }
 
-        // 序盤の評価関数の学習データが良くないので
-        if board.move_count() < 20 && max_depth_eval_solver > 14 {
-            max_depth_eval_solver -= 4;
-            if self.search.selectivity_lv != NO_MPC {
-                self.search.selectivity_lv = 3;
+                if eval_solver_lv >= 18 && selectivity > 5 {
+                    let init_width = cmp::max(10 - board.empties_count(), 2 + predict_score.rem_euclid(2));
+                    predict_score = self.aspiration_search(init_width, predict_score, SolverType::Perfect(selectivity - 4));
+                }
+
+                let init_width = cmp::max(10 - board.empties_count(), 2 + predict_score.rem_euclid(2));
+                predict_score = self.aspiration_search(init_width, predict_score, SolverType::Perfect(selectivity));
             }
-        }
-        let step = 4;
-        let start = max_depth_eval_solver.rem_euclid(step);
-        for depth in (start..=max_depth_eval_solver).step_by(step as usize) {
-            let init_width: i32 = if depth > 16 { 2 } else { 6 };
-            
-            predict_score =
-                self.aspiration_search(init_width, predict_score, SolverType::Eval(depth));
         }
 
         // Perfect solver
-        if perfect_solver_use {
-            // if max_depth_eval_solver >= 18 && selectivity_lv_perfect_search > 3{
-            //     self.search.selectivity_lv = selectivity_lv_perfect_search - 3;
-            //     let init_width = cmp::max(10 - board.empties_count(), 2 + predict_score.rem_euclid(2));
-            //     predict_score = self.aspiration_search(init_width, predict_score, SolverType::Perfect);
-            // }
-            if max_depth_eval_solver >= 18 && selectivity_lv_perfect_search > 5{
-                self.search.selectivity_lv = selectivity_lv_perfect_search - 4;
-                let init_width = cmp::max(10 - board.empties_count(), 2 + predict_score.rem_euclid(2));
-                predict_score = self.aspiration_search(init_width, predict_score, SolverType::Perfect);
-            }
 
-            self.search.selectivity_lv = selectivity_lv_perfect_search;
-            let init_width = cmp::max(10 - board.empties_count(), 2 + predict_score.rem_euclid(2));
-            
-            predict_score = self.aspiration_search(init_width, predict_score, SolverType::Perfect);
-        }
-
-        let best_cand = self.candidate_boards.front().unwrap();//first().unwrap();
-        self.search.t_table.set_old();
+        let best_cand = self.candidate_boards.front().unwrap();
         SolverResult {
             best_move: position_num_to_bit(best_cand.put_place as i32).unwrap(),
             eval: predict_score,
-            solver_type: if perfect_solver_use {
-                SolverType::Perfect
-            } else {
-                SolverType::Eval(lv)
-            },
-            selectivity_lv: self.search.selectivity_lv,
+            solver_type,
             searched_nodes: self.search.status.eval_search_node_count
                 + self.search.status.perfect_search_node_count,
             searched_leaf_nodes: self.search.status.eval_search_leaf_node_count
@@ -372,18 +404,22 @@ impl Solver {
     }
     
     fn search_root(&mut self, alpha: i32, beta: i32, solver_type: &SolverType) -> i32 {
+        match *solver_type {
+            SolverType::Eval(_, selectivity) => self.search.selectivity_lv = selectivity,
+            SolverType::Perfect(selectivity) => self.search.selectivity_lv = selectivity
+        }
         
         fn pvs_search(board: &Board, alpha: i32, beta: i32, search: &mut SearchEngine, solver_type: &SolverType) -> i32{
             match solver_type {
-                SolverType::Eval(lv) => pvs_eval(board, alpha, beta, *lv - 1, search),
-                SolverType::Perfect => pvs_perfect(board, alpha, beta, search)
+                SolverType::Eval(lv, _) => pvs_eval(board, alpha, beta, *lv - 1, search),
+                SolverType::Perfect(_) => pvs_perfect(board, alpha, beta, search)
             }
         }
 
         fn nws_search(board: &Board, alpha: i32, search: &mut SearchEngine, solver_type: &SolverType) -> i32{
             match solver_type {
-                SolverType::Eval(lv) => nws_eval(board, alpha, *lv - 1, search),
-                SolverType::Perfect => nws_perfect(board, alpha, search)
+                SolverType::Eval(lv, _) => nws_eval(board, alpha, *lv - 1, search),
+                SolverType::Perfect(_) => nws_perfect(board, alpha, search)
             }
         }
 
@@ -394,6 +430,7 @@ impl Solver {
         // first move
         let primary_board = candidate_iter.next().unwrap();
         let mut best_score = -pvs_search(&primary_board.board, -beta, -alpha, &mut self.search, solver_type);
+        
         alpha = cmp::max(alpha, best_score);
         if best_score >= beta {
             return best_score;
@@ -403,12 +440,14 @@ impl Solver {
         for (i, candidate) in candidate_iter.enumerate() {
             let candidate_index = i + 1;
             let mut score = -nws_search(&candidate.board, -alpha - 1, &mut self.search, solver_type);
+            
             if score >= beta {
                 self.candidate_boards.swap(0, candidate_index);
                 return score;
             }
             if score > alpha {
                 score = -pvs_search(&candidate.board, -beta, -alpha, &mut self.search, solver_type);
+                
                 if score >= beta {
                     self.candidate_boards.swap(0, candidate_index);
                     return score;

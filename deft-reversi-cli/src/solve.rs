@@ -52,7 +52,7 @@ pub fn solve(path: &str, eval_path: &str, level: i32) {
             board.empties_count(),
             solver_result
                 .solver_type
-                .description(solver_result.selectivity_lv),
+                .description(),
             solver_result.searched_nodes,
             solver_result.searched_nodes as f64 / solve_time.as_secs_f64(),
             format_duration(solve_time)

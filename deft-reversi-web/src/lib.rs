@@ -252,12 +252,13 @@ impl App {
             }
         }
 
-        
+        let empties = self.game.current.board.empties_count();
         let r = self.solver.solve( &self.game.current.board, lv);
         let p = position_bit_to_str(r.best_move).unwrap();
         self.game.put(p.as_str()).unwrap_or_else(|e| {console_log!("{}", e);});
-        console_log!("    lv            : {}", lv);
+        console_log!("    solver type   : {  }", r.solver_type.description());
         console_log!("    score         : {:+}", r.eval);
+        console_log!("    empty squares : {  }", empties);
         console_log!("    best move     : {  }", position_bit_to_str(r.best_move).unwrap());
         console_log!("    node          : {  }", r.searched_nodes);
     }
