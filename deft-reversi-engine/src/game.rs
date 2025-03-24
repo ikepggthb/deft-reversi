@@ -1,6 +1,4 @@
 use crate::board::*;
-use crate::eval::*;
-use crate::t_table::*;
 
 
 pub struct Game {
@@ -12,7 +10,34 @@ pub struct Game {
 pub struct State {
     pub board: Board,
     pub put_place: u8,
-    pub turn: usize
+    pub turn: Color
+}
+
+#[derive(Clone, Copy)]
+pub enum Color {
+    Black,
+    White
+}
+
+impl Color {
+    pub fn opponent(&self) -> Color {
+        match self {
+            Self::Black => Self::White,
+            Self::White => Self::Black
+        }
+    }
+    pub fn get_char(&self) -> char {
+        match self {
+            Self::Black => 'X',
+            Self::White => 'O'
+        }
+    }
+    pub fn get_str(&self) -> &str {
+         match self {
+            Self::Black => "Black",
+            Self::White => "White"
+        }
+    }
 }
 
 /// 棋譜データ（ASCII 文字列）を2文字単位で処理します。
@@ -39,11 +64,27 @@ where
     Ok(())
 }
 
-fn count_record(record: &str) -> Result<usize, &'static str> {
+pub fn count_record(record: &str) -> Result<usize, &'static str> {
     if !record.is_ascii() {
         return Err("Record contains non-ASCII characters");
     }
     Ok(record.len() / 2)
+}
+
+pub fn check_record(record: &str) -> Result<(), &str> {
+    if !record.is_ascii() {
+        return Err("Record contains non-ASCII characters");
+    }
+    let mut b = Board::new();
+    for chunk in record.as_bytes().chunks_exact(2) {
+        let chunk_str = std::str::from_utf8(chunk).map_err(|_| "Invalid UTF-8 sequence")?;
+        let put_mask = position_str_to_bit(chunk_str)?;
+        if b.put(put_mask).is_err() {
+            return Err("invalid move");
+        }
+    }
+
+    Ok(())
 }
 
 impl Game {
@@ -53,12 +94,13 @@ impl Game {
             current: State {
                 board: initial_board,
                 put_place: NO_COORD,
-                turn: Board::BLACK
+                turn: Color::Black
             },
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
     }
+
 
     pub fn from_record(record: &str) -> Result<Self, &'static str>
     {
@@ -73,8 +115,8 @@ impl Game {
         Ok(game)
     }
     
-    fn update_new_state(&mut self, new_board: Board, put_place: u8, turn: usize) {
-        self.undo_stack.push(State { board: self.current.board.clone(), put_place: put_place, turn: self.current.turn});
+    fn update_new_state(&mut self, new_board: Board, put_place: u8, turn: Color) {
+        self.undo_stack.push(State { board: self.current.board.clone(), put_place, turn: self.current.turn});
         self.redo_stack.clear();
         self.current.board = new_board;
         self.current.put_place = NO_COORD;
@@ -113,9 +155,9 @@ impl Game {
 
         let position_bit = position_str_to_bit(positon)?;
 
-        match b.put_piece(position_bit) {
+        match b.put(position_bit) {
             Ok(()) => {
-                self.update_new_state(b.clone(), position_bit_to_num(position_bit)?, self.current.turn^1);
+                self.update_new_state(b.clone(), position_bit_to_num(position_bit)?, self.current.turn.opponent());
             },
             Err(_) => return Err("Invalid position")
         };
@@ -124,7 +166,7 @@ impl Game {
 
     pub fn is_pass(&self) -> bool {
         let b = &self.current.board;
-        b.put_able().count_ones() == 0 && b.opponent_put_able().count_ones() != 0
+        b.moves().count_ones() == 0 && b.opponent_moves().count_ones() != 0
     }
 
     pub fn pass(&mut self) {
@@ -132,12 +174,12 @@ impl Game {
 
         let mut b = self.current.board.clone();
         b.swap();
-        self.update_new_state(b, PASS, self.current.turn^1);
+        self.update_new_state(b, PASS, self.current.turn.opponent());
     }
 
     pub fn is_end(&self) -> bool {
         let b = &self.current.board;
-        b.put_able().count_ones() == 0 && b.opponent_put_able().count_ones() == 0
+        b.moves().count_ones() == 0 && b.opponent_moves().count_ones() == 0
     }
 
     pub fn record(&self) -> String {

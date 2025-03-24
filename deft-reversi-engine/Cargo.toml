@@ -1,6 +1,6 @@
 [package]
 name = "deft_reversi_engine"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -10,9 +10,3 @@ bincode = "1.3.3"
 rand = "0.8.5"
 serde = {version = "1.0.195", features = ["derive"] }
 serde_json = "1.0.111"
-smallvec = "1.13.2"
-
-[package.metadata.wasm-pack.profile.profiling]
-wasm-opt = ['-O4']
-
-[package.metadata.wasm-pack.profile.release]

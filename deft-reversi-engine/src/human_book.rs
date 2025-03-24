@@ -99,13 +99,13 @@ impl OpeningBook {
     }
 
     pub fn opening_move(&self, board: &Board, name_index: usize) -> Result<Option<u64>, PutPieceErr> {
-        let mut legal_moves = board.put_able();
+        let mut legal_moves = board.moves();
         while legal_moves != 0 {
             let legal_move = (!legal_moves + 1) & legal_moves;
             legal_moves &= legal_moves - 1;
             let next_board = {
                 let mut b = board.clone();
-                b.put_piece(legal_move)?;
+                b.put(legal_move)?;
                 b
             };
 
@@ -125,13 +125,13 @@ impl OpeningBook {
     }
 
     pub fn opening_move_from_string(&self, board: &Board, name: &String) -> Result<Option<u64>, PutPieceErr> {
-        let mut legal_moves = board.put_able();
+        let mut legal_moves = board.moves();
         while legal_moves != 0 {
             let legal_move = (!legal_moves + 1) & legal_moves;
             legal_moves &= legal_moves - 1;
             let next_board = {
                 let mut b = board.clone();
-                b.put_piece(legal_move)?;
+                b.put(legal_move)?;
                 b
             };
 
@@ -177,7 +177,7 @@ impl FromStr for OpeningBook {
             while let Some(position) = positions.next() {
                 let position = std::str::from_utf8(position).map_err(|e| OpeningBookError::ParseError(format!("{}", e)))?;
                 let position_bit = position_str_to_bit(position).map_err(|s| OpeningBookError::InvalidOpeningData(s.to_string()))?;
-                board.put_piece(position_bit).map_err(|_| OpeningBookError::InvalidOpeningData(format!("record: {}, invalid position bit: {:<02b}", opening.sequence ,position_bit)))?;
+                board.put(position_bit).map_err(|_| OpeningBookError::InvalidOpeningData(format!("record: {}, invalid position bit: {:<02b}", opening.sequence ,position_bit)))?;
                 let u_board = board.get_unique_board();
                 
                 match book.opening_boards.get_mut(&u_board) {
@@ -208,7 +208,7 @@ impl FromStr for OpeningBook {
                     }
                 }
 
-                if board.put_able() == 0 {
+                if board.moves() == 0 {
                     board.swap();
                 }
 

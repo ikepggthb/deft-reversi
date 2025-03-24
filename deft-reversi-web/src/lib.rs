@@ -111,13 +111,13 @@ impl App {
     fn get_move_scores(&mut self, lv: i32) -> [i32; 64] {
         let mut scores = [0; 64];
         let b = &self.game.current.board;
-        let legal_moves =  b.put_able();
+        let legal_moves =  b.moves();
         for i in 0..64 {
             let mask = 1u64 << i;
             if mask & legal_moves != 0 {
                 let position = position_bit_to_num(mask).unwrap();
                 let mut b = b.clone();
-                b.put_piece(mask);
+                b.put(mask);
                 let result = self.solver.solve(&b, lv);                
                 scores[position as usize] = -result.eval;
                 
@@ -131,21 +131,18 @@ impl App {
         let eval= eval_level.map(|lv| self.get_move_scores(lv).to_vec());
 
         let b = &self.game.current.board;
-        let legal_moves =  b.put_able();
+        let legal_moves =  b.moves();
 
-        let next_turn = {
-            if self.game.current.turn == Board::BLACK {
-                "Black"
-            } else {
-                "White"
-            }
-        };
+        let next_turn = self.game.current.turn.get_str();
 
         let (black, white) = {
-            if self.game.current.turn == Board::BLACK {
-                (b.player, b.opponent)
-            } else { 
-                (b.opponent, b.player)
+            match self.game.current.turn {
+                Color::Black => {
+                    (b.player, b.opponent)
+                },
+                Color::White => {
+                    (b.opponent, b.player)
+                }
             }
         };
 
@@ -201,7 +198,7 @@ impl App {
     #[wasm_bindgen]
     pub fn is_legal_move(&mut self, i: i32) -> bool {
         let position_bit = position_num_to_bit(i).unwrap();
-        return self.game.current.board.put_able() & position_bit != 0
+        return self.game.current.board.moves() & position_bit != 0
     }
 
     #[wasm_bindgen]
@@ -255,12 +252,13 @@ impl App {
             }
         }
 
-        
+        let empties = self.game.current.board.empties_count();
         let r = self.solver.solve( &self.game.current.board, lv);
         let p = position_bit_to_str(r.best_move).unwrap();
         self.game.put(p.as_str()).unwrap_or_else(|e| {console_log!("{}", e);});
-        console_log!("    lv            : {}", lv);
+        console_log!("    solver type   : {  }", r.solver_type.description());
         console_log!("    score         : {:+}", r.eval);
+        console_log!("    empty squares : {  }", empties);
         console_log!("    best move     : {  }", position_bit_to_str(r.best_move).unwrap());
         console_log!("    node          : {  }", r.searched_nodes);
     }

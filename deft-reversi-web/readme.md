@@ -4,9 +4,6 @@
 ## AIと遊ぶ
 https://az.recazbowl.net/deft-reversi-web/index.html
 
-## AI部分のソースコード
-[Deft Reversi Engine (Github)](https://github.com/ikepggthb/deft-reversi-engine)
-
 ## 難易度について
 
 レベルは、0~24まであります。
@@ -15,17 +12,3 @@ https://az.recazbowl.net/deft-reversi-web/index.html
 
 レベル20以上は、重いので推奨しないです。
 
-# Note
-
-ビルド方法
-
-- Rustと、wasm-packが必要です。
-
-```
-git clone https://github.com/ikepggthb/deft_web.git
-cd deft_web
-git clone https://github.com/ikepggthb/deft-reversi-engine.git
-
-cargo install wasm-pack
-wasm-pack build --target web
-```

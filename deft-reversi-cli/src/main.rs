@@ -1,141 +1,82 @@
+mod solve;
+mod self_play;
+mod play;
+mod perft;
+
+use crate::play::*;
+use crate::solve::*;
+use crate::self_play::*;
+use crate::perft::*;
+use clap::Parser;
+
+const DEFAULT_LEVEL: u8 = 10;
 
 
-use deft_reversi_engine::*;
-use std::io::{self, Write};
+/// Reversi games
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Solve
+    #[arg(short, long)]
+    solve: Option<String>,
 
-#[test] 
-fn stackoverflow_test(){
-    let mut game = CUIOthello::new(10); // AIレベル10
-    game.play();
+ /// Path to read eval weight from
+    #[arg(short, long)]
+    eval_path: Option<String>,
+
+    /// AI level
+    #[arg(short, long, default_value_t = DEFAULT_LEVEL)]
+    level: u8,
+
+    /// Number of self-play games to run
+    /// (e.g. --self-play 10 --level 16 --self-play-out "./self-play.txt" --self-play-start-rand 45)
+    #[arg(long, id = "Number of games")]
+    self_play: Option<usize>,
+
+    /// Output file path for self-play records
+    #[arg(long, id = "PATH", default_value = "./self-play.txt")]
+    self_play_out: String,
+
+    /// Number of starting random moves in self-play
+    #[arg(long, default_value_t = 20)]
+    self_play_start_rand: usize,
+
+    #[arg(long, id = "DEPTH")]
+    perft: Option<u64>,
+
+    #[arg(long)]
+    perft_count_pass: bool,
 }
 
-struct CUIOthello {
-    game: Game,
-    solver: Solver,
-    ai_level: i32,
-    hints_enabled: bool,
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+
+    let level = args.level as i32;
+    let eval_path = args.eval_path.as_deref().unwrap_or("../data/eval/eval.json");
+
+    if let Some(n_games) = args.self_play {
+        // 自己対戦モード
+        let start_rand = args.self_play_start_rand;
+        let out_path = args.self_play_out;
+        run_self_play(n_games, level, start_rand, eval_path, &out_path)?;
+    } else if let Some(path) = &args.solve {
+        // Solveモード
+        // e.g. -solve ".\problem\fforum-40-59.obf" -l 25
+        println!("AI level   :  {}", args.level);
+        solve(path, eval_path, level);
+    } else if let Some(depth) = &args.perft {
+        // Perft mode
+        // e.g. --perft 11
+        run_perft(*depth, args.perft_count_pass);
+    }else {
+        // 通常プレイモード
+        let mut game = OthelloCLI::new(
+            level,
+            eval_path
+        );
+        game.play();
+    }
+
+    Ok(())
 }
 
-impl CUIOthello {
-    fn new(ai_level: i32) -> Self {
-        CUIOthello {
-            game: Game::new(),
-            solver: Solver::new(Evaluator::default()),
-            ai_level,
-            hints_enabled: false,
-        }
-    }
-
-    fn display_board(&self) {
-        println!("{}", self.game.current.board.print_board_string(self.game.current.turn));
-    }
-
-    fn display_score(&self) {
-        let black_count = self.game.current.board.player.count_ones();
-        let white_count = self.game.current.board.opponent.count_ones();
-        println!("スコア: プレイヤー (X): {}, コンピュータ (O): {}", black_count, white_count);
-    }
-
-    fn display_hints(&self) {
-        if self.hints_enabled {
-            let legal_moves = self.game.current.board.put_able();
-            println!("ヒント: 打てる場所: {:?}", self.get_legal_moves(legal_moves));
-        }
-    }
-
-    fn get_legal_moves(&self, legal_moves: u64) -> Vec<String> {
-        let mut moves = Vec::new();
-        let mut temp_moves = legal_moves;
-        while temp_moves != 0 {
-            let move_bit = temp_moves & (!temp_moves + 1);
-            temp_moves &= temp_moves - 1;
-            if let Ok(move_str) = position_bit_to_str(move_bit) {
-                moves.push(move_str);
-            }
-        }
-        moves
-    }
-
-    fn player_turn(&mut self) {
-        loop {
-            print!("入力（例: E6）: ");
-            io::stdout().flush().unwrap();
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-            let input = input.trim();
-
-            if input == "undo" {
-                if self.game.undo().is_err() {
-                    println!("これ以上戻れません。");
-                } else {
-                    println!("1手戻しました。");
-                }
-                return;
-            } else if input == "redo" {
-                if self.game.redo().is_err() {
-                    println!("これ以上やり直せません。");
-                } else {
-                    println!("1手やり直しました。");
-                }
-                return;
-            } else if let Err(e) = self.game.put(input) {
-                println!("無効な入力です: {}", e);
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn computer_turn(&mut self) {
-        println!("コンピュータが考えています...");
-        let result = self.solver.solve(&self.game.current.board, self.ai_level);
-        if let Ok(move_str) = position_bit_to_str(result.best_move) {
-            println!("コンピュータの手: {}", move_str);
-            self.game.put(&move_str).unwrap();
-        }
-    }
-
-    fn play(&mut self) {
-        println!("オセロゲーム開始！");
-        println!("プレイヤー: X, コンピュータ: O");
-        println!("コマンド: 'undo' で1手戻る, 'redo' でやり直し, 'quit' で終了");
-
-        loop {
-            self.display_board();
-            self.display_hints();
-
-            if self.game.is_end() {
-                println!("ゲーム終了！");
-                self.display_score();
-                let black_count = self.game.current.board.player.count_ones();
-                let white_count = self.game.current.board.opponent.count_ones();
-                if black_count > white_count {
-                    println!("プレイヤーの勝利！");
-                } else if black_count < white_count {
-                    println!("コンピュータの勝利！");
-                } else {
-                    println!("引き分け！");
-                }
-                break;
-            }
-
-            if self.game.is_pass() {
-                println!("{}はパスです。", if self.game.current.turn == Board::BLACK { "プレイヤー" } else { "コンピュータ" });
-                self.game.pass();
-                continue;
-            }
-
-            if self.game.current.turn == Board::BLACK {
-                self.player_turn();
-            } else {
-                self.computer_turn();
-            }
-        }
-    }
-}
-
-fn main() {
-    let mut game = CUIOthello::new(10); // AIレベル10
-    game.play();
-}

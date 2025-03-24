@@ -1,13 +1,14 @@
 use crate::{
     board::*,
-    search::*,
+    cut_off::*,
     eval_search::*,
-    eval::evaluator_const::*
+    eval::evaluator_const::SCORE_MAX,
+    solver::SearchEngine,
 };
 
 pub enum ProbCutResult {
     Cut(i32),
-    FAIL
+    Fail
 }
 
 pub struct Selectivity {
@@ -188,11 +189,11 @@ pub fn eval_search_mpc(
     alpha          : i32,
     beta           : i32,
     lv             : i32,
-    search         : &mut Search
+    search         : &mut SearchEngine
 ) -> ProbCutResult
 {
     if lv < MPC_START_LEVEL_EVAL_SEARCH {
-        return  ProbCutResult::FAIL;
+        return  ProbCutResult::Fail;
     }
     let n_empties = board.empties_count();
     let mpc_params = gen_eval_search_mpc_params(lv, n_empties);
@@ -205,13 +206,13 @@ pub fn perfect_search_mpc(
     board          : &Board,
     alpha          : i32,
     beta           : i32,
-    search         : &mut Search
+    search         : &mut SearchEngine
 ) -> ProbCutResult
 {
     let n_empties = board.empties_count();
     let mpc_params = match &PERFECT_SEARCH_MPC_SEARCH_PARAMS[n_empties as usize] {
         Some(params) => { params },
-        None                     => { return ProbCutResult::FAIL }
+        None                     => { return ProbCutResult::Fail }
     };
     multi_prob_cut(board, alpha, beta, mpc_params, search)
 }
@@ -222,14 +223,14 @@ pub fn multi_prob_cut(
     alpha            : i32,
     beta             : i32,
     mpc_params       : &MpcParams, 
-    search           : &mut Search
+    search           : &mut SearchEngine
 ) -> ProbCutResult 
 {
     if alpha >= SCORE_MAX {return ProbCutResult::Cut(alpha)}
     if beta <= -SCORE_MAX {return ProbCutResult::Cut(beta)}
 
     if search.selectivity_lv == NO_MPC { // no selectivity
-        return ProbCutResult::FAIL;
+        return ProbCutResult::Fail;
     }
 
     #[cfg(debug_assertions)]
@@ -267,11 +268,11 @@ pub fn multi_prob_cut(
         }
     }
     
-    ProbCutResult::FAIL
+    ProbCutResult::Fail
 }
 
 #[inline(always)]
-fn nws_eval_0_selectivity_lv(board: &Board, alpha: i32, lv: i32, search : &mut Search) -> i32
+fn nws_eval_0_selectivity_lv(board: &Board, alpha: i32, lv: i32, search : &mut SearchEngine) -> i32
 {
     let main_search_selectivity_lv = search.selectivity_lv;
     search.selectivity_lv = NO_MPC;
