@@ -77,7 +77,7 @@ pub struct MpcParams {
         e_std : f64
 }
 
-pub const PERFECT_SEARCH_MPC_SEARCH_PARAMS: [Option<MpcParams>; 61] = [
+pub const FINAL_SEARCH_MPC_SEARCH_PARAMS: [Option<MpcParams>; 61] = [
     None, // 存在しない
     None, // 残り1マス
     None, // 2
@@ -202,7 +202,7 @@ pub fn eval_search_mpc(
 }
 
 #[inline(always)]
-pub fn perfect_search_mpc(
+pub fn final_search_mpc(
     board          : &Board,
     alpha          : i32,
     beta           : i32,
@@ -210,7 +210,7 @@ pub fn perfect_search_mpc(
 ) -> ProbCutResult
 {
     let n_empties = board.empties_count();
-    let mpc_params = match &PERFECT_SEARCH_MPC_SEARCH_PARAMS[n_empties as usize] {
+    let mpc_params = match &FINAL_SEARCH_MPC_SEARCH_PARAMS[n_empties as usize] {
         Some(params) => { params },
         None                     => { return ProbCutResult::Fail }
     };

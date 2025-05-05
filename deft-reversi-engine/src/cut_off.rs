@@ -1,11 +1,12 @@
-use crate::t_table::TranspositionTable;
-use crate::{board::*, TableData};
-
-use crate::move_list::*;
-
+use crate::{
+    board::*,
+    move_list::*,
+    TableData,
+    t_table::TranspositionTable
+};
 
 #[inline(always)]
-pub fn t_table_cut_off_td(
+pub fn tt_cut(
     alpha: &mut i32,
     beta: &mut i32,
     lv: i32,
@@ -36,40 +37,7 @@ pub fn t_table_cut_off_td(
 }
 
 #[inline(always)]
-pub fn t_table_cut_off(
-    board: &Board,
-    alpha: &mut i32,
-    beta: &mut i32,
-    lv: i32,
-    selectivity_lv: i32,
-    t_table: &TranspositionTable,
-) -> Option<i32> {
-    if let Some(t) = t_table.get(board) {
-        if t.lv as i32 != lv || t.selectivity_lv as i32 != selectivity_lv {
-            return None;
-        }
-        let max = t.max as i32;
-        let min = t.min as i32;
-        if max <= *alpha {
-            return Some(max);
-        } else if min >= *beta {
-            return Some(min);
-        } else if max == min {
-            return Some(max);
-        }
-        if min > *alpha {
-            *alpha = min
-        };
-        if max < *beta {
-            *beta = max
-        };
-    }
-    None
-}
-
-
-#[inline(always)]
-pub fn et_cut_off(
+pub fn e_tt_cut(
     alpha: &mut i32,
     beta: &mut i32,
     move_list: &mut [MoveBoard],

@@ -1,7 +1,7 @@
 use std::mem;
 
 use crate::board::*;
-use crate::perfect_search::solve_score;
+use crate::final_search::solve_score;
 use crate::cut_off::*;
 use crate::move_list::*;
 use crate::solver::SearchEngine;
@@ -152,7 +152,7 @@ pub fn negaalpha_eval(
     best_score
 }
 
-/// 関数`pvs_perfect_simple`で用いられるヌルウィンドウ探索（Null Window Search, NWS）
+/// 関数`pvs_final_simple`で用いられるヌルウィンドウ探索（Null Window Search, NWS）
 ///
 /// `alpha`から、`alpha + 1`までの範囲で、alpha-beta探索を行う。
 ///
@@ -331,7 +331,7 @@ pub fn pvs_eval_simple(board: &Board, alpha: i32, beta: i32, lv: i32, search: &m
     best_score
 }
 
-/// 関数`pvs_perfect`で用いられるヌルウィンドウ探索（Null Window Search, NWS）
+/// 関数`pvs_final`で用いられるヌルウィンドウ探索（Null Window Search, NWS）
 ///
 /// `alpha`から、`alpha + 1`までの範囲で、alpha-beta探索を行う。
 ///
@@ -346,7 +346,7 @@ pub fn pvs_eval_simple(board: &Board, alpha: i32, beta: i32, lv: i32, search: &m
 ///   現在のプレイヤーから見た盤面の評価値を表す。
 ///
 /// # 注記
-/// * 置換表が存在しない場合は、`nvs_perfect_simple` 関数に切り替える。
+/// * 置換表が存在しない場合は、`nvs_final_simple` 関数に切り替える。
 /// * `nws_eval_simple` と大きく異なるところは、置換表を使用していることである。
 /// * 最後の残り数手は、`nws_eval_simple`関数を使用した探索結果を用いる。
 ///     * 最後の残り数手は、`SWITCH_SIMPLE_SEARCH_LEVEL`で定義される。
@@ -391,7 +391,7 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut SearchEngin
         }
     };
 
-    if let Some(score) = t_table_cut_off_td(&mut alpha, &mut beta, lv, search.selectivity_lv, &td) {
+    if let Some(score) = tt_cut(&mut alpha, &mut beta, lv, search.selectivity_lv, &td) {
         return score;
     }
 
@@ -418,7 +418,7 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut SearchEngin
     if lv > 8 {
         if let Some(tt_move_list) = tt_move_list.as_mut() {
             let mut n_tt_skip = 0;
-            if let Some(score) = et_cut_off(
+            if let Some(score) = e_tt_cut(
                 &mut alpha,
                 &mut beta,
                 tt_move_list,
@@ -430,7 +430,7 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut SearchEngin
                 return score;
             }
         }
-        if let Some(score) = et_cut_off(
+        if let Some(score) = e_tt_cut(
             &mut alpha,
             &mut beta,
             move_list,
@@ -559,7 +559,7 @@ pub fn nws_eval(board: &Board, mut alpha: i32, lv: i32, search: &mut SearchEngin
 /// ```
 ///
 /// # 注記
-/// * 置換表が存在しない場合は、`pvs_perfect_simple` 関数に切り替える。
+/// * 置換表が存在しない場合は、`pvs_final_simple` 関数に切り替える。
 /// * `pvs_eval_simple` と大きく異なることは、置換表を使用していることである。
 /// * 最後の残り数手は、`pvs_eval_simple`関数を使用した探索結果を用いる。
 ///     * 最後の残り数手は、`SWITCH_SIMPLE_SEARCH_LEVEL`で定義される。
@@ -612,7 +612,7 @@ pub fn pvs_eval(board: &Board, mut alpha: i32, mut beta: i32, lv: i32, search: &
     };
 
     // TranspositionTable Cut off
-    if let Some(score) = t_table_cut_off_td(&mut alpha, &mut beta, lv, search.selectivity_lv, &td) {
+    if let Some(score) = tt_cut(&mut alpha, &mut beta, lv, search.selectivity_lv, &td) {
         return score;
     }
 
@@ -639,7 +639,7 @@ pub fn pvs_eval(board: &Board, mut alpha: i32, mut beta: i32, lv: i32, search: &
     if lv > 8 {
         if let Some(tt_move_list) = tt_move_list.as_mut() {
             let mut n_tt_skip = 0;
-            if let Some(score) = et_cut_off(
+            if let Some(score) = e_tt_cut(
                 &mut alpha,
                 &mut beta,
                 tt_move_list,
@@ -651,7 +651,7 @@ pub fn pvs_eval(board: &Board, mut alpha: i32, mut beta: i32, lv: i32, search: &
                 return score;
             }
         }
-        if let Some(score) = et_cut_off(
+        if let Some(score) = e_tt_cut(
             &mut alpha,
             &mut beta,
             move_list,

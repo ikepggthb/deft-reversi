@@ -1,6 +1,6 @@
 pub mod board;
 pub mod eval_simple;
-pub mod perfect_search;
+pub mod final_search;
 pub mod eval_search;
 pub mod solver;
 pub mod game;
@@ -26,6 +26,7 @@ pub use human_book::*;
 pub use cut_off::*;
 pub use mpc::{SELECTIVITY, SELECTIVITY_LV_MAX, N_SELECTIVITY_LV, NO_MPC};
 pub use move_list::*;
+// pub use final_search::*;
 
 
 #[cfg(test)]

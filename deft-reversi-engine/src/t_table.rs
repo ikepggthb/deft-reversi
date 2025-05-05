@@ -4,6 +4,7 @@ use rand::Rng;
 const TABLE_SIZE: usize = 1 << 22;
 pub const N_TT_MOVES: usize = 2;
 
+// 24 byte
 #[derive(Clone)]
 pub struct TableData {
     pub board: Board,

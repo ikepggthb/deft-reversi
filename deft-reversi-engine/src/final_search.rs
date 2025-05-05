@@ -14,11 +14,11 @@ use crate::t_table::N_TT_MOVES;
 
 use crate::eval_search::{negaalpha_eval, negaalpha_eval_no_mo};
 /// 空きマスが残り`SWITCH_EMPTIES_SIMPLE_NWS`以下である場合、
-/// `nws_perfect`から、`nws_perfect_simple`へ切り替える
+/// `nws_final`から、`nws_final_simple`へ切り替える
 const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 10;
 
 /// 空きマスが残り`SWITCH_EMPTIES_NEGA_ALPHA`以下である場合、
-/// `pvs_perfect_simple`や`nws_perfect_simple`から、`negaalpha_perfect`へ切り替える
+/// `pvs_final_simple`や`nws_final_simple`から、`negaalpha_final`へ切り替える
 const SWITCH_EMPTIES_NEGA_ALPHA: i32 = 5;
 
 
@@ -209,7 +209,7 @@ const NEIGHBOUR: [u64; 66] = [
 
 #[inline(always)]
 pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut SearchEngine) -> i32 {
-    search.status.perfect_search_node_count += 1;
+    search.status.final_search_node_count += 1;
     let empties = !(board.player | board.opponent);
 
     let first = empties & (!empties + 1);
@@ -222,8 +222,8 @@ pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut 
         let flip = board.flip_bit(first);
         if flip != 0 {
             no_move = false;
-            search.status.perfect_search_node_count += 2;
-            search.status.perfect_search_leaf_node_count += 1;
+            search.status.final_search_node_count += 2;
+            search.status.final_search_leaf_node_count += 1;
             let first_score = -solve_score_1_empties(
                 board.opponent ^ flip,
                 -beta,
@@ -242,8 +242,8 @@ pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut 
         let flip = board.flip_bit(second);
         if flip != 0 {
             no_move = false;
-            search.status.perfect_search_node_count += 2;
-            search.status.perfect_search_leaf_node_count += 1;
+            search.status.final_search_node_count += 2;
+            search.status.final_search_leaf_node_count += 1;
             let second_score = -solve_score_1_empties(
                 board.opponent ^ flip,
                 -beta,
@@ -257,7 +257,7 @@ pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut 
 
     if no_move {
         if board.opponent_moves() == 0 {
-            search.status.perfect_search_leaf_node_count += 1;
+            search.status.final_search_leaf_node_count += 1;
             return solve_score(board);
         } else {
             return -solve_score_2_empties(&board.swapped_board(), -beta, -alpha, search);
@@ -280,11 +280,11 @@ pub fn solve_score_2_empties(board: &Board, alpha: i32, beta: i32, search: &mut 
 /// * 探索結果として計算された盤面のスコアを表す整数値。
 ///   スコアは現在のプレイヤーから見た盤面のスコアを表す。
 ///
-pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut SearchEngine) -> i32 {
+pub fn negaalpha_final(board: &Board, mut alpha: i32, beta: i32, search: &mut SearchEngine) -> i32 {
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
 
-    search.status.perfect_search_node_count += 1;
+    search.status.final_search_node_count += 1;
 
     // 空きマスが残り2のとき
     let n_empties = board.empties_count();
@@ -298,7 +298,7 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
     if legal_moves == 0 {
         if board.opponent_moves() == 0 {
             // passしても置くところがない == ゲーム終了
-            search.status.perfect_search_leaf_node_count += 1;
+            search.status.final_search_leaf_node_count += 1;
             return solve_score(board);
         }
         let passed_board = {
@@ -306,7 +306,7 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
             b.swap();
             b
         };
-        return -negaalpha_perfect(&passed_board, -beta, -alpha, search);
+        return -negaalpha_final(&passed_board, -beta, -alpha, search);
     }
 
     // 探索範囲: [alpha, beta]
@@ -320,7 +320,7 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
         let score: i32 = if n_empties - 1 == 2 {
             -solve_score_2_empties(&current_board, -beta, -alpha, search)
         } else {
-            -negaalpha_perfect(&current_board, -beta, -alpha, search)
+            -negaalpha_final(&current_board, -beta, -alpha, search)
         };
         if score >= beta {
             return score;
@@ -336,7 +336,7 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
     best_score
 }
 
-/// 関数`pvs_perfect_simple`で用いられるヌルウィンドウ探索（Null Window Search, NWS）
+/// 関数`pvs_final_simple`で用いられるヌルウィンドウ探索（Null Window Search, NWS）
 ///
 /// # 引数
 /// * `board` - 評価するオセロの盤面を表す `Board` オブジェクトの参照。
@@ -348,31 +348,31 @@ pub fn negaalpha_perfect(board: &Board, mut alpha: i32, beta: i32, search: &mut 
 ///   スコアは現在のプレイヤーから見た盤面のスコアを表す。
 ///
 /// # 注記
-/// * 終盤の局面では、`negaalpha_perfect` 関数に切り替わります。
-pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> i32 {
+/// * 終盤の局面では、`negaalpha_final` 関数に切り替わります。
+pub fn nws_final_simple(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> i32 {
     // 探索範囲: [alpha, beta]
     let beta: i32 = alpha + 1;
 
     let n_empties = board.empties_count();
     if n_empties < SWITCH_EMPTIES_NEGA_ALPHA {
-        return negaalpha_perfect(board, alpha, beta, search);
+        return negaalpha_final(board, alpha, beta, search);
     }
 
-    search.status.perfect_search_node_count += 1;
+    search.status.final_search_node_count += 1;
 
     let moves_bit: u64 = board.moves();
 
     if moves_bit == 0 {
         if board.opponent_moves() == 0 {
             // passしても置くところがない == ゲーム終了
-            search.status.perfect_search_leaf_node_count += 1;
+            search.status.final_search_leaf_node_count += 1;
             
             return solve_score(&board);
         }        
-        return -nws_perfect_simple(&board.swapped_board(), -beta, search);
+        return -nws_final_simple(&board.swapped_board(), -beta, search);
     }
 
-    match perfect_search_mpc(board, alpha, beta, search) {
+    match final_search_mpc(board, alpha, beta, search) {
         ProbCutResult::Cut(score) => return score,
         ProbCutResult::Fail => (),
     }
@@ -393,7 +393,7 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngi
     let mut best_score: i32 = -SCORE_INF;
     for move_board in move_list.iter_mut() {
         let current_put_board = &move_board.board;
-        let score: i32 = -nws_perfect_simple(current_put_board, -beta, search);
+        let score: i32 = -nws_final_simple(current_put_board, -beta, search);
         if score >= beta {
             return score;
         }
@@ -410,7 +410,7 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngi
 
 /// Principal Variation Search (PVS) を用いて、完全読みを行い、オセロの盤面のスコアを計算する。
 ///
-/// `pvs_perfect`とは異なり、探索速度を優先するため、置換表を使用しない。
+/// `pvs_final`とは異なり、探索速度を優先するため、置換表を使用しない。
 /// 浅い探索で用いられる。
 /// 現在は使われていない
 ///
@@ -427,31 +427,31 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngi
 /// # 戻り値
 /// * 探索結果として計算された盤面のスコアを表す整数値。
 ///   スコアは現在のプレイヤーから見た盤面のスコアを表す。
-// pub fn pvs_perfect_simple(board: &Board, alpha: i32, beta: i32, search: &mut Search) -> i32 {
+// pub fn pvs_final_simple(board: &Board, alpha: i32, beta: i32, search: &mut Search) -> i32 {
 //     #[cfg(debug_assertions)]
 //     assert!(alpha <= beta);
 
 //     if board.empties_count() < SWITCH_EMPTIES_NEGA_ALPHA {
-//         return negaalpha_perfect(board, alpha, beta, search);
+//         return negaalpha_final(board, alpha, beta, search);
 //     }
 
-//     search.status.perfect_search_node_count += 1;
+//     search.status.final_search_node_count += 1;
 
 //     // 探索範囲: [alpha, beta]
 //     let moves_bit: u64 = board.moves();
 
 //     if moves_bit == 0 {
 //         if board.opponent_moves() == 0 {
-//             search.status.perfect_search_leaf_node_count += 1;
+//             search.status.final_search_leaf_node_count += 1;
 //             return solve_score(board);
 //         } else {
 //             let mut board: Board = board.clone();
 //             board.swap();
-//             return -pvs_perfect_simple(&board, -beta, -alpha, search);
+//             return -pvs_final_simple(&board, -beta, -alpha, search);
 //         }
 //     }
 
-//     match perfect_search_mpc(board, alpha, beta, search) {
+//     match final_search_mpc(board, alpha, beta, search) {
 //         ProbCutResult::Cut(score) => return score,
 //         ProbCutResult::Fail => (),
 //     }
@@ -475,7 +475,7 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngi
 
 //     // first move
 //     let first_move = move_list_iter.next().unwrap();
-//     best_score = -pvs_perfect_simple(&first_move.board, -beta, -this_node_alpha, search);
+//     best_score = -pvs_final_simple(&first_move.board, -beta, -this_node_alpha, search);
 //     if best_score >= beta {
 //         return best_score;
 //     }
@@ -486,12 +486,12 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngi
 //     // other move
 //     for other_move in move_list_iter {
 //         let board: &Board = &other_move.board;
-//         let mut score: i32 = -nws_perfect_simple(board, -this_node_alpha - 1, search);
+//         let mut score: i32 = -nws_final_simple(board, -this_node_alpha - 1, search);
 //         if score >= beta {
 //             return score;
 //         }
 //         if best_score < score {
-//             score = -pvs_perfect_simple(board, -beta, -this_node_alpha, search);
+//             score = -pvs_final_simple(board, -beta, -this_node_alpha, search);
 //             if beta <= score {
 //                 return score;
 //             }
@@ -508,7 +508,7 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngi
 //     best_score
 // }
 
-/// # 関数 `pvs_perfect`で用いられるヌルウィンドウ探索（Null Window Search, NWS）
+/// # 関数 `pvs_final`で用いられるヌルウィンドウ探索（Null Window Search, NWS）
 ///
 /// # 引数
 /// * `board` - 評価するオセロの盤面を表す `Board` オブジェクトの参照。
@@ -520,24 +520,24 @@ pub fn nws_perfect_simple(board: &Board, mut alpha: i32, search: &mut SearchEngi
 ///   スコアは現在のプレイヤーから見た盤面の評価値を表す。
 ///
 /// # 注記
-/// * 終盤の局面では、`negaalpha_perfect` 関数に切り替わります。
+/// * 終盤の局面では、`negaalpha_final` 関数に切り替わります。
 
-pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> i32 {
+pub fn nws_final(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> i32 {
     let mut beta = alpha + 1;
 
     let n_empties: i32 = board.empties_count();
     if n_empties < SWITCH_EMPTIES_SIMPLE_NWS {
-        return nws_perfect_simple(board, alpha, search);
+        return nws_final_simple(board, alpha, search);
     }
 
-    search.status.perfect_search_node_count += 1;
+    search.status.final_search_node_count += 1;
 
     // 探索範囲: [alpha, beta]
     let mut moves_bit: u64 = board.moves();
 
     if moves_bit == 0 {
         if board.opponent_moves() == 0 {
-            search.status.perfect_search_leaf_node_count += 1;
+            search.status.final_search_leaf_node_count += 1;
             return solve_score(board);
         } else {
             let passed_board: Board = {
@@ -545,7 +545,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> 
                 b.swap();
                 b
             };
-            return -nws_perfect(&passed_board, -beta, search);
+            return -nws_final(&passed_board, -beta, search);
         }
     }
 
@@ -567,11 +567,11 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> 
         }
     };
 
-    if let Some(score) = t_table_cut_off_td(&mut alpha, &mut beta, 60, search.selectivity_lv, &td) {
+    if let Some(score) = tt_cut(&mut alpha, &mut beta, 60, search.selectivity_lv, &td) {
         return score;
     }
 
-    match perfect_search_mpc(board, alpha, beta, search) {
+    match final_search_mpc(board, alpha, beta, search) {
         ProbCutResult::Cut(score) => return score,
         ProbCutResult::Fail => (),
     }
@@ -594,7 +594,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> 
     if n_empties > 12 {
         if let Some(tt_move_list) = tt_move_list.as_mut() {
             let mut n_tt_skip = 0;
-            if let Some(score) = et_cut_off(
+            if let Some(score) = e_tt_cut(
                 &mut alpha,
                 &mut beta,
                 tt_move_list,
@@ -606,7 +606,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> 
                 return score;
             }
         }
-        if let Some(score) = et_cut_off(
+        if let Some(score) = e_tt_cut(
             &mut alpha,
             &mut beta,
             move_list,
@@ -628,7 +628,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> 
             if move_board.skip {
                 continue;
             }
-            let score: i32 = -nws_perfect(&move_board.board, -beta, search);
+            let score: i32 = -nws_final(&move_board.board, -beta, search);
             if score >= beta {
                 search.t_table.add(
                     board,
@@ -704,7 +704,7 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> 
         if move_board.skip {
             continue;
         }
-        let score: i32 = -nws_perfect(&move_board.board, -beta, search);
+        let score: i32 = -nws_final(&move_board.board, -beta, search);
         if score >= beta {
             search.t_table.add(
                 board,
@@ -766,16 +766,16 @@ pub fn nws_perfect(board: &Board, mut alpha: i32, search: &mut SearchEngine) -> 
 ///
 /// # Returns
 /// The best score for the current player given the board state and the search window.
-pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut SearchEngine) -> i32 {
+pub fn pvs_final(board: &Board, mut alpha: i32, mut beta: i32, search: &mut SearchEngine) -> i32 {
     let n_empties = board.empties_count();
     if n_empties < SWITCH_EMPTIES_NEGA_ALPHA {
-        return negaalpha_perfect(board, alpha, beta, search);
+        return negaalpha_final(board, alpha, beta, search);
     }
     // println!("{}, {}", alpha, beta);
     #[cfg(debug_assertions)]
     assert!(alpha <= beta);
 
-    search.status.perfect_search_node_count += 1;
+    search.status.final_search_node_count += 1;
 
     // 探索範囲: [alpha, beta]
     let mut moves_bit: u64 = board.moves();
@@ -784,7 +784,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
     if moves_bit == 0 {
         // 合法手がないならば
         if board.opponent_moves() == 0 {
-            search.status.perfect_search_leaf_node_count += 1;
+            search.status.final_search_leaf_node_count += 1;
             return solve_score(board);
         }
 
@@ -794,7 +794,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
             b.swap();
             b
         };
-        return -pvs_perfect(&passed_board, -beta, -alpha, search);
+        return -pvs_final(&passed_board, -beta, -alpha, search);
     }
 
     let td = search.t_table.get(board);
@@ -816,12 +816,12 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
     };
 
     // TranspositionTable Cut off
-    if let Some(score) = t_table_cut_off_td(&mut alpha, &mut beta, 60, search.selectivity_lv, &td) {
+    if let Some(score) = tt_cut(&mut alpha, &mut beta, 60, search.selectivity_lv, &td) {
         return score;
     }
 
     // Multi prub cut
-    match perfect_search_mpc(board, alpha, beta, search) {
+    match final_search_mpc(board, alpha, beta, search) {
         ProbCutResult::Cut(score) => return score,
         ProbCutResult::Fail => (),
     }
@@ -844,7 +844,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
     if n_empties > 12 {
         if let Some(tt_move_list) = tt_move_list.as_mut() {
             let mut n_tt_skip = 0;
-            if let Some(score) = et_cut_off(
+            if let Some(score) = e_tt_cut(
                 &mut alpha,
                 &mut beta,
                 tt_move_list,
@@ -857,7 +857,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
             }
         }
 
-        if let Some(score) = et_cut_off(
+        if let Some(score) = e_tt_cut(
             &mut alpha,
             &mut beta,
             move_list,
@@ -881,7 +881,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
                 continue;
             }
             if !pvs_ok {
-                let score: i32 = -pvs_perfect(&move_board.board, -beta, -alpha, search);
+                let score: i32 = -pvs_final(&move_board.board, -beta, -alpha, search);
                 if score >= beta {
                     search.t_table.add(
                         board,
@@ -902,7 +902,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
                 }
                 pvs_ok = true;
             } else {
-                let mut score: i32 = -nws_perfect(&move_board.board, -this_node_alpha - 1, search);
+                let mut score: i32 = -nws_final(&move_board.board, -this_node_alpha - 1, search);
                 if score >= beta {
                     search.t_table.add(
                         board,
@@ -916,7 +916,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
                 }
                 if score > best_score {
                     // 再探索
-                    score = -pvs_perfect(&move_board.board, -beta, -this_node_alpha, search);
+                    score = -pvs_final(&move_board.board, -beta, -this_node_alpha, search);
                     if score >= beta {
                         search.t_table.add(
                             board,
@@ -991,7 +991,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
                 continue;
             }
             best_move = move_board.put_place;
-            best_score = -pvs_perfect(&move_board.board, -beta, -this_node_alpha, search);
+            best_score = -pvs_final(&move_board.board, -beta, -this_node_alpha, search);
             if best_score >= beta {
                 search.t_table.add(
                     board,
@@ -1014,7 +1014,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
         if move_board.skip {
             continue;
         }
-        let mut score: i32 = -nws_perfect(&move_board.board, -this_node_alpha - 1, search);
+        let mut score: i32 = -nws_final(&move_board.board, -this_node_alpha - 1, search);
         if score >= beta {
             search.t_table.add(
                 board,
@@ -1028,7 +1028,7 @@ pub fn pvs_perfect(board: &Board, mut alpha: i32, mut beta: i32, search: &mut Se
         }
         if score > best_score {
             // 再探索
-            score = -pvs_perfect(&move_board.board, -beta, -this_node_alpha, search);
+            score = -pvs_final(&move_board.board, -beta, -this_node_alpha, search);
             if score >= beta {
                 search.t_table.add(
                     board,

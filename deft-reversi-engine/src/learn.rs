@@ -1,7 +1,7 @@
 
 use crate::search::Search;
 use crate::{board_manager::*, learn, search, Evaluator};
-use crate::{board::Board, perfect_search::solve_score};
+use crate::{board::Board, final_search::solve_score};
 use crate::t_table::*;
 use serde::{Deserialize, Serialize};
 
@@ -217,7 +217,7 @@ pub fn learning() {
 
 use crate::{
     eval_search::*,
-    perfect_search::*
+    final_search::*
 };
 
 pub fn npc_learn(lv: i32) {
@@ -251,7 +251,7 @@ pub fn npc_learn(lv: i32) {
     }
 }
 
-pub fn npc_perfect_learn() {
+pub fn npc_final_learn() {
 
 
     let mut tt = TranspositionTable::new();
@@ -263,7 +263,7 @@ pub fn npc_perfect_learn() {
         training_data.append(&mut gen_training_data(&filename));
     }
 
-    use crate::mpc::PERFECT_SEARCH_MPC_SEARCH_PARAMS;
+    use crate::mpc::FINAL_SEARCH_MPC_SEARCH_PARAMS;
     use crate::mpc::MpcParams;
 
     println!("n_empties, Search depth for prob cut, Search score, Search score for prob cut ");
@@ -276,7 +276,7 @@ pub fn npc_perfect_learn() {
         for board in training_datum.bm.board_record.iter(){
             let n_empties = board.empties_count();
             let mpc_search_lv = 
-                match &PERFECT_SEARCH_MPC_SEARCH_PARAMS[n_empties as usize] {
+                match &FINAL_SEARCH_MPC_SEARCH_PARAMS[n_empties as usize] {
                     Some(mpc_params) => {
                         mpc_params.lv
                     },
