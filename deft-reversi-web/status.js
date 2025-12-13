@@ -1,3 +1,5 @@
+import { countBits, getBits } from "./utils.js";
+
 export class StatusUI {
     constructor() {
         this.cv = document.getElementById("cv");
@@ -101,15 +103,8 @@ export class StatusUI {
 
     drawStatus(status, blackPlayerName, whitePlayerName) {
         if(!status) return;
-        let count = (str) => {
-            let c = 0;
-            for (var i = 0; i < str.length; i++) {
-                if (str[i] == "1") c++;
-            }
-            return c;
-        };
-        const blackCount = count(status.black);
-        const whiteCount = count(status.white);
+        const blackCount = countBits(getBits(status, "black"));
+        const whiteCount = countBits(getBits(status, "white"));
 
         this.ctx.font = "16px Arial";
         this.ctx.fillStyle = "#000000";

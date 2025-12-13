@@ -40,58 +40,81 @@ async function fetch_opening_data() {
 }
 
 async function init() {
-    await __wbg_init();
-    console.log("fetch eval data");
-    const eval_data = await fetch_eval_data();
-    const oopening_data = await fetch_opening_data();
+    try {
+        await __wbg_init();
+        console.log("fetch eval data");
+        const eval_data = await fetch_eval_data();
+        const oopening_data = await fetch_opening_data();
 
-    console.log("set evaluator");
-    const app = await App.new(eval_data, oopening_data);
-    
-    self.postMessage("ready");
-    return app;
+        console.log("set evaluator");
+        const app = await App.new(eval_data, oopening_data);
+        self.postMessage({ type: "ready", ok: true, payload: null, requestId: null, protocolVersion: 1 });
+        return app;
+    } catch (error) {
+        console.error("init failed", error);
+        self.postMessage({ type: "ready", ok: false, error: error?.message ?? String(error), payload: null, requestId: null, protocolVersion: 1 });
+        return undefined;
+    }
 }
 
 const app = await init();
 
 self.addEventListener('message', (event) => {
-    if (app === undefined) return;
+    if (app === undefined) {
+        if (event?.data?.requestId) {
+            self.postMessage({ type: event.data.type, ok: false, error: "Engine not initialized", payload: null, requestId: event.data.requestId, protocolVersion: 1 });
+        }
+        return;
+    }
     const { type, payload, requestId } = event.data;
 
-    const result = (function (){
-        switch (type) {
-            case 'isLegalMove':
-                return app.is_legal_move(...payload);
-            case 'getState':
-                return app.get_state(...payload);
-            case 'isPass':
-                return app.is_pass();
-            case 'pass':
-                return app.pass();
-            case 'isEnd':
-                return app.is_end();
-            case 'put':
-                return app.put(...payload);
-            case 'aiPut':
-                return app.ai_put(...payload);
-            case  'undo':
-                return app.undo();
-            case 'redo':
-                return app.redo();
-            case 'getRecord':
-                return app.get_record(...payload);
-            case 'newGame' :
-                return app.new_game();
-            case 'setHumanOpening':
-                return app.set_human_opening(...payload);
-            default:
-                console.warn(`Unknown message type: ${type}`);
-                return;
-        }
-    })();
+    const responseBase = { requestId, protocolVersion: 1 };
+    try {
+        const result = (function (){
+            switch (type) {
+                case 'isLegalMove':
+                    return app.is_legal_move(...payload);
+                case 'getState':
+                    return app.get_state(...payload);
+                case 'isPass':
+                    return app.is_pass();
+                case 'pass':
+                    return app.pass();
+                case 'isEnd':
+                    return app.is_end();
+                case 'put':
+                    return app.put(...payload);
+                case 'aiPut':
+                    return app.ai_put(...payload);
+                case  'undo':
+                    return app.undo();
+                case 'redo':
+                    return app.redo();
+                case 'getRecord':
+                    return app.get_record(...payload);
+                case 'newGame' :
+                    return app.new_game();
+                case 'setHumanOpening':
+                    return app.set_human_opening(...payload);
+                default:
+                    throw new Error(`Unknown message type: ${type}`);
+            }
+        })();
 
-    self.postMessage({
-        payload: result,
-        requestId
-    });
+        self.postMessage({
+            ...responseBase,
+            type,
+            ok: true,
+            payload: result
+        });
+    } catch (error) {
+        console.error("engine.js error", error);
+        self.postMessage({
+            ...responseBase,
+            type,
+            ok: false,
+            error: error?.message ?? String(error),
+            payload: null
+        });
+    }
 });

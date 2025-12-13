@@ -1,7 +1,9 @@
+import { getBits } from "./utils.js";
+
 export class BoardUI {
     constructor() {
         this.cv = document.getElementById("cv");
-        this.ctx = cv.getContext("2d");
+        this.ctx = this.cv.getContext("2d");
         
         const p1 = window.innerWidth / 600;
         const p2 = window.innerHeight / 800;
@@ -94,12 +96,12 @@ export class BoardUI {
     }
 
     drawMoves(status) {
-        if (!status.legal_moves) return;
-        const legal_moves = status.legal_moves.split("").reverse().join("");
+        const bits = getBits(status, "legal_moves");
+        if (bits == null) return;
         for (let i = 0; i < 64; ++i) {
-            const row = i % 8;
-            const col = Math.floor(i / 8);
-            if (legal_moves.charAt(i) == "1") {
+            if (((bits >> BigInt(i)) & 1n) === 1n) {
+                const row = i % 8;
+                const col = Math.floor(i / 8);
                 this.ctx.fillStyle = "#60C969";
                 this.ctx.fillRect(
                     this.X + this.padding + row * (this.cellSize + this.cellMargin),
@@ -109,7 +111,6 @@ export class BoardUI {
                 );
             }
         }
-
     }
 
     drawScore(position, score, color) {
@@ -140,40 +141,36 @@ export class BoardUI {
         }
     }
     drawScores(status) {
-        if (!status.eval || !status.legal_moves) return;
-        const legal_moves = status.legal_moves.split("").reverse().join("");
+        if (!status.eval) return;
+        const bits = getBits(status, "legal_moves");
+        if (bits == null) return;
 
         let max_score = -64;
         for (let i = 0; i < 64; ++i) {
-            if (legal_moves.charAt(i) == "1") {
-                if (status.eval[i] > max_score){
+            if (((bits >> BigInt(i)) & 1n) === 1n) {
+                if (status.eval[i] > max_score) {
                     max_score = status.eval[i];
                 }
             }
         }
         for (let i = 0; i < 64; ++i) {
-            if (legal_moves.charAt(i) == "1") {
+            if (((bits >> BigInt(i)) & 1n) === 1n) {
                 const score = status.eval[i];
                 const color = max_score == score ? "#2077c0" : "white";
                 this.drawScore(i, score, color);
             }
-
         }
     }
 
     drawStones(status) {
-        if (!status.black || !status.white) return;
-        const black = status.black.split("").reverse().join("");
-        const white = status.white.split("").reverse().join("");
+        const blackBits = getBits(status, "black");
+        const whiteBits = getBits(status, "white");
+        if (blackBits == null || whiteBits == null) return;
 
         for (let i = 0; i < 64; ++i) {
-            if (black.charAt(i) == "1") {
-                this.drawStone(i, "Black");
-            }
-            if (white.charAt(i) == "1") {
-                this.drawStone(i, "White");
-            }
-
+            const mask = 1n << BigInt(i);
+            if ((blackBits & mask) !== 0n) this.drawStone(i, "Black");
+            if ((whiteBits & mask) !== 0n) this.drawStone(i, "White");
         }
     }
 
