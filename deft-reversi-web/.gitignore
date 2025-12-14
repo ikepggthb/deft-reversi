@@ -6,3 +6,5 @@ deft-reversi-engine
 /target
 /bp*
 main.js
+.vscode
+node_modules

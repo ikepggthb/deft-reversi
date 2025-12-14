@@ -145,18 +145,23 @@ export class BoardUI {
         const bits = getBits(status, "legal_moves");
         if (bits == null) return;
 
-        let max_score = -64;
-        for (let i = 0; i < 64; ++i) {
-            if (((bits >> BigInt(i)) & 1n) === 1n) {
-                if (status.eval[i] > max_score) {
-                    max_score = status.eval[i];
-                }
-            }
-        }
+        let maxScore = null;
         for (let i = 0; i < 64; ++i) {
             if (((bits >> BigInt(i)) & 1n) === 1n) {
                 const score = status.eval[i];
-                const color = max_score == score ? "#2077c0" : "white";
+                if (score === null || score === undefined) continue;
+                if (maxScore === null || score > maxScore) {
+                    maxScore = score;
+                }
+            }
+        }
+        if (maxScore === null) return;
+
+        for (let i = 0; i < 64; ++i) {
+            if (((bits >> BigInt(i)) & 1n) === 1n) {
+                const score = status.eval[i];
+                if (score === null || score === undefined) continue;
+                const color = maxScore == score ? "#2077c0" : "white";
                 this.drawScore(i, score, color);
             }
         }

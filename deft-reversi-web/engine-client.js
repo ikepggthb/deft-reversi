@@ -1,4 +1,4 @@
-const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_TIMEOUT_MS = 120000;
 
 class WorkerWrapper {
     constructor(workerFile) {
@@ -44,18 +44,7 @@ export class Engine extends WorkerWrapper {
     constructor() {
         super("engine.js");
         this.initializeMethods([
-            "getState",
-            "put",
-            "aiPut",
-            "undo",
-            "redo",
-            "isLegalMove",
-            "isPass",
-            "pass",
-            "isEnd",
-            "getRecord",
-            "newGame",
-            "setHumanOpening",
+            "solveTurn",
         ]);
     }
 
