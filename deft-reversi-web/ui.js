@@ -2,7 +2,14 @@ import { BoardUI } from "./board.js";
 import { StatusUI } from "./status.js";
 import { OPENINGS } from "./openings.js";
 
+/**
+ * ゲームのすべてのUI要素の管理とレンダリングを担当します。
+ * これには、ゲームボード、ステータス表示、モーダルウィンドウ、およびユーザーインタラクションが含まれます。
+ */
 export class UI {
+    /**
+     * @param {EventDispatcher} eventDispatcher UIイベントを送信するためのイベントディスパッチャ。
+     */
     constructor(eventDispatcher) {
         this.initModalWindow();
         this.initEndGameModalWindow();
@@ -23,6 +30,9 @@ export class UI {
         this.aiReady = false;
     }
 
+    /**
+     * 画面隅にログメッセージを表示するための領域を初期化します。
+     */
     initLogArea() {
         this.logArea = document.createElement("div");
         this.logArea.id = "log-area";
@@ -45,6 +55,11 @@ export class UI {
         this.logTimeout = null;
     }
 
+    /**
+     * 画面の隅に一時的なメッセージを表示します。
+     * @param {string} message 表示するメッセージ。
+     * @param {boolean} [isError=false] メッセージがエラーかどうか。エラーの場合、背景色が異なります。
+     */
     logMessage(message, isError = false) {
         if (!this.logArea) return;
         this.logArea.textContent = message;
@@ -58,20 +73,36 @@ export class UI {
         }, 5000);
     }
 
+    /**
+     * エラーメッセージを画面に表示します。
+     * @param {string} message 表示するエラーメッセージ。
+     */
     logError(message) {
         this.logMessage(message, true);
     }
 
+    /**
+     * 情報メッセージを画面に表示します。
+     * @param {string} message 表示する情報メッセージ。
+     */
     logInfo(message) {
         this.logMessage(message, false);
     }
 
+    /**
+     * AIエンジンが準備完了したときにUIを更新します。
+     * 主にスタートボタンのテキストを変更します。
+     */
     onAIReady() {
         const startButton = document.getElementById("start-button");
         startButton.textContent = "Game Start !";
         this.aiReady = true;
     }
 
+    /**
+     * ゲーム開始前の設定モーダルウィンドウを初期化します。
+     * イベントリスナーと初期設定の読み込みを行います。
+     */
     initModalWindow() {
         const aiToggle = document.getElementById("ai-toggle");
         const aiLevelSetting = document.getElementById("ai-level-setting");
@@ -209,6 +240,9 @@ export class UI {
         this.addOpenings();
     }
 
+    /**
+     * 定石選択のドロップダウンリストに定石を追加します。
+     */
     addOpenings() {
         const openingSelect = document.getElementById("opening-strategy");
         for (const opening of OPENINGS) {
@@ -220,6 +254,9 @@ export class UI {
         }
     }
 
+    /**
+     * ゲーム終了時のモーダルウィンドウを初期化します。
+     */
     initEndGameModalWindow() {
         this.endGameModalOverlay = document.getElementById("end-game-modal-overlay");
         this.gameHistory = document.getElementById("game-history");
@@ -237,6 +274,14 @@ export class UI {
         });
     }
 
+    /**
+     * ゲーム終了時のモーダルウィンドウを表示します。
+     * @param {number} blackScore 黒の最終スコア。
+     * @param {number} whiteScore 白の最終スコア。
+     * @param {string} blackPlayerName 黒のプレイヤー名。
+     * @param {string} whitePlayerName 白のプレイヤー名。
+     * @param {string} history ゲームの棋譜。
+     */
     showEndGameModal(blackScore, whiteScore, blackPlayerName, whitePlayerName, history) {
         const endGameModalOverlay = document.getElementById("end-game-modal-overlay");
         const blackScoreElement = document.getElementById("black-score");
@@ -262,22 +307,34 @@ export class UI {
         endGameModalOverlay.style.display = "flex";
     }
 
+    /**
+     * ゲーム終了時のモーダルウィンドウを非表示にします。
+     */
     hideEndGameModal() {
         this.endGameModalOverlay.style.display = "none";
     }
 
+    /**
+     * 新しいゲームを開始するための設定モーダルウィンドウを表示します。
+     */
     showModalWindow() {
         const modalOverlay = document.getElementById("modal-overlay");
         modalOverlay.classList.remove("fade-out");
         modalOverlay.style.display = "";
     }
 
+    /**
+     * ウィンドウサイズに基づいてキャンバスを拡大縮小します。
+     */
     scale() {
         const scale = Math.min(window.innerWidth / this.cv.width, window.innerHeight / this.cv.height);
         this.cv.style.width = `${this.cv.width * scale}px`;
         this.cv.style.height = `${this.cv.height * scale}px`;
     }
 
+    /**
+     * 盤面中央に「パス」というメッセージを描画します。
+     */
     drawPassMessage() {
         const centerX = this.cv.width / 2;
         const centerY = this.cv.height / 2;
@@ -292,6 +349,9 @@ export class UI {
         this.ctx.fillText("パス", centerX, centerY);
     }
 
+    /**
+     * ステータス領域に表示される操作ボタンを設定します。
+     */
     setButtons() {
         const buttons = [
             {
@@ -329,6 +389,12 @@ export class UI {
         this.statusUI.setButtons(buttons);
     }
 
+    /**
+     * キャンバス上でのクリックイベントを処理します。
+     * クリックがボード上の有効な位置で行われたか、またはUIボタン上で
+     * 行われたかを判断し、適切なイベントを発行します。
+     * @param {MouseEvent} event ブラウザから渡されるマウスイベントオブジェクト。
+     */
     handleClick(event) {
         const rect = this.cv.getBoundingClientRect();
         const scaleX = this.cv.clientWidth / this.cv.width;
@@ -346,6 +412,12 @@ export class UI {
         this.statusUI.clickButton(x, y);
     }
 
+    /**
+     * 現在のゲーム状態に基づいて、ボードとステータスUI全体を再描画します。
+     * @param {object | undefined} status 現在のゲーム状態オブジェクト。
+     * @param {string | undefined} blackPlayerName 黒のプレイヤー名。
+     * @param {string | undefined} whitePlayerName 白のプレイヤー名。
+     */
     render(status, blackPlayerName, whitePlayerName) {
         this.ctx.clearRect(0, 0, this.cv.width, this.cv.height);
         this.board.update(status);

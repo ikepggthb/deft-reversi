@@ -1,6 +1,17 @@
+/**
+ * @file Reversi AIエンジンのWeb Workerスクリプト。
+ * メインスレッドから独立して動作し、WebAssemblyでコンパイルされたAIの思考ルーチンを実行します。
+ * Wasmモジュールの初期化、評価データのロード、およびメインスレッドとの通信を処理します。
+ */
+
 import pako from 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.esm.mjs';
 import __wbg_init, { AiSolver } from "./pkg/deft_reversi_web.js";
 
+/**
+ * AIの評価関数で使用されるデータをフェッチし、解凍します。
+ * @returns {Promise<string|undefined>} 成功した場合は解凍された評価データ（文字列）、失敗した場合はundefined。
+ * @private
+ */
 async function fetch_eval_data() {
     try {
         const response = await fetch('./deft_eval_2024-01-27.json.gz');
@@ -16,6 +27,12 @@ async function fetch_eval_data() {
     }
 }
 
+/**
+ * WebAssemblyモジュールとAIソルバーを初期化します。
+ * 成功または失敗のステータスをメインスレッドに通知します。
+ * @returns {Promise<AiSolver|undefined>} 初期化に成功した場合はAiSolverインスタンス、失敗した場合はundefined。
+ * @private
+ */
 async function init() {
     try {
         await __wbg_init();
@@ -32,8 +49,13 @@ async function init() {
     }
 }
 
+// スクリプトの読み込み時にAIを初期化
 const ai = await init();
 
+/**
+ * メインスレッドからのメッセージを処理するイベントリスナー。
+ * 'solveTurn'のようなリクエストを受け取り、AIソルバーを実行して結果を返します。
+ */
 self.addEventListener('message', (event) => {
     if (ai === undefined) {
         if (event?.data?.requestId) {

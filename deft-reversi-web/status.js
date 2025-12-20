@@ -1,5 +1,8 @@
 import { countBits, getBits } from "./utils.js";
 
+/**
+ * ゲームのステータス表示領域（スコア、手番、ボタン）のUIを管理します。
+ */
 export class StatusUI {
     constructor() {
         this.cv = document.getElementById("cv");
@@ -9,22 +12,29 @@ export class StatusUI {
         this.Y = 570;
         this.W = 540;
         this.H = 180;
-        this.padding = 25; 
+        this.padding = 25;
         this.dividSpace = 10;
 
-        this.topSectionHeight = ((this.H - this.padding * 2) / 2 - this.dividSpace);
+        this.topSectionHeight = (this.H - this.padding * 2) / 2 - this.dividSpace;
 
         this.drawBackground();
         this.drawStatusArea();
     }
 
-
+    /**
+     * ステータス領域の背景を描画します。
+     * @private
+     */
     drawBackground() {
         // 黒い背景
         this.ctx.fillStyle = "#000000";
         this.ctx.fillRect(this.X, this.Y, this.W, this.H);
     }
 
+    /**
+     * スコア表示とボタン表示のための基本的なパネルを描画します。
+     * @private
+     */
     drawStatusArea() {
         // 試合状況を表示する場所
         this.ctx.fillStyle = "#D3D3D3";
@@ -32,7 +42,7 @@ export class StatusUI {
             this.X + this.padding,
             this.Y + this.padding,
             this.W - this.padding * 2,
-            this.topSectionHeight
+            this.topSectionHeight,
         );
 
         // ボタンを配置する場所
@@ -41,10 +51,14 @@ export class StatusUI {
             this.X + this.padding,
             this.Y + this.padding + this.topSectionHeight + this.dividSpace,
             this.W - this.padding * 2,
-            this.topSectionHeight
+            this.topSectionHeight,
         );
     }
 
+    /**
+     * 表示するボタンを設定します。
+     * @param {Array<object>} buttons ボタンオブジェクトの配列。各オブジェクトは label と onClick プロパティを持つ。
+     */
     setButtons(buttons) {
         this.buttons = buttons;
 
@@ -61,6 +75,10 @@ export class StatusUI {
         this.drawButtons();
     }
 
+    /**
+     * 設定されたボタンを描画します。
+     * @private
+     */
     drawButtons() {
         for (let i = 0; i < this.buttonCount; i++) {
             const buttonX = this.buttonAreaX + this.buttonPadding + (this.buttonWidth + this.buttonPadding) * i;
@@ -69,6 +87,12 @@ export class StatusUI {
         }
     }
 
+    /**
+     * 指定された座標でのクリックがボタン上で行われたかを判断し、
+     * 対応するボタンのonClickハンドラを実行します。
+     * @param {number} x クリックされたx座標。
+     * @param {number} y クリックされたy座標。
+     */
     clickButton(x, y) {
         for (let i = 0; i < this.buttonCount; i++) {
             const buttonX = this.buttonAreaX + this.buttonPadding + (this.buttonWidth + this.buttonPadding) * i;
@@ -76,15 +100,23 @@ export class StatusUI {
 
             const inX = buttonX <= x && x <= buttonX + this.buttonWidth;
             const inY = buttonY <= y && y <= buttonY + this.buttonHeight;
-            if(inX && inY){
+            if (inX && inY) {
                 this.buttons[i].onClick();
             }
         }
         return null;
     }
 
+    /**
+     * 単一のボタンを描画します。
+     * @param {number} x ボタンのx座標。
+     * @param {number} y ボタンのy座標。
+     * @param {number} width ボタンの幅。
+     * @param {number} height ボタンの高さ。
+     * @param {string} label ボタンに表示するテキスト。
+     * @private
+     */
     drawButton(x, y, width, height, label) {
-
         // ボタンの背景
         this.ctx.fillStyle = "#000000";
         this.ctx.fillRect(x, y, width, height);
@@ -101,8 +133,14 @@ export class StatusUI {
         this.ctx.fillText(label, x + width / 2, y + height / 2);
     }
 
+    /**
+     * 現在のゲーム状態（プレイヤー名、スコア）を描画します。
+     * @param {object} status 現在のゲーム状態。
+     * @param {string} blackPlayerName 黒のプレイヤー名。
+     * @param {string} whitePlayerName 白のプレイヤー名。
+     */
     drawStatus(status, blackPlayerName, whitePlayerName) {
-        if(!status) return;
+        if (!status) return;
         const blackCount = countBits(getBits(status, "black"));
         const whiteCount = countBits(getBits(status, "white"));
 
@@ -124,7 +162,6 @@ export class StatusUI {
         // 黒石の数
         this.ctx.fillText(blackCount, this.X + this.padding + (this.W - this.padding * 2) * 0.325, statusY);
 
-
         // 白石の数
         this.ctx.fillStyle = "black";
         this.ctx.fillText(whiteCount, this.X + this.padding + (this.W - this.padding * 2) * 0.675, statusY);
@@ -141,10 +178,21 @@ export class StatusUI {
         this.ctx.textAlign = "center";
         this.ctx.textBaseline = "middle";
         if (status.current_human_opening) {
-            this.ctx.fillText(status.current_human_opening, this.X + this.padding + (this.W - this.padding * 2) * 0.5, statusY);
+            this.ctx.fillText(
+                status.current_human_opening,
+                this.X + this.padding + (this.W - this.padding * 2) * 0.5,
+                statusY,
+            );
         }
     }
 
+    /**
+     * スコア表示用の小さな石アイコンを描画します。
+     * @param {number} x アイコンの中心x座標。
+     * @param {number} y アイコンの中心y座標。
+     * @param {string} color 石の色 ("Black" または "White")。
+     * @private
+     */
     drawStoneIcon(x, y, color) {
         const radius = 15;
 
@@ -164,6 +212,12 @@ export class StatusUI {
         this.ctx.shadowBlur = 0;
     }
 
+    /**
+     * ステータス領域全体を更新・再描画します。
+     * @param {object} status 現在のゲーム状態。
+     * @param {string} blackPlayerName 黒のプレイヤー名。
+     * @param {string} whitePlayerName 白のプレイヤー名。
+     */
     update(status, blackPlayerName, whitePlayerName) {
         // ステータスエリアを再描画
         this.ctx.clearRect(this.X, this.Y, this.W, this.H);

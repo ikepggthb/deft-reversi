@@ -1,10 +1,14 @@
 import { getBits } from "./utils.js";
 
+/**
+ * ゲームボードの視覚的な表現を管理します。
+ * これには、盤面、石、座標、合法手、ヒントの描画が含まれます。
+ */
 export class BoardUI {
     constructor() {
         this.cv = document.getElementById("cv");
         this.ctx = this.cv.getContext("2d");
-        
+
         const p1 = window.innerWidth / 600;
         const p2 = window.innerHeight / 800;
         const p = p1 < p2 ? p1 : p2;
@@ -14,14 +18,21 @@ export class BoardUI {
         this.size = 540;
         this.padding = 25;
         this.cellMargin = 1.5;
-        this.cellSize = ((this.size - 25 * 2 - (this.cellMargin * (8 - 1))) / 8);
+        this.cellSize = (this.size - 25 * 2 - this.cellMargin * (8 - 1)) / 8;
     }
 
+    /**
+     * ボードの背景を描画します。
+     */
     drawBackground() {
         this.ctx.fillStyle = "#000000";
         this.ctx.fillRect(this.X, this.Y, this.size, this.size);
     }
 
+    /**
+     * 指定されたゲーム状態に基づいてボード全体を更新および再描画します。
+     * @param {object} status 現在のゲーム状態。
+     */
     update(status) {
         this.drawBackground();
         this.drawTiles();
@@ -36,6 +47,9 @@ export class BoardUI {
         this.drawMarkers();
     }
 
+    /**
+     * ボードのタイル（マス目）を描画します。
+     */
     drawTiles() {
         for (let i = 0; i < 8; ++i) {
             for (let j = 0; j < 8; ++j) {
@@ -44,12 +58,15 @@ export class BoardUI {
                     this.X + this.padding + i * (this.cellSize + this.cellMargin),
                     this.Y + this.padding + j * (this.cellSize + this.cellMargin),
                     this.cellSize,
-                    this.cellSize
+                    this.cellSize,
                 );
             }
         }
     }
 
+    /**
+     * ボード上の基準点マーカーを描画します。
+     */
     drawMarkers() {
         for (let i = 2; i <= 6; i += 4) {
             for (let j = 2; j <= 6; j += 4) {
@@ -64,15 +81,32 @@ export class BoardUI {
             }
         }
     }
-    
+
+    /**
+     * ボードのx座標をキャンバスのx座標に変換します。
+     * @param {number} x ボードの列インデックス (0-7)。
+     * @returns {number} 対応するキャンバスのx座標。
+     * @private
+     */
     coordStoneX(x) {
         return this.X + this.padding + x * (this.cellSize + this.cellMargin) + this.cellSize / 2;
     }
 
+    /**
+     * ボードのy座標をキャンバスのy座標に変換します。
+     * @param {number} y ボードの行インデックス (0-7)。
+     * @returns {number} 対応するキャンバスのy座標。
+     * @private
+     */
     coordStoneY(y) {
         return this.Y + this.padding + y * (this.cellSize + this.cellMargin) + this.cellSize / 2;
     }
 
+    /**
+     * 指定された位置に単一の石を描画します。
+     * @param {number} position 石を置く位置 (0-63)。
+     * @param {string} color 石の色 ("Black" または "White")。
+     */
     drawStone(position, color) {
         const x = position % 8;
         const y = Math.floor(position / 8);
@@ -95,6 +129,10 @@ export class BoardUI {
         this.ctx.shadowBlur = 0;
     }
 
+    /**
+     * 現在のプレイヤーの合法手をハイライト表示します。
+     * @param {object} status 現在のゲーム状態。
+     */
     drawMoves(status) {
         const bits = getBits(status, "legal_moves");
         if (bits == null) return;
@@ -107,12 +145,19 @@ export class BoardUI {
                     this.X + this.padding + row * (this.cellSize + this.cellMargin),
                     this.Y + this.padding + col * (this.cellSize + this.cellMargin),
                     this.cellSize,
-                    this.cellSize
+                    this.cellSize,
                 );
             }
         }
     }
 
+    /**
+     * 指定された位置に評価スコアを描画します。
+     * @param {number} position スコアを描画する位置 (0-63)。
+     * @param {number} score 描画するスコア。
+     * @param {string} color スコアのテキスト色。
+     * @private
+     */
     drawScore(position, score, color) {
         const row = position % 8;
         const col = Math.floor(position / 8);
@@ -120,13 +165,14 @@ export class BoardUI {
         this.ctx.font = "24px Arial";
         this.ctx.textAlign = "center";
         this.ctx.textBaseline = "middle";
-        this.ctx.fillText(
-            score.toString(),
-            this.coordStoneX(row),
-            this.coordStoneY(col)
-        );
+        this.ctx.fillText(score.toString(), this.coordStoneX(row), this.coordStoneY(col));
     }
 
+    /**
+     * 定石の次の推奨手をハイライトします。
+     * @param {object} status 現在のゲーム状態。
+     * @private
+     */
     drawHumanOpeningNextPosition(status) {
         if (status.human_opening_next_position !== undefined && status.human_opening_next_position !== null && status.eval) {
             const row = status.human_opening_next_position % 8;
@@ -136,10 +182,15 @@ export class BoardUI {
                 this.X + this.padding + row * (this.cellSize + this.cellMargin),
                 this.Y + this.padding + col * (this.cellSize + this.cellMargin),
                 this.cellSize,
-                this.cellSize
+                this.cellSize,
             );
         }
     }
+
+    /**
+     * 各合法手に対する評価スコア（ヒント）を描画します。
+     * @param {object} status 現在のゲーム状態。
+     */
     drawScores(status) {
         if (!status.eval) return;
         const bits = getBits(status, "legal_moves");
@@ -167,6 +218,10 @@ export class BoardUI {
         }
     }
 
+    /**
+     * 現在の盤面に基づいてすべての石を描画します。
+     * @param {object} status 現在のゲーム状態。
+     */
     drawStones(status) {
         const blackBits = getBits(status, "black");
         const whiteBits = getBits(status, "white");
@@ -179,6 +234,9 @@ export class BoardUI {
         }
     }
 
+    /**
+     * ボードの座標（A-H, 1-8）を描画します。
+     */
     drawCoord() {
         const horizontal = "ABCDEFGH";
         const vertical = "12345678";
@@ -192,20 +250,15 @@ export class BoardUI {
         const horizontalX = this.X + this.padding / 2;
 
         for (let i = 0; i < 8; ++i) {
-            this.ctx.fillText(
-                horizontal[i],
-                this.coordStoneX(i),
-                verticalY
-            );
-            this.ctx.fillText(
-                vertical[i],
-                horizontalX,
-                this.coordStoneY(i)
-            );
+            this.ctx.fillText(horizontal[i], this.coordStoneX(i), verticalY);
+            this.ctx.fillText(vertical[i], horizontalX, this.coordStoneY(i));
         }
     }
 
-
+    /**
+     * 最後の着手があった位置にマーカーを描画します。
+     * @param {number | null} lastMove 最後の着手があった位置 (0-63)。
+     */
     drawLastMoveMarker(lastMove) {
         if (!lastMove) return;
 
@@ -224,12 +277,17 @@ export class BoardUI {
         this.ctx.closePath();
     }
 
+    /**
+     * キャンバスの座標 (x, y) をボードの位置 (0-63) に変換します。
+     * @param {number} x キャンバス上のx座標。
+     * @param {number} y キャンバス上のy座標。
+     * @returns {number | undefined} 対応するボードの位置。ボード外の場合はundefined。
+     */
     getBoardPosition(x, y) {
         const col = Math.floor((x - this.X - this.padding) / (this.cellSize + this.cellMargin));
         const row = Math.floor((y - this.Y - this.padding) / (this.cellSize + this.cellMargin));
         if (col >= 0 && col < 8 && row >= 0 && row < 8) {
             return row * 8 + col;
-        } 
+        }
     }
-
 }

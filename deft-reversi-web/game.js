@@ -403,6 +403,14 @@ export class Game {
         return passed;
     }
 
+    /**
+     * 現在のプレーヤーの着手を適用し、ゲームの状態を更新します。
+     * この関数は、指定された位置に石を置いた後の新しい盤面を計算し、
+     * ゲーム履歴に新しい状態を記録（コミット）します。
+     * ゲームオーバーのチェックやパスの処理は行いません。
+     * @param {number} position 石を置く盤上の位置 (0-63)。
+     * @returns {void}
+     */
     applyMoveForCurrentTurn(position) {
         const { player, opponent } = playerOpponentFromState(this.state);
         const turn = this.turnLower;
