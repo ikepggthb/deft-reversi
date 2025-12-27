@@ -114,11 +114,7 @@ export class UI {
         const openingSelect = document.getElementById("opening-strategy");
 
         this.setLevelDisplay = (lv) => {
-            if (lv > 20) {
-                levelDisplay.textContent = `Lv. ${aiLevelSlider.value} (非推奨)`;
-            } else {
-                levelDisplay.textContent = `Lv. ${aiLevelSlider.value}`;
-            }
+            levelDisplay.textContent = `Lv. ${aiLevelSlider.value}`;
         };
 
         const firstButton = document.getElementById("first-button");

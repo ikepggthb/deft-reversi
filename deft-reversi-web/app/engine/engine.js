@@ -5,7 +5,7 @@
  */
 
 import pako from 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.esm.mjs';
-import __wbg_init, { AiSolver } from "./pkg/deft_reversi_web.js";
+import __wbg_init, { AiSolver } from "../pkg/deft_reversi_web.js";
 
 /**
  * AIの評価関数で使用されるデータをフェッチし、解凍します。
@@ -14,7 +14,7 @@ import __wbg_init, { AiSolver } from "./pkg/deft_reversi_web.js";
  */
 async function fetch_eval_data() {
     try {
-        const response = await fetch('./deft_eval_2024-01-27.json.gz');
+        const response = await fetch(new URL("../assets/deft_eval_2024-01-27.json.gz", import.meta.url));
         if (!response.ok) {
             throw new Error(response.statusText);
         }

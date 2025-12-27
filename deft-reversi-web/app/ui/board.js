@@ -1,4 +1,4 @@
-import { getBits } from "./utils.js";
+import { getBits } from "../utils/bitboard.js";
 
 /**
  * ゲームボードの視覚的な表現を管理します。

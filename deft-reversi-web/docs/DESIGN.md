@@ -37,7 +37,7 @@
   - `enableHint` がONのとき、状態変化後に `scheduleHintRefresh()` で再計算をスケジュール
   - `startHintJob()` が逐次評価し、**1手評価するたびに描画を更新**する
 
-### `utils.js`（ルール純関数）
+### `bitboard.js`（ルール純関数）
 
 - ビット演算によるルール処理（JS内完結）:
   - `legalMoves(player, opponent)`
@@ -131,5 +131,4 @@
 
 ## テスト
 
-- `test/utils.test.mjs`（`node --test`）で `utils.js` のルール純関数を検証する。
-
+- `test/utils.test.mjs`（`node --test`）で `bitboard.js` のルール純関数を検証する。

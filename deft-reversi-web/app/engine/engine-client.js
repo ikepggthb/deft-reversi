@@ -73,7 +73,7 @@ class WorkerWrapper {
  */
 export class Engine extends WorkerWrapper {
     constructor() {
-        super("engine.js");
+        super(new URL("./engine.js", import.meta.url));
         this.initializeMethods(["solveTurn"]);
     }
 

@@ -7,7 +7,7 @@ import {
     isEnd,
     isPass,
     legalMoves,
-} from "../utils.js";
+} from "../utils/bitboard.js";
 
 const FULL_MASK = 0xffff_ffff_ffff_ffffn;
 const INITIAL_BLACK = 0x0000000810000000n;
@@ -121,4 +121,3 @@ test("find a pass position: isPass true implies opponent has moves", () => {
     }
     assert.fail("Could not find a pass position; likely bug in legalMoves/isPass");
 });
-

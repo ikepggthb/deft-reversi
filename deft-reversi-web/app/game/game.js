@@ -1,6 +1,6 @@
-import { Engine } from "./engine-client.js";
-import { EventDispatcher } from "./events.js";
-import { UI } from "./ui.js";
+import { Engine } from "../engine/engine-client.js";
+import { EventDispatcher } from "../events.js";
+import { UI } from "../ui/ui.js";
 import {
     applyMoveForTurn,
     bitsToParts,
@@ -9,8 +9,8 @@ import {
     isEnd,
     isPass,
     legalMoves,
-    sleep,
-} from "./utils.js";
+} from "../utils/bitboard.js";
+import { sleep } from "../utils/time.js";
 
 const INITIAL_BLACK = 0x0000000810000000n;
 const INITIAL_WHITE = 0x0000001008000000n;

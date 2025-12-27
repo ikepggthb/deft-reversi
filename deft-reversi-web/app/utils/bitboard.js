@@ -1,11 +1,4 @@
 /**
- * 指定されたミリ秒数だけ非同期に待機します。
- * @param {number} timeMs 待機するミリ秒数。
- * @returns {Promise<void>} 指定時間が経過した後に解決されるPromise。
- */
-export const sleep = (timeMs) => new Promise((resolve) => setTimeout(resolve, timeMs));
-
-/**
  * ビットが立っている数を数えます。BigIntのみを受け付けます。
  * @param {bigint | null | undefined} bits ビット数を数える対象のBigInt。
  * @returns {number} 立っているビットの数。

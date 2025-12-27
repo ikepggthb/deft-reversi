@@ -22,7 +22,7 @@ graph TD
         subgraph MainThread [Main Thread]
             direction LR
             UIComponents["UI Components<br>(ui.js, board.js, status.js)"]
-            GameLogic["Game Logic<br>(game.js, utils.js)"]
+            GameLogic["Game Logic<br>(game.js, bitboard.js)"]
             EngineClient["Engine Client<br>(engine-client.js)"]
 
             UIComponents -- "User Input" --> GameLogic
@@ -118,7 +118,7 @@ The frontend is responsible for the user-facing parts of the application.
 -   `board.js`: The `BoardUI` class is responsible for all drawing on the main board canvas, including the grid, stones, and hints.
 -   `status.js`: The `StatusUI` class handles the drawing of the status area, which includes scores, player names, and action buttons.
 -   `events.js`: A simple `EventDispatcher` class that is used to decouple components, allowing the `Game` logic and `UI` to communicate without direct dependencies.
--   `utils.js`: Contains pure utility functions for the game logic, primarily for bitboard manipulation (calculating legal moves, applying moves, etc.).
+-   `bitboard.js`: Contains pure functions for the game logic, primarily for bitboard manipulation (calculating legal moves, applying moves, etc.).
 
 ### 2. Web Worker Layer
 
@@ -172,7 +172,7 @@ graph TD
         subgraph MainThread [メインスレッド]
             direction LR
             UIComponents["UIコンポーネント<br>(ui.js, board.js, status.js)"]
-            GameLogic["ゲームロジック<br>(game.js, utils.js)"]
+            GameLogic["ゲームロジック<br>(game.js, bitboard.js)"]
             EngineClient["エンジンクライアント<br>(engine-client.js)"]
 
             UIComponents -- "ユーザー入力" --> GameLogic
@@ -268,7 +268,7 @@ stateDiagram-v2
 -   `board.js`: `BoardUI`クラスは、グリッド、石、ヒントを含むメインのゲームボードキャンバス上のすべての描画を担当します。
 -   `status.js`: `StatusUI`クラスは、スコア、プレイヤー名、アクションボタンを含むステータス領域の描画を処理します。
 -   `events.js`: コンポーネントを疎結合にするために使用されるシンプルな`EventDispatcher`クラス。これにより、`Game`ロジックと`UI`が直接の依存関係なしに通信できます。
--   `utils.js`: ゲームロジックのための純粋なユーティリティ関数を含み、主にビットボード操作（合法手の計算、手の適用など）に使用されます。
+-   `bitboard.js`: ゲームロジックのための純粋な関数を含み、主にビットボード操作（合法手の計算、手の適用など）に使用されます。
 
 ### 2. Web Worker レイヤー
 

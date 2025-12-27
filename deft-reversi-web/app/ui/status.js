@@ -1,4 +1,4 @@
-import { countBits, getBits } from "./utils.js";
+import { countBits, getBits } from "../utils/bitboard.js";
 
 /**
  * ゲームのステータス表示領域（スコア、手番、ボタン）のUIを管理します。

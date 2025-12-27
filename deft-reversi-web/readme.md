@@ -3,7 +3,7 @@
 
 ## 設計
 
-実装の責務分担・データ境界・処理フローは `DESIGN.md` を参照してください。
+実装の責務分担・データ境界・処理フローは `docs/DESIGN.md` を参照してください。
 
 ## AIと遊ぶ
 https://az.recazbowl.net/deft-reversi-web/index.html
