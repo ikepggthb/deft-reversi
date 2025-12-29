@@ -1,4 +1,4 @@
-import { countBits, getBits } from "../utils/bitboard.js";
+import { Board } from "../domain/board.js";
 
 /**
  * ゲームのステータス表示領域（スコア、手番、ボタン）のUIを管理します。
@@ -141,8 +141,8 @@ export class StatusUI {
      */
     drawStatus(status, blackPlayerName, whitePlayerName) {
         if (!status) return;
-        const blackCount = countBits(getBits(status, "black"));
-        const whiteCount = countBits(getBits(status, "white"));
+        const blackCount = Board.countBits(status.blackBits);
+        const whiteCount = Board.countBits(status.whiteBits);
 
         this.ctx.font = "16px Arial";
         this.ctx.fillStyle = "#000000";
@@ -177,9 +177,9 @@ export class StatusUI {
         this.ctx.fillStyle = "#000000";
         this.ctx.textAlign = "center";
         this.ctx.textBaseline = "middle";
-        if (status.current_human_opening) {
+        if (status.currentHumanOpening) {
             this.ctx.fillText(
-                status.current_human_opening,
+                status.currentHumanOpening,
                 this.X + this.padding + (this.W - this.padding * 2) * 0.5,
                 statusY,
             );

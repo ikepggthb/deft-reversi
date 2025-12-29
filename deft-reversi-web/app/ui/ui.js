@@ -9,8 +9,13 @@ import { OPENINGS } from "./openings.js";
 export class UI {
     /**
      * @param {EventDispatcher} eventDispatcher UIイベントを送信するためのイベントディスパッチャ。
+     * @param {{ aiEnabled: boolean, aiLevel: number, aiTurn: 'black' | 'white', humanOpening: number | null }} [initialSettings]
      */
-    constructor(eventDispatcher) {
+    constructor(eventDispatcher, initialSettings) {
+        if (!initialSettings) {
+            throw new Error("UI requires initialSettings");
+        }
+        this.initialSettings = initialSettings;
         this.initModalWindow();
         this.initEndGameModalWindow();
         this.cv = document.getElementById("cv");
@@ -120,39 +125,29 @@ export class UI {
         const firstButton = document.getElementById("first-button");
         const secondButton = document.getElementById("second-button");
 
+        // 定石選択肢を先に追加（初期値反映のため）
+        this.addOpenings();
+
         if (!this.aiReady) startButton.textContent = "Now Loading...";
 
-        const savedSettingsString = localStorage.getItem("gameSettings");
-        if (savedSettingsString !== null) {
-            const savedSettings = JSON.parse(localStorage.getItem("gameSettings")) || {
-                aiEnabled: true,
-                aiLevel: 5,
-                aiTurn: "white",
-            };
+        const savedSettings = this.initialSettings;
+        modal.style.height = "auto";
+        aiToggle.classList.toggle("active", savedSettings.aiEnabled);
+        aiLevelSetting.classList.toggle("hidden", !savedSettings.aiEnabled);
+        turnSetting.classList.toggle("hidden", !savedSettings.aiEnabled);
+        aiLevelSlider.value = String(savedSettings.aiLevel);
+        this.setLevelDisplay(savedSettings.aiLevel);
 
-            aiToggle.classList.toggle("active", savedSettings.aiEnabled);
-            aiLevelSetting.classList.toggle("hidden", !savedSettings.aiEnabled);
-            turnSetting.classList.toggle("hidden", !savedSettings.aiEnabled);
-            aiLevelSlider.value = savedSettings.aiLevel;
-            this.setLevelDisplay(savedSettings.aiLevel);
-
-            if (savedSettings.aiTurn === "white") {
-                firstButton.classList.add("active");
-                secondButton.classList.remove("active");
-            } else if (savedSettings.aiTurn === "black") {
-                secondButton.classList.add("active");
-                firstButton.classList.remove("active");
-            }
-        } else {
-            modal.style.height = "auto";
-            aiToggle.classList.toggle("active", true);
-            aiLevelSetting.classList.toggle("hidden", false);
-            turnSetting.classList.toggle("hidden", false);
+        if (savedSettings.aiTurn === "white") {
             firstButton.classList.add("active");
             secondButton.classList.remove("active");
-            aiLevelSlider.value = 1;
-            this.setLevelDisplay(1);
+        } else if (savedSettings.aiTurn === "black") {
+            secondButton.classList.add("active");
+            firstButton.classList.remove("active");
         }
+
+        openingSelect.value =
+            savedSettings.humanOpening === null ? "none" : String(savedSettings.humanOpening);
 
         aiLevelSlider.addEventListener("input", () => {
             this.setLevelDisplay(aiLevelSlider.value);
@@ -193,7 +188,8 @@ export class UI {
                     aiEnabled: aiToggle.classList.contains("active"),
                     aiLevel: parseInt(aiLevelSlider.value),
                     aiTurn: aiTurn,
-                    humanOpening: openingSelect.value,
+                    humanOpening:
+                        openingSelect.value === "none" ? null : Number(openingSelect.value),
                 };
 
                 if (settings.aiEnabled) {
@@ -209,7 +205,6 @@ export class UI {
                     this.whitePlayerName = "後攻";
                 }
 
-                localStorage.setItem("gameSettings", JSON.stringify(settings));
                 this.eventDispatcher.dispatchEvent("setEnableAI", settings.aiEnabled);
                 this.eventDispatcher.dispatchEvent("setAILevel", settings.aiLevel);
                 this.eventDispatcher.dispatchEvent("setAITurn", settings.aiTurn);
@@ -232,8 +227,6 @@ export class UI {
                 );
             }).bind(this),
         );
-
-        this.addOpenings();
     }
 
     /**

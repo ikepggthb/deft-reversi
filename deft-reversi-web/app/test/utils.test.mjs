@@ -1,13 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-    applyMoveForTurn,
-    countBits,
-    flipBits,
-    isEnd,
-    isPass,
-    legalMoves,
-} from "../utils/bitboard.js";
+import { Board } from "../domain/board.js";
+
+// Board静的メソッドを使用
+const { legalMoves, applyMoveForTurn, flipBits, countBits, isEnd, isPass } = Board;
 
 const FULL_MASK = 0xffff_ffff_ffff_ffffn;
 const INITIAL_BLACK = 0x0000000810000000n;

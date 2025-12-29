@@ -1,5 +1,3 @@
-import { getBits } from "../utils/bitboard.js";
-
 /**
  * ゲームボードの視覚的な表現を管理します。
  * これには、盤面、石、座標、合法手、ヒントの描画が含まれます。
@@ -42,7 +40,7 @@ export class BoardUI {
             this.drawMoves(status);
             this.drawHumanOpeningNextPosition(status);
             this.drawScores(status);
-            this.drawLastMoveMarker(status.last_move);
+            this.drawLastMoveMarker(status.lastMove);
         }
         this.drawMarkers();
     }
@@ -134,7 +132,7 @@ export class BoardUI {
      * @param {object} status 現在のゲーム状態。
      */
     drawMoves(status) {
-        const bits = getBits(status, "legal_moves");
+        const bits = status.legalMovesBits;
         if (bits == null) return;
         for (let i = 0; i < 64; ++i) {
             if (((bits >> BigInt(i)) & 1n) === 1n) {
@@ -174,9 +172,9 @@ export class BoardUI {
      * @private
      */
     drawHumanOpeningNextPosition(status) {
-        if (status.human_opening_next_position !== undefined && status.human_opening_next_position !== null && status.eval) {
-            const row = status.human_opening_next_position % 8;
-            const col = Math.floor(status.human_opening_next_position / 8);
+        if (status.humanOpeningNextPosition !== undefined && status.humanOpeningNextPosition !== null && status.eval) {
+            const row = status.humanOpeningNextPosition % 8;
+            const col = Math.floor(status.humanOpeningNextPosition / 8);
             this.ctx.fillStyle = "#F07050";
             this.ctx.fillRect(
                 this.X + this.padding + row * (this.cellSize + this.cellMargin),
@@ -193,7 +191,7 @@ export class BoardUI {
      */
     drawScores(status) {
         if (!status.eval) return;
-        const bits = getBits(status, "legal_moves");
+        const bits = status.legalMovesBits;
         if (bits == null) return;
 
         let maxScore = null;
@@ -223,8 +221,8 @@ export class BoardUI {
      * @param {object} status 現在のゲーム状態。
      */
     drawStones(status) {
-        const blackBits = getBits(status, "black");
-        const whiteBits = getBits(status, "white");
+        const blackBits = status.blackBits;
+        const whiteBits = status.whiteBits;
         if (blackBits == null || whiteBits == null) return;
 
         for (let i = 0; i < 64; ++i) {
@@ -260,7 +258,7 @@ export class BoardUI {
      * @param {number | null} lastMove 最後の着手があった位置 (0-63)。
      */
     drawLastMoveMarker(lastMove) {
-        if (!lastMove) return;
+        if (lastMove === null || lastMove === undefined) return;
 
         const col = lastMove % 8; // 列
         const row = Math.floor(lastMove / 8); // 行

@@ -1,7 +1,7 @@
-import { Game } from "./game/game.js";
+import { GameService } from './application/game-service.js';
 
 function main() {
-    new Game();
+    new GameService();
 }
 
-window.addEventListener("load", main);
+window.addEventListener('load', main);
