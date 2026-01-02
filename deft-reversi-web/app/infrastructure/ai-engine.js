@@ -1,7 +1,7 @@
 /**
- * @fileoverview AiEngine - Web Worker + WASM のAIエンジン呼び出しを抽象化する
+ * @fileoverview AiEngine - Web Worker + WASM のAIエンジン呼び出しを管理する
  *
- * - Worker RPC（requestId / timeout）
+ * - Worker通信（requestId / timeout）
  * - BigInt bitboard ↔ u32 low/high 変換
  * を1箇所に集約し、アプリケーション層をWorker境界の表現から隔離する。
  */
@@ -43,77 +43,6 @@ function extractPosition(low, high) {
 }
 
 /**
- * Web Workerとの通信を抽象化し、リクエスト/レスポンスパターンを実装するラッパークラス。
- * 各リクエストに一意のIDを付与し、Promiseベースの非同期処理を可能にします。
- */
-class WorkerRpc {
-    /**
-     * @param {URL} workerUrl
-     */
-    constructor(workerUrl) {
-        this.worker = new Worker(workerUrl, { type: 'module' });
-        this.pendingRequests = new Map();
-        this.generateRequestId = () => `${Date.now()}-${Math.random()}`;
-        this.attachMessageHandler();
-    }
-
-    /** @private */
-    attachMessageHandler() {
-        this.worker.addEventListener('message', (event) => {
-            if (!event?.data || typeof event.data !== 'object') return;
-
-            const { payload, requestId, ok, error } = event.data;
-            if (!requestId) return;
-
-            const pending = this.pendingRequests.get(requestId);
-            if (!pending) return;
-
-            if (ok === false) {
-                pending.reject(new Error(error ?? 'Unknown worker error'));
-            } else {
-                pending.resolve(payload);
-            }
-            this.pendingRequests.delete(requestId);
-        });
-    }
-
-    /**
-     * Workerにリクエストを送信し、レスポンスを待つPromiseを返す
-     * @param {string} type
-     * @param {any} payload
-     * @returns {Promise<any>}
-     */
-    sendRequest(type, payload) {
-        return new Promise((resolve, reject) => {
-            const requestId = this.generateRequestId();
-            const timeoutId = setTimeout(() => {
-                this.pendingRequests.delete(requestId);
-                reject(new Error(`Worker request timeout: ${type}`));
-            }, DEFAULT_TIMEOUT_MS);
-
-            this.pendingRequests.set(requestId, {
-                resolve: (v) => {
-                    clearTimeout(timeoutId);
-                    resolve(v);
-                },
-                reject: (e) => {
-                    clearTimeout(timeoutId);
-                    reject(e);
-                },
-            });
-
-            // engine/engine.js は payload を配列として受け取り、先頭要素に実データを期待する
-            this.worker.postMessage({ type, payload: [payload], requestId });
-        });
-    }
-
-    terminate() {
-        this.worker.terminate();
-        this.pendingRequests.clear();
-    }
-}
-
-/**
  * AI計算結果
  * @typedef {Object} SolverResult
  * @property {number | null} bestMove 最善手の位置（0-63）、パスの場合はnull
@@ -121,18 +50,20 @@ class WorkerRpc {
  */
 
 /**
- * Web Worker + WASM のAIエンジン呼び出しを抽象化するクラス
+ * Web Worker + WASM のAIエンジン呼び出しを管理するクラス
  */
 export class AiEngine {
     constructor() {
         /** @private */
-        this._rpc = null;
+        this._worker = null;
         /** @private */
         this._ready = false;
         /** @private */
         this._onReadyCallbacks = [];
         /** @private */
         this._readyHandler = null;
+        /** @private */
+        this._pendingRequests = new Map();
     }
 
     /**
@@ -143,7 +74,9 @@ export class AiEngine {
     initialize(onReady, onError) {
         this.terminate();
 
-        this._rpc = new WorkerRpc(new URL('../engine/engine.js', import.meta.url));
+        this._worker = new Worker(new URL('../engine/engine.js', import.meta.url), {
+            type: 'module',
+        });
         this._ready = false;
 
         this._readyHandler = (event) => {
@@ -159,23 +92,66 @@ export class AiEngine {
                 onError?.(new Error(data.error ?? 'Engine initialization failed'));
             }
         };
-        this._rpc.worker.addEventListener('message', this._readyHandler);
+        this._worker.addEventListener('message', this._readyHandler);
+        this._attachMessageHandler();
+    }
+
+    /**
+     * メッセージハンドラーを設定
+     * @private
+     */
+    _attachMessageHandler() {
+        this._worker.addEventListener('message', (event) => {
+            const data = event?.data;
+            if (!data || typeof data !== 'object') return;
+            if (!data.requestId) return;
+
+            const pending = this._pendingRequests.get(data.requestId);
+            if (!pending) return;
+
+            if (data.ok === false) {
+                pending.reject(new Error(data.error ?? 'Unknown worker error'));
+            } else {
+                pending.resolve(data.payload);
+            }
+            this._pendingRequests.delete(data.requestId);
+        });
+    }
+
+    /**
+     * Workerにリクエストを送信
+     * @private
+     * @param {string} type
+     * @param {any} payload
+     * @returns {Promise<any>}
+     */
+    _sendRequest(type, payload) {
+        return new Promise((resolve, reject) => {
+            const requestId = `${Date.now()}-${Math.random()}`;
+            const timeoutId = setTimeout(() => {
+                this._pendingRequests.delete(requestId);
+                reject(new Error(`Worker request timeout: ${type}`));
+            }, DEFAULT_TIMEOUT_MS);
+
+            this._pendingRequests.set(requestId, {
+                resolve: (v) => {
+                    clearTimeout(timeoutId);
+                    resolve(v);
+                },
+                reject: (e) => {
+                    clearTimeout(timeoutId);
+                    reject(e);
+                },
+            });
+
+            const message = { type, payload: [payload], requestId };
+            this._worker.postMessage(message);
+        });
     }
 
     /** @returns {boolean} エンジンが準備完了しているか */
     get isReady() {
         return this._ready;
-    }
-
-    /**
-     * 準備完了を待つ
-     * @returns {Promise<void>}
-     */
-    waitForReady() {
-        if (this._ready) return Promise.resolve();
-        return new Promise((resolve) => {
-            this._onReadyCallbacks.push(resolve);
-        });
     }
 
     /**
@@ -186,14 +162,14 @@ export class AiEngine {
      * @returns {Promise<SolverResult>}
      */
     async solveTurn(playerBits, opponentBits, level) {
-        if (!this._ready || !this._rpc) {
+        if (!this._ready || !this._worker) {
             throw new Error('Engine not ready');
         }
 
         const { low: player_bits_low, high: player_bits_high } = bitsToParts(playerBits);
         const { low: opponent_bits_low, high: opponent_bits_high } = bitsToParts(opponentBits);
 
-        const result = await this._rpc.sendRequest('solveTurn', {
+        const result = await this._sendRequest('solveTurn', {
             player_bits_low,
             player_bits_high,
             opponent_bits_low,
@@ -211,16 +187,17 @@ export class AiEngine {
      * エンジンを終了
      */
     terminate() {
-        if (this._rpc) {
+        if (this._worker) {
             if (this._readyHandler) {
-                this._rpc.worker.removeEventListener('message', this._readyHandler);
+                this._worker.removeEventListener('message', this._readyHandler);
                 this._readyHandler = null;
             }
-            this._rpc.terminate();
-            this._rpc = null;
+            this._worker.terminate();
+            this._worker = null;
         }
         this._ready = false;
         this._onReadyCallbacks = [];
+        this._pendingRequests.clear();
     }
 }
 

@@ -8,14 +8,16 @@ import { OPENINGS } from "./openings.js";
  */
 export class UI {
     /**
-     * @param {EventDispatcher} eventDispatcher UIイベントを送信するためのイベントディスパッチャ。
+     * @param {import('../application/game-service.js').GameService} gameService
      * @param {{ aiEnabled: boolean, aiLevel: number, aiTurn: 'black' | 'white', humanOpening: number | null }} [initialSettings]
      */
-    constructor(eventDispatcher, initialSettings) {
+    constructor(gameService, initialSettings) {
         if (!initialSettings) {
             throw new Error("UI requires initialSettings");
         }
         this.initialSettings = initialSettings;
+        this.gameService = gameService;
+
         this.initModalWindow();
         this.initEndGameModalWindow();
         this.cv = document.getElementById("cv");
@@ -30,7 +32,6 @@ export class UI {
         this.statusUI = new StatusUI();
         this.setButtons();
 
-        this.eventDispatcher = eventDispatcher;
         this.cv.addEventListener("click", this.handleClick.bind(this));
         this.aiReady = false;
     }
@@ -205,16 +206,10 @@ export class UI {
                     this.whitePlayerName = "後攻";
                 }
 
-                this.eventDispatcher.dispatchEvent("setEnableAI", settings.aiEnabled);
-                this.eventDispatcher.dispatchEvent("setAILevel", settings.aiLevel);
-                this.eventDispatcher.dispatchEvent("setAITurn", settings.aiTurn);
-                this.eventDispatcher.dispatchEvent(
-                    "setPlayerName",
-                    this.blackPlayerName,
-                    this.whitePlayerName,
-                );
-                this.eventDispatcher.dispatchEvent("setHumanOpening", settings.humanOpening);
-                this.eventDispatcher.dispatchEvent("newGameClick");
+                this.gameService.updateAISettings(settings.aiEnabled, settings.aiLevel, settings.aiTurn);
+                this.gameService.setPlayerNames(this.blackPlayerName, this.whitePlayerName);
+                this.gameService.setHumanOpening(settings.humanOpening);
+                this.gameService.startNewGame();
 
                 const modalOverlay = document.getElementById("modal-overlay");
                 modalOverlay.classList.add("fade-out");
@@ -352,25 +347,35 @@ export class UI {
             {
                 label: "Undo",
                 onClick: (() => {
-                    this.eventDispatcher.dispatchEvent("doOverClick");
+                    this.gameService.undo();
                 }).bind(this),
             },
             {
                 label: "Redo",
                 onClick: (() => {
-                    this.eventDispatcher.dispatchEvent("redoClick");
+                    this.gameService.redo();
                 }).bind(this),
             },
             {
                 label: "Hint",
                 onClick: (() => {
-                    this.eventDispatcher.dispatchEvent("switchShowEvalClick");
+                    this.gameService.toggleHint();
                 }).bind(this),
             },
             {
                 label: "Hint\n(Deep)",
                 onClick: (() => {
-                    this.eventDispatcher.dispatchEvent("deepHintClick");
+                    const depth = Number(
+                        window.prompt(
+                            '現在の盤面のヒントをより深く計算します。\nAIのレベル(1 ~ 24)を入力してください。',
+                            '10'
+                        )
+                    );
+                    if (Number.isInteger(depth) && depth >= 1 && depth <= 24) {
+                        this.gameService.requestDeepHint(depth);
+                    } else {
+                        this.logError('無効な入力です。AIのレベル(1 ~ 24)を整数値で入力してください。');
+                    }
                 }).bind(this),
             },
         ];
@@ -394,7 +399,7 @@ export class UI {
 
         const position = this.board.getBoardPosition(x, y);
         if (position !== undefined) {
-            this.eventDispatcher.dispatchEvent("boardClick", position);
+            this.gameService.handleBoardClick(position);
             return;
         }
 

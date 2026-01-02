@@ -60,14 +60,20 @@ sequenceDiagram
   App->>UI: render(viewModel)
 
   Note right of App: If AI turn and enabled
-  App->>Client: solveTurn(bits, aiLevel)
-  Client->>Worker: postMessage({type:"solveTurn", ...})
-  Worker->>Wasm: solver_result_for_turn_bits(...)
-  Wasm-->>Worker: result
-  Worker-->>Client: postMessage({ok:true, payload: result})
-  Client-->>App: Promise resolves
-  App->>App: Apply best move (domain)
-  App->>UI: render(viewModel)
+  App->>App: Check opening match (OpeningService)
+  alt Opening next move exists
+    App->>App: Apply opening move (domain)
+    App->>UI: render(viewModel)
+  else No opening move
+    App->>Client: solveTurn(bits, aiLevel)
+    Client->>Worker: postMessage({type:"solveTurn", ...})
+    Worker->>Wasm: solver_result_for_turn_bits(...)
+    Wasm-->>Worker: result
+    Worker-->>Client: postMessage({ok:true, payload: result})
+    Client-->>App: Promise resolves
+    App->>App: Apply best move (domain)
+    App->>UI: render(viewModel)
+  end
 ```
 
 ## Component Breakdown
@@ -97,9 +103,10 @@ sequenceDiagram
 ## Data Flow Example: AI Turn (Summary)
 
 1. `GameService` decides it is AI’s turn.
-2. `AiEngine.solveTurn(playerBits, opponentBits, aiLevel)` sends a worker request via postMessage.
-3. The worker calls into WASM (`AiSolver`) and returns the best move/eval.
-4. `GameService` applies the move (domain) and re-renders the UI.
+2. `GameService` checks `OpeningService` for an opening match; if a next move exists, it plays that move.
+3. Otherwise, `AiEngine.solveTurn(playerBits, opponentBits, aiLevel)` sends a worker request via postMessage.
+4. The worker calls into WASM (`AiSolver`) and returns the best move/eval.
+5. `GameService` applies the move (domain) and re-renders the UI.
 
 ---
 
@@ -149,6 +156,7 @@ sequenceDiagram
 ## データフロー例（AI手番）
 
 1. `GameService` がAI手番かどうかを判定します。
-2. `AiEngine.solveTurn(playerBits, opponentBits, aiLevel)` がWorkerへ要求を送ります。
-3. Worker（`engine/engine.js`）がWASMの `AiSolver.solver_result_for_turn_bits(...)` を呼び出して探索し、結果を返します。
-4. `GameService` が最善手をドメインで適用し、`UI.render(viewModel, ...)` により再描画します。
+2. `GameService` が `OpeningService` で定石照合し、次の推奨手があればそれを着手します。
+3. 定石がない場合は `AiEngine.solveTurn(playerBits, opponentBits, aiLevel)` がWorkerへ要求を送ります。
+4. Worker（`engine/engine.js`）がWASMの `AiSolver.solver_result_for_turn_bits(...)` を呼び出して探索し、結果を返します。
+5. `GameService` が最善手をドメインで適用し、`UI.render(viewModel, ...)` により再描画します。

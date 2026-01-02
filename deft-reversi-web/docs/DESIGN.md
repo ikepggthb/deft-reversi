@@ -97,14 +97,17 @@
 ### AIの着手
 
 1. 強制パス連鎖を先に解決
-2. `AiEngine.solveTurn(playerBits, opponentBits, aiLevel)` を呼び出す
-3. 結果の最善手を `pos` に復元し、着手を適用して描画
+2. 定石が選択されている場合、`OpeningService` で棋譜が定石に一致するか照合する
+3. 次の推奨手（`nextPosition`）があれば、その手をAIの着手として採用して描画する
+4. 定石がない（未選択/一致しない/次の手がない）場合は `AiEngine.solveTurn(playerBits, opponentBits, aiLevel)` を呼び出す
+5. 結果の最善手を `pos` に復元し、着手を適用して描画
 
 ### ヒント計算
 
 - 目的: 「1手計算したらすぐ描画」し、深さを上げながら更新していく。
 - 実装: `HintService` が反復深化で `solveTurn` を繰り返し呼び、更新ごとにコールバックで通知する。
 - キャンセル: 世代トークンにより古い計算結果は破棄する。
+ - 表示: ヒント表示中（`viewModel.eval` がある間）は、定石が一致している場合に「次の推奨手」（`humanOpeningNextPosition`）をハイライト表示する。
 
 ## テスト
 

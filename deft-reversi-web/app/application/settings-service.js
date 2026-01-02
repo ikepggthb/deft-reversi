@@ -127,17 +127,4 @@ export class SettingsService {
             humanOpening: this._humanOpening,
         });
     }
-
-    /**
-     * 設定をリセット
-     */
-    reset() {
-        this._repository.reset();
-        this._enableAi = DEFAULT_SETTINGS.aiEnabled;
-        this._aiLevel = DEFAULT_SETTINGS.aiLevel;
-        this._aiTurn = DEFAULT_SETTINGS.aiTurn;
-        this._humanOpening = DEFAULT_SETTINGS.humanOpening;
-        this._enableHint = false;
-        this._hintLevel = 7;
-    }
 }

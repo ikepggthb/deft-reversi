@@ -8,9 +8,7 @@ import { AiEngine } from '../infrastructure/ai-engine.js';
 import { HintService } from './hint-service.js';
 import { SettingsService } from './settings-service.js';
 import { OpeningService } from './opening-service.js';
-import { EventDispatcher } from '../events.js';
 import { UI } from '../ui/ui.js';
-import { sleep } from '../utils/time.js';
 
 /**
  * UI層へ渡すビューモデル
@@ -28,7 +26,7 @@ import { sleep } from '../utils/time.js';
 /**
  * 履歴スナップショット
  * @typedef {Object} HistorySnapshot
- * @property {import('../domain/game.js').GameSnapshot} game
+ * @property {import('../domain/game.js').Game} game
  * @property {(number | null)[] | null} hintScores
  */
 
@@ -38,24 +36,12 @@ import { sleep } from '../utils/time.js';
 export class GameService {
     /**
      * @param {Object} [dependencies] オプショナルな依存関係
-     * @param {import('../events.js').EventDispatcher} [dependencies.eventDispatcher]
      * @param {Object} [dependencies.ui]
      */
     constructor(dependencies = {}) {
-        // 依存関係が渡されなければ内部で生成
-        /** @private */
-        this._eventDispatcher = dependencies.eventDispatcher ?? new EventDispatcher();
+        // 設定サービスを先に初期化
         /** @private */
         this._settingsService = new SettingsService();
-        /** @private */
-        this._ui =
-            dependencies.ui ??
-            new UI(this._eventDispatcher, {
-                aiEnabled: this._settingsService.enableAi,
-                aiLevel: this._settingsService.aiLevel,
-                aiTurn: this._settingsService.aiTurn,
-                humanOpening: this._settingsService.humanOpening,
-            });
 
         // インフラ層
         /** @private */
@@ -96,7 +82,17 @@ export class GameService {
         /** @private */
         this._whitePlayerName = undefined;
 
-        this._setupEventListeners();
+        // UIを最後に初期化（thisを渡す）
+        /** @private */
+        this._ui =
+            dependencies.ui ??
+            new UI(this, {
+                aiEnabled: this._settingsService.enableAi,
+                aiLevel: this._settingsService.aiLevel,
+                aiTurn: this._settingsService.aiTurn,
+                humanOpening: this._settingsService.humanOpening,
+            });
+
         this._initializeEngine();
         this._ui.render(undefined, this._blackPlayerName, this._whitePlayerName);
 
@@ -105,14 +101,89 @@ export class GameService {
         });
     }
 
-    // === 公開API ===
+    // === 公開API（UIから呼ばれる） ===
 
     /**
-     * SettingsServiceへのアクセス
-     * @returns {SettingsService}
+     * 盤面クリック処理
+     * @param {number} position
      */
-    get settings() {
-        return this._settingsService;
+    handleBoardClick(position) {
+        this._runExclusive(() => this._handleHumanMove(position));
+    }
+
+    /**
+     * 新規ゲーム開始
+     */
+    startNewGame() {
+        this._runExclusive(async () => {
+            this._aiToken += 1;
+            this._isAiThinking = false;
+            this._hintService.cancel();
+            this._aiEngine.terminate();
+            this._initializeEngine();
+            await this._startNewGame();
+        });
+    }
+
+    /**
+     * Undo操作
+     */
+    undo() {
+        this._runExclusive(() => this._undo());
+    }
+
+    /**
+     * Redo操作
+     */
+    redo() {
+        this._runExclusive(() => this._redo());
+    }
+
+    /**
+     * ヒント表示切り替え
+     */
+    toggleHint() {
+        this._runExclusive(() => this._toggleHint());
+    }
+
+    /**
+     * 深いヒント計算
+     * @param {number} depth
+     */
+    requestDeepHint(depth) {
+        this._runExclusive(() => this._deepHint(depth));
+    }
+
+    /**
+     * AI設定を更新
+     * @param {boolean} enabled
+     * @param {number} level
+     * @param {'black' | 'white'} turn
+     */
+    updateAISettings(enabled, level, turn) {
+        this._settingsService.enableAi = enabled;
+        this._settingsService.aiLevel = level;
+        this._settingsService.aiTurn = turn;
+        this._settingsService.save();
+    }
+
+    /**
+     * プレイヤー名を設定
+     * @param {string} black
+     * @param {string} white
+     */
+    setPlayerNames(black, white) {
+        this._blackPlayerName = black;
+        this._whitePlayerName = white;
+    }
+
+    /**
+     * 定石設定
+     * @param {number | null} opening
+     */
+    setHumanOpening(opening) {
+        this._settingsService.humanOpening = opening;
+        this._settingsService.save();
     }
 
     // === プライベートメソッド: 初期化 ===
@@ -149,75 +220,6 @@ export class GameService {
                 this._ui.logError(`AIエンジンで問題が発生しました: ${error.message}`);
             }
         );
-    }
-
-    /** @private */
-    _setupEventListeners() {
-        this._eventDispatcher.addEventListener('boardClick', (position) =>
-            this._runExclusive(() => this._handleHumanMove(position))
-        );
-
-        this._eventDispatcher.addEventListener('newGameClick', () =>
-            this._runExclusive(async () => {
-                this._aiToken += 1;
-                this._isAiThinking = false;
-                this._hintService.cancel();
-                this._aiEngine.terminate();
-                this._initializeEngine();
-                await this._startNewGame();
-            })
-        );
-
-        this._eventDispatcher.addEventListener('doOverClick', () =>
-            this._runExclusive(() => this._undo())
-        );
-
-        this._eventDispatcher.addEventListener('redoClick', () =>
-            this._runExclusive(() => this._redo())
-        );
-
-        this._eventDispatcher.addEventListener('switchShowEvalClick', () =>
-            this._runExclusive(() => this._toggleHint())
-        );
-
-        this._eventDispatcher.addEventListener('deepHintClick', () => {
-            const depth = Number(
-                window.prompt(
-                    '現在の盤面のヒントをより深く計算します。\nAIのレベル(1 ~ 24)を入力してください。',
-                    String(this._settingsService.hintLevel)
-                )
-            );
-            if (Number.isInteger(depth) && depth >= 1 && depth <= 24) {
-                this._runExclusive(() => this._deepHint(depth));
-            } else {
-                this._ui.logError('無効な入力です。AIのレベル(1 ~ 24)を整数値で入力してください。');
-            }
-        });
-
-        this._eventDispatcher.addEventListener('setAILevel', (lv) => {
-            this._settingsService.aiLevel = lv;
-            this._settingsService.save();
-        });
-
-        this._eventDispatcher.addEventListener('setEnableAI', (f) => {
-            this._settingsService.enableAi = f;
-            this._settingsService.save();
-        });
-
-        this._eventDispatcher.addEventListener('setAITurn', (turn) => {
-            this._settingsService.aiTurn = turn;
-            this._settingsService.save();
-        });
-
-        this._eventDispatcher.addEventListener('setPlayerName', (black, white) => {
-            this._blackPlayerName = black;
-            this._whitePlayerName = white;
-        });
-
-        this._eventDispatcher.addEventListener('setHumanOpening', (opening) => {
-            this._settingsService.humanOpening = opening;
-            this._settingsService.save();
-        });
     }
 
     // === プライベートメソッド: 排他制御 ===
@@ -374,19 +376,32 @@ export class GameService {
         const token = ++this._aiToken;
         let shouldContinue = false;
 
-        this._ui.logInfo('AIが思考中です...');
-
         try {
-            const board = this._game.board;
-            const { bestMove, eval: evalScore } = await this._aiEngine.solveTurn(
-                board.playerBits,
-                board.opponentBits,
-                this._settingsService.aiLevel
-            );
+            // 定石チェック: 定石が選択されていて、次の手があればそれを打つ
+            const openingMatch = this._getOpeningMatch();
+            let bestMove = null;
+
+            if (openingMatch && openingMatch.nextPosition !== null) {
+                bestMove = openingMatch.nextPosition;
+                this._ui.logInfo(`AIが定石「${openingMatch.name}」の手を打ちます...`);
+                console.log('AI: opening move', { name: openingMatch.name, position: bestMove });
+            } else {
+                // 定石がない場合は通常のAI思考
+                this._ui.logInfo('AIが思考中です...');
+                const board = this._game.board;
+                const { bestMove: aiMove, eval: evalScore } = await this._aiEngine.solveTurn(
+                    board.playerBits,
+                    board.opponentBits,
+                    this._settingsService.aiLevel
+                );
+
+                if (token !== this._aiToken) return;
+
+                bestMove = aiMove;
+                console.log('AI solveTurn result:', { bestMove, eval: evalScore });
+            }
 
             if (token !== this._aiToken) return;
-
-            console.log('AI solveTurn result:', { bestMove, eval: evalScore });
 
             if (bestMove === null || bestMove < 0) {
                 this._ui.logInfo('AIはパスします。');
@@ -459,7 +474,7 @@ export class GameService {
      */
     async _handlePassAnimation() {
         this._ui.drawPassMessage();
-        await sleep(600);
+        await new Promise((resolve) => setTimeout(resolve, 600));
     }
 
     /**
@@ -473,7 +488,7 @@ export class GameService {
             whiteCount,
             this._blackPlayerName,
             this._whitePlayerName,
-            this._game.record.toString()
+            this._game.record.join(' ')
         );
     }
 
@@ -530,7 +545,7 @@ export class GameService {
      */
     _snapshot() {
         return {
-            game: this._game.snapshot(),
+            game: this._game,
             hintScores: this._hintScores ? [...this._hintScores] : null,
         };
     }
@@ -541,7 +556,7 @@ export class GameService {
      * @param {HistorySnapshot} snapshot
      */
     _restore(snapshot) {
-        this._game = Game.fromSnapshot(snapshot.game);
+        this._game = snapshot.game;
         this._hintScores = snapshot.hintScores;
         this._render();
     }
@@ -652,7 +667,7 @@ export class GameService {
             return null;
         }
 
-        const recordMoves = this._game.record.moves;
+        const recordMoves = this._game.record;
         return this._openingService.match(selectedOpening, recordMoves);
     }
 }

@@ -297,20 +297,6 @@ export class Board {
     }
 
     /**
-     * 等価性判定
-     * @param {Board} other
-     * @returns {boolean}
-     */
-    equals(other) {
-        if (!(other instanceof Board)) return false;
-        return (
-            this._blackBits === other._blackBits &&
-            this._whiteBits === other._whiteBits &&
-            this._nextTurn === other._nextTurn
-        );
-    }
-
-    /**
      * デバッグ用の盤面文字列表現
      * @returns {string}
      */

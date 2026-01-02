@@ -59,16 +59,6 @@ export class HintService {
     }
 
     /**
-     * ヒント計算を即座に開始
-     * @param {Board} board 対象の盤面
-     * @param {number} level 計算レベル
-     * @param {(scores: number[] | null) => void} onUpdate スコア更新時のコールバック
-     */
-    startImmediate(board, level, onUpdate) {
-        this._startJob(board, level, onUpdate);
-    }
-
-    /**
      * ヒント計算を実行
      * @private
      * @param {Board} board
@@ -110,6 +100,7 @@ export class HintService {
 
         // 反復深化: レベル1から指定レベルまで
         for (let lv = 1; lv <= level; lv++) {
+            console.log(`hint: ${lv}`);
             sortByScoreDesc();
 
             for (const pos of moves) {

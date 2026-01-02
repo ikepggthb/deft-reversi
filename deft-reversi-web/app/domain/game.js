@@ -3,18 +3,7 @@
  */
 
 import { Board } from './board.js';
-import { GameRecord } from './game-record.js';
-import { Turn } from './types.js';
-
-/**
- * ゲームのスナップショット（値オブジェクト）
- * @typedef {Object} GameSnapshot
- * @property {bigint} blackBits
- * @property {bigint} whiteBits
- * @property {Turn} nextTurn
- * @property {string[]} recordMoves
- * @property {number | null} lastMove
- */
+import { Turn, positionToNotation } from './types.js';
 
 /**
  * リバーシゲームの集約ルート
@@ -23,14 +12,14 @@ import { Turn } from './types.js';
 export class Game {
     /**
      * @param {Board} board
-     * @param {GameRecord} record
+     * @param {string[]} record
      * @param {number | null} lastMove
      */
-    constructor(board, record = new GameRecord(), lastMove = null) {
+    constructor(board, record = [], lastMove = null) {
         /** @private @readonly */
         this._board = board;
         /** @private @readonly */
-        this._record = record;
+        this._record = Object.freeze([...record]);
         /** @private @readonly */
         this._lastMove = lastMove;
         Object.freeze(this);
@@ -41,7 +30,7 @@ export class Game {
      * @returns {Game}
      */
     static newGame() {
-        return new Game(Board.initial(), new GameRecord(), null);
+        return new Game(Board.initial(), [], null);
     }
 
     /** @returns {Board} 現在の盤面 */
@@ -49,7 +38,7 @@ export class Game {
         return this._board;
     }
 
-    /** @returns {GameRecord} 棋譜 */
+    /** @returns {ReadonlyArray<string>} 棋譜 */
     get record() {
         return this._record;
     }
@@ -101,7 +90,7 @@ export class Game {
      */
     applyMove(position) {
         const newBoard = this._board.applyMove(position);
-        const newRecord = this._record.addMove(position);
+        const newRecord = [...this._record, positionToNotation(position)];
         return new Game(newBoard, newRecord, position);
     }
 
@@ -111,33 +100,8 @@ export class Game {
      */
     applyPass() {
         const newBoard = this._board.applyPass();
-        const newRecord = this._record.addPass();
+        const newRecord = [...this._record, 'pass'];
         return new Game(newBoard, newRecord, this._lastMove);
-    }
-
-    /**
-     * スナップショットを取得（シリアライズ可能な形式）
-     * @returns {GameSnapshot}
-     */
-    snapshot() {
-        return {
-            blackBits: this._board.blackBits,
-            whiteBits: this._board.whiteBits,
-            nextTurn: this._board.nextTurn,
-            recordMoves: [...this._record.moves],
-            lastMove: this._lastMove,
-        };
-    }
-
-    /**
-     * スナップショットから復元
-     * @param {GameSnapshot} snapshot
-     * @returns {Game}
-     */
-    static fromSnapshot(snapshot) {
-        const board = Board.fromBits(snapshot.blackBits, snapshot.whiteBits, snapshot.nextTurn);
-        const record = new GameRecord(snapshot.recordMoves);
-        return new Game(board, record, snapshot.lastMove);
     }
 
     /**

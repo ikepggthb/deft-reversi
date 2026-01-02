@@ -30,15 +30,6 @@ export function turnToLower(turn) {
     return turn.toLowerCase();
 }
 
-/**
- * 小文字の文字列からTurnに変換する
- * @param {string} str
- * @returns {Turn}
- */
-export function turnFromLower(str) {
-    return str === 'black' ? Turn.BLACK : Turn.WHITE;
-}
-
 const LETTERS = 'abcdefgh';
 const NUMBERS = '12345678';
 
