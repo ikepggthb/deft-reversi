@@ -3,12 +3,14 @@
  */
 
 import { Game } from '../domain/game.js';
-import { turnToLower } from '../domain/types.js';
+import { turnToLower, Turn, positionToNotation } from '../domain/types.js';
 import { AiEngine } from '../infrastructure/ai-engine.js';
 import { HintService } from './hint-service.js';
 import { SettingsService } from './settings-service.js';
 import { OpeningService } from './opening-service.js';
 import { UI } from '../ui/ui.js';
+import { notationToPosition } from '../domain/types.js';
+import { Board } from '../domain/board.js';
 
 /**
  * UI層へ渡すビューモデル
@@ -37,6 +39,7 @@ export class GameService {
     /**
      * @param {Object} [dependencies] オプショナルな依存関係
      * @param {Object} [dependencies.ui]
+     * @param {boolean} [dependencies.autoStart] 起動時にゲームを開始するか（デフォルト: false）
      */
     constructor(dependencies = {}) {
         // 設定サービスを先に初期化
@@ -96,9 +99,11 @@ export class GameService {
         this._initializeEngine();
         this._ui.render(undefined, this._blackPlayerName, this._whitePlayerName);
 
-        this._runExclusive(async () => {
-            await this._startNewGame();
-        });
+        if (dependencies.autoStart === true) {
+            this._runExclusive(async () => {
+                await this._startNewGame();
+            });
+        }
     }
 
     // === 公開API（UIから呼ばれる） ===
@@ -126,6 +131,141 @@ export class GameService {
     }
 
     /**
+     * セッションを開始（設定 + 初期局面）
+     * - 対戦（AI自動着手）/Free/Analysis の共通入口として使用する
+     * @param {Object} options
+     * @param {boolean} options.aiEnabled
+     * @param {number} options.aiLevel
+     * @param {'black' | 'white'} options.aiTurn
+     * @param {number | null} options.humanOpening
+     * @param {string} [options.blackPlayerName]
+     * @param {string} [options.whitePlayerName]
+     * @param {string[] | null} [options.record] e.g. ["f5","d6","pass",...]
+     * @param {boolean} [options.enableHint] ヒントを有効化する（デフォルト: false）
+     * @param {number} [options.hintLevel] ヒント計算の深さ（enableHint=trueの場合のみ反映）
+     * @param {boolean} [options.truncateHistoryToCurrent] 現局面をUndo/Redoの基点にする（Analysis/Edit用）
+     * @param {boolean} [options.resetEngine] Worker/WASMを再初期化する（デフォルト: false）
+     */
+    startSession(options) {
+        this._runExclusive(async () => {
+            const {
+                aiEnabled,
+                aiLevel,
+                aiTurn,
+                humanOpening,
+                blackPlayerName,
+                whitePlayerName,
+                record,
+                enableHint = false,
+                hintLevel,
+                truncateHistoryToCurrent = false,
+                resetEngine = false,
+            } = options;
+
+            this._settingsService.enableAi = Boolean(aiEnabled);
+            this._settingsService.aiLevel = aiLevel;
+            this._settingsService.aiTurn = aiTurn;
+            this._settingsService.humanOpening = humanOpening ?? null;
+            this._settingsService.save();
+
+            if (typeof blackPlayerName === 'string') this._blackPlayerName = blackPlayerName;
+            if (typeof whitePlayerName === 'string') this._whitePlayerName = whitePlayerName;
+
+            this._aiToken += 1;
+            this._isAiThinking = false;
+            this._hintService.cancel();
+
+            this._settingsService.enableHint = Boolean(enableHint);
+            if (Number.isInteger(hintLevel)) {
+                this._settingsService.hintLevel = hintLevel;
+            }
+
+            if (resetEngine) {
+                this._aiEngine.terminate();
+                this._initializeEngine();
+            }
+
+            if (record && Array.isArray(record) && record.length > 0) {
+                this._loadFromRecord(record);
+            } else {
+                this._createNewGameState();
+            }
+
+            if (truncateHistoryToCurrent) {
+                this._history = [];
+                this._future = [];
+            }
+
+            this._render();
+            if (this._aiEngine.isReady && this._settingsService.enableAi) {
+                await this._maybeRunAiTurn();
+            }
+            this._refreshHint();
+        });
+    }
+
+    /**
+     * 棋譜（文字列）から局面を作る（Free/Analysis用）
+     * @param {string} moveListText e.g. "f5d6c3" or "f5 d6 c3" or includes "pass"
+     * @param {{ autoPass?: boolean }} [options]
+     * @returns {{ ok: true, record: string[] } | { ok: false, error: string }}
+     */
+    parseMoveList(moveListText, options = {}) {
+        const autoPass = options.autoPass ?? true;
+        if (typeof moveListText !== 'string') {
+            return { ok: false, error: 'Invalid input' };
+        }
+        const raw = moveListText.trim();
+        if (!raw) return { ok: true, record: [] };
+
+        // tokenize: whitespace/comma separated OR compact pairs (e.g. f5d6c3)
+        /** @type {string[]} */
+        let tokens = [];
+        if (/[,\s]/.test(raw)) {
+            tokens = raw
+                .split(/[\s,]+/g)
+                .map((t) => t.trim())
+                .filter(Boolean);
+        } else {
+            tokens = [];
+            let i = 0;
+            while (i < raw.length) {
+                const rest = raw.slice(i).toLowerCase();
+                if (rest.startsWith('pass')) {
+                    tokens.push('pass');
+                    i += 4;
+                    continue;
+                }
+                if (i + 2 > raw.length) {
+                    return { ok: false, error: 'Invalid move list (odd length)' };
+                }
+                tokens.push(raw.slice(i, i + 2));
+                i += 2;
+            }
+        }
+
+        /** @type {string[]} */
+        const record = [];
+        for (const token of tokens) {
+            const t = token.toLowerCase();
+            if (t === 'pass') {
+                record.push('pass');
+                continue;
+            }
+            const pos = notationToPosition(t);
+            if (pos === null) {
+                return { ok: false, error: `Invalid move: ${token}` };
+            }
+            record.push(t);
+        }
+
+        if (!autoPass) return { ok: true, record };
+
+        // auto-pass normalization is handled in _loadFromRecord (board legality required)
+        return { ok: true, record };
+    }
+
+    /**
      * Undo操作
      */
     undo() {
@@ -137,6 +277,212 @@ export class GameService {
      */
     redo() {
         this._runExclusive(() => this._redo());
+    }
+
+    /** @returns {boolean} */
+    get canUndo() {
+        return this._history.length > 0;
+    }
+
+    /** @returns {boolean} */
+    get canRedo() {
+        return this._future.length > 0;
+    }
+
+    /**
+     * Redoできるだけ進める（Analysis/Edit 用）
+     */
+    redoToEnd() {
+        this._runExclusive(() => {
+            while (this._future.length > 0) {
+                this._redo();
+            }
+        });
+    }
+
+    /**
+     * Undoできるだけ戻る（Free用）
+     */
+    undoToStart() {
+        this._runExclusive(() => {
+            while (this._history.length > 0) {
+                this._undo();
+            }
+        });
+    }
+
+    /**
+     * 現在の棋譜（読み取り専用）
+     * @returns {ReadonlyArray<string>}
+     */
+    get record() {
+        return this._game?.record ?? [];
+    }
+
+    /** @returns {boolean} */
+    get hintEnabled() {
+        return this._settingsService.enableHint;
+    }
+
+    /** @returns {number} */
+    get hintLevel() {
+        return this._settingsService.hintLevel;
+    }
+
+    /**
+     * 棋譜の各手順の「最善手/評価」を解析する（評価は黒視点に正規化）
+     * - ply=0 は初期局面（次の手番の最善手/評価）
+     * - ply=i は i手進んだ局面（次の手番の最善手/評価）
+     * @param {string[]} record
+     * @param {number} level
+     * @param {{ onProgress?: (p: { ply: number, total: number }) => void }} [options]
+     * @returns {Promise<{ ok: true, analysis: Array<{ ply: number, nextTurn: import('../domain/types.js').Turn, evalToMove: number, evalBlack: number, bestMove: string | null }>, error?: undefined } | { ok: false, analysis?: undefined, error: string }>}
+     */
+    async analyzeRecord(record, level, options = {}) {
+        try {
+            if (!this._aiEngine.isReady) {
+                return { ok: false, error: 'Engine not ready' };
+            }
+            const total = Array.isArray(record) ? record.length : 0;
+            const depth = Math.max(1, Math.min(24, Math.trunc(Number(level) || 8)));
+
+            /** @type {Array<{ ply: number, nextTurn: import('../domain/types.js').Turn, evalToMove: number, evalBlack: number, bestMove: string | null }>} */
+            const analysis = [];
+
+            let board = Board.initial();
+
+            for (let ply = 0; ply <= total; ply++) {
+                options.onProgress?.({ ply, total });
+
+                const { bestMove, eval: evalToMove } = await this._aiEngine.solveTurn(
+                    board.playerBits,
+                    board.opponentBits,
+                    depth
+                );
+
+                const evalBlack = board.nextTurn === Turn.BLACK ? evalToMove : -evalToMove;
+                const bestMoveText = bestMove === null ? 'pass' : positionToNotation(bestMove);
+
+                analysis.push({
+                    ply,
+                    nextTurn: board.nextTurn,
+                    evalToMove,
+                    evalBlack,
+                    bestMove: bestMoveText,
+                });
+
+                if (ply === total) break;
+
+                const mRaw = record[ply];
+                const m = String(mRaw).toLowerCase();
+                if (m === 'pass') {
+                    if (!board.mustPass()) {
+                        return { ok: false, error: `Invalid pass at ply ${ply + 1}` };
+                    }
+                    board = board.applyPass();
+                    continue;
+                }
+
+                const pos = notationToPosition(m);
+                if (pos === null) {
+                    return { ok: false, error: `Invalid move: ${mRaw}` };
+                }
+
+                if (!board.canPlace(pos)) {
+                    if (board.mustPass()) {
+                        board = board.applyPass();
+                    }
+                }
+
+                if (!board.canPlace(pos)) {
+                    return { ok: false, error: `Illegal move: ${mRaw}` };
+                }
+                board = board.applyMove(pos);
+            }
+
+            return { ok: true, analysis };
+        } catch (e) {
+            return { ok: false, error: e?.message ?? String(e) };
+        }
+    }
+
+    /**
+     * 現在のゲーム結果（ゲーム終了時のみ意味がある）
+     * @returns {{ blackCount: number, whiteCount: number, winner: import('../domain/types.js').Turn | null } | null}
+     */
+    get result() {
+        if (!this._game) return null;
+        if (!this._game.isGameOver) return null;
+        return this._game.getResult();
+    }
+
+    /**
+     * AIの最善手を1手だけ打つ（Free/Analysis用）
+     * @param {number} level
+     */
+    playAiMoveOnce(level) {
+        this._runExclusive(async () => {
+            if (!this._game) return;
+            if (!this._aiEngine.isReady) {
+                this._ui.logError('AIエンジンの準備ができていません。');
+                return;
+            }
+            if (this._isAiThinking) return;
+            if (this._game.isGameOver) {
+                await this._showGameOver();
+                return;
+            }
+
+            const passed = await this._handleForcedPasses();
+            if (this._game.isGameOver) {
+                await this._showGameOver();
+                return;
+            }
+            if (passed) {
+                this._refreshHint();
+                return;
+            }
+
+            this._isAiThinking = true;
+            const token = ++this._aiToken;
+            try {
+                const board = this._game.board;
+                const { bestMove } = await this._aiEngine.solveTurn(
+                    board.playerBits,
+                    board.opponentBits,
+                    level
+                );
+
+                if (token !== this._aiToken) return;
+
+                this._pushHistory();
+                this._clearFuture();
+                if (bestMove === null || bestMove < 0) {
+                    await this._handlePassAnimation();
+                    this._game = this._game.applyPass();
+                } else {
+                    this._game = this._game.applyMove(bestMove);
+                }
+                this._render();
+
+                if (this._game.isGameOver) {
+                    await this._showGameOver();
+                    return;
+                }
+                if (this._game.mustPass) {
+                    await this._handlePassAnimation();
+                    this._game = this._game.applyPass();
+                    this._render();
+                }
+                this._refreshHint();
+            } catch (error) {
+                if (token !== this._aiToken) return;
+                console.error('playAiMoveOnce failed', error);
+                this._ui.logError('AIの思考に失敗しました。');
+            } finally {
+                this._isAiThinking = false;
+            }
+        });
     }
 
     /**
@@ -152,6 +498,23 @@ export class GameService {
      */
     requestDeepHint(depth) {
         this._runExclusive(() => this._deepHint(depth));
+    }
+
+    /**
+     * ヒント計算深さを更新（表示のON/OFFは変えない）
+     * @param {number} level
+     */
+    setHintLevel(level) {
+        this._runExclusive(() => {
+            const n = Number(level);
+            if (!Number.isFinite(n)) return;
+            const depth = Math.max(1, Math.min(24, Math.trunc(n)));
+            this._settingsService.hintLevel = depth;
+            this._hintService.cancel();
+            if (this._settingsService.enableHint) {
+                this._refreshHint();
+            }
+        });
     }
 
     /**
@@ -247,16 +610,75 @@ export class GameService {
      * @private
      */
     async _startNewGame() {
-        this._history = [];
-        this._future = [];
-        this._hintScores = null;
-        this._game = Game.newGame();
+        this._createNewGameState();
         this._render();
 
         if (this._isAiTurn()) {
             await this._maybeRunAiTurn();
         }
         this._refreshHint();
+    }
+
+    /**
+     * 新規ゲーム状態を作る（副作用なし）
+     * @private
+     */
+    _createNewGameState() {
+        this._history = [];
+        this._future = [];
+        this._hintScores = null;
+        this._game = Game.newGame();
+    }
+
+    /**
+     * 棋譜からゲーム状態を構築（Undo可能な履歴も生成）
+     * @private
+     * @param {string[]} record
+     */
+    _loadFromRecord(record) {
+        this._history = [];
+        this._future = [];
+        this._hintScores = null;
+        let game = Game.newGame();
+
+        const pushSnapshot = () => {
+            this._game = game;
+            this._history.push(this._snapshot());
+        };
+
+        for (const move of record) {
+            const t = String(move).toLowerCase();
+            if (!t) continue;
+            pushSnapshot();
+
+            if (t === 'pass') {
+                game = game.applyPass();
+                continue;
+            }
+
+            const pos = notationToPosition(t);
+            if (pos === null) {
+                throw new Error(`Invalid move: ${move}`);
+            }
+            if (!game.canPlace(pos)) {
+                // 記録がパス省略形式の場合、強制パスを自動挿入
+                if (game.mustPass) {
+                    game = game.applyPass();
+                    pushSnapshot();
+                }
+                if (!game.canPlace(pos)) {
+                    throw new Error(`Illegal move: ${move}`);
+                }
+            }
+            game = game.applyMove(pos);
+
+            // 次手番が強制パスで、入力が省略されていそうなら自動で入れる
+            if (game.mustPass) {
+                game = game.applyPass();
+            }
+        }
+
+        this._game = game;
     }
 
     /**

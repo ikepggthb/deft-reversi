@@ -4,7 +4,6 @@
  * Wasmモジュールの初期化、評価データのロード、およびメインスレッドとの通信を処理します。
  */
 
-import pako from 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.esm.mjs';
 import __wbg_init, { AiSolver } from "../pkg/deft_reversi_web.js";
 
 /**
@@ -20,11 +19,24 @@ async function fetch_eval_data() {
         }
 
         const data = await response.arrayBuffer();
-        const decompressedData = await pako.ungzip(data, { to: 'string' });
+        const decompressedData = await ungzipToString(data);
         return decompressedData;
     } catch (error) {
         console.log("評価データの読み込みに失敗しました\n" + error);
     }
+}
+
+/**
+ * gzip(ArrayBuffer)を文字列へ解凍する（CDN依存を避けるため DecompressionStream を使用）
+ * @param {ArrayBuffer} buffer
+ * @returns {Promise<string>}
+ */
+async function ungzipToString(buffer) {
+    if (typeof DecompressionStream !== 'function') {
+        throw new Error('DecompressionStream is not supported in this environment');
+    }
+    const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return await new Response(stream).text();
 }
 
 /**
