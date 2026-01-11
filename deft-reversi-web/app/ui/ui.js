@@ -1641,8 +1641,8 @@ function renderSparklineSvg(series, options = {}) {
             const y = toY(v);
             const label = v === 0 ? '0' : String(v);
             return `
-              <line x1="${pad}" y1="${y.toFixed(1)}" x2="${(w - pad).toFixed(1)}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-              <text x="${(pad).toFixed(1)}" y="${(y - 4).toFixed(1)}" fill="rgba(255,255,255,0.55)" font-size="10">${escapeHtml(label)}</text>
+              <line x1="${pad}" y1="${y.toFixed(1)}" x2="${(w - pad).toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--line)" stroke-width="1"/>
+              <text x="${pad.toFixed(1)}" y="${(y - 4).toFixed(1)}" fill="var(--muted)" font-size="10">${escapeHtml(label)}</text>
             `.trim();
         })
         .join('');
@@ -1650,7 +1650,7 @@ function renderSparklineSvg(series, options = {}) {
     const cursorLine = (() => {
         if (cursor === null || cursor < 0 || cursor >= n) return '';
         const x = toX(cursor);
-        return `<line x1="${x.toFixed(1)}" y1="${pad}" x2="${x.toFixed(1)}" y2="${(h - pad).toFixed(1)}" stroke="rgba(255,255,255,0.18)" stroke-width="1" />`;
+        return `<line x1="${x.toFixed(1)}" y1="${pad}" x2="${x.toFixed(1)}" y2="${(h - pad).toFixed(1)}" stroke="rgba(15,23,42,0.24)" stroke-width="1" />`;
     })();
 
     const hoverLine = (() => {
@@ -1666,17 +1666,17 @@ function renderSparklineSvg(series, options = {}) {
             const active = cursor === i;
             const hovered = hover === i;
             const r = active ? 5 : hovered ? 4.5 : 3.5;
-            const fill = active ? 'rgba(255,255,255,0.92)' : 'rgba(16,185,129,0.95)';
-            return `<circle data-ply="${i}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r}" fill="${fill}" stroke="rgba(0,0,0,0.35)" stroke-width="1" />`;
+            const fill = active ? 'var(--text)' : 'var(--accent)';
+            return `<circle data-ply="${i}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r}" fill="${fill}" stroke="rgba(15,23,42,0.28)" stroke-width="1" />`;
         })
         .join('');
     return `
       <svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="graph">
         ${grid}
-        <line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${w - pad}" y2="${zeroY.toFixed(1)}" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+        <line x1="${pad}" y1="${zeroY.toFixed(1)}" x2="${w - pad}" y2="${zeroY.toFixed(1)}" stroke="rgba(15,23,42,0.18)" stroke-width="1"/>
         ${hoverLine}
         ${cursorLine}
-        <polyline points="${points}" fill="none" stroke="rgba(16,185,129,0.95)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         ${dots}
       </svg>
     `.trim();
