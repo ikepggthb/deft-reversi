@@ -323,11 +323,11 @@ export class UI {
     _renderHome() {
         const engineText = this._engineReady ? 'ENGINE READY' : 'ENGINE LOADING';
         return `
-          <div style="max-width: 520px; margin: 0 auto; min-height: calc(100vh - 140px); display:flex; flex-direction:column; justify-content:center;">
-            <div class="card" data-card="match" style="cursor:pointer">
-              <small>AIとの対戦</small>
-              <div class="card-title"><strong>Play vs AI</strong><span style="opacity:.8">🤖</span></div>
-            </div>
+	          <div class="page page--home">
+	            <div class="card" data-card="match" style="cursor:pointer">
+	              <small>AIとの対戦</small>
+	              <div class="card-title"><strong>Play vs AI</strong><span style="opacity:.8">🤖</span></div>
+	            </div>
             <div class="card" data-card="free" style="cursor:pointer">
               <small>自由モード</small>
               <div class="card-title"><strong>Free Mode</strong><span style="opacity:.8">✎</span></div>
@@ -343,15 +343,15 @@ export class UI {
         `;
     }
 
-    _renderMatchSetup() {
-        const tabPresetActive = this._setup.tab === 'preset';
-        const tabManualActive = this._setup.tab === 'manual';
-        return `
-          <div style="max-width: 520px; margin: 0 auto;">
-            <div class="card">
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                <div style="font-weight:650;">AI Match Setup</div>
-                <span class="pill" id="engine-pill"><span class="dot ${this._engineReady ? 'ok' : ''}"></span>${this._engineReady ? 'ENGINE READY' : 'ENGINE LOADING'}</span>
+	    _renderMatchSetup() {
+	        const tabPresetActive = this._setup.tab === 'preset';
+	        const tabManualActive = this._setup.tab === 'manual';
+	        return `
+	          <div class="page">
+	            <div class="card">
+	              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+	                <div style="font-weight:650;">AI Match Setup</div>
+	                <span class="pill" id="engine-pill"><span class="dot ${this._engineReady ? 'ok' : ''}"></span>${this._engineReady ? 'ENGINE READY' : 'ENGINE LOADING'}</span>
               </div>
               <div style="margin-top: 12px;" class="tabs">
                 <button class="tab ${tabPresetActive ? 'active' : ''}" data-click="setup-tab" data-tab="preset">Preset</button>
@@ -474,16 +474,16 @@ export class UI {
         }
     }
 
-    _renderAnalysisSetup() {
-        const level = this._analysis.aiLevel;
-        const engineText = this._engineReady ? 'ENGINE READY' : 'ENGINE LOADING';
-        const busy = this._analysis.isAnalyzing;
-        return `
-          <div style="max-width: 520px; margin: 0 auto;">
-            <div class="card">
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                <div style="font-weight:650;">Analysis Setup</div>
-                <span class="pill" id="engine-pill"><span class="dot ${this._engineReady ? 'ok' : ''}"></span>${engineText}</span>
+	    _renderAnalysisSetup() {
+	        const level = this._analysis.aiLevel;
+	        const engineText = this._engineReady ? 'ENGINE READY' : 'ENGINE LOADING';
+	        const busy = this._analysis.isAnalyzing;
+	        return `
+	          <div class="page">
+	            <div class="card">
+	              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+	                <div style="font-weight:650;">Analysis Setup</div>
+	                <span class="pill" id="engine-pill"><span class="dot ${this._engineReady ? 'ok' : ''}"></span>${engineText}</span>
               </div>
               <div class="section">
                 <h2>MOVE LIST</h2>
@@ -530,7 +530,7 @@ export class UI {
         }
     }
 
-    _renderBoardScreen(mode) {
+	    _renderBoardScreen(mode) {
         const vm = this._viewModel;
         const black = vm?.blackBits ?? null;
         const white = vm?.whiteBits ?? null;
@@ -582,15 +582,15 @@ export class UI {
                     ? this._renderAnalysisGraph()
                     : this._renderAnalysisMoveList(recordText);
 
-        const analysisToolbar =
-            mode === 'analysis' ? this._renderAnalysisToolbar() : mode === 'free' ? this._renderFreeToolbar() : '';
+	        const analysisToolbar =
+	            mode === 'analysis' ? this._renderAnalysisToolbar() : mode === 'free' ? this._renderFreeToolbar() : '';
 
         return `
-          <div style="max-width: 520px; margin: 0 auto;">
-            <div class="card">
-              <div style="display:flex; align-items:center; justify-content:space-between;">
-                <div style="display:flex; flex-direction:column; gap:2px;">
-                  <div style="font-weight:650;">${subtitle}</div>
+	          <div class="page page--board">
+	            <div class="card">
+	              <div style="display:flex; align-items:center; justify-content:space-between;">
+	                <div style="display:flex; flex-direction:column; gap:2px;">
+	                  <div style="font-weight:650;">${subtitle}</div>
                   <div style="font-size:12px; color: var(--muted);">${opening}</div>
                 </div>
                 <span class="pill" id="engine-pill"><span class="dot ${this._engineReady ? 'ok' : ''}"></span>${this._engineReady ? 'ENGINE READY' : 'ENGINE LOADING'}</span>
@@ -814,7 +814,8 @@ export class UI {
                 const isNextOpening = nextOpeningPos === pos;
                 const score = scores ? scores[pos] : null;
                 const showScore = score !== null && score !== undefined && isLegal;
-                const scoreColor = maxScore !== null && score === maxScore ? 'style="color:#93c5fd"' : '';
+                const scoreColor =
+                    maxScore !== null && score === maxScore ? 'style="color: var(--score-best)"' : '';
 
                 const classes = [
                     'cell',
@@ -841,17 +842,17 @@ export class UI {
         return `<div class="board-shell" role="grid">${tiles.join('')}</div>`;
     }
 
-    _renderResult() {
+	    _renderResult() {
         const r = this._result;
         if (!r) return this._renderHome();
 
-        const winner = r.blackScore === r.whiteScore ? 'DRAW' : r.blackScore > r.whiteScore ? 'BLACK' : 'WHITE';
-        return `
-          <div style="max-width: 520px; margin: 0 auto;">
-            <div class="card">
-              <div style="display:flex; align-items:center; justify-content:space-between;">
-                <div style="font-weight:650;">Result</div>
-                <span class="pill" id="engine-pill"><span class="dot ${this._engineReady ? 'ok' : ''}"></span>${this._engineReady ? 'ENGINE READY' : 'ENGINE LOADING'}</span>
+	        const winner = r.blackScore === r.whiteScore ? 'DRAW' : r.blackScore > r.whiteScore ? 'BLACK' : 'WHITE';
+	        return `
+	          <div class="page">
+	            <div class="card">
+	              <div style="display:flex; align-items:center; justify-content:space-between;">
+	                <div style="font-weight:650;">Result</div>
+	                <span class="pill" id="engine-pill"><span class="dot ${this._engineReady ? 'ok' : ''}"></span>${this._engineReady ? 'ENGINE READY' : 'ENGINE LOADING'}</span>
               </div>
               <div class="section">
                 <h2>SCORE</h2>
