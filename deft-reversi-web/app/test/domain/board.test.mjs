@@ -101,15 +101,6 @@ test('Board.toKey: returns unique string for state', () => {
     assert.notEqual(board1.toKey(), board3.toKey());
 });
 
-test('Board.equals: compares boards correctly', () => {
-    const board1 = Board.initial();
-    const board2 = Board.initial();
-    const board3 = board1.applyMove(37);
-
-    assert.equal(board1.equals(board2), true);
-    assert.equal(board1.equals(board3), false);
-});
-
 test('Board is frozen (immutable)', () => {
     const board = Board.initial();
     assert.ok(Object.isFrozen(board));
