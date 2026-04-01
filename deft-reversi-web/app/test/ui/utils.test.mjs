@@ -1,30 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    presetToLevel,
     clampInt,
     escapeHtml,
+    formatRecordText,
     formatSigned,
+    formatWinnerMessage,
     notationToPositionSafe,
     computeMaterialDiffSeries,
     renderSparklineSvg,
 } from '../../ui/utils.js';
-
-// === presetToLevel ===
-
-test('presetToLevel: returns correct level for known presets', () => {
-    assert.equal(presetToLevel('beginner'), 4);
-    assert.equal(presetToLevel('intermediate'), 8);
-    assert.equal(presetToLevel('expert'), 16);
-    assert.equal(presetToLevel('grandmaster'), 24);
-});
-
-test('presetToLevel: returns default for unknown preset', () => {
-    assert.equal(presetToLevel('unknown'), 8);
-    assert.equal(presetToLevel(''), 8);
-    assert.equal(presetToLevel(null), 8);
-    assert.equal(presetToLevel(undefined), 8);
-});
 
 // === clampInt ===
 
@@ -100,6 +85,34 @@ test('formatSigned: handles non-finite values', () => {
 test('formatSigned: converts string numbers', () => {
     assert.equal(formatSigned('5'), '+5');
     assert.equal(formatSigned('-3'), '-3');
+});
+
+// === formatRecordText ===
+
+test('formatRecordText: omits pass by default', () => {
+    assert.equal(formatRecordText(['f5', 'pass', 'd6']), 'f5 d6');
+});
+
+test('formatRecordText: can include pass when requested', () => {
+    assert.equal(formatRecordText(['f5', 'pass', 'd6'], { includePass: true }), 'f5 pass d6');
+});
+
+test('formatRecordText: handles empty input', () => {
+    assert.equal(formatRecordText([]), '');
+});
+
+// === formatWinnerMessage ===
+
+test('formatWinnerMessage: renders black winner with display name', () => {
+    assert.equal(formatWinnerMessage({ winner: 'black' }, 'あなた', 'AI Lv 4'), 'あなたの勝ち');
+});
+
+test('formatWinnerMessage: renders white winner with display name', () => {
+    assert.equal(formatWinnerMessage({ winner: 'white' }, 'あなた', 'AI Lv 4'), 'AI Lv 4の勝ち');
+});
+
+test('formatWinnerMessage: renders draw', () => {
+    assert.equal(formatWinnerMessage({ winner: null }, '黒', '白'), '引き分け');
 });
 
 // === notationToPositionSafe ===

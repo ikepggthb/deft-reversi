@@ -100,7 +100,6 @@ export class HintService {
 
         // 反復深化: レベル1から指定レベルまで
         for (let lv = 1; lv <= level; lv++) {
-            console.log(`hint: ${lv}`);
             sortByScoreDesc();
 
             for (const pos of moves) {

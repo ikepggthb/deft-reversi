@@ -10,6 +10,10 @@ import { SettingsRepository } from '../infrastructure/settings-repository.js';
 const DEFAULT_SETTINGS = Object.freeze({
     aiEnabled: true,
     aiLevel: 5,
+    analysisLevel: 7,
+    analysisRunLevel: 7,
+    blackAiLevel: 5,
+    whiteAiLevel: 5,
     aiTurn: 'white',
     humanOpening: null,
 });
@@ -29,6 +33,14 @@ export class SettingsService {
         this._enableAi = saved.aiEnabled;
         /** @private */
         this._aiLevel = saved.aiLevel;
+        /** @private */
+        this._analysisLevel = saved.analysisLevel;
+        /** @private */
+        this._analysisRunLevel = saved.analysisRunLevel;
+        /** @private */
+        this._blackAiLevel = saved.blackAiLevel;
+        /** @private */
+        this._whiteAiLevel = saved.whiteAiLevel;
         /** @private */
         this._aiTurn = saved.aiTurn;
 
@@ -65,12 +77,52 @@ export class SettingsService {
         this._aiLevel = value;
     }
 
-    /** @returns {'black' | 'white'} */
+    /** @returns {number} */
+    get analysisLevel() {
+        return this._analysisLevel;
+    }
+
+    /** @param {number} value */
+    set analysisLevel(value) {
+        this._analysisLevel = value;
+    }
+
+    /** @returns {number} */
+    get analysisRunLevel() {
+        return this._analysisRunLevel;
+    }
+
+    /** @param {number} value */
+    set analysisRunLevel(value) {
+        this._analysisRunLevel = value;
+    }
+
+    /** @returns {number} */
+    get blackAiLevel() {
+        return this._blackAiLevel;
+    }
+
+    /** @param {number} value */
+    set blackAiLevel(value) {
+        this._blackAiLevel = value;
+    }
+
+    /** @returns {number} */
+    get whiteAiLevel() {
+        return this._whiteAiLevel;
+    }
+
+    /** @param {number} value */
+    set whiteAiLevel(value) {
+        this._whiteAiLevel = value;
+    }
+
+    /** @returns {'black' | 'white' | 'both'} */
     get aiTurn() {
         return this._aiTurn;
     }
 
-    /** @param {'black' | 'white'} value */
+    /** @param {'black' | 'white' | 'both'} value */
     set aiTurn(value) {
         this._aiTurn = value;
     }
@@ -123,6 +175,10 @@ export class SettingsService {
         this._repository.save({
             aiEnabled: this._enableAi,
             aiLevel: this._aiLevel,
+            analysisLevel: this._analysisLevel,
+            analysisRunLevel: this._analysisRunLevel,
+            blackAiLevel: this._blackAiLevel,
+            whiteAiLevel: this._whiteAiLevel,
             aiTurn: this._aiTurn,
             humanOpening: this._humanOpening,
         });

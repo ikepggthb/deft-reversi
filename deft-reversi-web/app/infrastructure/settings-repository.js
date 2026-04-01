@@ -10,7 +10,11 @@ const LEGACY_STORAGE_KEY = 'gameSettings';
  * @typedef {Object} GameSettings
  * @property {boolean} aiEnabled AI有効/無効
  * @property {number} aiLevel AIレベル（1-24）
- * @property {'black' | 'white'} aiTurn AIの手番
+ * @property {number} analysisLevel 評価レベル（1-24）
+ * @property {number} analysisRunLevel 分析レベル（1-24）
+ * @property {number} blackAiLevel AI対AI時の黒AIレベル（1-24）
+ * @property {number} whiteAiLevel AI対AI時の白AIレベル（1-24）
+ * @property {'black' | 'white' | 'both'} aiTurn AIの手番
  * @property {number | null} humanOpening 定石インデックス（未使用はnull）
  */
 
@@ -21,12 +25,19 @@ const LEGACY_STORAGE_KEY = 'gameSettings';
  * @returns {GameSettings}
  */
 function normalizeSettings(raw, defaults) {
+    const normalizeLevel = (value, fallback) =>
+        Number.isInteger(value) && value >= 1 && value <= 24 ? value : fallback;
+
     const aiEnabled = typeof raw?.aiEnabled === 'boolean' ? raw.aiEnabled : defaults.aiEnabled;
-    const aiLevel =
-        Number.isInteger(raw?.aiLevel) && raw.aiLevel >= 1 && raw.aiLevel <= 24
-            ? raw.aiLevel
-            : defaults.aiLevel;
-    const aiTurn = raw?.aiTurn === 'black' || raw?.aiTurn === 'white' ? raw.aiTurn : defaults.aiTurn;
+    const aiLevel = normalizeLevel(raw?.aiLevel, defaults.aiLevel);
+    const analysisLevel = normalizeLevel(raw?.analysisLevel, defaults.analysisLevel);
+    const analysisRunLevel = normalizeLevel(raw?.analysisRunLevel, defaults.analysisRunLevel);
+    const blackAiLevel = normalizeLevel(raw?.blackAiLevel, defaults.blackAiLevel);
+    const whiteAiLevel = normalizeLevel(raw?.whiteAiLevel, defaults.whiteAiLevel);
+    const aiTurn =
+        raw?.aiTurn === 'black' || raw?.aiTurn === 'white' || raw?.aiTurn === 'both'
+            ? raw.aiTurn
+            : defaults.aiTurn;
 
     const humanOpeningRaw = raw?.humanOpening;
     const humanOpening =
@@ -40,8 +51,16 @@ function normalizeSettings(raw, defaults) {
                 : typeof humanOpeningRaw === 'string' && Number.isInteger(Number(humanOpeningRaw))
                     ? Number(humanOpeningRaw)
                     : null;
-
-    return { aiEnabled, aiLevel, aiTurn, humanOpening };
+    return {
+        aiEnabled,
+        aiLevel,
+        analysisLevel,
+        analysisRunLevel,
+        blackAiLevel,
+        whiteAiLevel,
+        aiTurn,
+        humanOpening,
+    };
 }
 
 /**

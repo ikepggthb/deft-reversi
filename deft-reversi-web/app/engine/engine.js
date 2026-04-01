@@ -22,7 +22,7 @@ async function fetch_eval_data() {
         const decompressedData = await ungzipToString(data);
         return decompressedData;
     } catch (error) {
-        console.log("評価データの読み込みに失敗しました\n" + error);
+        throw new Error(`評価データの読み込みに失敗しました: ${error?.message ?? String(error)}`);
     }
 }
 
@@ -48,9 +48,7 @@ async function ungzipToString(buffer) {
 async function init() {
     try {
         await __wbg_init();
-        console.log("fetch eval data");
         const eval_data = await fetch_eval_data();
-        console.log("init ai solver");
         const ai = new AiSolver(eval_data);
         self.postMessage({ type: "ready", ok: true, payload: null, requestId: null, protocolVersion: 1 });
         return ai;
