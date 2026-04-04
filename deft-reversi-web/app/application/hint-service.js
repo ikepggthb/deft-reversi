@@ -139,11 +139,4 @@ export class HintService {
         }
     }
 
-    /**
-     * 最後に計算した盤面のキーを取得
-     * @returns {string | null}
-     */
-    get lastBoardKey() {
-        return this._lastBoardKey;
-    }
 }

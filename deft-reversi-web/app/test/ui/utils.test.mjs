@@ -6,8 +6,6 @@ import {
     formatRecordText,
     formatSigned,
     formatWinnerMessage,
-    notationToPositionSafe,
-    computeMaterialDiffSeries,
     renderSparklineSvg,
 } from '../../ui/utils.js';
 
@@ -113,71 +111,6 @@ test('formatWinnerMessage: renders white winner with display name', () => {
 
 test('formatWinnerMessage: renders draw', () => {
     assert.equal(formatWinnerMessage({ winner: null }, '黒', '白'), '引き分け');
-});
-
-// === notationToPositionSafe ===
-
-test('notationToPositionSafe: converts valid notation to position', () => {
-    assert.equal(notationToPositionSafe('a1'), 0);
-    assert.equal(notationToPositionSafe('h8'), 63);
-    assert.equal(notationToPositionSafe('f5'), 37);
-    assert.equal(notationToPositionSafe('d6'), 43);
-});
-
-test('notationToPositionSafe: handles uppercase', () => {
-    assert.equal(notationToPositionSafe('A1'), 0);
-    assert.equal(notationToPositionSafe('F5'), 37);
-});
-
-test('notationToPositionSafe: returns null for invalid notation', () => {
-    assert.equal(notationToPositionSafe(''), null);
-    assert.equal(notationToPositionSafe('a'), null);
-    assert.equal(notationToPositionSafe('a11'), null);
-    assert.equal(notationToPositionSafe('i1'), null);
-    assert.equal(notationToPositionSafe('a9'), null);
-    assert.equal(notationToPositionSafe('a0'), null);
-});
-
-test('notationToPositionSafe: returns null for non-string input', () => {
-    assert.equal(notationToPositionSafe(null), null);
-    assert.equal(notationToPositionSafe(undefined), null);
-    assert.equal(notationToPositionSafe(123), null);
-});
-
-// === computeMaterialDiffSeries ===
-
-test('computeMaterialDiffSeries: returns initial diff for empty record', () => {
-    const series = computeMaterialDiffSeries([]);
-    assert.equal(series.length, 1);
-    assert.equal(series[0], 0); // 初期盤面: 黒2, 白2
-});
-
-test('computeMaterialDiffSeries: computes diff for valid moves', () => {
-    const series = computeMaterialDiffSeries(['f5']);
-    assert.equal(series.length, 2);
-    // F5: 黒が白1つ反転 → 黒4, 白1
-    assert.equal(series[1], 3);
-});
-
-test('computeMaterialDiffSeries: handles pass in record', () => {
-    // F5, D6 is a valid sequence
-    const series1 = computeMaterialDiffSeries(['f5', 'd6']);
-    assert.equal(series1.length, 3);
-
-    // pass adds an entry with unchanged material count
-    const series2 = computeMaterialDiffSeries(['f5', 'pass', 'd6']);
-    // series: [0 (initial), 3 (after f5), 3 (after pass - unchanged), ...d6 if valid]
-    // But d6 may not be a valid black move after pass, so check length >= 3
-    assert.ok(series2.length >= 3);
-    // After f5 and pass, material stays at 3
-    assert.equal(series2[1], 3);
-    assert.equal(series2[2], 3);
-});
-
-test('computeMaterialDiffSeries: stops at invalid move', () => {
-    // a1 is not a valid first move
-    const series = computeMaterialDiffSeries(['a1']);
-    assert.equal(series.length, 1);
 });
 
 // === renderSparklineSvg ===

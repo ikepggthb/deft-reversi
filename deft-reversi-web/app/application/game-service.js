@@ -97,7 +97,7 @@ export class GameService {
         /** @private */
         this._passHandler = new PassHandler({
             onPassAnimation: () => this._handlePassAnimation(),
-            onSnapshot: (state) => this._snapshotState(state),
+            onSnapshot: (state) => this._stateManager.snapshotState(state),
             onRender: () => this._render(),
         });
 
@@ -210,11 +210,6 @@ export class GameService {
     /** @private @param {boolean} value */
     set _pendingAutoStart(value) {
         this._stateManager.pendingAutoStart = value;
-    }
-
-    /** @private @returns {ReadonlyArray<string>} */
-    get _studyBranchStartRecord() {
-        return this._stateManager.studyBranchStartRecord;
     }
 
     // === 公開API（UIから呼ばれる） ===
@@ -348,8 +343,8 @@ export class GameService {
             const whiteBits = rotateBitsClockwise(board.whiteBits, turns);
             const rotatedBoard = Board.fromBits(blackBits, whiteBits, board.nextTurn);
 
-            this._pushHistory();
-            this._clearFuture();
+            this._stateManager.pushHistory();
+            this._stateManager.clearFuture();
             this._hintService.cancel();
             this._hintScores = null;
             this._game = new Game(rotatedBoard, [], null);
@@ -723,8 +718,8 @@ export class GameService {
 
                 if (token !== this._aiToken) return;
 
-                this._pushHistory();
-                this._clearFuture();
+                this._stateManager.pushHistory();
+                this._stateManager.clearFuture();
                 if (bestMove === null || bestMove < 0) {
                     await this._handlePassAnimation();
                     this._game = this._game.applyPass();
@@ -1030,7 +1025,7 @@ export class GameService {
 
         const pushSnapshot = () => {
             this._game = game;
-            this._history.push(this._snapshot());
+            this._history.push(this._stateManager.snapshot());
         };
 
         for (const move of record) {
@@ -1142,8 +1137,8 @@ export class GameService {
      * @returns {Promise<'continue' | 'game-over'>}
      */
     async _applyHumanMove(position) {
-        this._pushHistory();
-        this._clearFuture();
+        this._stateManager.pushHistory();
+        this._stateManager.clearFuture();
         this._game = this._game.applyMove(position);
         this._render();
 
@@ -1311,7 +1306,7 @@ export class GameService {
      * @returns {Promise<'continue' | 'game-over'>}
      */
     async _applyAiMove(state, bestMove) {
-        state.history.push(this._snapshotState(state));
+        state.history.push(this._stateManager.snapshotState(state));
         state.future = [];
 
         if (bestMove === null || bestMove < 0) {
@@ -1395,7 +1390,7 @@ export class GameService {
      */
     _undo() {
         if (this._history.length === 0) return;
-        this._future.push(this._snapshot());
+        this._future.push(this._stateManager.snapshot());
         const snapshot = this._history.pop();
         this._restore(snapshot);
         this._hintService.cancel();
@@ -1408,46 +1403,11 @@ export class GameService {
      */
     _redo() {
         if (this._future.length === 0) return;
-        this._history.push(this._snapshot());
+        this._history.push(this._stateManager.snapshot());
         const snapshot = this._future.pop();
         this._restore(snapshot);
         this._hintService.cancel();
         this._refreshHint();
-    }
-
-    /**
-     * 履歴に追加
-     * @private
-     */
-    _pushHistory() {
-        this._stateManager.pushHistory();
-    }
-
-    /**
-     * 未来を消去
-     * @private
-     */
-    _clearFuture() {
-        this._stateManager.clearFuture();
-    }
-
-    /**
-     * スナップショットを取得
-     * @private
-     * @returns {HistorySnapshot}
-     */
-    _snapshot() {
-        return this._stateManager.snapshot();
-    }
-
-    /**
-     * 指定セッションのスナップショットを取得
-     * @private
-     * @param {SessionState} state
-     * @returns {HistorySnapshot}
-     */
-    _snapshotState(state) {
-        return this._stateManager.snapshotState(state);
     }
 
     /**

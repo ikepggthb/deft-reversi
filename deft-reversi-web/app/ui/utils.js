@@ -2,9 +2,6 @@
  * @fileoverview UI層で使用するユーティリティ関数
  */
 
-import { Board } from '../domain/board.js';
-import { AI_LEVEL_DEFAULT } from '../config/constants.js';
-
 
 /**
  * 数値を整数に変換し、範囲内に収める
@@ -67,61 +64,6 @@ export function formatRecordText(record, options = {}) {
 export function formatWinnerMessage(result, blackName, whiteName) {
     if (!result?.winner) return '引き分け';
     return result.winner === 'black' ? `${blackName}の勝ち` : `${whiteName}の勝ち`;
-}
-
-/**
- * 棋譜表記を盤面位置に変換（安全版）
- * @param {string} notation 棋譜表記（例: "f5"）
- * @returns {number | null} 位置（0-63）、無効な場合はnull
- */
-export function notationToPositionSafe(notation) {
-    if (typeof notation !== 'string' || notation.length !== 2) return null;
-    const letters = 'abcdefgh';
-    const numbers = '12345678';
-    const col = letters.indexOf(notation[0].toLowerCase());
-    const row = numbers.indexOf(notation[1]);
-    if (col === -1 || row === -1) return null;
-    return row * 8 + col;
-}
-
-/**
- * 石数差（black - white）を手順ごとに計算する
- * @param {ReadonlyArray<string>} record 棋譜（例: ["f5","d6","pass",...]）
- * @returns {number[]} 各手順での石数差
- */
-export function computeMaterialDiffSeries(record) {
-    try {
-        let board = Board.initial();
-        /** @type {number[]} */
-        const series = [];
-        series.push(board.blackCount - board.whiteCount);
-        for (const m of record) {
-            const t = String(m).toLowerCase();
-            if (t === 'pass') {
-                board = board.applyPass();
-            } else {
-                const pos = notationToPositionSafe(t);
-                if (pos === null) break;
-                if (board.canPlace(pos)) {
-                    board = board.applyMove(pos);
-                } else if (board.mustPass()) {
-                    board = board.applyPass();
-                    if (board.canPlace(pos)) {
-                        board = board.applyMove(pos);
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-            series.push(board.blackCount - board.whiteCount);
-        }
-        return series;
-    } catch (error) {
-        console.warn('computeMaterialDiffSeries: failed to compute series', error);
-        return [0];
-    }
 }
 
 // === SVG描画関連 ===
