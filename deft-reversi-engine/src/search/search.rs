@@ -10,7 +10,8 @@ pub const NO_MPC_SELECTIVITY_LV: i32 = 6;
 /// 最初は観測に必要な最小限だけ持つ。
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchStats {
-    pub nodes: u64,
+    pub final_search_nodes: u64,
+    pub eval_search_nodes: u64,
     pub final_search_leaf_nodes: u64,
     pub eval_search_leaf_nodes: u64,
     pub tt_hits: u64,
@@ -24,25 +25,25 @@ pub struct SearchStats {
 /// 評価探索で共有する不変資源と探索設定。
 ///
 /// board や alpha/beta/depth のようなノードごとに変わる状態は持たない。
-pub struct EvalSearch<'a> {
+pub struct SearchContext<'a> {
     pub evaluator: Arc<Evaluator>,
-    pub mpc: Arc<MpcConfig>,
+    pub mpc_config: Arc<MpcConfig>,
     pub tt: Arc<TranspositionTable>,
     pub stats: &'a mut SearchStats,
     pub selectivity_lv: i32,
     pub final_search_empties: i32,
 }
 
-impl<'a> EvalSearch<'a> {
+impl<'a> SearchContext<'a> {
     pub fn new(
         evaluator: Arc<Evaluator>,
-        mpc: Arc<MpcConfig>,
+        mpc_config: Arc<MpcConfig>,
         tt: Arc<TranspositionTable>,
         stats: &'a mut SearchStats,
     ) -> Self {
         Self {
             evaluator,
-            mpc,
+            mpc_config,
             tt,
             stats,
             selectivity_lv: NO_MPC_SELECTIVITY_LV,

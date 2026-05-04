@@ -70,14 +70,15 @@ impl Board {
     }
 
     #[inline(always)]
-    pub fn make_move_from_flip_bit(&mut self, move_bit: u64, flip_bit: u64) {
+    pub fn make_move_from_flip_bit(&self, move_bit: u64, flip_bit: u64) -> Board {
         debug_assert!(move_bit.count_ones() == 1);
         debug_assert!(self.moves() & move_bit != 0);
         debug_assert!(self.flip_bit(move_bit) == flip_bit);
 
-        self.player ^= flip_bit | move_bit;
-        self.opponent ^= flip_bit;
-        (self.player, self.opponent) = (self.opponent, self.player);
+        Board {
+            player: self.opponent ^ flip_bit,
+            opponent: self.player ^ (flip_bit | move_bit),
+        }
     }
 
     #[inline(always)]

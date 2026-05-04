@@ -2,7 +2,7 @@ use crate::board::board::Board;
 use crate::eval::evaluator_const::SCORE_MAX;
 use crate::search::eval_search::nws_eval_leaf_no_mpc;
 use crate::search::mpc::MpcParams;
-use crate::search::search::{EvalSearch, NO_MPC_SELECTIVITY_LV};
+use crate::search::search::{SearchContext, NO_MPC_SELECTIVITY_LV};
 
 const EVAL_SEARCH_MPC_START_DEPTH: i32 = 4;
 const FINAL_SEARCH_MPC_START_EMPTIES: i32 = 12;
@@ -38,13 +38,13 @@ pub fn eval_search_mpc(
     alpha: i32,
     beta: i32,
     depth: i32,
-    search: &mut EvalSearch,
+    search: &mut SearchContext,
 ) -> ProbCutResult {
     if depth < EVAL_SEARCH_MPC_START_DEPTH {
         return ProbCutResult::Fail;
     }
     let empties = 64 - (board.player | board.opponent).count_ones() as i32;
-    multi_prob_cut(board, alpha, beta, search.mpc.eval_search.params(depth, empties), search)
+    multi_prob_cut(board, alpha, beta, search.mpc_config.eval_search.params(depth, empties), search)
 }
 
 #[inline(always)]
@@ -52,13 +52,13 @@ pub fn final_search_mpc(
     board: &Board,
     alpha: i32,
     beta: i32,
-    search: &mut EvalSearch,
+    search: &mut SearchContext,
 ) -> ProbCutResult {
     let empties = 64 - (board.player | board.opponent).count_ones() as i32;
     if empties < FINAL_SEARCH_MPC_START_EMPTIES {
         return ProbCutResult::Fail;
     }
-    multi_prob_cut(board, alpha, beta, search.mpc.final_search.params(empties), search)
+    multi_prob_cut(board, alpha, beta, search.mpc_config.final_search.params(empties), search)
 }
 
 #[inline(always)]
@@ -67,7 +67,7 @@ fn multi_prob_cut(
     alpha: i32,
     beta: i32,
     params: MpcParams,
-    search: &mut EvalSearch,
+    search: &mut SearchContext,
 ) -> ProbCutResult {
     if alpha >= SCORE_MAX {
         return ProbCutResult::Cut(alpha);
@@ -124,7 +124,7 @@ mod tests {
         let mpc = Arc::new(MpcConfig::default());
         let tt = Arc::new(TranspositionTable::new());
         let mut stats = crate::search::search::SearchStats::default();
-        let mut search = EvalSearch::new(evaluator, mpc, tt, &mut stats);
+        let mut search = SearchContext::new(evaluator, mpc, tt, &mut stats);
 
         assert_eq!(
             eval_search_mpc(&board, -1, 1, 10, &mut search),
@@ -140,7 +140,7 @@ mod tests {
         let mpc = Arc::new(MpcConfig::default());
         let tt = Arc::new(TranspositionTable::new());
         let mut stats = crate::search::search::SearchStats::default();
-        let mut search = EvalSearch::new(evaluator, mpc, tt, &mut stats);
+        let mut search = SearchContext::new(evaluator, mpc, tt, &mut stats);
         search.selectivity_lv = 0;
 
         assert_eq!(
@@ -170,7 +170,7 @@ mod tests {
         let mpc = Arc::new(MpcConfig::default());
         let tt = Arc::new(TranspositionTable::new());
         let mut stats = crate::search::search::SearchStats::default();
-        let mut search = EvalSearch::new(evaluator, mpc, tt, &mut stats);
+        let mut search = SearchContext::new(evaluator, mpc, tt, &mut stats);
         search.selectivity_lv = 0;
 
         assert_eq!(

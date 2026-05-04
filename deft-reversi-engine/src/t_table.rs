@@ -13,7 +13,7 @@ use std::sync::atomic::{fence, AtomicU64, AtomicU8, Ordering};
 // - generation: entry の世代。古い entry を置換しやすくするための番号。
 
 /// 各 TT エントリに保存する候補手の数。
-pub const N_TT_MOVES: usize = 2;
+pub const TT_MOVES_CAPACITY: usize = 2;
 
 /// デフォルトの transposition table サイズ。単位は MiB。
 pub const DEFAULT_TT_MB_SIZE: usize = 256;
@@ -24,32 +24,27 @@ const MIB: usize = 1024 * 1024;
 const OCCUPIED_FLAG: u8 = 1;
 const AGE_WEIGHT: i32 = 8;
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TTValueFields {
-    lower: i8,
-    upper: i8,
-    lv: u8,
-    selectivity_lv: u8,
-    move0: u8,
-    move1: u8,
-    generation: u8,
-    flags: u8,
-}
-
-// 探索結果本体を atomic word 1 個に収める。TTEntry では AtomicU64 として保存し、
-// 評価値の上下限、深さ、世代、候補手をまとめて読み書きできるようにする。
-const _: () = assert!(mem::size_of::<TTValueFields>() == 8);
-
 /// transposition table のエントリに保存する探索結果本体。
 ///
 /// board key 自体はここには保存しない。`TTEntry` 側で完全な
 /// `Board { player, opponent }` を別に保存し、見つかったときに毎回比較するため、
 /// hash collision で別局面を誤って一致扱いすることはない。
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TTValue {
-    fields: TTValueFields,
+    pub lower: i8,
+    pub upper: i8,
+    pub lv: u8,
+    pub selectivity_lv: u8,
+    pub move0: u8,
+    pub move1: u8,
+    pub generation: u8,
+    pub flags: u8,
 }
+
+// 探索結果本体を atomic word 1 個に収める。TTEntry では AtomicU64 として保存し、
+// 評価値の上下限、深さ、世代、候補手をまとめて読み書きできるようにする。
+const _: () = assert!(mem::size_of::<TTValue>() == 8);
 
 /// table 内のエントリ保存先位置。
 ///
@@ -324,7 +319,7 @@ impl TranspositionTable {
     ) {
         validate_store_args(lower, upper, lv, selectivity_lv);
 
-        let new_value = TTValueFields::new(
+        let new_value = TTValue::new(
             lower as i8,
             upper as i8,
             lv as u8,
@@ -468,54 +463,46 @@ impl TTValue {
     /// この局面に保存された lower bound。
     #[inline(always)]
     pub fn lower(self) -> i8 {
-        self.fields.lower
+        self.lower
     }
 
     /// この局面に保存された upper bound。
     #[inline(always)]
     pub fn upper(self) -> i8 {
-        self.fields.upper
+        self.upper
     }
 
     /// この entry に紐づく探索 depth / level。
     #[inline(always)]
     pub fn lv(self) -> u8 {
-        self.fields.lv
+        self.lv
     }
 
     /// この entry に紐づく selectivity level。
     #[inline(always)]
     pub fn selectivity_lv(self) -> u8 {
-        self.fields.selectivity_lv
-    }
-
-    /// 保存された候補手を優先順で返す。
-    ///
-    /// 手がない entry は `NO_COORD` を使う。
-    #[inline(always)]
-    pub fn moves(self) -> [u8; N_TT_MOVES] {
-        [self.fields.move0, self.fields.move1]
+        self.selectivity_lv
     }
 
     /// この entry が書かれた generation。
     #[inline(always)]
     pub fn generation(self) -> u8 {
-        self.fields.generation
+        self.generation
     }
 
     #[inline(always)]
     fn is_occupied(self) -> bool {
-        self.fields.flags & OCCUPIED_FLAG != 0
+        self.flags & OCCUPIED_FLAG != 0
     }
 
     #[inline(always)]
     fn quality(self) -> u16 {
-        ((self.fields.lv as u16) << 8) | self.fields.selectivity_lv as u16
+        ((self.lv as u16) << 8) | self.selectivity_lv as u16
     }
 
     #[inline(always)]
     fn relative_age(self, generation: u8) -> i32 {
-        generation.wrapping_sub(self.fields.generation) as i32
+        generation.wrapping_sub(self.generation) as i32
     }
 
     #[inline(always)]
@@ -527,9 +514,7 @@ impl TTValue {
             i32::MIN / 2 + self.quality() as i32 - age * AGE_WEIGHT
         }
     }
-}
 
-impl TTValueFields {
     #[inline(always)]
     fn new(
         lower: i8,
@@ -553,14 +538,14 @@ impl TTValueFields {
 
     #[inline(always)]
     fn pack(self) -> u64 {
-        // SAFETY: TTValueFields は #[repr(C)] で、ちょうど 8 byte であることを assert 済み。
+        // SAFETY: TTValue は #[repr(C)] で、ちょうど 8 byte であることを assert 済み。
         // 整数 field だけを持つため、すべての bit pattern が有効。
         unsafe { mem::transmute(self) }
     }
 
     #[inline(always)]
     fn unpack(packed: u64) -> Self {
-        // SAFETY: TTValueFields は整数 field だけを持つため、
+        // SAFETY: TTValue は整数 field だけを持つため、
         // すべての u64 bit pattern が有効な保存値になる。
         unsafe { mem::transmute(packed) }
     }
@@ -568,11 +553,6 @@ impl TTValueFields {
     #[inline(always)]
     fn is_occupied(self) -> bool {
         self.flags & OCCUPIED_FLAG != 0
-    }
-
-    #[inline(always)]
-    fn quality(self) -> u16 {
-        ((self.lv as u16) << 8) | self.selectivity_lv as u16
     }
 
     #[inline(always)]
@@ -610,6 +590,11 @@ impl TTValueFields {
             self.move1 = self.move0;
             self.move0 = best_move;
         }
+    }
+
+    #[inline(always)]
+    pub fn moves(self) -> [u8; TT_MOVES_CAPACITY] {
+        [self.move0, self.move1]
     }
 }
 
@@ -649,14 +634,12 @@ impl TTEntry {
         Some((
             player,
             opponent,
-            TTValue {
-                fields: TTValueFields::unpack(packed_value),
-            },
+            TTValue::unpack(packed_value),
             start_seq,
         ))
     }
 
-    fn save(&self, board: &Board, new_value: TTValueFields) {
+    fn save(&self, board: &Board, new_value: TTValue) {
         for _ in 0..Self::SAVE_RETRIES {
             let Some((stored_player, stored_opponent, stored_value, observed_seq)) =
                 self.try_load_snapshot()
@@ -665,24 +648,23 @@ impl TTEntry {
                 continue;
             };
 
-            let stored_fields = stored_value.fields;
             let matches_stored_board = stored_value.is_occupied()
                 && stored_player == board.player
                 && stored_opponent == board.opponent;
 
             let value_to_write = if matches_stored_board {
-                if stored_fields.quality() == new_value.quality() {
-                    stored_fields.merge_same_level(new_value)
-                } else if stored_fields.generation != new_value.generation
-                    || new_value.quality() >= stored_fields.quality()
+                if stored_value.quality() == new_value.quality() {
+                    stored_value.merge_same_level(new_value)
+                } else if stored_value.generation != new_value.generation
+                    || new_value.quality() >= stored_value.quality()
                 {
-                    stored_fields.replace_same_board(new_value)
+                    stored_value.replace_same_board(new_value)
                 } else {
                     return;
                 }
-            } else if !stored_fields.is_occupied()
-                || stored_fields.generation != new_value.generation
-                || new_value.quality() >= stored_fields.quality()
+            } else if !stored_value.is_occupied()
+                || stored_value.generation != new_value.generation
+                || new_value.quality() >= stored_value.quality()
             {
                 new_value
             } else {
@@ -704,7 +686,7 @@ impl TTEntry {
         &self,
         expected_seq: u64,
         board: &Board,
-        value_to_write: TTValueFields,
+        value_to_write: TTValue,
     ) -> bool {
         debug_assert_eq!(expected_seq & 1, 0);
         if expected_seq & 1 != 0 {
@@ -798,7 +780,7 @@ mod tests {
 
     #[test]
     fn table_layout_is_cache_line_clustered() {
-        assert_eq!(mem::size_of::<TTValueFields>(), 8);
+        assert_eq!(mem::size_of::<TTValue>(), 8);
         assert_eq!(mem::size_of::<TTEntry>(), 32);
         assert_eq!(mem::size_of::<TTCluster>(), 64);
         assert_eq!(mem::align_of::<TTCluster>(), 64);
