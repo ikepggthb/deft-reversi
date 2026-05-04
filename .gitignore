@@ -6,5 +6,10 @@ todo_list.md
 deft-reversi-cli/self-play*
 deft-reversi-cli/problem/test.obf
 
+deft-reversi-engine_old/*
+deft-reversi-engine/c.txt
+
+data/eval/*
+
 codex
 .codex

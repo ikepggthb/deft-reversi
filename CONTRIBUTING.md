@@ -38,7 +38,7 @@ type(scope): emoji title
 - `web`（deft-reversi-web）
 - `engine`（deft-reversi-engine）
 - `cli`（deft-reversi-cli）
-- `learn`（deft-reversi-learn）
+- `train`（deft-reversi-train）
 - `data`
 - `tools`
 - `workspace`（ルート設定・全体に関わる変更）
@@ -50,4 +50,3 @@ type(scope): emoji title
 - `docs(workspace): 📝 ビルド手順を更新`
 - `refactor(cli): ♻️ オプション解析を整理`
 - `style(web): 💄 レイアウトの余白を調整`
-
