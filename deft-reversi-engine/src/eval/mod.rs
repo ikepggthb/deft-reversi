@@ -1,8 +1,9 @@
 pub mod evaluator;
 pub mod evaluator_const;
 pub mod feature_indexes;
+pub mod nnue_evaluator;
+pub mod nnue_features;
+pub mod pattern_evaluator;
+mod util;
 
-pub use evaluator::Evaluator;
-pub use feature_indexes::FeatureIndexes;
-
-pub use crate::file::{EngineFile, Metadata};
+pub(crate) use evaluator::Evaluator;

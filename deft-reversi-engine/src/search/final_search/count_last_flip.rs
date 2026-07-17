@@ -222,12 +222,12 @@ pub(crate) fn count_last_flip(pos: usize, p: u64) -> i32 {
         [((((p >> x) & 0x0101010101010101).wrapping_mul(0x0102040810204080)) >> 56) as usize]
         as usize;
     n_flipped += count_flip_x[(p >> (y * 8)) as u8 as usize] as usize;
-    n_flipped +=
-        count_flip_x[(((p & MASK_D[0][pos]).wrapping_mul(0x0101010101010101)) >> 56) as usize]
-            as usize;
-    n_flipped +=
-        count_flip_x[(((p & MASK_D[1][pos]).wrapping_mul(0x0101010101010101)) >> 56) as usize]
-            as usize;
+    n_flipped += count_flip_x
+        [(((p & MASK_D[0][pos]).wrapping_mul(0x0101010101010101)) >> 56) as usize]
+        as usize;
+    n_flipped += count_flip_x
+        [(((p & MASK_D[1][pos]).wrapping_mul(0x0101010101010101)) >> 56) as usize]
+        as usize;
 
     n_flipped as i32
 }

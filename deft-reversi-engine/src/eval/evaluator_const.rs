@@ -14,6 +14,8 @@ pub const N_MOBILITY_MAX: usize = 128;
 pub const N_MOBILITY_BASE: usize = 64;
 pub const N_PHASES: usize = 60;
 pub const N_BOARD_SQUARES: usize = 64;
+// Compile-time feature map capacity for planned differential pattern updates.
+#[allow(dead_code)]
 pub const MAX_SQUARE_FEATURES: usize = 11;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,18 +25,24 @@ pub struct PatternDefinition {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// One entry in the planned square-to-pattern differential update map.
+#[allow(dead_code)]
 pub struct SquareFeature {
     pub feature_idx: u8,
     pub base3_weight: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// Per-square feature list for planned differential pattern updates.
+#[allow(dead_code)]
 pub struct SquareFeatures {
     pub len: u8,
     pub features: [SquareFeature; MAX_SQUARE_FEATURES],
 }
 
 impl SquareFeature {
+    // Empty sentinel for compile-time square feature map construction.
+    #[allow(dead_code)]
     pub const EMPTY: Self = Self {
         feature_idx: 0,
         base3_weight: 0,
@@ -42,11 +50,15 @@ impl SquareFeature {
 }
 
 impl SquareFeatures {
+    // Empty sentinel for compile-time square feature map construction.
+    #[allow(dead_code)]
     pub const EMPTY: Self = Self {
         len: 0,
         features: [SquareFeature::EMPTY; MAX_SQUARE_FEATURES],
     };
 
+    // Const builder for planned differential pattern update maps.
+    #[allow(dead_code)]
     pub const fn push(mut self, feature: SquareFeature) -> Self {
         self.features[self.len as usize] = feature;
         self.len += 1;
@@ -164,6 +176,8 @@ pub const PATTERN_TABLE_SIZES: [usize; N_PATTERNS] = build_pattern_table_sizes()
 pub const TOTAL_PATTERN_WEIGHTS: usize = build_total_pattern_weights();
 
 // 各マスがどの feature に影響するかを compile time に展開した表。
+// Compile-time map retained for planned differential pattern updates.
+#[allow(dead_code)]
 pub const SQUARE_TO_FEATURES: [SquareFeatures; N_BOARD_SQUARES] = build_square_to_features();
 
 const fn build_pattern_table_sizes() -> [usize; N_PATTERNS] {
@@ -190,6 +204,8 @@ const fn build_total_pattern_weights() -> usize {
     total
 }
 
+// Builder retained with SQUARE_TO_FEATURES for differential update work.
+#[allow(dead_code)]
 const fn build_square_to_features() -> [SquareFeatures; N_BOARD_SQUARES] {
     let mut table = [SquareFeatures::EMPTY; N_BOARD_SQUARES];
     let mut pattern_idx = 0;

@@ -1,6 +1,8 @@
-pub fn position_str_to_num(s: &str) -> Result<u64, &'static str> {
+use crate::EngineError;
+
+pub fn position_str_to_num(s: &str) -> Result<u8, EngineError> {
     if s.len() != 2 {
-        return Err("Invalid position string");
+        return Err(EngineError::InvalidPosition(s.to_string()));
     }
 
     let mut chars = s.chars();
@@ -15,9 +17,9 @@ pub fn position_str_to_num(s: &str) -> Result<u64, &'static str> {
             'F' => 5,
             'G' => 6,
             'H' => 7,
-            _ => return Err("Invalid column letter"),
+            _ => return Err(EngineError::InvalidPosition(s.to_string())),
         },
-        _ => return Err("Invalid column letter"),
+        _ => return Err(EngineError::InvalidPosition(s.to_string())),
     };
 
     let row = match chars.next() {
@@ -29,15 +31,15 @@ pub fn position_str_to_num(s: &str) -> Result<u64, &'static str> {
         Some('6') => 5,
         Some('7') => 6,
         Some('8') => 7,
-        _ => return Err("Invalid row number"),
+        _ => return Err(EngineError::InvalidPosition(s.to_string())),
     };
 
     Ok(row * 8 + col)
 }
 
-pub fn position_num_to_str(pos: u64) -> Result<String, &'static str> {
+pub fn position_num_to_str(pos: u8) -> Result<String, EngineError> {
     if pos >= 64 {
-        return Err("Invalid bit position");
+        return Err(EngineError::InvalidPosition(pos.to_string()));
     }
 
     let col = (pos % 8) as u8;
@@ -52,7 +54,7 @@ pub fn position_num_to_str(pos: u64) -> Result<String, &'static str> {
         5 => 'F',
         6 => 'G',
         7 => 'H',
-        _ => return Err("Invalid column"),
+        _ => return Err(EngineError::InvalidPosition(pos.to_string())),
     };
 
     let row_char = match row {
@@ -64,7 +66,7 @@ pub fn position_num_to_str(pos: u64) -> Result<String, &'static str> {
         5 => '6',
         6 => '7',
         7 => '8',
-        _ => return Err("Invalid row"),
+        _ => return Err(EngineError::InvalidPosition(pos.to_string())),
     };
 
     Ok(format!("{}{}", col_char, row_char))
@@ -76,30 +78,30 @@ mod tests {
 
     #[test]
     fn position_str_to_num_accepts_board_corners() {
-        assert_eq!(position_str_to_num("A1"), Ok(0));
-        assert_eq!(position_str_to_num("H8"), Ok(63));
+        assert_eq!(position_str_to_num("A1").unwrap(), 0);
+        assert_eq!(position_str_to_num("H8").unwrap(), 63);
     }
 
     #[test]
     fn position_str_to_num_accepts_lowercase_column() {
-        assert_eq!(position_str_to_num("d3"), Ok(19));
+        assert_eq!(position_str_to_num("d3").unwrap(), 19);
     }
 
     #[test]
     fn position_str_to_num_rejects_invalid_input() {
-        assert_eq!(position_str_to_num("I1"), Err("Invalid column letter"));
-        assert_eq!(position_str_to_num("A9"), Err("Invalid row number"));
-        assert_eq!(position_str_to_num("A10"), Err("Invalid position string"));
+        assert!(position_str_to_num("I1").is_err());
+        assert!(position_str_to_num("A9").is_err());
+        assert!(position_str_to_num("A10").is_err());
     }
 
     #[test]
     fn position_num_to_str_accepts_board_corners() {
-        assert_eq!(position_num_to_str(0), Ok("A1".to_string()));
-        assert_eq!(position_num_to_str(63), Ok("H8".to_string()));
+        assert_eq!(position_num_to_str(0).unwrap(), "A1");
+        assert_eq!(position_num_to_str(63).unwrap(), "H8");
     }
 
     #[test]
     fn position_num_to_str_rejects_out_of_board_position() {
-        assert_eq!(position_num_to_str(64), Err("Invalid bit position"));
+        assert!(position_num_to_str(64).is_err());
     }
 }

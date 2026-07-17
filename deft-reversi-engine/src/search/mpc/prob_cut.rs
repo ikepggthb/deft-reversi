@@ -44,7 +44,13 @@ pub fn eval_search_mpc(
         return ProbCutResult::Fail;
     }
     let empties = 64 - (board.player | board.opponent).count_ones() as i32;
-    multi_prob_cut(board, alpha, beta, search.mpc_config.eval_search.params(depth, empties), search)
+    multi_prob_cut(
+        board,
+        alpha,
+        beta,
+        search.mpc_config.eval_search.params(depth, empties),
+        search,
+    )
 }
 
 #[inline(always)]
@@ -58,7 +64,13 @@ pub fn final_search_mpc(
     if empties < FINAL_SEARCH_MPC_START_EMPTIES {
         return ProbCutResult::Fail;
     }
-    multi_prob_cut(board, alpha, beta, search.mpc_config.final_search.params(empties), search)
+    multi_prob_cut(
+        board,
+        alpha,
+        beta,
+        search.mpc_config.final_search.params(empties),
+        search,
+    )
 }
 
 #[inline(always)]

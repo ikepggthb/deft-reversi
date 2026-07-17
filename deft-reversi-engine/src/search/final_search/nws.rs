@@ -15,25 +15,35 @@
 //! - `SWITCH_EMPTIES_SIMPLE_NWS` 空きマス以下では `nws_final_simple` に切り替える
 //! - `FINAL_LV` 置換表に登録する探索レベル(60 = 完全読み)
 
-use crate::board::board::Board;
-use crate::board::constant::NO_COORD;
-use crate::eval::evaluator_const::SCORE_MAX;
-use crate::search::final_search::cut_off::{assign_ordering_scores, e_tt_cut, tt_cut, FINAL_LV};
-use crate::search::final_search::move_list::{
-    assign_ffs_scores, build_tt_move_list, set_move_list, sort_move_list, uninit_move_array,
-    MoveBoard,
+use crate::{
+    board::{board::Board, constant::NO_COORD},
+    eval::evaluator_const::SCORE_MAX,
+    search::{
+        final_search::{negaalpha::negaalpha_final, solve_score::solve_score},
+        move_list::*,
+        mpc::{final_search_mpc, ProbCutResult},
+        search::SearchContext,
+        stability_cut::stability_cut_nws,
+        thread_pool::{Job, TaskHandle, TaskResult},
+        tt_cut::*,
+    },
+    t_table::{TTProbe, TTSlot, TTValue},
 };
-use crate::search::final_search::negaalpha::negaalpha_final;
-use crate::search::final_search::solve_score::solve_score;
-use crate::search::mpc::{final_search_mpc, ProbCutResult};
-use crate::search::search::SearchContext;
-use crate::t_table::TT_MOVES_CAPACITY;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+const TT_MOVE0_SCORE: i32 = 1 << 8;
+const TT_MOVE1_SCORE: i32 = 1 << 7;
+
+const FINAL_LV: i32 = 60;
 
 /// 空きマスがこれ以下のとき `negaalpha_final` に切り替える。
 const SWITCH_EMPTIES_NEGA_ALPHA: i32 = 5;
 
 /// 空きマスがこれ以下のとき `nws_final_simple` に切り替える。
 const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 10;
+
+const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 16;
 
 // ── nws_final_simple ──────────────────────────────────────────────────────────
 
@@ -49,6 +59,9 @@ pub fn nws_final_simple(board: &Board, alpha: i32, search: &mut SearchContext) -
     }
 
     search.stats.final_search_nodes += 1;
+    if search.check_abort() {
+        return alpha;
+    }
 
     let moves_bit = board.moves();
     if moves_bit == 0 {
@@ -60,24 +73,29 @@ pub fn nws_final_simple(board: &Board, alpha: i32, search: &mut SearchContext) -
         return -nws_final_simple(&passed, -beta, search);
     }
 
+    if let Some(score) = stability_cut_nws(board, alpha, n_empties, search) {
+        return score;
+    }
+
     match final_search_mpc(board, alpha, beta, search) {
         ProbCutResult::Cut(score) => return score,
         ProbCutResult::Fail => {}
     }
 
-    let move_count = moves_bit.count_ones() as usize;
-    let mut move_list = uninit_move_array();
-    let move_list = &mut move_list[..move_count];
-    set_move_list(board, moves_bit, move_list);
+    let mut move_list = make_move_list(board, moves_bit);
 
-    if move_count >= 2 {
-        assign_ffs_scores(move_list);
-        sort_move_list(move_list);
+    if move_list.len() >= 2 {
+        assign_ffs_scores(board, &mut move_list);
+        sort_move_list(&mut move_list);
     }
 
     let mut best_score = -SCORE_MAX;
     for mb in move_list.iter() {
-        let score = -nws_final_simple(&mb.board, -beta, search);
+        let child_board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
+        let score = -nws_final_simple(&child_board, -beta, search);
+        if search.is_aborted() {
+            return alpha;
+        }
         if score >= beta {
             return score;
         }
@@ -95,7 +113,7 @@ pub fn nws_final_simple(board: &Board, alpha: i32, search: &mut SearchContext) -
 ///
 /// 空きマスが少ないとき `nws_final_simple` へ降格する。
 pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
-    let mut beta = alpha + 1;
+    let beta = alpha + 1;
 
     let n_empties = (board.player | board.opponent).count_zeros() as i32;
     if n_empties <= SWITCH_EMPTIES_SIMPLE_NWS {
@@ -103,8 +121,11 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
     }
 
     search.stats.final_search_nodes += 1;
+    if search.check_abort() {
+        return alpha;
+    }
 
-    let mut moves_bit = board.moves();
+    let moves_bit = board.moves();
     if moves_bit == 0 {
         let passed = board.passed();
         if passed.moves() == 0 {
@@ -114,106 +135,118 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
         return -nws_final(&passed, -beta, search);
     }
 
+    // ── 通常手リストの生成 ───────────────────────────────────────────────────
+    let mut move_list = make_move_list(board, moves_bit);
+
+    // 全消しがある場合は、即時return
+    for move_board in move_list.iter() {
+        if board.opponent ^ move_board.flip_bit == 0 {
+            return SCORE_MAX;
+        }
+    }
+
+    if let Some(score) = stability_cut_nws(board, alpha, n_empties, search) {
+        return score;
+    }
+
     // ── 置換表プローブ ───────────────────────────────────────────────────────
-    let probe = search.tt.probe(board);
-    let tt_value = probe.value();
+    let probe: TTProbe = search.tt.probe(board);
+    let tt_value: Option<TTValue> = probe.value();
     let mut alpha_cur = alpha;
+    let mut beta_cur = beta;
 
-    // TT に登録済みの手を moves_bit から除いて、先に探索できるようにする
-    let tt_moves: Option<[u8; TT_MOVES_CAPACITY]> = if let Some(v) = tt_value {
-        let moves = v.moves();
-        if moves[0] != NO_COORD {
-            moves_bit &= !(1u64 << moves[0]);
-        }
-        if moves[1] != NO_COORD {
-            moves_bit &= !(1u64 << moves[1]);
-        }
-        Some(moves)
-    } else {
-        None
-    };
-
-    // tt_cut
     if let Some(v) = tt_value {
-        if let Some(score) = tt_cut(v, FINAL_LV, search.selectivity_lv, &mut alpha_cur, &mut beta) {
+        if let Some(score) = tt_cut(
+            v,
+            FINAL_LV,
+            search.selectivity_lv,
+            &mut alpha_cur,
+            &mut beta_cur,
+        ) {
             return score;
         }
     }
 
-    // MPC
-    match final_search_mpc(board, alpha_cur, beta, search) {
+    // ── MPC ──────────────────────────────────────────────────────────────────
+    match final_search_mpc(board, alpha_cur, beta_cur, search) {
         ProbCutResult::Cut(score) => return score,
         ProbCutResult::Fail => {}
     }
 
-    // ── TT 手リスト (最大 N_TT_MOVES) ────────────────────────────────────────
-    let mut tt_move_list: [MoveBoard; TT_MOVES_CAPACITY] = [MoveBoard::SENTINEL; TT_MOVES_CAPACITY];
-    let tt_move_count = build_tt_move_list(board, &tt_moves, &mut tt_move_list);
-    let tt_move_list = &mut tt_move_list[..tt_move_count];
-
-    // ── 通常手リスト ──────────────────────────────────────────────────────────
-    let move_count = moves_bit.count_ones() as usize;
-    let mut move_list = uninit_move_array();
-    let move_list = &mut move_list[..move_count];
-    set_move_list(board, moves_bit, move_list);
-
-    // ETC (n_empties > 12 のときだけ有益)
-    let mut n_skip = 0i32;
+    // ── ETC ───────────────────────────────────────────────────────────────────
     if n_empties > 12 {
-        let sl = search.selectivity_lv;
-        if let Some(score) = e_tt_cut(&mut alpha_cur, &mut beta, tt_move_list, sl, &mut 0, search) {
-            return score;
-        }
-        if let Some(score) = e_tt_cut(&mut alpha_cur, &mut beta, move_list, sl, &mut n_skip, search) {
-            return score;
+        match e_tt_cut(
+            board,
+            alpha,
+            beta_cur,
+            &mut move_list,
+            FINAL_LV,
+            search.selectivity_lv,
+            search,
+        ) {
+            ETCResult::BetaCut(beta) => return beta,
+            ETCResult::NarrowAlpha(na) => alpha_cur = na,
+            ETCResult::AllMovesSkipped(upper) => return upper,
+        };
+    }
+
+    // ── TT 手の ordering score 反映 ──────────────────────────────────────────
+    if let Some(value) = tt_value {
+        for ml in move_list.iter_mut() {
+            if ml.move_num == value.move0 {
+                ml.score = TT_MOVE0_SCORE;
+            } else if ml.move_num == value.move1 {
+                ml.score = TT_MOVE1_SCORE;
+            }
         }
     }
 
-    // ── move ordering: 浅い eval + mobility ──────────────────────────────────
-    if move_count - n_skip as usize >= 2 {
+    // ── move ordering ─────────────────────────────────────────────────────────
+    if move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2 {
         let eval_depth = match n_empties {
             11..13 => 0,
             13..17 => 1,
             17..21 => 2,
             _ => ((n_empties / 3) - 1).max(0),
         };
-        assign_ordering_scores(move_list, alpha_cur, eval_depth, 1, search);
-        sort_move_list(move_list);
+        assign_ordering_scores(board, &mut move_list, eval_depth, alpha_cur, search);
+        sort_move_list(&mut move_list);
+    }
+
+    if should_split_ybwc(n_empties, &move_list, search) {
+        return nws_final_ybwc(
+            board,
+            alpha,
+            beta_cur,
+            alpha_cur,
+            probe.slot(),
+            &move_list,
+            search,
+        );
     }
 
     // ── 探索ループ ────────────────────────────────────────────────────────────
     let mut best_score = -SCORE_MAX;
     let mut best_move = NO_COORD;
 
-    // TT 手から先に探索
-    for mb in tt_move_list.iter() {
-        let score = -nws_final(&mb.board, -beta, search);
-        if score >= beta {
-            search.tt.store(
-                probe.slot(), board, score, SCORE_MAX, FINAL_LV,
-                search.selectivity_lv, mb.put_place,
-            );
-            return score;
-        }
-        if score > alpha_cur {
-            alpha_cur = score;
-        }
-        if score > best_score {
-            best_score = score;
-            best_move = mb.put_place;
-        }
-    }
-
-    // 通常手
     for mb in move_list.iter() {
-        if mb.skip {
+        if mb.is_skip {
             continue;
         }
-        let score = -nws_final(&mb.board, -beta, search);
-        if score >= beta {
+        let child_board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
+        let score = -nws_final(&child_board, -beta_cur, search);
+        if search.is_aborted() {
+            return alpha;
+        }
+        if score >= beta_cur {
             search.tt.store(
-                probe.slot(), board, score, SCORE_MAX, FINAL_LV,
-                search.selectivity_lv, mb.put_place,
+                probe.slot(),
+                board,
+                score,
+                SCORE_MAX,
+                FINAL_LV,
+                search.selectivity_lv,
+                mb.move_num,
             );
             return score;
         }
@@ -222,28 +255,278 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
         }
         if score > best_score {
             best_score = score;
-            best_move = mb.put_place;
+            best_move = mb.move_num;
         }
     }
 
-    if best_move == NO_COORD {
-        return -SCORE_MAX;
-    }
+    debug_assert_ne!(best_move, NO_COORD);
 
-    // TT に結果を保存
     if best_score > alpha {
         search.tt.store(
-            probe.slot(), board, best_score, best_score, FINAL_LV,
-            search.selectivity_lv, best_move,
+            probe.slot(),
+            board,
+            best_score,
+            best_score,
+            FINAL_LV,
+            search.selectivity_lv,
+            best_move,
         );
     } else {
         search.tt.store(
-            probe.slot(), board, -SCORE_MAX, best_score, FINAL_LV,
-            search.selectivity_lv, best_move,
+            probe.slot(),
+            board,
+            -SCORE_MAX,
+            best_score,
+            FINAL_LV,
+            search.selectivity_lv,
+            best_move,
         );
     }
 
     best_score
+}
+
+fn should_split_ybwc(n_empties: i32, move_list: &[MoveBoard], search: &SearchContext) -> bool {
+    n_empties >= YBWC_END_SPLIT_MIN_EMPTIES
+        && search.thread_pool.is_some()
+        && move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2
+}
+
+fn nws_final_ybwc(
+    board: &Board,
+    alpha: i32,
+    beta: i32,
+    mut alpha_cur: i32,
+    tt_slot: TTSlot,
+    move_list: &[MoveBoard],
+    search: &mut SearchContext,
+) -> i32 {
+    let Some(thread_pool) = search.thread_pool.clone() else {
+        return alpha;
+    };
+    let split_searching = Arc::new(AtomicBool::new(true));
+    let mut handles: Vec<TaskHandle> = Vec::new();
+    let mut best_score = -SCORE_MAX;
+    let mut best_move = NO_COORD;
+    let mut searched = 0usize;
+
+    for (move_index, mb) in move_list.iter().enumerate() {
+        if mb.is_skip {
+            continue;
+        }
+        // 分配済みの子が fail-high を確定させていたら、残りの手は探索不要
+        if searched > 0 && !split_searching.load(Ordering::Relaxed) {
+            break;
+        }
+        let child_board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
+        if searched == 0 {
+            let score = -nws_final(&child_board, -beta, search);
+            searched += 1;
+            if search.is_aborted() {
+                split_searching.store(false, Ordering::Relaxed);
+                join_ybwc_tasks(handles, search, true);
+                return alpha;
+            }
+            if score >= beta {
+                split_searching.store(false, Ordering::Relaxed);
+                join_ybwc_tasks(handles, search, true);
+                search.tt.store(
+                    tt_slot,
+                    board,
+                    score,
+                    SCORE_MAX,
+                    FINAL_LV,
+                    search.selectivity_lv,
+                    mb.move_num,
+                );
+                return score;
+            }
+            if score > alpha_cur {
+                alpha_cur = score;
+            }
+            if score > best_score {
+                best_score = score;
+                best_move = mb.move_num;
+            }
+            continue;
+        }
+
+        let job = make_ybwc_job(
+            child_board,
+            -beta,
+            move_index,
+            split_searching.clone(),
+            search,
+        );
+        match thread_pool.try_push(job) {
+            Ok(handle) => {
+                search.stats.ybwc_splits += 1;
+                handles.push(handle);
+            }
+            Err(job) => {
+                let result = job();
+                search.stats.add_assign(result.stats);
+                if result.aborted {
+                    search.stats.ybwc_split_aborts += 1;
+                    if !split_searching.load(Ordering::Relaxed) {
+                        // 先に走っている兄弟がfail-highを確定した。勝者の結果を
+                        // handlesから回収するため、残りの分配だけ打ち切る。
+                        break;
+                    }
+                    split_searching.store(false, Ordering::Relaxed);
+                    join_ybwc_tasks(handles, search, true);
+                    search.check_abort_now();
+                    return alpha;
+                }
+                if result.score >= beta {
+                    split_searching.store(false, Ordering::Relaxed);
+                    join_ybwc_tasks(handles, search, true);
+                    let move_num = move_list[result.move_index].move_num;
+                    search.tt.store(
+                        tt_slot,
+                        board,
+                        result.score,
+                        SCORE_MAX,
+                        FINAL_LV,
+                        search.selectivity_lv,
+                        move_num,
+                    );
+                    return result.score;
+                }
+                if result.score > alpha_cur {
+                    alpha_cur = result.score;
+                }
+                if result.score > best_score {
+                    best_score = result.score;
+                    best_move = move_list[result.move_index].move_num;
+                }
+            }
+        }
+    }
+
+    let results = collect_ybwc_tasks(handles, search);
+    if search.check_abort_now() {
+        split_searching.store(false, Ordering::Relaxed);
+        return alpha;
+    }
+    for result in results {
+        if result.aborted {
+            continue;
+        }
+        if result.score >= beta {
+            split_searching.store(false, Ordering::Relaxed);
+            let move_num = move_list[result.move_index].move_num;
+            search.tt.store(
+                tt_slot,
+                board,
+                result.score,
+                SCORE_MAX,
+                FINAL_LV,
+                search.selectivity_lv,
+                move_num,
+            );
+            return result.score;
+        }
+        if result.score > alpha_cur {
+            alpha_cur = result.score;
+        }
+        if result.score > best_score {
+            best_score = result.score;
+            best_move = move_list[result.move_index].move_num;
+        }
+    }
+
+    debug_assert_ne!(best_move, NO_COORD);
+
+    if best_score > alpha {
+        search.tt.store(
+            tt_slot,
+            board,
+            best_score,
+            best_score,
+            FINAL_LV,
+            search.selectivity_lv,
+            best_move,
+        );
+    } else {
+        search.tt.store(
+            tt_slot,
+            board,
+            -SCORE_MAX,
+            best_score,
+            FINAL_LV,
+            search.selectivity_lv,
+            best_move,
+        );
+    }
+
+    best_score
+}
+
+fn make_ybwc_job(
+    child_board: Board,
+    child_alpha: i32,
+    move_index: usize,
+    split_searching: Arc<AtomicBool>,
+    parent: &SearchContext,
+) -> Job {
+    let evaluator = parent.evaluator.clone();
+    let ordering_evaluator = parent.ordering_evaluator.clone();
+    let mpc_config = parent.mpc_config.clone();
+    let tt = parent.tt.clone();
+    let stop = parent.stop.clone();
+    let thread_pool = parent.thread_pool.clone();
+    let selectivity_lv = parent.selectivity_lv;
+    let mut searchings = parent.searchings.clone();
+    searchings.push(split_searching.clone());
+
+    Box::new(move || {
+        let mut stats = crate::search::search::SearchStats::default();
+        let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
+            .with_ordering_evaluator(ordering_evaluator)
+            .with_stop(stop)
+            .with_thread_pool(thread_pool)
+            .with_searchings(searchings);
+        search.selectivity_lv = selectivity_lv;
+        let score = -nws_final(&child_board, child_alpha, &mut search);
+        let aborted = search.is_aborted();
+        drop(search);
+        // fail-high (score >= beta = -child_alpha) が確定したら兄弟タスクを打ち切る
+        if !aborted && score >= -child_alpha {
+            split_searching.store(false, Ordering::Relaxed);
+        }
+        TaskResult {
+            score,
+            move_index,
+            stats,
+            aborted,
+        }
+    })
+}
+
+fn collect_ybwc_tasks(handles: Vec<TaskHandle>, search: &mut SearchContext) -> Vec<TaskResult> {
+    let pool = search.thread_pool.clone();
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        let result = match pool.as_deref() {
+            Some(pool) => pool.join_helping(handle),
+            None => handle.join(),
+        };
+        search.stats.add_assign(result.stats);
+        if result.aborted {
+            search.stats.ybwc_split_aborts += 1;
+        }
+        results.push(result);
+    }
+    results
+}
+
+fn join_ybwc_tasks(handles: Vec<TaskHandle>, search: &mut SearchContext, discard_scores: bool) {
+    for result in collect_ybwc_tasks(handles, search) {
+        if discard_scores && result.aborted {
+            continue;
+        }
+    }
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -298,7 +581,10 @@ mod tests {
             empties |= 1u64 << pos;
         }
         let player = next_pseudo_random(rng) & !empties;
-        Board { player, opponent: !player & !empties }
+        Board {
+            player,
+            opponent: !player & !empties,
+        }
     }
 
     /// NWS の正しさを検証するヘルパー。
@@ -307,8 +593,13 @@ mod tests {
     /// で NWS を呼ぶ。
     /// - `alpha = T-1` → beta=T → true_score ≥ T=beta → fail-high → result ≥ beta=T
     /// - `alpha = T`   → beta=T+1 → true_score=T ≤ alpha=T → fail-low → result ≤ T
-    fn check_nws<F>(board: &Board, ev: &Arc<Evaluator>, mpc: &Arc<MpcConfig>, tt: &Arc<TranspositionTable>, mut nws: F)
-    where
+    fn check_nws<F>(
+        board: &Board,
+        ev: &Arc<Evaluator>,
+        mpc: &Arc<MpcConfig>,
+        tt: &Arc<TranspositionTable>,
+        mut nws: F,
+    ) where
         F: FnMut(&Board, i32, &mut SearchContext) -> i32,
     {
         let true_score = brute_force(board);
@@ -320,7 +611,8 @@ mod tests {
         assert!(
             result >= true_score,
             "fail-high broken: alpha={} result={result} true={true_score} (player={:#018x})",
-            true_score - 1, board.player,
+            true_score - 1,
+            board.player,
         );
 
         // fail-low check
@@ -343,7 +635,9 @@ mod tests {
         for _ in 0..200 {
             let extra = (next_pseudo_random(&mut rng) % 4) as u32;
             let board = make_board_with_empties(&mut rng, 6 + extra);
-            check_nws(&board, &ev, &mpc, &tt, |b, alpha, s| nws_final_simple(b, alpha, s));
+            check_nws(&board, &ev, &mpc, &tt, |b, alpha, s| {
+                nws_final_simple(b, alpha, s)
+            });
         }
     }
 

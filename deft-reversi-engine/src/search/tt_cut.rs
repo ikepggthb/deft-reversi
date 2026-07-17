@@ -1,24 +1,24 @@
-//! 中盤評価探索用の置換表カット helpers。
+//! 置換表カット helpers。
 //!
-//! 終盤探索 (`final_search/cut_off.rs`) との違い:
-//! - lv の比較が **以上** (`stored_lv >= depth`)。深く探索された TT エントリは
-//!   現在の探索よりも信頼できるため、現在の depth 以上に探索された値があれば使う。
-//! - selectivity_lv も同様に `stored_selectivity_lv >= selectivity_lv` で判定する。
+//! 現在の実装では、保存済みの `lv` / `selectivity_lv` が要求値と完全一致する
+//! TT entry だけを cut / ETC に使う。
 
-use crate::search::final_search::move_list::MoveBoard;
+use crate::board::board::Board;
+use crate::eval::evaluator_const::SCORE_MAX;
+use crate::search::move_list::MoveBoard;
 use crate::search::search::SearchContext;
-use crate::t_table::TTValue;
+use crate::t_table::*;
 
-enum TTCutResult {
-    UPPER(i32),
-    LOWER(i32),
-    None,
+pub enum ETCResult {
+    BetaCut(i32),
+    NarrowAlpha(i32),
+    AllMovesSkipped(i32),
 }
 
 /// TT 値で alpha/beta を絞り込み、早期カットを試みる。
 ///
-/// 保存値の `lv` が `depth` 以上、`selectivity_lv` が現探索以上のときのみ
-/// 値を信頼してカットする。
+/// 保存値の `lv` / `selectivity_lv` が現在の探索条件と完全一致するときのみ
+/// 値を信頼する。
 #[inline(always)]
 pub fn tt_cut(
     tt_value: TTValue,
@@ -27,11 +27,11 @@ pub fn tt_cut(
     alpha: &mut i32,
     beta: &mut i32,
 ) -> Option<i32> {
-    if (tt_value.lv() as i32) != lv || (tt_value.selectivity_lv() as i32) != selectivity_lv {
+    if (tt_value.lv as i32) != lv || (tt_value.selectivity_lv as i32) != selectivity_lv {
         return None;
     }
-    let upper = tt_value.upper() as i32;
-    let lower = tt_value.lower() as i32;
+    let upper = tt_value.upper as i32;
+    let lower = tt_value.lower as i32;
 
     if upper <= *alpha {
         return Some(upper);
@@ -53,44 +53,60 @@ pub fn tt_cut(
 
 /// 子ノードの TT 値を見て早期カットを試みる(Enhanced TT Cutoff)。
 ///
-/// 子は親の `depth - 1` で探索されるため、`stored_lv >= depth - 1` を要求する。
+/// `child_lv` と完全一致する子entryだけを使う。中盤探索では親depth-1、
+/// 完全読みでは全ノード共通のFINAL_LVを呼び出し側が渡す。
+/// `parent_upper <= alpha` の手は、呼び出し元の元の alpha を超えられないため
+/// `is_skip` を立てる。ETC 中に更新した alpha では skip 判定しない。
 #[inline(always)]
 pub fn e_tt_cut(
-    alpha: &mut i32,
-    beta: &mut i32,
+    board: &Board,
+    alpha: i32,
+    beta: i32,
     move_list: &mut [MoveBoard],
-    depth: i32,
+    child_lv: i32,
     selectivity_lv: i32,
-    n_skip: &mut i32,
     search: &SearchContext,
-) -> Option<i32> {
-    let child_lv = depth - 1;
+) -> ETCResult {
+    let mut best_upper_on_skip = -SCORE_MAX;
+
+    let mut alpha_cur = alpha;
+    let mut count_skip = 0;
+
     for mb in move_list.iter_mut() {
-        if mb.skip {
-            continue;
-        }
-        let Some(t) = search.tt.get(&mb.board) else {
-            continue;
+        let board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
+        let tt_value = match search.tt.probe(&board) {
+            TTProbe::Hit { value, .. } => value,
+            TTProbe::Miss { .. } => continue,
         };
-        if (t.lv() as i32) < child_lv || (t.selectivity_lv() as i32) < selectivity_lv {
+
+        if (tt_value.lv as i32) != child_lv || (tt_value.selectivity_lv as i32) != selectivity_lv {
             continue;
         }
+
         // 子ノードスコアを親視点に変換: child [lower, upper] → parent [-upper, -lower]
-        let parent_lower = -(t.upper() as i32);
-        let parent_upper = -(t.lower() as i32);
+        let parent_lower = -(tt_value.upper as i32);
+        let parent_upper = -(tt_value.lower as i32);
 
-        mb.eval += 5; // TT 登録済みの手を優先
+        mb.score += 1 << 6; // TT 登録済みの手を優先
 
-        if parent_lower >= *beta {
-            return Some(parent_lower);
+        if parent_lower >= beta {
+            return ETCResult::BetaCut(parent_lower);
         }
-        if parent_lower > *alpha {
-            *alpha = parent_lower;
+        if parent_lower > alpha_cur {
+            alpha_cur = parent_lower;
         }
-        if parent_upper <= *alpha {
-            mb.skip = true;
-            *n_skip += 1;
+        if parent_upper <= alpha {
+            mb.is_skip = true;
+            count_skip += 1;
+            if parent_upper > best_upper_on_skip {
+                best_upper_on_skip = parent_upper;
+            }
         }
     }
-    None
+
+    if move_list.len() == count_skip {
+        ETCResult::AllMovesSkipped(best_upper_on_skip)
+    } else {
+        ETCResult::NarrowAlpha(alpha_cur)
+    }
 }

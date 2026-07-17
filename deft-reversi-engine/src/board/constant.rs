@@ -62,5 +62,7 @@ pub const E8: u8 = 60;
 pub const F8: u8 = 61;
 pub const G8: u8 = 62;
 pub const H8: u8 = 63;
+// Public coordinate sentinel reserved for protocol-compatible pass notation.
+#[allow(dead_code)]
 pub const PASS: u8 = 64;
 pub const NO_COORD: u8 = 65;

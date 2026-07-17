@@ -1,9 +1,6 @@
-use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
-use deft_reversi_engine::{
-    position_bit_to_num, Board, Evaluator, Solver, SolverResult, SolverType,
-};
+use deft_reversi_engine::{Board, Solver, SolverResult, SolverType};
 use serde::Serialize;
 
 #[wasm_bindgen]
@@ -57,14 +54,14 @@ struct SolverResultForJs {
 
 impl From<SolverResult> for SolverResultForJs {
     fn from(result: SolverResult) -> Self {
-        let (best_move_low, best_move_high) = u64_to_parts(result.best_move);
-        let (searched_nodes_low, searched_nodes_high) = u64_to_parts(result.searched_nodes);
-        let (searched_leaf_nodes_low, searched_leaf_nodes_high) =
-            u64_to_parts(result.searched_leaf_nodes);
+        let (best_move_low, best_move_high) =
+            u64_to_parts(result.best_move.map(u64::from).unwrap_or(0));
+        let (searched_nodes_low, searched_nodes_high) = u64_to_parts(result.nodes);
+        let (searched_leaf_nodes_low, searched_leaf_nodes_high) = u64_to_parts(result.leaf_nodes);
         Self {
             best_move_low,
             best_move_high,
-            eval: result.eval,
+            eval: result.score,
             solver_type: result.solver_type.into(),
             searched_nodes_low,
             searched_nodes_high,
@@ -78,11 +75,10 @@ impl From<SolverResult> for SolverResultForJs {
 impl AiSolver {
     #[wasm_bindgen(constructor)]
     pub fn new(eval_string: &str) -> Result<Self, JsValue> {
-        let evaluator = Evaluator::read_string(eval_string)
-            .map_err(|e| JsValue::from_str(&format!("Evaluator load failed: {}", e)))?;
-        Ok(Self {
-            solver: Solver::new(evaluator),
-        })
+        let solver =
+            Solver::from_str_data(eval_string, deft_reversi_engine::SolverOptions::default())
+                .map_err(|e| JsValue::from_str(&format!("Evaluator load failed: {}", e)))?;
+        Ok(Self { solver })
     }
 
     /// solver.solve と同じデータを返す

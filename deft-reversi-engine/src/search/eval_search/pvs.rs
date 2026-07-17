@@ -13,18 +13,16 @@
 use crate::board::board::Board;
 use crate::board::constant::NO_COORD;
 use crate::eval::evaluator_const::SCORE_MAX;
-use crate::search::eval_search::cut_off::{e_tt_cut, tt_cut};
 use crate::search::eval_search::leaf::negaalpha_eval_leaf;
 use crate::search::eval_search::nws::nws_eval;
-use crate::search::final_search::cut_off::assign_ordering_scores;
-use crate::search::final_search::move_list::{
-    build_tt_move_list, set_move_list, sort_move_list, uninit_move_array, MoveBoard,
-};
-use crate::search::final_search::pvs::pvs_final;
 use crate::search::final_search::solve_score::solve_score;
+use crate::search::move_list::*;
 use crate::search::mpc::{eval_search_mpc, ProbCutResult};
 use crate::search::search::SearchContext;
-use crate::t_table::TT_MOVES_CAPACITY;
+use crate::search::tt_cut::*;
+
+const TT_MOVE0_SCORE: i32 = 1 << 8;
+const TT_MOVE1_SCORE: i32 = 1 << 7;
 
 /// depth がこれ以下のとき `negaalpha_eval_leaf` に委譲する。
 const SWITCH_DEPTH_LEAF: i32 = 2;
@@ -43,21 +41,17 @@ pub fn pvs_eval(
     debug_assert!(alpha < beta);
     debug_assert!(-SCORE_MAX <= alpha && beta <= SCORE_MAX);
 
-    let n_empties = (board.player | board.opponent).count_zeros() as i32;
-
-    // 終盤に十分近づいたら完全読みへ
-    if n_empties <= search.final_search_empties {
-        return pvs_final(board, alpha, beta, search);
-    }
-
     // 浅い depth は leaf 探索へ
     if depth <= SWITCH_DEPTH_LEAF {
         return negaalpha_eval_leaf(board, alpha, beta, depth, search);
     }
 
     search.stats.eval_search_nodes += 1;
+    if search.check_abort() {
+        return alpha;
+    }
 
-    let mut moves_bit = board.moves();
+    let moves_bit = board.moves();
     if moves_bit == 0 {
         let passed = board.passed();
         if passed.moves() == 0 {
@@ -73,21 +67,14 @@ pub fn pvs_eval(
     let mut alpha_cur = alpha;
     let mut beta_cur = beta;
 
-    let tt_moves = if let Some(v) = tt_value {
-        let moves = v.moves();
-        if moves[0] != NO_COORD {
-            moves_bit &= !(1u64 << moves[0]);
-        }
-        if moves[1] != NO_COORD {
-            moves_bit &= !(1u64 << moves[1]);
-        }
-        Some(moves)
-    } else {
-        None
-    };
-
     if let Some(v) = tt_value {
-        if let Some(score) = tt_cut(v, depth, search.selectivity_lv, &mut alpha_cur, &mut beta_cur) {
+        if let Some(score) = tt_cut(
+            v,
+            depth,
+            search.selectivity_lv,
+            &mut alpha_cur,
+            &mut beta_cur,
+        ) {
             return score;
         }
     }
@@ -98,39 +85,46 @@ pub fn pvs_eval(
         ProbCutResult::Fail => {}
     }
 
-    // ── TT 手リスト ───────────────────────────────────────────────────────────
-    let mut tt_move_list: [MoveBoard; TT_MOVES_CAPACITY] = [MoveBoard::SENTINEL; TT_MOVES_CAPACITY];
-    let tt_move_count = build_tt_move_list(board, &tt_moves, &mut tt_move_list);
-    let tt_move_list = &mut tt_move_list[..tt_move_count];
-
     // ── 通常手リスト ──────────────────────────────────────────────────────────
-    let move_count = moves_bit.count_ones() as usize;
-    let mut move_list = uninit_move_array();
-    let move_list = &mut move_list[..move_count];
-    set_move_list(board, moves_bit, move_list);
+    let mut move_list = make_move_list(board, moves_bit);
 
     // ── ETC ───────────────────────────────────────────────────────────────────
-    let mut n_skip = 0i32;
     if depth >= SWITCH_DEPTH_ETC {
-        let sl = search.selectivity_lv;
-        if let Some(score) = e_tt_cut(&mut alpha_cur, &mut beta_cur, tt_move_list, depth, sl, &mut 0, search) {
-            return score;
-        }
-        if let Some(score) = e_tt_cut(&mut alpha_cur, &mut beta_cur, move_list, depth, sl, &mut n_skip, search) {
-            return score;
+        match e_tt_cut(
+            board,
+            alpha,
+            beta_cur,
+            &mut move_list,
+            depth - 1,
+            search.selectivity_lv,
+            search,
+        ) {
+            ETCResult::BetaCut(beta) => return beta,
+            ETCResult::NarrowAlpha(na) => alpha_cur = na,
+            ETCResult::AllMovesSkipped(upper) => return upper,
+        };
+    }
+
+    if let Some(value) = tt_value {
+        for ml in move_list.iter_mut() {
+            if ml.move_num == value.move0 {
+                ml.score = TT_MOVE0_SCORE;
+            } else if ml.move_num == value.move1 {
+                ml.score = TT_MOVE1_SCORE;
+            }
         }
     }
 
     // ── move ordering ─────────────────────────────────────────────────────────
-    if move_count - n_skip as usize >= 2 {
+    if move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2 {
         let eval_depth = match depth {
             ..=4 => 0,
             5..=7 => 1,
             8..=11 => 2,
             _ => 3,
         };
-        assign_ordering_scores(move_list, alpha_cur, eval_depth, 2, search);
-        sort_move_list(move_list);
+        assign_ordering_scores(board, &mut move_list, eval_depth, alpha_cur, search);
+        sort_move_list(&mut move_list);
     }
 
     // ── PVS ループ ────────────────────────────────────────────────────────────
@@ -138,55 +132,35 @@ pub fn pvs_eval(
     let mut best_move = NO_COORD;
     let mut is_first = true;
 
-    for mb in tt_move_list.iter() {
-        let score = if is_first {
-            is_first = false;
-            -pvs_eval(&mb.board, -beta_cur, -alpha_cur, depth - 1, search)
-        } else {
-            let s = -nws_eval(&mb.board, -(alpha_cur + 1), depth - 1, search);
-            if s > alpha_cur && s < beta_cur {
-                -pvs_eval(&mb.board, -beta_cur, -alpha_cur, depth - 1, search)
-            } else {
-                s
-            }
-        };
-
-        if score >= beta_cur {
-            search.tt.store(
-                probe.slot(), board, score, SCORE_MAX, depth,
-                search.selectivity_lv, mb.put_place,
-            );
-            return score;
-        }
-        if score > alpha_cur {
-            alpha_cur = score;
-        }
-        if score > best_score {
-            best_score = score;
-            best_move = mb.put_place;
-        }
-    }
-
     for mb in move_list.iter() {
-        if mb.skip {
+        if mb.is_skip {
             continue;
         }
+        let child_board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
         let score = if is_first {
             is_first = false;
-            -pvs_eval(&mb.board, -beta_cur, -alpha_cur, depth - 1, search)
+            -pvs_eval(&child_board, -beta_cur, -alpha_cur, depth - 1, search)
         } else {
-            let s = -nws_eval(&mb.board, -(alpha_cur + 1), depth - 1, search);
+            let s = -nws_eval(&child_board, -(alpha_cur + 1), depth - 1, search);
             if s > alpha_cur && s < beta_cur {
-                -pvs_eval(&mb.board, -beta_cur, -alpha_cur, depth - 1, search)
+                -pvs_eval(&child_board, -beta_cur, -alpha_cur, depth - 1, search)
             } else {
                 s
             }
         };
+        if search.is_aborted() {
+            return alpha;
+        }
 
         if score >= beta_cur {
             search.tt.store(
-                probe.slot(), board, score, SCORE_MAX, depth,
-                search.selectivity_lv, mb.put_place,
+                probe.slot(),
+                board,
+                score,
+                SCORE_MAX,
+                depth,
+                search.selectivity_lv,
+                mb.move_num,
             );
             return score;
         }
@@ -195,7 +169,7 @@ pub fn pvs_eval(
         }
         if score > best_score {
             best_score = score;
-            best_move = mb.put_place;
+            best_move = mb.move_num;
         }
     }
 
@@ -205,13 +179,23 @@ pub fn pvs_eval(
 
     if best_score > alpha {
         search.tt.store(
-            probe.slot(), board, best_score, best_score, depth,
-            search.selectivity_lv, best_move,
+            probe.slot(),
+            board,
+            best_score,
+            best_score,
+            depth,
+            search.selectivity_lv,
+            best_move,
         );
     } else {
         search.tt.store(
-            probe.slot(), board, -SCORE_MAX, best_score, depth,
-            search.selectivity_lv, best_move,
+            probe.slot(),
+            board,
+            -SCORE_MAX,
+            best_score,
+            depth,
+            search.selectivity_lv,
+            best_move,
         );
     }
 
@@ -249,7 +233,10 @@ mod tests {
             empties |= 1u64 << pos;
         }
         let player = next_pseudo_random(rng) & !empties;
-        Board { player, opponent: !player & !empties }
+        Board {
+            player,
+            opponent: !player & !empties,
+        }
     }
 
     /// `pvs_eval` が `negaalpha_eval_leaf`(全幅 reference)と一致することを確認する。
@@ -268,13 +255,19 @@ mod tests {
 
             let mut stats = SearchStats::default();
             let mut search = SearchContext::new(
-                ev.clone(), mpc.clone(), Arc::new(TranspositionTable::new()), &mut stats,
+                ev.clone(),
+                mpc.clone(),
+                Arc::new(TranspositionTable::new()),
+                &mut stats,
             );
             let leaf_r = negaalpha_eval_leaf(&board, -SCORE_MAX, SCORE_MAX, depth, &mut search);
 
             let mut stats2 = SearchStats::default();
             let mut search2 = SearchContext::new(
-                ev.clone(), mpc.clone(), Arc::new(TranspositionTable::new()), &mut stats2,
+                ev.clone(),
+                mpc.clone(),
+                Arc::new(TranspositionTable::new()),
+                &mut stats2,
             );
             let pvs_r = pvs_eval(&board, -SCORE_MAX, SCORE_MAX, depth, &mut search2);
 
@@ -300,17 +293,27 @@ mod tests {
             // 真値を leaf で取得
             let mut stats = SearchStats::default();
             let mut search = SearchContext::new(
-                ev.clone(), mpc.clone(), Arc::new(TranspositionTable::new()), &mut stats,
+                ev.clone(),
+                mpc.clone(),
+                Arc::new(TranspositionTable::new()),
+                &mut stats,
             );
             let true_score = negaalpha_eval_leaf(&board, -SCORE_MAX, SCORE_MAX, depth, &mut search);
 
-            for &(alpha, beta) in &[(true_score - 5, true_score + 5), (true_score, true_score + 1), (true_score - 1, true_score)] {
+            for &(alpha, beta) in &[
+                (true_score - 5, true_score + 5),
+                (true_score, true_score + 1),
+                (true_score - 1, true_score),
+            ] {
                 if alpha >= beta {
                     continue;
                 }
                 let mut stats2 = SearchStats::default();
                 let mut search2 = SearchContext::new(
-                    ev.clone(), mpc.clone(), Arc::new(TranspositionTable::new()), &mut stats2,
+                    ev.clone(),
+                    mpc.clone(),
+                    Arc::new(TranspositionTable::new()),
+                    &mut stats2,
                 );
                 let result = pvs_eval(&board, alpha, beta, depth, &mut search2);
 

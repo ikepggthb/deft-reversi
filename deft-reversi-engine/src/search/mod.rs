@@ -1,12 +1,16 @@
+pub mod config;
 pub mod eval_search;
 pub mod final_search;
+pub mod move_list;
 pub mod mpc;
 pub mod search;
+pub mod solve_score;
 pub mod solver;
+pub mod stability_cut;
+pub mod thread_pool;
 pub mod tt_cut;
-pub mod move_list;
 
-pub use eval_search::nws_eval_leaf;
-pub use final_search::solve_score;
-pub use search::{SearchContext, SearchStats};
-pub use solver::{Solver, SolverResult, SolverType, SOLVE_LEVEL_MAX};
+pub use mpc::MpcConfig;
+pub(crate) use search::SearchContext;
+pub use search::NO_MPC_SELECTIVITY_LV;
+pub use solver::{Solver, SolverOptions, SolverResult, SolverType, SOLVE_LEVEL_MAX};

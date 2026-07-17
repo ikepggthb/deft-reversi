@@ -159,7 +159,7 @@ impl EvalSearchMpcConfig {
         }
     }
 
-    pub(crate) fn validate(&self) -> io::Result<()> {
+    pub fn validate(&self) -> io::Result<()> {
         if self.search_lv_by_depth.len() != 61 {
             return Err(invalid_data(format!(
                 "eval_search.search_lv_by_depth must be 61, got {}",
@@ -212,7 +212,7 @@ impl FinalSearchMpcConfig {
 }
 
 impl MpcConfig {
-    pub(crate) fn validate(&self) -> io::Result<()> {
+    pub fn validate(&self) -> io::Result<()> {
         self.eval_search.validate()?;
         self.final_search.validate()?;
         Ok(())

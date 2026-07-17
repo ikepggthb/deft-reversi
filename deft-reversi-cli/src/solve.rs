@@ -3,7 +3,7 @@ use std::time;
 use std::fs::File;
 use std::io::{self, BufRead};
 
-use deft_reversi_engine::*;
+use deft_reversi_engine::{position_num_to_str, Board, Evaluator, Solver, SolverOptions};
 
 // hh:mm:ss.mmm の形式にフォーマット
 fn format_duration(duration: time::Duration) -> String {
@@ -15,9 +15,26 @@ fn format_duration(duration: time::Duration) -> String {
     format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
 }
 
-pub fn solve(path: &str, eval_path: &str, level: i32) {
-    let evaluator = Evaluator::read_file(eval_path).unwrap();
-    let mut solver = Solver::new(evaluator);
+pub fn solve(
+    path: &str,
+    eval_path: &str,
+    level: i32,
+    ordering_eval_path: Option<&str>,
+    n_threads: usize,
+    hash_mb: Option<usize>,
+) {
+    let mut solver = Solver::from_file(
+        eval_path,
+        SolverOptions {
+            n_threads,
+            tt_capacity: hash_mb,
+            ..SolverOptions::default()
+        },
+    )
+    .unwrap();
+    if let Some(path) = ordering_eval_path {
+        solver.set_ordering_evaluator(Evaluator::from_path(path).unwrap());
+    }
 
     let board_list: Vec<Board> = match read_solve_file(path) {
         Ok(b) => b,
@@ -47,17 +64,18 @@ pub fn solve(path: &str, eval_path: &str, level: i32) {
         println!(
             "{:>5}   {:+5}   {:>4}   {:>9}   {:28}   {:>12}   {:>15.3}   {:>14} ",
             i + 1,
-            solver_result.eval,
-            position_bit_to_str(solver_result.best_move).unwrap(),
-            board.empties_count(),
+            solver_result.score,
             solver_result
-                .solver_type
-                .description(),
-            solver_result.searched_nodes,
-            solver_result.searched_nodes as f64 / solve_time.as_secs_f64(),
+                .best_move
+                .map(|pos| position_num_to_str(pos).unwrap())
+                .unwrap_or_else(|| "pass".to_string()),
+            board.empties_count(),
+            format!("level {}", level),
+            solver_result.nodes,
+            solver_result.nodes as f64 / solve_time.as_secs_f64(),
             format_duration(solve_time)
         );
-        total_nodes += solver_result.searched_nodes;
+        total_nodes += solver_result.nodes;
     }
 
     let total_solve_time = total_solve_start_time.elapsed();

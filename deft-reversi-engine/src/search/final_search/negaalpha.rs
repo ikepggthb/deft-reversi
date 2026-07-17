@@ -3,34 +3,76 @@
 //! 葉に近いノードで使う最も単純な完全読み。Move ordering は parity ベースで、
 //! TT も MPC も使わない(より深いノードでは `nws_final` / `pvs_final` が呼ばれる)。
 //!
-//! 空きマスが 2 になった時点で `solve_score_2_empties` に切り替えて打ち切る。
+//! 空きマスが 4 以下になった時点で専用ソルバに切り替えて打ち切る。
 
 use crate::board::board::Board;
 use crate::eval::evaluator_const::SCORE_MAX;
-use crate::search::final_search::move_iterator::MoveIteratorParity;
-use crate::search::final_search::solve_score::{solve_score, solve_score_2_empties};
+use crate::search::final_search::solve_score::{
+    final_parity, solve_score, solve_score_1_empties, solve_score_2_empties, solve_score_3_empties,
+    solve_score_4_empties,
+};
+use crate::search::move_list::MoveIteratorParity;
 use crate::search::search::SearchContext;
 
 /// NegaAlpha で完全読みを行い、現プレイヤー視点のスコアを返す。
-pub fn negaalpha_final(
+pub fn negaalpha_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContext) -> i32 {
+    negaalpha_final_impl(board, alpha, beta, search, beta == alpha + 1)
+}
+
+fn negaalpha_final_impl(
     board: &Board,
     mut alpha: i32,
     beta: i32,
     search: &mut SearchContext,
+    allow_specialized: bool,
 ) -> i32 {
     debug_assert!(alpha < beta);
     debug_assert!(-SCORE_MAX <= alpha && beta <= SCORE_MAX);
 
     search.stats.final_search_nodes += 1;
+    if search.check_abort() {
+        return alpha;
+    }
 
     let n_empties = (board.player | board.opponent).count_zeros() as i32;
 
-    // 2 マス以下は専用ソルバへ。
-    if n_empties == 2 {
-        return solve_score_2_empties(board, alpha, beta, search);
+    // 4/3/2 空き専用ソルバは null-window 専用。
+    // pvs_final から幅のある窓で呼ばれた場合は下の汎用 NegaAlpha で正確値を返す。
+    if allow_specialized {
+        if n_empties == 4 {
+            return solve_score_4_empties(board.player, board.opponent, alpha, search);
+        }
+        if n_empties == 3 {
+            let empties = !(board.player | board.opponent);
+            let x1 = empties.trailing_zeros() as usize;
+            let rest = empties & (empties - 1);
+            let x2 = rest.trailing_zeros() as usize;
+            let rest = rest & (rest - 1);
+            let x3 = rest.trailing_zeros() as usize;
+            return solve_score_3_empties(
+                board.player,
+                board.opponent,
+                alpha,
+                x1,
+                x2,
+                x3,
+                final_parity(board.player, board.opponent),
+                search,
+            );
+        }
+        if n_empties == 2 {
+            let empties = !(board.player | board.opponent);
+            let x1 = empties.trailing_zeros() as usize;
+            let x2 = (empties & (empties - 1)).trailing_zeros() as usize;
+            return solve_score_2_empties(board.player, board.opponent, alpha, x1, x2, search);
+        }
     }
-    if n_empties <= 1 {
-        // 想定外だが安全側に倒して終局スコアを返す
+    if n_empties == 1 {
+        let empty = (!(board.player | board.opponent)).trailing_zeros() as usize;
+        search.stats.final_search_leaf_nodes += 1;
+        return solve_score_1_empties(board.player, -SCORE_MAX, empty);
+    }
+    if n_empties == 0 {
         search.stats.final_search_leaf_nodes += 1;
         return solve_score(board);
     }
@@ -42,13 +84,16 @@ pub fn negaalpha_final(
             search.stats.final_search_leaf_nodes += 1;
             return solve_score(board);
         }
-        return -negaalpha_final(&passed, -beta, -alpha, search);
+        return -negaalpha_final_impl(&passed, -beta, -alpha, search, allow_specialized);
     }
 
     let mut best_score = -SCORE_MAX;
     for move_bit in MoveIteratorParity::new(legal_moves, board) {
         let child = board.make_move(move_bit);
-        let score = -negaalpha_final(&child, -beta, -alpha, search);
+        let score = -negaalpha_final_impl(&child, -beta, -alpha, search, allow_specialized);
+        if search.is_aborted() {
+            return alpha;
+        }
 
         if score >= beta {
             return score;

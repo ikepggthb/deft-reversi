@@ -25,6 +25,42 @@ impl FeatureIndexes {
         state
     }
 
+    pub fn indexes(&self) -> &[u16; N_FEATURES] {
+        &self.feature_indexes
+    }
+
+    /// 現在の index に対して、1 マスの三値状態の差分を反映する。
+    ///
+    /// `delta` は empty/opponent/player = 0/1/2 の差で、合法着手から
+    /// 作る場合は -1, +1, +2 のいずれかになる。
+    #[inline(always)]
+    pub(crate) fn add_square_delta(&mut self, square: usize, delta: i16) {
+        debug_assert!(square < N_BOARD_SQUARES);
+        let square_features = unsafe { SQUARE_TO_FEATURES.get_unchecked(square) };
+        for feature in &square_features.features[..square_features.len as usize] {
+            let index = unsafe {
+                self.feature_indexes
+                    .get_unchecked_mut(feature.feature_idx as usize)
+            };
+            let next = *index as i32 + delta as i32 * feature.base3_weight as i32;
+            debug_assert!(next >= 0);
+            *index = next as u16;
+        }
+    }
+
+    /// 親盤面を手番反転して作った index から、合法手後の index を作る。
+    #[inline(always)]
+    pub(crate) fn child_from_swapped(mut self, move_bit: u64, flip_bit: u64) -> Self {
+        let mut flips = flip_bit;
+        while flips != 0 {
+            let square = flips.trailing_zeros() as usize;
+            flips &= flips - 1;
+            self.add_square_delta(square, -1);
+        }
+        self.add_square_delta(move_bit.trailing_zeros() as usize, 1);
+        self
+    }
+
     /// 盤面から FeatureIndexes を再計算する。
     pub fn refresh(&mut self, board: &Board) {
         self.feature_indexes = [0; N_FEATURES];
@@ -93,7 +129,7 @@ mod tests {
     const D3: u64 = 1u64 << 19;
 
     fn played_board() -> Board {
-        let mut board = Board::new();
+        let board = Board::new();
         let flip = board.flip_bit(D3);
         board.make_move_from_flip_bit(D3, flip);
         board
@@ -108,6 +144,59 @@ mod tests {
         state.refresh(&played);
 
         assert_eq!(state, FeatureIndexes::from_board(&played));
+    }
+
+    #[test]
+    fn square_delta_matches_recreated_state_after_move() {
+        let board = Board::new();
+        let move_bit = 1u64 << 19;
+        let flip = board.flip_bit(move_bit);
+        let child = board.make_move_from_flip_bit(move_bit, flip);
+
+        // child の手番から見ると、親の opponent/player index を交換した状態が基準。
+        let child_indexes =
+            FeatureIndexes::from_board(&board.passed()).child_from_swapped(move_bit, flip);
+
+        assert_eq!(child_indexes, FeatureIndexes::from_board(&child));
+    }
+
+    #[test]
+    fn square_delta_matches_recreated_state_during_game() {
+        let mut board = Board::new();
+        let mut choice = 0usize;
+
+        for _ in 0..60 {
+            let mut moves = board.moves();
+            if moves == 0 {
+                board = board.passed();
+                moves = board.moves();
+                if moves == 0 {
+                    break;
+                }
+            }
+
+            let swapped = FeatureIndexes::from_board(&board.passed());
+            let mut candidates = moves;
+            while candidates != 0 {
+                let move_bit = candidates & candidates.wrapping_neg();
+                candidates &= candidates - 1;
+                let flip = board.flip_bit(move_bit);
+                let child = board.make_move_from_flip_bit(move_bit, flip);
+                assert_eq!(
+                    swapped.child_from_swapped(move_bit, flip),
+                    FeatureIndexes::from_board(&child)
+                );
+            }
+
+            let selected = choice % moves.count_ones() as usize;
+            let mut move_bit = moves & moves.wrapping_neg();
+            for _ in 0..selected {
+                moves &= moves - 1;
+                move_bit = moves & moves.wrapping_neg();
+            }
+            board = board.make_move(move_bit);
+            choice = choice.wrapping_mul(5).wrapping_add(3);
+        }
     }
 
     #[test]

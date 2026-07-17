@@ -1,0 +1,21 @@
+services:
+  deft-reversi-train:
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    image: deft-reversi-train-rocm:latest
+    working_dir: /workspace/deft-reversi
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+    ipc: host
+    shm_size: 16gb
+    volumes:
+      - .:/workspace/deft-reversi
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DEFT_REVERSI_TRAIN_DOCKER: "1"
+    stdin_open: true
+    tty: true

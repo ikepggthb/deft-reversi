@@ -4,3 +4,4 @@ pub mod constant;
 mod flip;
 mod moves;
 pub mod position;
+pub mod stability;

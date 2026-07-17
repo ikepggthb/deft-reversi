@@ -16,17 +16,15 @@
 use crate::board::board::Board;
 use crate::board::constant::NO_COORD;
 use crate::eval::evaluator_const::SCORE_MAX;
-use crate::search::eval_search::cut_off::{e_tt_cut, tt_cut};
 use crate::search::eval_search::leaf::nws_eval_leaf;
-use crate::search::final_search::cut_off::assign_ordering_scores;
-use crate::search::final_search::move_list::{
-    build_tt_move_list, set_move_list, sort_move_list, uninit_move_array, MoveBoard,
-};
-use crate::search::final_search::nws::nws_final;
 use crate::search::final_search::solve_score::solve_score;
+use crate::search::move_list::*;
 use crate::search::mpc::{eval_search_mpc, ProbCutResult};
 use crate::search::search::SearchContext;
-use crate::t_table::TT_MOVES_CAPACITY;
+use crate::search::tt_cut::*;
+
+const TT_MOVE0_SCORE: i32 = 1 << 8;
+const TT_MOVE1_SCORE: i32 = 1 << 7;
 
 /// depth がこれ以下のとき `nws_eval_leaf` に委譲する。
 const SWITCH_DEPTH_LEAF: i32 = 2;
@@ -38,13 +36,6 @@ const SWITCH_DEPTH_ETC: i32 = 4;
 pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContext) -> i32 {
     debug_assert!(alpha < SCORE_MAX);
 
-    let n_empties = (board.player | board.opponent).count_zeros() as i32;
-
-    // 終盤に十分近づいたら完全読みへ
-    if n_empties <= search.final_search_empties {
-        return nws_final(board, alpha, search);
-    }
-
     // 浅い depth は leaf 探索へ
     if depth <= SWITCH_DEPTH_LEAF {
         return nws_eval_leaf(board, alpha, depth, search);
@@ -52,8 +43,11 @@ pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContex
 
     let mut beta = alpha + 1;
     search.stats.eval_search_nodes += 1;
+    if search.check_abort() {
+        return alpha;
+    }
 
-    let mut moves_bit = board.moves();
+    let moves_bit = board.moves();
     if moves_bit == 0 {
         let passed = board.passed();
         if passed.moves() == 0 {
@@ -68,19 +62,6 @@ pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContex
     let tt_value = probe.value();
     let mut alpha_cur = alpha;
 
-    let tt_moves = if let Some(v) = tt_value {
-        let moves = v.moves();
-        if moves[0] != NO_COORD {
-            moves_bit &= !(1u64 << moves[0]);
-        }
-        if moves[1] != NO_COORD {
-            moves_bit &= !(1u64 << moves[1]);
-        }
-        Some(moves)
-    } else {
-        None
-    };
-
     if let Some(v) = tt_value {
         if let Some(score) = tt_cut(v, depth, search.selectivity_lv, &mut alpha_cur, &mut beta) {
             return score;
@@ -93,72 +74,70 @@ pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContex
         ProbCutResult::Fail => {}
     }
 
-    // ── TT 手リスト ───────────────────────────────────────────────────────────
-    let mut tt_move_list: [MoveBoard; TT_MOVES_CAPACITY] = [MoveBoard::SENTINEL; TT_MOVES_CAPACITY];
-    let tt_move_count = build_tt_move_list(board, &tt_moves, &mut tt_move_list);
-    let tt_move_list = &mut tt_move_list[..tt_move_count];
-
     // ── 通常手リスト ──────────────────────────────────────────────────────────
-    let move_count = moves_bit.count_ones() as usize;
-    let mut move_list = uninit_move_array();
-    let move_list = &mut move_list[..move_count];
-    set_move_list(board, moves_bit, move_list);
+    let mut move_list = make_move_list(board, moves_bit);
 
     // ── ETC ───────────────────────────────────────────────────────────────────
-    let mut n_skip = 0i32;
     if depth >= SWITCH_DEPTH_ETC {
-        let sl = search.selectivity_lv;
-        if let Some(score) = e_tt_cut(&mut alpha_cur, &mut beta, tt_move_list, depth, sl, &mut 0, search) {
-            return score;
-        }
-        if let Some(score) = e_tt_cut(&mut alpha_cur, &mut beta, move_list, depth, sl, &mut n_skip, search) {
-            return score;
+        match e_tt_cut(
+            board,
+            alpha,
+            beta,
+            &mut move_list,
+            depth - 1,
+            search.selectivity_lv,
+            search,
+        ) {
+            ETCResult::BetaCut(beta) => return beta,
+            ETCResult::NarrowAlpha(na) => alpha_cur = na,
+            ETCResult::AllMovesSkipped(upper) => return upper,
+        };
+    }
+
+    if let Some(value) = tt_value {
+        for ml in move_list.iter_mut() {
+            if ml.move_num == value.move0 {
+                ml.score = TT_MOVE0_SCORE;
+            } else if ml.move_num == value.move1 {
+                ml.score = TT_MOVE1_SCORE;
+            }
         }
     }
 
     // ── move ordering ─────────────────────────────────────────────────────────
-    if move_count - n_skip as usize >= 2 {
+    if move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2 {
         let eval_depth = match depth {
             ..=4 => 0,
             5..=7 => 1,
             8..=11 => 2,
             _ => 3,
         };
-        assign_ordering_scores(move_list, alpha_cur, eval_depth, 1, search);
-        sort_move_list(move_list);
+        assign_ordering_scores(board, &mut move_list, eval_depth, alpha_cur, search);
+        sort_move_list(&mut move_list);
     }
 
     // ── 探索ループ ────────────────────────────────────────────────────────────
     let mut best_score = -SCORE_MAX;
     let mut best_move = NO_COORD;
 
-    for mb in tt_move_list.iter() {
-        let score = -nws_eval(&mb.board, -beta, depth - 1, search);
-        if score >= beta {
-            search.tt.store(
-                probe.slot(), board, score, SCORE_MAX, depth,
-                search.selectivity_lv, mb.put_place,
-            );
-            return score;
-        }
-        if score > alpha_cur {
-            alpha_cur = score;
-        }
-        if score > best_score {
-            best_score = score;
-            best_move = mb.put_place;
-        }
-    }
-
     for mb in move_list.iter() {
-        if mb.skip {
+        if mb.is_skip {
             continue;
         }
-        let score = -nws_eval(&mb.board, -beta, depth - 1, search);
+        let child_board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
+        let score = -nws_eval(&child_board, -beta, depth - 1, search);
+        if search.is_aborted() {
+            return alpha;
+        }
         if score >= beta {
             search.tt.store(
-                probe.slot(), board, score, SCORE_MAX, depth,
-                search.selectivity_lv, mb.put_place,
+                probe.slot(),
+                board,
+                score,
+                SCORE_MAX,
+                depth,
+                search.selectivity_lv,
+                mb.move_num,
             );
             return score;
         }
@@ -167,23 +146,31 @@ pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContex
         }
         if score > best_score {
             best_score = score;
-            best_move = mb.put_place;
+            best_move = mb.move_num;
         }
     }
 
-    if best_move == NO_COORD {
-        return -SCORE_MAX;
-    }
+    debug_assert_ne!(best_move, NO_COORD);
 
     if best_score > alpha {
         search.tt.store(
-            probe.slot(), board, best_score, best_score, depth,
-            search.selectivity_lv, best_move,
+            probe.slot(),
+            board,
+            best_score,
+            best_score,
+            depth,
+            search.selectivity_lv,
+            best_move,
         );
     } else {
         search.tt.store(
-            probe.slot(), board, -SCORE_MAX, best_score, depth,
-            search.selectivity_lv, best_move,
+            probe.slot(),
+            board,
+            -SCORE_MAX,
+            best_score,
+            depth,
+            search.selectivity_lv,
+            best_move,
         );
     }
 
@@ -222,7 +209,10 @@ mod tests {
             empties |= 1u64 << pos;
         }
         let player = next_pseudo_random(rng) & !empties;
-        Board { player, opponent: !player & !empties }
+        Board {
+            player,
+            opponent: !player & !empties,
+        }
     }
 
     /// `nws_eval` が NWS の単調性を満たすことを確認する。
@@ -258,7 +248,8 @@ mod tests {
             let r2 = nws_eval(&board, 0, depth, &mut search2);
             // TT 活用時、結果が NWS の同じ binary 結果を返すことを確認
             assert_eq!(
-                r1 > 0, r2 > 0,
+                r1 > 0,
+                r2 > 0,
                 "TT inconsistency: r1={r1}, r2={r2} (board player={:#018x})",
                 board.player,
             );
@@ -290,7 +281,8 @@ mod tests {
             let eval_r = nws_eval(&board, 0, depth, &mut search2);
 
             assert_eq!(
-                leaf_r > 0, eval_r > 0,
+                leaf_r > 0,
+                eval_r > 0,
                 "binary NWS mismatch: leaf={leaf_r}, eval={eval_r} (board player={:#018x})",
                 board.player,
             );

@@ -1,0 +1,13 @@
+.git
+target
+**/target
+egaroucid_rd_data_set
+data
+log
+runs
+*.pt
+*.bin
+*.jsonl
+*.csv
+deft-reversi-train/scripts/__pycache__
+**/__pycache__

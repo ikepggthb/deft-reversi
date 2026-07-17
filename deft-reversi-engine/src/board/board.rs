@@ -28,6 +28,11 @@ impl Board {
     }
 
     #[inline(always)]
+    pub fn swap(&mut self) {
+        self.make_pass();
+    }
+
+    #[inline(always)]
     pub fn passed(&self) -> Board {
         Board {
             player: self.opponent,
@@ -149,6 +154,16 @@ impl Board {
     pub fn unique_board(&self) -> Board {
         self.all_symmetries().into_iter().min().unwrap()
     }
+
+    #[inline(always)]
+    pub fn empties_count(&self) -> u32 {
+        (self.player | self.opponent).count_zeros()
+    }
+
+    #[inline(always)]
+    pub fn put_piece_fast(&mut self, move_bit: u64) {
+        *self = self.make_move(move_bit);
+    }
 }
 
 #[cfg(test)]
@@ -202,11 +217,11 @@ mod tests {
     #[test]
     fn make_move_from_flip_bit_matches_make_move() {
         let board_from_move = Board::new();
-        let mut board_from_flip = Board::new();
+        let board_from_flip = Board::new();
         let flip_bit = board_from_flip.flip_bit(D3);
 
         let board_from_move = board_from_move.make_move(D3);
-        board_from_flip.make_move_from_flip_bit(D3, flip_bit);
+        let board_from_flip = board_from_flip.make_move_from_flip_bit(D3, flip_bit);
 
         assert_eq!(board_from_flip.player, board_from_move.player);
         assert_eq!(board_from_flip.opponent, board_from_move.opponent);

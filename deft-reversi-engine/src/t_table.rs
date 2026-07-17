@@ -13,6 +13,8 @@ use std::sync::atomic::{fence, AtomicU64, AtomicU8, Ordering};
 // - generation: entry の世代。古い entry を置換しやすくするための番号。
 
 /// 各 TT エントリに保存する候補手の数。
+// Documented TT layout constant kept for compatibility and layout tests.
+#[allow(dead_code)]
 pub const TT_MOVES_CAPACITY: usize = 2;
 
 /// デフォルトの transposition table サイズ。単位は MiB。
@@ -114,11 +116,15 @@ impl TranspositionTable {
     }
 
     /// TT cluster 用に実際に確保された byte 数を返す。
+    // Diagnostic API used when tuning TT allocation sizes.
+    #[allow(dead_code)]
     pub fn actual_byte_size(&self) -> usize {
         self.clusters.len() * mem::size_of::<TTCluster>()
     }
 
     /// TT cluster 用に実際に確保されたサイズを MiB 単位で返す。
+    // Diagnostic API used when tuning TT allocation sizes.
+    #[allow(dead_code)]
     pub fn actual_mb_size(&self) -> usize {
         self.actual_byte_size() / MIB
     }
@@ -127,6 +133,8 @@ impl TranspositionTable {
     ///
     /// `&mut self` を要求するため、worker thread が共有参照を持ったまま clear できない。
     /// 通常の探索中に entry を古く扱いたい場合は [`Self::advance_generation`] を使う。
+    // Explicit clear API kept for tooling that owns the table mutably.
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         // SAFETY: &mut self により並行 reader / writer が存在しないことが保証される。
         // AtomicU64 と TTCluster は全 byte 0 の bit pattern が有効。
@@ -173,12 +181,16 @@ impl TranspositionTable {
     /// `board` の cluster index を返す。
     ///
     /// 主に test や診断用。
+    // Diagnostic API for collision and distribution checks.
+    #[allow(dead_code)]
     #[inline(always)]
     pub fn hash_board(&self, board: &Board) -> usize {
         self.cluster_index(Self::key(board))
     }
 
     /// 対応 architecture で `board` の cluster を prefetch する。
+    // Prefetch hook kept for search hot-path experiments.
+    #[allow(dead_code)]
     #[inline(always)]
     pub fn prefetch(&self, board: &Board) {
         self.prefetch_key(Self::key(board));
@@ -188,6 +200,8 @@ impl TranspositionTable {
     ///
     /// `x86_64` では L1 hint 付きの `_mm_prefetch` を発行する。
     /// それ以外の architecture では no-op。
+    // Prefetch hook kept for search hot-path experiments.
+    #[allow(dead_code)]
     #[inline(always)]
     pub fn prefetch_key(&self, key: u64) {
         #[cfg(target_arch = "x86_64")]
@@ -299,7 +313,10 @@ impl TranspositionTable {
     /// [`Self::probe`] を使う。
     #[inline(always)]
     pub fn get(&self, board: &Board) -> Option<TTValue> {
-        self.probe(board).value()
+        match self.probe(board) {
+            TTProbe::Hit { value, .. } => Some(value),
+            TTProbe::Miss { .. } => None,
+        }
     }
 
     /// 事前に probe した保存先位置に探索結果を保存する。
@@ -335,6 +352,8 @@ impl TranspositionTable {
     ///
     /// 探索中に頻繁に実行される処理では、選ばれた保存先位置を再利用するために
     /// [`Self::probe`] / [`Self::probe_with_key`] と [`Self::store`] を分けて使う。
+    // Compatibility helper retained for older TT call sites and tests.
+    #[allow(dead_code)]
     #[inline(always)]
     pub fn add(
         &self,
@@ -345,13 +364,18 @@ impl TranspositionTable {
         selectivity_lv: i32,
         best_move: u8,
     ) {
-        let slot = self.probe(board).slot();
+        let probe = self.probe(board);
+        let slot = match &probe {
+            TTProbe::Hit { slot, .. } | TTProbe::Miss { slot } => *slot,
+        };
         self.store(slot, board, lower, upper, lv, selectivity_lv, best_move);
     }
 
     /// 使用中の entry 数を数える。
     ///
     /// table 全体を走査するため、探索中に頻繁に実行される処理ではなく test や診断向け。
+    // Diagnostic API for TT occupancy checks.
+    #[allow(dead_code)]
     pub fn count_used_tt(&self) -> usize {
         self.clusters
             .iter()
@@ -453,6 +477,8 @@ impl TTProbe {
     }
 
     /// probe が完全一致 board を見つけた場合に `true` を返す。
+    // Convenience API kept for callers that only need hit/miss status.
+    #[allow(dead_code)]
     #[inline(always)]
     pub fn is_hit(&self) -> bool {
         matches!(self, TTProbe::Hit { .. })
@@ -460,41 +486,6 @@ impl TTProbe {
 }
 
 impl TTValue {
-    /// この局面に保存された lower bound。
-    #[inline(always)]
-    pub fn lower(self) -> i8 {
-        self.lower
-    }
-
-    /// この局面に保存された upper bound。
-    #[inline(always)]
-    pub fn upper(self) -> i8 {
-        self.upper
-    }
-
-    /// この entry に紐づく探索 depth / level。
-    #[inline(always)]
-    pub fn lv(self) -> u8 {
-        self.lv
-    }
-
-    /// この entry に紐づく selectivity level。
-    #[inline(always)]
-    pub fn selectivity_lv(self) -> u8 {
-        self.selectivity_lv
-    }
-
-    /// この entry が書かれた generation。
-    #[inline(always)]
-    pub fn generation(self) -> u8 {
-        self.generation
-    }
-
-    #[inline(always)]
-    fn is_occupied(self) -> bool {
-        self.flags & OCCUPIED_FLAG != 0
-    }
-
     #[inline(always)]
     fn quality(self) -> u16 {
         ((self.lv as u16) << 8) | self.selectivity_lv as u16
@@ -591,11 +582,6 @@ impl TTValue {
             self.move0 = best_move;
         }
     }
-
-    #[inline(always)]
-    pub fn moves(self) -> [u8; TT_MOVES_CAPACITY] {
-        [self.move0, self.move1]
-    }
 }
 
 impl Default for TTEntry {
@@ -631,12 +617,7 @@ impl TTEntry {
             return None;
         }
 
-        Some((
-            player,
-            opponent,
-            TTValue::unpack(packed_value),
-            start_seq,
-        ))
+        Some((player, opponent, TTValue::unpack(packed_value), start_seq))
     }
 
     fn save(&self, board: &Board, new_value: TTValue) {
@@ -682,12 +663,7 @@ impl TTEntry {
     }
 
     #[inline(always)]
-    fn seqlock_write(
-        &self,
-        expected_seq: u64,
-        board: &Board,
-        value_to_write: TTValue,
-    ) -> bool {
+    fn seqlock_write(&self, expected_seq: u64, board: &Board, value_to_write: TTValue) -> bool {
         debug_assert_eq!(expected_seq & 1, 0);
         if expected_seq & 1 != 0 {
             return false;
@@ -804,11 +780,11 @@ mod tests {
         tt.add(&board, -12, 34, 7, 2, 19);
         let stored_value = tt.get(&board).unwrap();
 
-        assert_eq!(stored_value.lower(), -12);
-        assert_eq!(stored_value.upper(), 34);
-        assert_eq!(stored_value.lv(), 7);
-        assert_eq!(stored_value.selectivity_lv(), 2);
-        assert_eq!(stored_value.moves(), [19, NO_COORD]);
+        assert_eq!(stored_value.lower, -12);
+        assert_eq!(stored_value.upper, 34);
+        assert_eq!(stored_value.lv, 7);
+        assert_eq!(stored_value.selectivity_lv, 2);
+        assert_eq!([stored_value.move0, stored_value.move1], [19, NO_COORD]);
         assert_eq!(tt.count_used_tt(), 1);
     }
 
@@ -847,11 +823,11 @@ mod tests {
         tt.add(&board, -5, 12, 6, 1, 30);
         let stored_value = tt.get(&board).unwrap();
 
-        assert_eq!(stored_value.lower(), -5);
-        assert_eq!(stored_value.upper(), 12);
-        assert_eq!(stored_value.lv(), 6);
-        assert_eq!(stored_value.selectivity_lv(), 1);
-        assert_eq!(stored_value.moves(), [30, 10]);
+        assert_eq!(stored_value.lower, -5);
+        assert_eq!(stored_value.upper, 12);
+        assert_eq!(stored_value.lv, 6);
+        assert_eq!(stored_value.selectivity_lv, 1);
+        assert_eq!([stored_value.move0, stored_value.move1], [30, 10]);
     }
 
     #[test]
@@ -863,9 +839,9 @@ mod tests {
         tt.add(&board, -5, -1, 6, 1, 30);
         let stored_value = tt.get(&board).unwrap();
 
-        assert_eq!(stored_value.lower(), -5);
-        assert_eq!(stored_value.upper(), -1);
-        assert_eq!(stored_value.moves(), [30, 10]);
+        assert_eq!(stored_value.lower, -5);
+        assert_eq!(stored_value.upper, -1);
+        assert_eq!([stored_value.move0, stored_value.move1], [30, 10]);
     }
 
     #[test]
@@ -877,11 +853,11 @@ mod tests {
         tt.add(&board, -2, 2, 6, 1, 20);
         let stored_value = tt.get(&board).unwrap();
 
-        assert_eq!(stored_value.lower(), -2);
-        assert_eq!(stored_value.upper(), 2);
-        assert_eq!(stored_value.lv(), 6);
-        assert_eq!(stored_value.selectivity_lv(), 1);
-        assert_eq!(stored_value.moves(), [20, 10]);
+        assert_eq!(stored_value.lower, -2);
+        assert_eq!(stored_value.upper, 2);
+        assert_eq!(stored_value.lv, 6);
+        assert_eq!(stored_value.selectivity_lv, 1);
+        assert_eq!([stored_value.move0, stored_value.move1], [20, 10]);
     }
 
     #[test]
@@ -893,9 +869,9 @@ mod tests {
         tt.add(&board, -2, 2, 6, 1, NO_COORD);
         let stored_value = tt.get(&board).unwrap();
 
-        assert_eq!(stored_value.lower(), -2);
-        assert_eq!(stored_value.upper(), 2);
-        assert_eq!(stored_value.moves(), [10, NO_COORD]);
+        assert_eq!(stored_value.lower, -2);
+        assert_eq!(stored_value.upper, 2);
+        assert_eq!([stored_value.move0, stored_value.move1], [10, NO_COORD]);
     }
 
     #[test]
@@ -936,13 +912,18 @@ mod tests {
         let tt = tiny_tt();
         let board = board(0x11, 0x22);
         let probe = tt.probe(&board);
+        let slot = match &probe {
+            TTProbe::Hit { slot, .. } | TTProbe::Miss { slot } => *slot,
+        };
 
-        assert!(!probe.is_hit());
-        tt.store(probe.slot(), &board, -4, 4, 3, 2, 12);
+        assert!(matches!(probe, TTProbe::Miss { .. }));
+        tt.store(slot, &board, -4, 4, 3, 2, 12);
 
         let probe = tt.probe(&board);
-        assert!(probe.is_hit());
-        assert_eq!(probe.value().unwrap().moves(), [12, NO_COORD]);
+        let TTProbe::Hit { value, .. } = probe else {
+            panic!("expected TT hit after store");
+        };
+        assert_eq!([value.move0, value.move1], [12, NO_COORD]);
     }
 
     #[test]
@@ -958,8 +939,11 @@ mod tests {
                     let opponent_bits = !player_bits.rotate_left(7);
                     let board = board(player_bits, opponent_bits);
                     let probe = tt.probe(&board);
+                    let slot = match &probe {
+                        TTProbe::Hit { slot, .. } | TTProbe::Miss { slot } => *slot,
+                    };
                     tt.store(
-                        probe.slot(),
+                        slot,
                         &board,
                         -64 + (position_index % 16) as i32,
                         64 - (position_index % 16) as i32,
@@ -968,8 +952,8 @@ mod tests {
                         (position_index % 64) as u8,
                     );
                     if let Some(stored_value) = tt.get(&board) {
-                        assert!(stored_value.lower() <= stored_value.upper());
-                        assert!(stored_value.moves()[0] <= NO_COORD);
+                        assert!(stored_value.lower <= stored_value.upper);
+                        assert!(stored_value.move0 <= NO_COORD);
                     }
                 }
             }));
@@ -995,8 +979,11 @@ mod tests {
                 !position_index.rotate_left(13),
             );
             let probe = tt.probe(&board);
+            let slot = match &probe {
+                TTProbe::Hit { slot, .. } | TTProbe::Miss { slot } => *slot,
+            };
             tt.store(
-                probe.slot(),
+                slot,
                 &board,
                 -10,
                 10,
