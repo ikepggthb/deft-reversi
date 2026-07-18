@@ -14,6 +14,7 @@ use crate::play::*;
 use crate::self_play::*;
 use crate::solve::*;
 use clap::{Parser, Subcommand};
+use std::num::NonZeroUsize;
 
 const DEFAULT_LEVEL: u8 = 10;
 
@@ -36,9 +37,9 @@ struct Args {
     #[arg(long)]
     ordering_eval: Option<String>,
 
-    /// Number of YBWC worker threads for endgame NWS
-    #[arg(long, default_value_t = 0)]
-    threads: usize,
+    /// Total number of threads that execute search nodes, including the main thread
+    #[arg(long, default_value_t = NonZeroUsize::MIN)]
+    threads: NonZeroUsize,
 
     /// Transposition table size in MiB
     #[arg(long)]

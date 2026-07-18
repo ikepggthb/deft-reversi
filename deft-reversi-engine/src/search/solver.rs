@@ -20,6 +20,7 @@ use crate::search::search::{SearchContext, SearchStats};
 use crate::search::thread_pool::ThreadPool;
 use crate::t_table::TranspositionTable;
 use crate::EngineError;
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -60,7 +61,8 @@ pub struct SolverResult {
 pub struct SolverOptions {
     pub tt_capacity: Option<usize>,
     pub stop: Option<Arc<AtomicBool>>,
-    pub n_threads: usize,
+    /// 探索ノードを処理する総スレッド数。メイン探索スレッドを含む。
+    pub search_threads: NonZeroUsize,
 }
 
 impl Default for SolverOptions {
@@ -68,7 +70,7 @@ impl Default for SolverOptions {
         Self {
             tt_capacity: None,
             stop: None,
-            n_threads: 0,
+            search_threads: NonZeroUsize::MIN,
         }
     }
 }
@@ -104,7 +106,8 @@ impl Solver {
             mpc,
             tt: Arc::new(tt),
             stop: opts.stop,
-            thread_pool: (opts.n_threads > 0).then(|| Arc::new(ThreadPool::new(opts.n_threads))),
+            thread_pool: (opts.search_threads.get() > 1)
+                .then(|| Arc::new(ThreadPool::new(opts.search_threads.get() - 1))),
         }
     }
 
@@ -1244,7 +1247,7 @@ mod tests {
             Arc::new(Evaluator::default()),
             SolverOptions {
                 tt_capacity: Some(16),
-                n_threads: 8,
+                search_threads: NonZeroUsize::new(8).unwrap(),
                 ..SolverOptions::default()
             },
         );
@@ -1269,6 +1272,27 @@ mod tests {
             assert!(!actual.aborted);
             assert_eq!(actual.score, expected);
         }
+    }
+
+    #[test]
+    fn search_thread_count_includes_main_thread() {
+        let single = Solver::with_options(
+            Arc::new(Evaluator::default()),
+            SolverOptions {
+                search_threads: NonZeroUsize::MIN,
+                ..SolverOptions::default()
+            },
+        );
+        assert!(single.thread_pool.is_none());
+
+        let parallel = Solver::with_options(
+            Arc::new(Evaluator::default()),
+            SolverOptions {
+                search_threads: NonZeroUsize::new(2).unwrap(),
+                ..SolverOptions::default()
+            },
+        );
+        assert!(parallel.thread_pool.is_some());
     }
 
     fn brute_force(board: &Board) -> i32 {

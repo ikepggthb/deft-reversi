@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::time;
 
 use std::fs::File;
@@ -20,13 +21,13 @@ pub fn solve(
     eval_path: &str,
     level: i32,
     ordering_eval_path: Option<&str>,
-    n_threads: usize,
+    search_threads: NonZeroUsize,
     hash_mb: Option<usize>,
 ) {
     let mut solver = Solver::from_file(
         eval_path,
         SolverOptions {
-            n_threads,
+            search_threads,
             tt_capacity: hash_mb,
             ..SolverOptions::default()
         },
