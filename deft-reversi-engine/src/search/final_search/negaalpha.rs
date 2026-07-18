@@ -87,6 +87,12 @@ fn negaalpha_final_impl(
         return -negaalpha_final_impl(&passed, -beta, -alpha, search, allow_specialized);
     }
 
+    if legal_moves.is_power_of_two() {
+        let child = board.make_move(legal_moves);
+        let score = -negaalpha_final_impl(&child, -beta, -alpha, search, allow_specialized);
+        return if search.is_aborted() { alpha } else { score };
+    }
+
     let mut best_score = -SCORE_MAX;
     for move_bit in MoveIteratorParity::new(legal_moves, board) {
         let child = board.make_move(move_bit);

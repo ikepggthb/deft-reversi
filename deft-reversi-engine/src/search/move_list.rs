@@ -11,7 +11,7 @@ use crate::board::board::Board;
 use crate::eval::evaluator::Evaluator;
 use crate::eval::evaluator_const::SCORE_MAX;
 use crate::eval::feature_indexes::FeatureIndexes;
-use crate::search::eval_search::negaalpha_eval_ordering;
+use crate::search::eval_search::{negaalpha_eval_ordering, negaalpha_eval_ordering_depth_one};
 use crate::search::SearchContext;
 
 /// オセロの最大合法手数。
@@ -52,25 +52,6 @@ pub fn make_move_list(board: &Board, moves_bit: u64) -> ArrayVec<MoveBoard, MOVE
     }
 
     move_list
-}
-
-/// fast first search のスコアを `move_list` に付加する。
-///
-/// 各手の後で相手が置ける手が少ない方が良いとみなし、
-/// コーナーへの合法手はさらにペナルティを与える。
-#[inline(always)]
-pub fn assign_ffs_scores(board: &Board, move_list: &mut [MoveBoard]) {
-    for mb in move_list.iter_mut() {
-        if mb.is_skip {
-            continue;
-        }
-        let opp_moves = board
-            .make_move_from_flip_bit(1u64 << mb.move_num, mb.flip_bit)
-            .moves();
-        let n_moves = -(opp_moves.count_ones() as i32);
-        let n_corners = -((opp_moves & CORNER_MASK).count_ones() as i32);
-        mb.score = n_moves * 2 + n_corners;
-    }
 }
 
 #[allow(dead_code)]
@@ -159,8 +140,44 @@ pub fn assign_ordering_scores(
     alpha: i32,
     search: &mut SearchContext,
 ) {
-    if lv < 1 {
-        if let Evaluator::Pattern(evaluator) = search.ordering_evaluator.as_ref() {
+    assign_ordering_scores_weighted(board, move_list, lv, alpha, 1, 1, search);
+}
+
+#[inline(always)]
+pub fn assign_ordering_scores_weighted(
+    board: &Board,
+    move_list: &mut [MoveBoard],
+    lv: i32,
+    alpha: i32,
+    value_weight: i32,
+    mobility_weight: i32,
+    search: &mut SearchContext,
+) {
+    assign_ordering_scores_weighted_window(
+        board,
+        move_list,
+        lv,
+        cmp::max(-alpha - 6, -SCORE_MAX),
+        cmp::min(-alpha + 16, SCORE_MAX),
+        value_weight,
+        mobility_weight,
+        search,
+    );
+}
+
+#[inline(always)]
+pub fn assign_ordering_scores_weighted_window(
+    board: &Board,
+    move_list: &mut [MoveBoard],
+    lv: i32,
+    eval_alpha: i32,
+    eval_beta: i32,
+    value_weight: i32,
+    mobility_weight: i32,
+    search: &mut SearchContext,
+) {
+    if lv <= 1 {
+        if matches!(search.ordering_evaluator.as_ref(), Evaluator::Pattern(_)) {
             // 子盤面では手番が交代するため、親の反転視点を共通の基準にする。
             // 各候補は反転石と着手マスだけ差分更新すればよい。
             let swapped = FeatureIndexes::from_board(&board.passed());
@@ -172,14 +189,48 @@ pub fn assign_ordering_scores(
                 let state = swapped.child_from_swapped(move_bit, ml.flip_bit);
 
                 let move_board = board.make_move_from_flip_bit(move_bit, ml.flip_bit);
+                if lv == 1 {
+                    search.stats.eval_search_nodes += 1;
+                    if search.check_abort() {
+                        return;
+                    }
+                    search.stats.eval_search_leaf_nodes += 1;
+                }
+                let Evaluator::Pattern(evaluator) = search.ordering_evaluator.as_ref() else {
+                    unreachable!("pattern fast path selected for a non-pattern evaluator");
+                };
                 let search_eval = -evaluator.evaluate(&move_board, &state);
                 let opp_moves = move_board.moves();
                 let mobility_score = -(opp_moves.count_ones() as i32) * 2
                     - ((opp_moves & CORNER_MASK).count_ones() as i32);
-                ml.score += search_eval + mobility_score;
+                ml.score += search_eval * value_weight + mobility_score * mobility_weight;
             }
             return;
         }
+    }
+
+    if lv == 2 && matches!(search.ordering_evaluator.as_ref(), Evaluator::Pattern(_)) {
+        let current = FeatureIndexes::from_board(board);
+        for ml in move_list.iter_mut() {
+            if ml.is_skip {
+                continue;
+            }
+            let move_bit = 1u64 << ml.move_num;
+            let move_board = board.make_move_from_flip_bit(move_bit, ml.flip_bit);
+            let child_swapped = current.child_passed_from_current(move_bit, ml.flip_bit);
+            let search_eval = -negaalpha_eval_ordering_depth_one(
+                &move_board,
+                &child_swapped,
+                eval_alpha,
+                eval_beta,
+                search,
+            );
+            let opp_moves = move_board.moves();
+            let mobility_score = -(opp_moves.count_ones() as i32) * 2
+                - ((opp_moves & CORNER_MASK).count_ones() as i32);
+            ml.score += search_eval * value_weight + mobility_score * mobility_weight;
+        }
+        return;
     }
 
     for ml in move_list.iter_mut() {
@@ -190,18 +241,12 @@ pub fn assign_ordering_scores(
         let search_eval = if lv < 1 {
             -search.ordering_evaluator.evaluate_board_slow(&move_board)
         } else {
-            -negaalpha_eval_ordering(
-                &move_board,
-                cmp::max(-alpha - 6, -SCORE_MAX),
-                cmp::min(-alpha + 16, SCORE_MAX),
-                lv - 1,
-                search,
-            )
+            -negaalpha_eval_ordering(&move_board, eval_alpha, eval_beta, lv - 1, search)
         };
         let opp_moves = move_board.moves();
         let mobility_score =
             -(opp_moves.count_ones() as i32) * 2 - ((opp_moves & CORNER_MASK).count_ones() as i32);
-        ml.score += search_eval + mobility_score;
+        ml.score += search_eval * value_weight + mobility_score * mobility_weight;
     }
 }
 

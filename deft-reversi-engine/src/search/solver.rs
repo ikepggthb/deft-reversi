@@ -13,6 +13,7 @@ use crate::eval::evaluator_const::SCORE_MAX;
 use crate::eval::Evaluator;
 use crate::file::EngineFile;
 use crate::search::eval_search::{nws_eval, pvs_eval};
+use crate::search::final_search::nws::{collect_ybwc_tasks, make_ybwc_job};
 use crate::search::final_search::{nws_final, pvs_final, solve_score};
 use crate::search::mpc::{MpcConfig, SELECTIVITY_LV_MAX};
 use crate::search::search::{SearchContext, SearchStats};
@@ -234,6 +235,11 @@ impl Solver {
             r.best_move = None;
             return r;
         }
+
+        // A Solver is reused across positions by the CLI. Start a fresh TT
+        // generation so entries from earlier positions are replacement
+        // candidates instead of competing with the current search.
+        self.tt.advance_generation();
 
         // root 候補手リスト(再順序の効率化のため Vec で保持)。
         let mut candidates: Vec<(u8, Board)> = Vec::with_capacity(legal.count_ones() as usize);
@@ -464,8 +470,16 @@ impl Solver {
 fn trace_search_stage(stage: &str, score: i32, search: &SearchContext) {
     if std::env::var_os("DEFT_SEARCH_TRACE").is_some() {
         eprintln!(
-            "SEARCHTRACE stage={stage} score={score:+} eval_nodes={} final_nodes={}",
-            search.stats.eval_search_nodes, search.stats.final_search_nodes
+            "SEARCHTRACE stage={stage} score={score:+} eval_nodes={} final_nodes={} \
+             mpc={}/{} stability={}/{} ybwc={}/{}",
+            search.stats.eval_search_nodes,
+            search.stats.final_search_nodes,
+            search.stats.mpc_cuts,
+            search.stats.mpc_tries,
+            search.stats.stability_cuts,
+            search.stats.stability_tries,
+            search.stats.ybwc_split_aborts,
+            search.stats.ybwc_splits,
         );
     }
 }
@@ -787,6 +801,92 @@ fn search_root_eval_window(
     best_score
 }
 
+fn search_root_final_siblings_ybwc(
+    mut alpha: i32,
+    beta: i32,
+    mut best_score: i32,
+    candidates: &mut [(u8, Board)],
+    search: &mut SearchContext,
+) -> i32 {
+    let Some(thread_pool) = search.thread_pool.clone() else {
+        return best_score;
+    };
+    let split_searching = Arc::new(AtomicBool::new(true));
+    let mut handles = Vec::with_capacity(candidates.len() - 1);
+    let mut results = Vec::new();
+
+    for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
+        if !split_searching.load(Ordering::Relaxed) {
+            break;
+        }
+        let job = make_ybwc_job(
+            *child_board,
+            -(alpha + 1),
+            beta,
+            move_index,
+            split_searching.clone(),
+            search,
+        );
+        match thread_pool.try_push(job) {
+            Ok(handle) => {
+                search.stats.ybwc_splits += 1;
+                handles.push(handle);
+            }
+            Err(job) => {
+                let result = job();
+                search.stats.add_assign(result.stats);
+                if result.aborted {
+                    search.stats.ybwc_split_aborts += 1;
+                }
+                let cutoff = !result.aborted && result.score >= beta;
+                results.push(result);
+                if cutoff {
+                    break;
+                }
+            }
+        }
+    }
+
+    results.extend(collect_ybwc_tasks(handles, search));
+    if search.check_abort_now() {
+        split_searching.store(false, Ordering::Relaxed);
+        return best_score;
+    }
+
+    if let Some(result) = results
+        .iter()
+        .find(|result| !result.aborted && result.score >= beta)
+    {
+        candidates.swap(0, result.move_index);
+        return result.score;
+    }
+
+    results.sort_unstable_by_key(|result| result.move_index);
+    let mut best_idx = 0;
+    for result in results {
+        if result.aborted || result.score <= alpha {
+            continue;
+        }
+        let score = -pvs_final(&candidates[result.move_index].1, -beta, -alpha, search);
+        if search.is_aborted() {
+            return best_score;
+        }
+        if score >= beta {
+            candidates.swap(0, result.move_index);
+            return score;
+        }
+        if score > alpha {
+            alpha = score;
+            best_score = score;
+            best_idx = result.move_index;
+        }
+    }
+    if best_idx > 0 {
+        candidates.swap(0, best_idx);
+    }
+    best_score
+}
+
 /// 終盤の root を [alpha, beta] 窓で 1 回探索し、最善手を `candidates[0]` に
 /// スワップする。fail-soft スコアを返す。
 fn search_root_final_window(
@@ -799,7 +899,25 @@ fn search_root_final_window(
     if search.is_aborted() {
         return alpha;
     }
+    let trace = std::env::var_os("DEFT_SEARCH_TRACE").is_some();
+    if trace {
+        eprintln!(
+            "SEARCHROOT_TT move={} value={:?}",
+            candidates[0].0,
+            search.tt.get(&candidates[0].1)
+        );
+    }
+    let mut nodes_before = search.stats.eval_search_nodes + search.stats.final_search_nodes;
     let mut best_score = -pvs_final(&candidates[0].1, -beta, -alpha, search);
+    if trace {
+        let nodes = search.stats.eval_search_nodes + search.stats.final_search_nodes;
+        eprintln!(
+            "SEARCHROOT move={} score={best_score:+} nodes={}",
+            candidates[0].0,
+            nodes - nodes_before
+        );
+        nodes_before = nodes;
+    }
     if search.is_aborted() {
         return alpha;
     }
@@ -810,6 +928,12 @@ fn search_root_final_window(
         alpha = best_score;
     }
     let mut best_idx = 0;
+    if search.selectivity_lv == SELECTIVITY_LV_MAX
+        && search.thread_pool.is_some()
+        && candidates.len() > 2
+    {
+        return search_root_final_siblings_ybwc(alpha, beta, best_score, candidates, search);
+    }
     for i in 1..candidates.len() {
         let mut s = -nws_final(&candidates[i].1, -alpha - 1, search);
         if search.is_aborted() {
@@ -833,6 +957,15 @@ fn search_root_final_window(
                 best_score = s;
                 best_idx = i;
             }
+        }
+        if trace {
+            let nodes = search.stats.eval_search_nodes + search.stats.final_search_nodes;
+            eprintln!(
+                "SEARCHROOT move={} score={s:+} nodes={}",
+                candidates[i].0,
+                nodes - nodes_before
+            );
+            nodes_before = nodes;
         }
     }
     if best_idx > 0 {
@@ -935,6 +1068,17 @@ mod tests {
 
     fn make_solver() -> Solver {
         Solver::new(Arc::new(Evaluator::default()))
+    }
+
+    #[test]
+    fn solve_advances_tt_generation() {
+        let solver = make_solver();
+        let generation = solver.tt.generation();
+
+        let result = solver.solve(&Board::new(), 1);
+
+        assert!(!result.aborted);
+        assert_eq!(solver.tt.generation(), generation.wrapping_add(1));
     }
 
     /// 初期盤面で深さ 4 の中盤探索が合法手を返すことを確認する。

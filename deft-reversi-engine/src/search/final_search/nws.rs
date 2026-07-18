@@ -19,7 +19,10 @@ use crate::{
     board::{board::Board, constant::NO_COORD},
     eval::evaluator_const::SCORE_MAX,
     search::{
-        final_search::{negaalpha::negaalpha_final, solve_score::solve_score},
+        final_search::{
+            negaalpha::negaalpha_final,
+            solve_score::{final_parity, solve_score},
+        },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
         search::SearchContext,
@@ -29,11 +32,13 @@ use crate::{
     },
     t_table::{TTProbe, TTSlot, TTValue},
 };
+use arrayvec::ArrayVec;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::{cell::UnsafeCell, cmp};
 
-const TT_MOVE0_SCORE: i32 = 1 << 8;
-const TT_MOVE1_SCORE: i32 = 1 << 7;
+const TT_MOVE0_SCORE: i32 = 1 << 20;
+const TT_MOVE1_SCORE: i32 = 1 << 19;
 
 const FINAL_LV: i32 = 60;
 
@@ -41,9 +46,54 @@ const FINAL_LV: i32 = 60;
 const SWITCH_EMPTIES_NEGA_ALPHA: i32 = 5;
 
 /// 空きマスがこれ以下のとき `nws_final_simple` に切り替える。
-const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 10;
+const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 13;
 
 const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 16;
+const LEGAL_UNDEFINED: u64 = u64::MAX;
+
+#[derive(Clone, Copy)]
+struct SimpleMove {
+    score: i32,
+    move_num: u8,
+    mobility: u8,
+    is_skip: bool,
+    flip_bit: u64,
+    child_moves: u64,
+}
+
+const LOCAL_TT_SIZE: usize = 1024;
+const LOCAL_TT_LAYERS: usize = (SWITCH_EMPTIES_SIMPLE_NWS - SWITCH_EMPTIES_NEGA_ALPHA) as usize;
+
+#[derive(Clone, Copy)]
+struct LocalTTEntry {
+    player: u64,
+    opponent: u64,
+    lower: i8,
+    upper: i8,
+    selectivity_lv: u8,
+}
+
+const EMPTY_LOCAL_TT_ENTRY: LocalTTEntry = LocalTTEntry {
+    player: 0,
+    opponent: 0,
+    lower: -64,
+    upper: 64,
+    selectivity_lv: u8::MAX,
+};
+
+thread_local! {
+    static LOCAL_END_TT: UnsafeCell<[LocalTTEntry; LOCAL_TT_SIZE * LOCAL_TT_LAYERS]> =
+        const { UnsafeCell::new([EMPTY_LOCAL_TT_ENTRY; LOCAL_TT_SIZE * LOCAL_TT_LAYERS]) };
+}
+
+#[inline(always)]
+fn local_tt_index(board: &Board, n_empties: i32) -> usize {
+    let hash = board.player.wrapping_mul(0x9dda_1c54_cfe6_b6e9)
+        ^ board.opponent.wrapping_mul(0xa2e6_c030_0831_e05a);
+    let layer =
+        (n_empties - SWITCH_EMPTIES_NEGA_ALPHA).clamp(0, LOCAL_TT_LAYERS as i32 - 1) as usize;
+    layer * LOCAL_TT_SIZE + ((hash >> 54) as usize)
+}
 
 // ── nws_final_simple ──────────────────────────────────────────────────────────
 
@@ -51,8 +101,59 @@ const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 16;
 ///
 /// 空きマスが少ないとき `negaalpha_final` へ降格する。
 pub fn nws_final_simple(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
-    let beta = alpha + 1;
     let n_empties = (board.player | board.opponent).count_zeros() as i32;
+    LOCAL_END_TT.with(|table| {
+        // SAFETY: the table is thread-local, and recursive calls stay in the impl.
+        let table = unsafe { &mut *table.get() };
+        nws_final_simple_impl(board, alpha, LEGAL_UNDEFINED, n_empties, search, table)
+    })
+}
+
+#[inline(always)]
+fn local_tt_child_entry(
+    board: &Board,
+    n_empties: i32,
+    selectivity_lv: i32,
+    local_tt: &[LocalTTEntry],
+) -> Option<LocalTTEntry> {
+    let entry = local_tt[local_tt_index(board, n_empties)];
+    (entry.player == board.player
+        && entry.opponent == board.opponent
+        && entry.selectivity_lv as i32 == selectivity_lv)
+        .then_some(entry)
+}
+
+#[inline(always)]
+fn local_tt_store_child(
+    board: &Board,
+    score: i32,
+    is_lower_bound: bool,
+    n_empties: i32,
+    selectivity_lv: i32,
+    local_tt: &mut [LocalTTEntry],
+) {
+    let entry = &mut local_tt[local_tt_index(board, n_empties)];
+    entry.player = board.player;
+    entry.opponent = board.opponent;
+    entry.selectivity_lv = selectivity_lv as u8;
+    if is_lower_bound {
+        entry.lower = score as i8;
+        entry.upper = 64;
+    } else {
+        entry.lower = -64;
+        entry.upper = score as i8;
+    }
+}
+
+fn nws_final_simple_impl(
+    board: &Board,
+    alpha: i32,
+    moves_bit: u64,
+    n_empties: i32,
+    search: &mut SearchContext,
+    local_tt: &mut [LocalTTEntry],
+) -> i32 {
+    let beta = alpha + 1;
 
     if n_empties <= SWITCH_EMPTIES_NEGA_ALPHA {
         return negaalpha_final(board, alpha, beta, search);
@@ -63,14 +164,19 @@ pub fn nws_final_simple(board: &Board, alpha: i32, search: &mut SearchContext) -
         return alpha;
     }
 
-    let moves_bit = board.moves();
+    let moves_bit = if moves_bit == LEGAL_UNDEFINED {
+        board.moves()
+    } else {
+        moves_bit
+    };
     if moves_bit == 0 {
         let passed = board.passed();
-        if passed.moves() == 0 {
+        let passed_moves = passed.moves();
+        if passed_moves == 0 {
             search.stats.final_search_leaf_nodes += 1;
             return solve_score(board);
         }
-        return -nws_final_simple(&passed, -beta, search);
+        return -nws_final_simple_impl(&passed, -beta, passed_moves, n_empties, search, local_tt);
     }
 
     if let Some(score) = stability_cut_nws(board, alpha, n_empties, search) {
@@ -82,28 +188,147 @@ pub fn nws_final_simple(board: &Board, alpha: i32, search: &mut SearchContext) -
         ProbCutResult::Fail => {}
     }
 
-    let mut move_list = make_move_list(board, moves_bit);
-
-    if move_list.len() >= 2 {
-        assign_ffs_scores(board, &mut move_list);
-        sort_move_list(&mut move_list);
+    if moves_bit.is_power_of_two() {
+        let child_board = board.make_move(moves_bit);
+        let child_moves = child_board.moves();
+        let score = -nws_final_simple_impl(
+            &child_board,
+            -beta,
+            child_moves,
+            n_empties - 1,
+            search,
+            local_tt,
+        );
+        if search.is_aborted() {
+            return alpha;
+        }
+        return score;
     }
 
+    let mut move_list = ArrayVec::<SimpleMove, { SWITCH_EMPTIES_SIMPLE_NWS as usize }>::new();
+    let parity = final_parity(board.player, board.opponent);
+    let mut moves = moves_bit;
+    while moves != 0 {
+        let move_num = moves.trailing_zeros() as u8;
+        let move_bit = 1u64 << move_num;
+        let flip_bit = board.flip_bit(move_bit);
+        if flip_bit == board.opponent {
+            return SCORE_MAX;
+        }
+        let child_board = board.make_move_from_flip_bit(move_bit, flip_bit);
+        let child_moves = child_board.moves();
+        let region = 1 << (((move_num >= 32) as i32) * 2 + (((move_num & 7) >= 4) as i32));
+        let mobility =
+            (child_moves.count_ones() + (child_moves & 0x8100_0000_0000_0081).count_ones()) as u8;
+        let score = -i32::from(mobility) * 18 + i32::from(parity & region != 0) * 17;
+        move_list.push(SimpleMove {
+            score,
+            move_num,
+            mobility,
+            is_skip: false,
+            flip_bit,
+            child_moves,
+        });
+        moves &= moves - 1;
+    }
     let mut best_score = -SCORE_MAX;
-    for mb in move_list.iter() {
+    for mb in move_list.iter_mut() {
         let child_board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
-        let score = -nws_final_simple(&child_board, -beta, search);
+        if let Some(entry) =
+            local_tt_child_entry(&child_board, n_empties - 1, search.selectivity_lv, local_tt)
+        {
+            if entry.lower as i32 > alpha {
+                return entry.lower as i32;
+            }
+            if entry.upper as i32 <= alpha {
+                best_score = cmp::max(best_score, entry.upper as i32);
+                mb.is_skip = true;
+                continue;
+            }
+        }
+        if mb.mobility <= 1 {
+            let score = -nws_final_simple_impl(
+                &child_board,
+                -beta,
+                mb.child_moves,
+                n_empties - 1,
+                search,
+                local_tt,
+            );
+            if search.is_aborted() {
+                return alpha;
+            }
+            if score >= beta {
+                local_tt_store_child(
+                    &child_board,
+                    score,
+                    true,
+                    n_empties - 1,
+                    search.selectivity_lv,
+                    local_tt,
+                );
+                return score;
+            }
+            best_score = cmp::max(best_score, score);
+            local_tt_store_child(
+                &child_board,
+                score,
+                false,
+                n_empties - 1,
+                search.selectivity_lv,
+                local_tt,
+            );
+            mb.is_skip = true;
+        }
+    }
+
+    for move_index in 0..move_list.len() {
+        let mut best_index = move_index;
+        for i in (move_index + 1)..move_list.len() {
+            if move_list[i].score > move_list[best_index].score {
+                best_index = i;
+            }
+        }
+        move_list.swap(move_index, best_index);
+        let mb = &move_list[move_index];
+        if mb.is_skip {
+            continue;
+        }
+        let child_board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
+        let score = -nws_final_simple_impl(
+            &child_board,
+            -beta,
+            mb.child_moves,
+            n_empties - 1,
+            search,
+            local_tt,
+        );
         if search.is_aborted() {
             return alpha;
         }
         if score >= beta {
+            local_tt_store_child(
+                &child_board,
+                score,
+                true,
+                n_empties - 1,
+                search.selectivity_lv,
+                local_tt,
+            );
             return score;
         }
         if score > best_score {
             best_score = score;
         }
+        local_tt_store_child(
+            &child_board,
+            score,
+            false,
+            n_empties - 1,
+            search.selectivity_lv,
+            local_tt,
+        );
     }
-
     best_score
 }
 
@@ -207,9 +432,17 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
             11..13 => 0,
             13..17 => 1,
             17..21 => 2,
-            _ => ((n_empties / 3) - 1).max(0),
+            _ => n_empties >> 3,
         };
-        assign_ordering_scores(board, &mut move_list, eval_depth, alpha_cur, search);
+        assign_ordering_scores_weighted(
+            board,
+            &mut move_list,
+            eval_depth,
+            alpha_cur,
+            7 + 25 * eval_depth,
+            17,
+            search,
+        );
         sort_move_list(&mut move_list);
     }
 
@@ -314,7 +547,6 @@ fn nws_final_ybwc(
         if mb.is_skip {
             continue;
         }
-        // 分配済みの子が fail-high を確定させていたら、残りの手は探索不要
         if searched > 0 && !split_searching.load(Ordering::Relaxed) {
             break;
         }
@@ -341,19 +573,16 @@ fn nws_final_ybwc(
                 );
                 return score;
             }
-            if score > alpha_cur {
-                alpha_cur = score;
-            }
-            if score > best_score {
-                best_score = score;
-                best_move = mb.move_num;
-            }
+            alpha_cur = alpha_cur.max(score);
+            best_score = best_score.max(score);
+            best_move = mb.move_num;
             continue;
         }
 
         let job = make_ybwc_job(
             child_board,
             -beta,
+            beta,
             move_index,
             split_searching.clone(),
             search,
@@ -369,8 +598,6 @@ fn nws_final_ybwc(
                 if result.aborted {
                     search.stats.ybwc_split_aborts += 1;
                     if !split_searching.load(Ordering::Relaxed) {
-                        // 先に走っている兄弟がfail-highを確定した。勝者の結果を
-                        // handlesから回収するため、残りの分配だけ打ち切る。
                         break;
                     }
                     split_searching.store(false, Ordering::Relaxed);
@@ -393,9 +620,7 @@ fn nws_final_ybwc(
                     );
                     return result.score;
                 }
-                if result.score > alpha_cur {
-                    alpha_cur = result.score;
-                }
+                alpha_cur = alpha_cur.max(result.score);
                 if result.score > best_score {
                     best_score = result.score;
                     best_move = move_list[result.move_index].move_num;
@@ -427,9 +652,7 @@ fn nws_final_ybwc(
             );
             return result.score;
         }
-        if result.score > alpha_cur {
-            alpha_cur = result.score;
-        }
+        alpha_cur = alpha_cur.max(result.score);
         if result.score > best_score {
             best_score = result.score;
             best_move = move_list[result.move_index].move_num;
@@ -463,9 +686,10 @@ fn nws_final_ybwc(
     best_score
 }
 
-fn make_ybwc_job(
+pub(crate) fn make_ybwc_job(
     child_board: Board,
     child_alpha: i32,
+    cutoff_score: i32,
     move_index: usize,
     split_searching: Arc<AtomicBool>,
     parent: &SearchContext,
@@ -491,8 +715,7 @@ fn make_ybwc_job(
         let score = -nws_final(&child_board, child_alpha, &mut search);
         let aborted = search.is_aborted();
         drop(search);
-        // fail-high (score >= beta = -child_alpha) が確定したら兄弟タスクを打ち切る
-        if !aborted && score >= -child_alpha {
+        if !aborted && score >= cutoff_score {
             split_searching.store(false, Ordering::Relaxed);
         }
         TaskResult {
@@ -504,7 +727,10 @@ fn make_ybwc_job(
     })
 }
 
-fn collect_ybwc_tasks(handles: Vec<TaskHandle>, search: &mut SearchContext) -> Vec<TaskResult> {
+pub(crate) fn collect_ybwc_tasks(
+    handles: Vec<TaskHandle>,
+    search: &mut SearchContext,
+) -> Vec<TaskResult> {
     let pool = search.thread_pool.clone();
     let mut results = Vec::with_capacity(handles.len());
     for handle in handles {
@@ -652,5 +878,41 @@ mod tests {
             let board = make_board_with_empties(&mut rng, 6 + extra);
             check_nws(&board, &ev, &mpc, &tt, |b, alpha, s| nws_final(b, alpha, s));
         }
+    }
+
+    #[test]
+    fn local_tt_does_not_reuse_selective_bound_for_exact_search() {
+        let (ev, mpc, tt) = shared_resources();
+        let board = Board {
+            player: 0xbc61_9192_4c6b_1c86,
+            opponent: 0x431e_6e24_2314_e159,
+        };
+        let n_empties = board.empties_count() as i32;
+        let mut local_tt = [EMPTY_LOCAL_TT_ENTRY; LOCAL_TT_SIZE * LOCAL_TT_LAYERS];
+        let move_bit = board.moves() & board.moves().wrapping_neg();
+        let child = board.make_move(move_bit);
+        let entry = &mut local_tt[local_tt_index(&child, n_empties - 1)];
+        *entry = LocalTTEntry {
+            player: child.player,
+            opponent: child.opponent,
+            lower: 64,
+            upper: 64,
+            selectivity_lv: 0,
+        };
+
+        let mut stats = SearchStats::default();
+        let mut search = SearchContext::new(ev, mpc, tt, &mut stats);
+        search.selectivity_lv = crate::search::mpc::SELECTIVITY_LV_MAX;
+        let true_score = brute_force(&board);
+        let actual = nws_final_simple_impl(
+            &board,
+            true_score,
+            LEGAL_UNDEFINED,
+            n_empties,
+            &mut search,
+            &mut local_tt,
+        );
+
+        assert!(actual <= true_score);
     }
 }

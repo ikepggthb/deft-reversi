@@ -708,8 +708,7 @@ pub unsafe fn load_256(v: &V8DI) -> [__m256i; 2] {
 #[inline]
 pub unsafe fn mm_flip(OP: __m128i, pos: usize) -> __m128i {
     let pp = _mm256_broadcastq_epi64(OP);
-    let op_hi = _mm_unpackhi_epi64(OP, OP);
-    let oo = _mm256_broadcastq_epi64(op_hi);
+    let oo = _mm256_permute4x64_epi64(_mm256_castsi128_si256(OP), 0x55);
 
     let masks = load_256(&LR_MASK[pos]);
     let mut mask = masks[1];

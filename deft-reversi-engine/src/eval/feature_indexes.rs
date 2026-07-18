@@ -61,6 +61,19 @@ impl FeatureIndexes {
         self
     }
 
+    /// 現手番の index から、合法手後の盤面をさらに pass した視点の index を作る。
+    #[inline(always)]
+    pub(crate) fn child_passed_from_current(mut self, move_bit: u64, flip_bit: u64) -> Self {
+        let mut flips = flip_bit;
+        while flips != 0 {
+            let square = flips.trailing_zeros() as usize;
+            flips &= flips - 1;
+            self.add_square_delta(square, 1);
+        }
+        self.add_square_delta(move_bit.trailing_zeros() as usize, 2);
+        self
+    }
+
     /// 盤面から FeatureIndexes を再計算する。
     pub fn refresh(&mut self, board: &Board) {
         self.feature_indexes = [0; N_FEATURES];
@@ -158,6 +171,10 @@ mod tests {
             FeatureIndexes::from_board(&board.passed()).child_from_swapped(move_bit, flip);
 
         assert_eq!(child_indexes, FeatureIndexes::from_board(&child));
+        assert_eq!(
+            FeatureIndexes::from_board(&board).child_passed_from_current(move_bit, flip),
+            FeatureIndexes::from_board(&child.passed())
+        );
     }
 
     #[test]

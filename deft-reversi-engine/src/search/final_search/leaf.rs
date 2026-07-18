@@ -182,14 +182,37 @@ pub(crate) fn solve_score_2_empties(
         return best;
     }
 
-    if (Board {
-        player: opponent,
-        opponent: player,
-    })
-    .moves()
-        != 0
-    {
-        -solve_score_2_empties(opponent, player, -beta, x1, x2, search)
+    // pass後も残り2マスだけを直接調べる。汎用moves生成と再帰は不要。
+    search.stats.final_search_nodes += 1;
+    let mut passed_best = SCORE_MAX + 1;
+
+    if NEIGHBOUR[x1] & player != 0 {
+        let flip = flip_at(opponent, player, x1);
+        if flip != 0 {
+            search.stats.final_search_nodes += 1;
+            search.stats.final_search_leaf_nodes += 1;
+            let score = solve_score_1_empties(player ^ flip, alpha, x2);
+            if score <= alpha {
+                return score;
+            }
+            passed_best = score;
+        }
+    }
+
+    if NEIGHBOUR[x2] & player != 0 {
+        let flip = flip_at(opponent, player, x2);
+        if flip != 0 {
+            search.stats.final_search_nodes += 1;
+            search.stats.final_search_leaf_nodes += 1;
+            let score = solve_score_1_empties(player ^ flip, alpha, x1);
+            if score < passed_best {
+                passed_best = score;
+            }
+        }
+    }
+
+    if passed_best != SCORE_MAX + 1 {
+        passed_best
     } else {
         search.stats.final_search_leaf_nodes += 1;
         solve_score_bits(player, 2)
@@ -270,14 +293,30 @@ pub(crate) fn solve_score_3_empties(
         return best;
     }
 
-    if (Board {
-        player: opponent,
-        opponent: player,
-    })
-    .moves()
-        != 0
-    {
-        -solve_score_3_empties(opponent, player, -beta, x1, x2, x3, parity, search)
+    // pass後は、整列済みの3マスを相手側から直接調べる。
+    search.stats.final_search_nodes += 1;
+    let mut passed_best = SCORE_MAX + 1;
+    for (x, y, z) in [(x1, x2, x3), (x2, x1, x3), (x3, x1, x2)] {
+        if NEIGHBOUR[x] & player == 0 {
+            continue;
+        }
+        let flip = flip_at(opponent, player, x);
+        if flip == 0 {
+            continue;
+        }
+        let bit = 1u64 << x;
+        let score =
+            solve_score_2_empties(player ^ flip, opponent ^ (flip | bit), alpha, y, z, search);
+        if score <= alpha {
+            return score;
+        }
+        if score < passed_best {
+            passed_best = score;
+        }
+    }
+
+    if passed_best != SCORE_MAX + 1 {
+        passed_best
     } else {
         search.stats.final_search_leaf_nodes += 1;
         solve_score_bits(player, 3)
@@ -402,14 +441,43 @@ pub(crate) fn solve_score_4_empties(
         return best;
     }
 
-    if (Board {
-        player: opponent,
-        opponent: player,
-    })
-    .moves()
-        != 0
-    {
-        -solve_score_4_empties(opponent, player, -beta, search)
+    // pass後も空きリストとパリティ順を再利用し、相手側の手を直接調べる。
+    search.stats.final_search_nodes += 1;
+    let mut passed_best = SCORE_MAX + 1;
+    for (x, y, z, w) in [
+        (x1, x2, x3, x4),
+        (x2, x1, x3, x4),
+        (x3, x1, x2, x4),
+        (x4, x1, x2, x3),
+    ] {
+        if NEIGHBOUR[x] & player == 0 {
+            continue;
+        }
+        let flip = flip_at(opponent, player, x);
+        if flip == 0 {
+            continue;
+        }
+        let bit = 1u64 << x;
+        let score = solve_score_3_empties(
+            player ^ flip,
+            opponent ^ (flip | bit),
+            alpha,
+            y,
+            z,
+            w,
+            parity ^ QUADRANT_ID[x],
+            search,
+        );
+        if score <= alpha {
+            return score;
+        }
+        if score < passed_best {
+            passed_best = score;
+        }
+    }
+
+    if passed_best != SCORE_MAX + 1 {
+        passed_best
     } else {
         search.stats.final_search_leaf_nodes += 1;
         solve_score_bits(player, 4)

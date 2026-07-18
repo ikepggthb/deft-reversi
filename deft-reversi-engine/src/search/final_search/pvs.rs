@@ -27,8 +27,8 @@ use crate::{
     t_table::{TTProbe, TTValue},
 };
 
-const TT_MOVE0_SCORE: i32 = 1 << 8;
-const TT_MOVE1_SCORE: i32 = 1 << 7;
+const TT_MOVE0_SCORE: i32 = 1 << 20;
+const TT_MOVE1_SCORE: i32 = 1 << 19;
 
 const FINAL_LV: i32 = 60;
 
@@ -122,6 +122,43 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
         ETCResult::AllMovesSkipped(upper) => return upper,
     };
 
+    // A selective endgame result is a strong score predictor even though its
+    // bounds cannot be used for an exact TT cutoff. Probe a two-point window
+    // first, then search only the side on which the prediction failed.
+    if beta_cur - alpha_cur >= 4 {
+        if let Some(value) = tt_value.filter(|value| {
+            value.lower == value.upper && value.selectivity_lv < search.selectivity_lv as u8
+        }) {
+            let raw_prediction = value.lower as i32;
+            let predicted = if raw_prediction & 1 != 0 {
+                raw_prediction - raw_prediction.signum()
+            } else {
+                raw_prediction
+            };
+            if alpha_cur < predicted && predicted < beta_cur {
+                let predicted_alpha = predicted - 1;
+                let predicted_beta = predicted + 1;
+                let score = pvs_final(board, predicted_alpha, predicted_beta, search);
+                if search.is_aborted() {
+                    return alpha;
+                }
+                if predicted_alpha < score && score < predicted_beta {
+                    return score;
+                }
+                if score <= predicted_alpha {
+                    if score <= alpha_cur {
+                        return score;
+                    }
+                    return pvs_final(board, alpha_cur, score, search);
+                }
+                if score >= beta_cur {
+                    return score;
+                }
+                return pvs_final(board, score, beta_cur, search);
+            }
+        }
+    }
+
     // ── TT 手リスト ───────────────────────────────────────────────────────────
     if let Some(value) = tt_value {
         for ml in move_list.iter_mut() {
@@ -137,11 +174,21 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
     let eval_depth = match empty_count {
         13..17 => 1,
         17..21 => 2,
-        _ => ((empty_count / 3) - 1).max(1),
+        _ => (empty_count >> 3).max(1),
     };
 
-    assign_ordering_scores(board, &mut move_list, eval_depth, alpha_cur, search);
+    assign_ordering_scores_weighted_window(
+        board,
+        &mut move_list,
+        eval_depth,
+        (-beta_cur - 8).max(-SCORE_MAX),
+        (-alpha_cur + 12).min(SCORE_MAX),
+        269 + 94 * eval_depth,
+        35,
+        search,
+    );
     sort_move_list(&mut move_list);
+
     // ── PVS ループ ────────────────────────────────────────────────────────────
     let mut best_score = -SCORE_MAX;
     let mut best_move = NO_COORD;

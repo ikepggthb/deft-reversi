@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub const NO_MPC_SELECTIVITY_LV: i32 = 6;
-const STOP_CHECK_NODE_MASK: u64 = 0x0fff;
+const STOP_CHECK_NODE_MASK: u64 = 0x01ff;
 
 /// 探索統計。
 ///

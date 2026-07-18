@@ -121,6 +121,58 @@ pub(crate) fn negaalpha_eval_ordering(
     negaalpha_eval_ordering_impl(board, alpha, beta, depth, search)
 }
 
+/// `board.passed()` の特徴を受け取り、深さ1の手順評価を差分更新だけで行う。
+pub(crate) fn negaalpha_eval_ordering_depth_one(
+    board: &Board,
+    swapped: &FeatureIndexes,
+    mut alpha: i32,
+    beta: i32,
+    search: &mut SearchContext,
+) -> i32 {
+    search.stats.eval_search_nodes += 1;
+    if search.check_abort() {
+        return alpha;
+    }
+    if board.player | board.opponent == u64::MAX {
+        return solve_score(board);
+    }
+
+    let mut moves_bit = board.moves();
+    if moves_bit == 0 {
+        let passed = board.passed();
+        if passed.moves() == 0 {
+            search.stats.eval_search_leaf_nodes += 1;
+            return solve_score(board);
+        }
+        return -negaalpha_eval_ordering_impl(&passed, -beta, -alpha, 1, search);
+    }
+
+    let mut best_score = -SCORE_MAX;
+    while moves_bit != 0 {
+        let move_bit = moves_bit & moves_bit.wrapping_neg();
+        moves_bit &= moves_bit - 1;
+        let flip = board.flip_bit(move_bit);
+        let child = board.make_move_from_flip_bit(move_bit, flip);
+        let state = swapped.child_from_swapped(move_bit, flip);
+
+        search.stats.eval_search_nodes += 1;
+        if search.check_abort() {
+            return alpha;
+        }
+        search.stats.eval_search_leaf_nodes += 1;
+        let score = match search.ordering_evaluator.as_ref() {
+            Evaluator::Pattern(evaluator) => -evaluator.evaluate(&child, &state),
+            Evaluator::Nnue(_) => unreachable!("pattern fast path selected for NNUE evaluator"),
+        };
+        if score >= beta {
+            return score;
+        }
+        alpha = alpha.max(score);
+        best_score = best_score.max(score);
+    }
+    best_score
+}
+
 fn negaalpha_eval_ordering_impl(
     board: &Board,
     mut alpha: i32,
@@ -292,6 +344,15 @@ mod tests {
         board
     }
 
+    fn search_context<'a>(
+        stats: &'a mut SearchStats,
+        evaluator: &Arc<Evaluator>,
+        mpc: &Arc<MpcConfig>,
+        tt: &Arc<TranspositionTable>,
+    ) -> SearchContext<'a> {
+        SearchContext::new(evaluator.clone(), mpc.clone(), tt.clone(), stats)
+    }
+
     #[test]
     fn nws_eval_leaf_depth_zero_matches_static_eval() {
         let board = played_board();
@@ -307,5 +368,45 @@ mod tests {
         );
         assert_eq!(search.stats.eval_search_nodes, 1);
         assert_eq!(search.stats.eval_search_leaf_nodes, 1);
+    }
+
+    #[test]
+    fn ordering_depth_one_with_parent_indexes_matches_regular_path() {
+        let mut board = Board::new();
+        let evaluator = Arc::new(Evaluator::default());
+        let mpc = Arc::new(MpcConfig::default());
+        let tt = Arc::new(TranspositionTable::new());
+
+        for ply in 0..24 {
+            let moves = board.moves();
+            if moves == 0 {
+                board = board.passed();
+                if board.moves() == 0 {
+                    break;
+                }
+                continue;
+            }
+
+            let swapped = FeatureIndexes::from_board(&board.passed());
+            for (alpha, beta) in [(-SCORE_MAX, SCORE_MAX), (-1, 0), (0, 1), (5, 12)] {
+                let mut regular_stats = SearchStats::default();
+                let mut regular = search_context(&mut regular_stats, &evaluator, &mpc, &tt);
+                let expected = negaalpha_eval_ordering(&board, alpha, beta, 1, &mut regular);
+
+                let mut indexed_stats = SearchStats::default();
+                let mut indexed = search_context(&mut indexed_stats, &evaluator, &mpc, &tt);
+                let actual =
+                    negaalpha_eval_ordering_depth_one(&board, &swapped, alpha, beta, &mut indexed);
+
+                assert_eq!(actual, expected, "ply={ply}, window=[{alpha}, {beta})");
+            }
+
+            let selected = ply as usize % moves.count_ones() as usize;
+            let mut candidates = moves;
+            for _ in 0..selected {
+                candidates &= candidates - 1;
+            }
+            board = board.make_move(candidates & candidates.wrapping_neg());
+        }
     }
 }

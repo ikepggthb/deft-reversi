@@ -1,4 +1,5 @@
 use crate::search::search::SearchStats;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 
@@ -27,11 +28,13 @@ impl TaskHandle {
 struct State {
     running: bool,
     queue: Vec<Job>,
+    idle_workers: usize,
 }
 
 struct Shared {
     state: Mutex<State>,
     ready: Condvar,
+    has_idle_worker: AtomicBool,
     /// キューに積める仕事数の上限。ワーカーが後から空いたときに
     /// すぐ取れる「作り置き」を許しつつ、投機的タスクの溢れを防ぐ。
     queue_cap: usize,
@@ -48,8 +51,10 @@ impl ThreadPool {
             state: Mutex::new(State {
                 running: true,
                 queue: Vec::new(),
+                idle_workers: 0,
             }),
             ready: Condvar::new(),
+            has_idle_worker: AtomicBool::new(false),
             queue_cap: (n_workers / 2).max(2),
         });
         let mut workers = Vec::with_capacity(n_workers);
@@ -61,8 +66,14 @@ impl ThreadPool {
     }
 
     pub fn try_push(&self, job: Job) -> Result<TaskHandle, Job> {
+        if !self.shared.has_idle_worker.load(Ordering::Relaxed) {
+            return Err(job);
+        }
         let mut state = self.shared.state.lock().unwrap();
-        if !state.running || state.queue.len() >= self.shared.queue_cap {
+        if !state.running
+            || state.queue.len() >= self.shared.queue_cap
+            || state.queue.len() >= state.idle_workers
+        {
             return Err(job);
         }
 
@@ -143,7 +154,13 @@ fn worker_loop(shared: Arc<Shared>) {
                 if let Some(job) = state.queue.pop() {
                     break job;
                 }
+                state.idle_workers += 1;
+                shared.has_idle_worker.store(true, Ordering::Relaxed);
                 state = shared.ready.wait(state).unwrap();
+                state.idle_workers -= 1;
+                if state.idle_workers == 0 {
+                    shared.has_idle_worker.store(false, Ordering::Relaxed);
+                }
             }
         };
         let _ = job();
