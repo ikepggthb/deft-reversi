@@ -82,6 +82,7 @@ pub struct Solver {
     ordering_evaluator: Arc<Evaluator>,
     mpc: Arc<MpcConfig>,
     tt: Arc<TranspositionTable>,
+    pv_tt: Arc<TranspositionTable>,
     stop: Option<Arc<AtomicBool>>,
     thread_pool: Option<Arc<ThreadPool>>,
 }
@@ -100,11 +101,13 @@ impl Solver {
             Some(mb) => TranspositionTable::with_mb_size(mb),
             None => TranspositionTable::new(),
         };
+        let pv_tt = TranspositionTable::with_mb_size((tt.actual_mb_size() / 16).max(1));
         Self {
             ordering_evaluator: evaluator.clone(),
             evaluator,
             mpc,
             tt: Arc::new(tt),
+            pv_tt: Arc::new(pv_tt),
             stop: opts.stop,
             thread_pool: (opts.search_threads.get() > 1)
                 .then(|| Arc::new(ThreadPool::new(opts.search_threads.get() - 1))),
@@ -151,6 +154,7 @@ impl Solver {
 
     pub fn clear_tt(&self) {
         self.tt.advance_generation();
+        self.pv_tt.advance_generation();
     }
 
     /// 中盤の PVS 探索を `depth` まで実行する。
@@ -165,6 +169,7 @@ impl Solver {
             self.tt.clone(),
             &mut stats,
         )
+        .with_pv_tt(self.pv_tt.clone(), board.empties_count() as i32)
         .with_ordering_evaluator(self.ordering_evaluator.clone())
         .with_stop(self.stop.clone())
         .with_thread_pool(self.thread_pool.clone());
@@ -188,6 +193,7 @@ impl Solver {
             self.tt.clone(),
             &mut stats,
         )
+        .with_pv_tt(self.pv_tt.clone(), board.empties_count() as i32)
         .with_ordering_evaluator(self.ordering_evaluator.clone())
         .with_stop(self.stop.clone())
         .with_thread_pool(self.thread_pool.clone());
@@ -243,6 +249,7 @@ impl Solver {
         // generation so entries from earlier positions are replacement
         // candidates instead of competing with the current search.
         self.tt.advance_generation();
+        self.pv_tt.advance_generation();
 
         // root 候補手リスト(再順序の効率化のため Vec で保持)。
         let mut candidates: Vec<(u8, Board)> = Vec::with_capacity(legal.count_ones() as usize);
@@ -261,6 +268,7 @@ impl Solver {
             self.tt.clone(),
             &mut stats,
         )
+        .with_pv_tt(self.pv_tt.clone(), n_empties)
         .with_ordering_evaluator(self.ordering_evaluator.clone())
         .with_stop(self.stop.clone())
         .with_thread_pool(self.thread_pool.clone());
@@ -453,20 +461,27 @@ impl Solver {
                     break;
                 }
                 current = current.passed();
-                next_move = self.tt.get(&current).map(|value| value.move0);
+                next_move = self.pv_move(&current);
                 continue;
             }
 
-            let mv = match next_move.or_else(|| self.tt.get(&current).map(|value| value.move0)) {
+            let mv = match next_move.or_else(|| self.pv_move(&current)) {
                 Some(mv) if mv != NO_COORD && (moves & (1u64 << mv)) != 0 => mv,
                 _ => break,
             };
             pv.push(mv);
             current = current.make_move(1u64 << mv);
-            next_move = self.tt.get(&current).map(|value| value.move0);
+            next_move = self.pv_move(&current);
         }
 
         pv
+    }
+
+    fn pv_move(&self, board: &Board) -> Option<u8> {
+        self.pv_tt
+            .get(board)
+            .or_else(|| self.tt.get(board))
+            .map(|value| value.move0)
     }
 }
 
@@ -694,6 +709,7 @@ fn aspiration_search_final(
     search: &mut SearchContext,
 ) -> i32 {
     search.selectivity_lv = selectivity;
+    let mut root_bounds = [RootBound::UNBOUNDED; 64];
     let mut left = init_width;
     let mut right = init_width;
     let mut predict = predict;
@@ -705,7 +721,7 @@ fn aspiration_search_final(
         let alpha = (predict - left).max(-SCORE_MAX);
         let beta = (predict + right).min(SCORE_MAX);
         debug_assert!(alpha <= beta);
-        predict = search_root_final_window(alpha, beta, candidates, search);
+        predict = search_root_final_window(alpha, beta, candidates, &mut root_bounds, search);
         if search.is_aborted() {
             restore_candidate_front(candidates, previous_best);
             return previous_score;
@@ -725,6 +741,66 @@ fn aspiration_search_final(
         }
     }
     predict
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RootBound {
+    lower: i32,
+    upper: i32,
+}
+
+impl RootBound {
+    const UNBOUNDED: Self = Self {
+        lower: -SCORE_MAX,
+        upper: SCORE_MAX,
+    };
+
+    #[inline(always)]
+    fn exact(self) -> Option<i32> {
+        (self.lower == self.upper).then_some(self.lower)
+    }
+
+    #[inline(always)]
+    fn update(&mut self, score: i32, alpha: i32, beta: i32) -> i32 {
+        if score <= alpha {
+            self.upper = self.upper.min(score);
+        } else if score >= beta {
+            self.lower = self.lower.max(score);
+        } else {
+            self.lower = score;
+            self.upper = score;
+        }
+        debug_assert!(self.lower <= self.upper);
+        self.exact().unwrap_or(score)
+    }
+}
+
+#[inline(always)]
+fn search_root_final_candidate(
+    board: &Board,
+    alpha: i32,
+    beta: i32,
+    bound: &mut RootBound,
+    search: &mut SearchContext,
+) -> i32 {
+    if let Some(score) = bound.exact() {
+        return score;
+    }
+    if bound.lower >= beta {
+        return bound.lower;
+    }
+    if bound.upper <= alpha {
+        return bound.upper;
+    }
+
+    let search_alpha = alpha.max(bound.lower);
+    let search_beta = beta.min(bound.upper);
+    debug_assert!(search_alpha < search_beta);
+    let score = -pvs_final(board, -search_beta, -search_alpha, search);
+    if search.is_aborted() {
+        return alpha;
+    }
+    bound.update(score, search_alpha, search_beta)
 }
 
 fn restore_candidate_front(candidates: &mut [(u8, Board)], previous_best: (u8, Board)) {
@@ -809,6 +885,7 @@ fn search_root_final_siblings_ybwc(
     beta: i32,
     mut best_score: i32,
     candidates: &mut [(u8, Board)],
+    root_bounds: &mut [RootBound; 64],
     search: &mut SearchContext,
 ) -> i32 {
     let Some(thread_pool) = search.thread_pool.clone() else {
@@ -817,10 +894,20 @@ fn search_root_final_siblings_ybwc(
     let split_searching = Arc::new(AtomicBool::new(true));
     let mut handles = Vec::with_capacity(candidates.len() - 1);
     let mut results = Vec::new();
+    let mut known_cutoff = None;
 
     for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
         if !split_searching.load(Ordering::Relaxed) {
             break;
+        }
+        let move_num = candidates[move_index].0 as usize;
+        if root_bounds[move_num].lower >= beta {
+            known_cutoff = Some((move_index, root_bounds[move_num].lower));
+            split_searching.store(false, Ordering::Relaxed);
+            break;
+        }
+        if root_bounds[move_num].upper <= alpha {
+            continue;
         }
         let job = make_ybwc_job(
             *child_board,
@@ -856,6 +943,16 @@ fn search_root_final_siblings_ybwc(
         return best_score;
     }
 
+    if let Some((move_index, score)) = known_cutoff {
+        candidates.swap(0, move_index);
+        return score;
+    }
+
+    for result in results.iter().filter(|result| !result.aborted) {
+        let move_num = candidates[result.move_index].0 as usize;
+        root_bounds[move_num].update(result.score, alpha, alpha + 1);
+    }
+
     if let Some(result) = results
         .iter()
         .find(|result| !result.aborted && result.score >= beta)
@@ -870,7 +967,14 @@ fn search_root_final_siblings_ybwc(
         if result.aborted || result.score <= alpha {
             continue;
         }
-        let score = -pvs_final(&candidates[result.move_index].1, -beta, -alpha, search);
+        let move_num = candidates[result.move_index].0 as usize;
+        let score = search_root_final_candidate(
+            &candidates[result.move_index].1,
+            alpha,
+            beta,
+            &mut root_bounds[move_num],
+            search,
+        );
         if search.is_aborted() {
             return best_score;
         }
@@ -896,6 +1000,7 @@ fn search_root_final_window(
     alpha: i32,
     beta: i32,
     candidates: &mut [(u8, Board)],
+    root_bounds: &mut [RootBound; 64],
     search: &mut SearchContext,
 ) -> i32 {
     let mut alpha = alpha;
@@ -907,11 +1012,22 @@ fn search_root_final_window(
         eprintln!(
             "SEARCHROOT_TT move={} value={:?}",
             candidates[0].0,
-            search.tt.get(&candidates[0].1)
+            search
+                .pv_tt
+                .as_ref()
+                .and_then(|pv_tt| pv_tt.get(&candidates[0].1))
+                .or_else(|| search.tt.get(&candidates[0].1))
         );
     }
     let mut nodes_before = search.stats.eval_search_nodes + search.stats.final_search_nodes;
-    let mut best_score = -pvs_final(&candidates[0].1, -beta, -alpha, search);
+    let first_move = candidates[0].0 as usize;
+    let mut best_score = search_root_final_candidate(
+        &candidates[0].1,
+        alpha,
+        beta,
+        &mut root_bounds[first_move],
+        search,
+    );
     if trace {
         let nodes = search.stats.eval_search_nodes + search.stats.final_search_nodes;
         eprintln!(
@@ -935,19 +1051,45 @@ fn search_root_final_window(
         && search.thread_pool.is_some()
         && candidates.len() > 2
     {
-        return search_root_final_siblings_ybwc(alpha, beta, best_score, candidates, search);
+        return search_root_final_siblings_ybwc(
+            alpha,
+            beta,
+            best_score,
+            candidates,
+            root_bounds,
+            search,
+        );
     }
     for i in 1..candidates.len() {
+        let move_num = candidates[i].0 as usize;
+        if root_bounds[move_num].lower >= beta {
+            candidates.swap(0, i);
+            return root_bounds[move_num].lower;
+        }
+        if root_bounds[move_num].upper <= alpha {
+            if root_bounds[move_num].upper > best_score {
+                best_score = root_bounds[move_num].upper;
+                best_idx = i;
+            }
+            continue;
+        }
         let mut s = -nws_final(&candidates[i].1, -alpha - 1, search);
         if search.is_aborted() {
             return best_score;
         }
+        s = root_bounds[move_num].update(s, alpha, alpha + 1);
         if s >= beta {
             candidates.swap(0, i);
             return s;
         }
         if s > alpha {
-            s = -pvs_final(&candidates[i].1, -beta, -alpha, search);
+            s = search_root_final_candidate(
+                &candidates[i].1,
+                alpha,
+                beta,
+                &mut root_bounds[move_num],
+                search,
+            );
             if search.is_aborted() {
                 return best_score;
             }
@@ -1077,11 +1219,29 @@ mod tests {
     fn solve_advances_tt_generation() {
         let solver = make_solver();
         let generation = solver.tt.generation();
+        let pv_generation = solver.pv_tt.generation();
 
         let result = solver.solve(&Board::new(), 1);
 
         assert!(!result.aborted);
         assert_eq!(solver.tt.generation(), generation.wrapping_add(1));
+        assert_eq!(solver.pv_tt.generation(), pv_generation.wrapping_add(1));
+    }
+
+    #[test]
+    fn root_bound_combines_opposite_bounds_into_exact_score() {
+        let mut bound = RootBound::UNBOUNDED;
+        assert_eq!(bound.update(-8, -7, -3), -8);
+        assert_eq!(
+            bound,
+            RootBound {
+                lower: -64,
+                upper: -8
+            }
+        );
+
+        assert_eq!(bound.update(-8, -12, -8), -8);
+        assert_eq!(bound.exact(), Some(-8));
     }
 
     /// 初期盤面で深さ 4 の中盤探索が合法手を返すことを確認する。

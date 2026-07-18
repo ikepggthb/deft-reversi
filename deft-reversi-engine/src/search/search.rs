@@ -37,6 +37,8 @@ pub struct SearchContext<'a> {
     pub ordering_evaluator: Arc<Evaluator>,
     pub mpc_config: Arc<MpcConfig>,
     pub tt: Arc<TranspositionTable>,
+    pub pv_tt: Option<Arc<TranspositionTable>>,
+    pub pv_tt_min_empties: i32,
     pub stats: &'a mut SearchStats,
     pub selectivity_lv: i32,
     pub thread_pool: Option<Arc<ThreadPool>>,
@@ -57,6 +59,8 @@ impl<'a> SearchContext<'a> {
             evaluator,
             mpc_config,
             tt,
+            pv_tt: None,
+            pv_tt_min_empties: i32::MAX,
             stats,
             selectivity_lv: NO_MPC_SELECTIVITY_LV,
             thread_pool: None,
@@ -78,6 +82,12 @@ impl<'a> SearchContext<'a> {
 
     pub fn with_thread_pool(mut self, thread_pool: Option<Arc<ThreadPool>>) -> Self {
         self.thread_pool = thread_pool;
+        self
+    }
+
+    pub fn with_pv_tt(mut self, pv_tt: Arc<TranspositionTable>, root_empties: i32) -> Self {
+        self.pv_tt = Some(pv_tt);
+        self.pv_tt_min_empties = (root_empties - 4).max(0);
         self
     }
 

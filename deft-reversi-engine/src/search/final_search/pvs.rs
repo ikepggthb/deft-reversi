@@ -24,7 +24,7 @@ use crate::{
         search::SearchContext,
         stability_cut::stability_cut_pvs,
     },
-    t_table::{TTProbe, TTValue},
+    t_table::{TTProbe, TTSlot, TTValue},
 };
 
 const TT_MOVE0_SCORE: i32 = 1 << 20;
@@ -36,6 +36,61 @@ const FINAL_LV: i32 = 60;
 ///
 /// PVS は全幅探索なので、基底は NWS ではなく厳密探索に委ねる。
 const SWITCH_EMPTIES_NEGAALPHA: i32 = 12;
+
+#[inline(always)]
+fn choose_pvs_tt_value(
+    pv_value: Option<TTValue>,
+    main_value: Option<TTValue>,
+    selectivity_lv: i32,
+) -> Option<TTValue> {
+    let matches_search = |value: TTValue| {
+        value.lv as i32 == FINAL_LV && value.selectivity_lv as i32 == selectivity_lv
+    };
+    let pv_match = pv_value.filter(|value| matches_search(*value));
+    let main_match = main_value.filter(|value| matches_search(*value));
+    match (pv_match, main_match) {
+        (Some(pv), Some(main)) => {
+            let pv_width = pv.upper as i32 - pv.lower as i32;
+            let main_width = main.upper as i32 - main.lower as i32;
+            Some(if pv_width <= main_width { pv } else { main })
+        }
+        (Some(pv), None) => Some(pv),
+        (None, Some(main)) => Some(main),
+        (None, None) => pv_value.or(main_value),
+    }
+}
+
+#[inline(always)]
+fn store_pvs_result(
+    search: &SearchContext,
+    main_slot: TTSlot,
+    pv_slot: Option<TTSlot>,
+    board: &Board,
+    lower: i32,
+    upper: i32,
+    best_move: u8,
+) {
+    search.tt.store(
+        main_slot,
+        board,
+        lower,
+        upper,
+        FINAL_LV,
+        search.selectivity_lv,
+        best_move,
+    );
+    if let (Some(pv_tt), Some(slot)) = (search.pv_tt.as_ref(), pv_slot) {
+        pv_tt.store(
+            slot,
+            board,
+            lower,
+            upper,
+            FINAL_LV,
+            search.selectivity_lv,
+            best_move,
+        );
+    }
+}
 
 /// TT + ETC + MPC + PVS ループによる完全読みを行い、現プレイヤー視点のスコアを返す。
 pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContext) -> i32 {
@@ -86,7 +141,14 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
 
     // ── 置換表 取得 ────────────────────────────────────────────────────────
     let probe: TTProbe = search.tt.probe(board);
-    let tt_value: Option<TTValue> = probe.value();
+    let pv_probe = (empty_count >= search.pv_tt_min_empties)
+        .then(|| search.pv_tt.as_ref().map(|pv_tt| pv_tt.probe(board)))
+        .flatten();
+    let tt_value = choose_pvs_tt_value(
+        pv_probe.and_then(|probe| probe.value()),
+        probe.value(),
+        search.selectivity_lv,
+    );
 
     // ── TT CUT OFF ─────────────────────────────────────────────────────────────
     if let Some(v) = tt_value {
@@ -215,13 +277,13 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
         }
 
         if score >= beta_cur {
-            search.tt.store(
+            store_pvs_result(
+                search,
                 probe.slot(),
+                pv_probe.map(|probe| probe.slot()),
                 board,
                 score,
                 SCORE_MAX,
-                FINAL_LV,
-                search.selectivity_lv,
                 mb.move_num,
             );
             return score;
@@ -238,23 +300,23 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
     debug_assert_ne!(best_move, NO_COORD);
 
     if best_score > alpha {
-        search.tt.store(
+        store_pvs_result(
+            search,
             probe.slot(),
+            pv_probe.map(|probe| probe.slot()),
             board,
             best_score,
             best_score,
-            FINAL_LV,
-            search.selectivity_lv,
             best_move,
         );
     } else {
-        search.tt.store(
+        store_pvs_result(
+            search,
             probe.slot(),
+            pv_probe.map(|probe| probe.slot()),
             board,
             -SCORE_MAX,
             best_score,
-            FINAL_LV,
-            search.selectivity_lv,
             best_move,
         );
     }
@@ -278,6 +340,27 @@ mod tests {
             Arc::new(MpcConfig::default()),
             Arc::new(TranspositionTable::new()),
         )
+    }
+
+    #[test]
+    fn pvs_tt_prefers_tighter_matching_bound() {
+        let value = |lower, upper| TTValue {
+            lower,
+            upper,
+            lv: FINAL_LV as u8,
+            selectivity_lv: crate::search::mpc::SELECTIVITY_LV_MAX as u8,
+            move0: 1,
+            move1: NO_COORD,
+            generation: 1,
+            flags: 1,
+        };
+        let pv = value(-8, 64);
+        let main = value(-10, -10);
+
+        assert_eq!(
+            choose_pvs_tt_value(Some(pv), Some(main), crate::search::mpc::SELECTIVITY_LV_MAX,),
+            Some(main)
+        );
     }
 
     fn brute_force(board: &Board) -> i32 {
