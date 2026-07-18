@@ -61,7 +61,7 @@ struct SimpleMove {
     child_moves: u64,
 }
 
-const LOCAL_TT_SIZE: usize = 1024;
+const LOCAL_TT_SIZE: usize = 2048;
 const LOCAL_TT_LAYERS: usize = (SWITCH_EMPTIES_SIMPLE_NWS - SWITCH_EMPTIES_NEGA_ALPHA) as usize;
 
 #[derive(Clone, Copy)]
@@ -88,11 +88,10 @@ thread_local! {
 
 #[inline(always)]
 fn local_tt_index(board: &Board, n_empties: i32) -> usize {
-    let hash = board.player.wrapping_mul(0x9dda_1c54_cfe6_b6e9)
-        ^ board.opponent.wrapping_mul(0xa2e6_c030_0831_e05a);
+    let hash = (board.player ^ board.opponent.rotate_left(32)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
     let layer =
         (n_empties - SWITCH_EMPTIES_NEGA_ALPHA).clamp(0, LOCAL_TT_LAYERS as i32 - 1) as usize;
-    layer * LOCAL_TT_SIZE + ((hash >> 54) as usize)
+    layer * LOCAL_TT_SIZE + ((hash >> 53) as usize)
 }
 
 // ── nws_final_simple ──────────────────────────────────────────────────────────

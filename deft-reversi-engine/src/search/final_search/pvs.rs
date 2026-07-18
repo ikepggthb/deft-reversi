@@ -18,7 +18,11 @@ use crate::{
     eval::evaluator_const::SCORE_MAX,
     search::tt_cut::*,
     search::{
-        final_search::{negaalpha::negaalpha_final, nws::nws_final, solve_score::solve_score},
+        final_search::{
+            negaalpha::negaalpha_final,
+            nws::{collect_ybwc_tasks, make_ybwc_job, nws_final},
+            solve_score::solve_score,
+        },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
         search::SearchContext,
@@ -26,11 +30,14 @@ use crate::{
     },
     t_table::{TTProbe, TTSlot, TTValue},
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 const TT_MOVE0_SCORE: i32 = 1 << 20;
 const TT_MOVE1_SCORE: i32 = 1 << 19;
 
 const FINAL_LV: i32 = 60;
+const PVS_YBWC_MIN_EMPTIES: i32 = 20;
 
 /// 空きマスがこれ以下のとき `negaalpha_final` に切り替える。
 ///
@@ -90,6 +97,157 @@ fn store_pvs_result(
             best_move,
         );
     }
+}
+
+fn pvs_final_ybwc(
+    board: &Board,
+    alpha: i32,
+    mut alpha_cur: i32,
+    beta_cur: i32,
+    probe: TTProbe,
+    pv_probe: Option<TTProbe>,
+    move_list: &[MoveBoard],
+    search: &mut SearchContext,
+) -> i32 {
+    let thread_pool = search.thread_pool.clone().expect("YBWC requires a pool");
+    let Some((first_index, first_move)) = move_list.iter().enumerate().find(|(_, mv)| !mv.is_skip)
+    else {
+        return -SCORE_MAX;
+    };
+
+    let first_child = board.make_move_from_flip_bit(1 << first_move.move_num, first_move.flip_bit);
+    let mut best_score = -pvs_final(&first_child, -beta_cur, -alpha_cur, search);
+    if search.is_aborted() {
+        return alpha;
+    }
+    let mut best_move = first_move.move_num;
+    if best_score >= beta_cur {
+        store_pvs_result(
+            search,
+            probe.slot(),
+            pv_probe.map(|probe| probe.slot()),
+            board,
+            best_score,
+            SCORE_MAX,
+            best_move,
+        );
+        return best_score;
+    }
+    alpha_cur = alpha_cur.max(best_score);
+
+    let split_searching = Arc::new(AtomicBool::new(true));
+    let mut handles = Vec::new();
+    let mut results = Vec::new();
+    for (move_index, mv) in move_list.iter().enumerate().skip(first_index + 1) {
+        if mv.is_skip || !split_searching.load(Ordering::Relaxed) {
+            continue;
+        }
+        let child = board.make_move_from_flip_bit(1 << mv.move_num, mv.flip_bit);
+        let job = make_ybwc_job(
+            child,
+            -(alpha_cur + 1),
+            beta_cur,
+            move_index,
+            split_searching.clone(),
+            search,
+        );
+        match thread_pool.try_push(job) {
+            Ok(handle) => {
+                search.stats.ybwc_splits += 1;
+                handles.push(handle);
+            }
+            Err(job) => {
+                let result = job();
+                search.stats.add_assign(result.stats);
+                if result.aborted {
+                    search.stats.ybwc_split_aborts += 1;
+                }
+                let cutoff = !result.aborted && result.score >= beta_cur;
+                results.push(result);
+                if cutoff {
+                    break;
+                }
+            }
+        }
+    }
+    results.extend(collect_ybwc_tasks(handles, search));
+    if search.check_abort_now() {
+        split_searching.store(false, Ordering::Relaxed);
+        return alpha;
+    }
+
+    if let Some(result) = results
+        .iter()
+        .find(|result| !result.aborted && result.score >= beta_cur)
+    {
+        let best_move = move_list[result.move_index].move_num;
+        store_pvs_result(
+            search,
+            probe.slot(),
+            pv_probe.map(|probe| probe.slot()),
+            board,
+            result.score,
+            SCORE_MAX,
+            best_move,
+        );
+        return result.score;
+    }
+
+    results.sort_unstable_by_key(|result| result.move_index);
+    for result in results {
+        if result.aborted {
+            continue;
+        }
+        let mv = &move_list[result.move_index];
+        let mut score = result.score;
+        if score > alpha_cur {
+            let child = board.make_move_from_flip_bit(1 << mv.move_num, mv.flip_bit);
+            score = -pvs_final(&child, -beta_cur, -alpha_cur, search);
+            if search.is_aborted() {
+                return alpha;
+            }
+        }
+        if score > best_score {
+            best_score = score;
+            best_move = mv.move_num;
+        }
+        if score >= beta_cur {
+            store_pvs_result(
+                search,
+                probe.slot(),
+                pv_probe.map(|probe| probe.slot()),
+                board,
+                score,
+                SCORE_MAX,
+                best_move,
+            );
+            return score;
+        }
+        alpha_cur = alpha_cur.max(score);
+    }
+
+    if best_score > alpha {
+        store_pvs_result(
+            search,
+            probe.slot(),
+            pv_probe.map(|probe| probe.slot()),
+            board,
+            best_score,
+            best_score,
+            best_move,
+        );
+    } else {
+        store_pvs_result(
+            search,
+            probe.slot(),
+            pv_probe.map(|probe| probe.slot()),
+            board,
+            -SCORE_MAX,
+            best_score,
+            best_move,
+        );
+    }
+    best_score
 }
 
 /// TT + ETC + MPC + PVS ループによる完全読みを行い、現プレイヤー視点のスコアを返す。
@@ -251,6 +409,15 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
         search,
     );
     sort_move_list(&mut move_list);
+
+    if empty_count >= PVS_YBWC_MIN_EMPTIES
+        && search.thread_pool.is_some()
+        && move_list.iter().filter(|mv| !mv.is_skip).take(2).count() >= 2
+    {
+        return pvs_final_ybwc(
+            board, alpha, alpha_cur, beta_cur, probe, pv_probe, &move_list, search,
+        );
+    }
 
     // ── PVS ループ ────────────────────────────────────────────────────────────
     let mut best_score = -SCORE_MAX;
