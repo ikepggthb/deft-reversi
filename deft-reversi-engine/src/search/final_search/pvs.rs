@@ -247,6 +247,7 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
         (-alpha_cur + 12).min(SCORE_MAX),
         269 + 94 * eval_depth,
         35,
+        1 << 15,
         search,
     );
     sort_move_list(&mut move_list);

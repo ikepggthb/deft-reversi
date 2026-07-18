@@ -441,6 +441,7 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
             alpha_cur,
             7 + 25 * eval_depth,
             17,
+            1 << 15,
             search,
         );
         sort_move_list(&mut move_list);

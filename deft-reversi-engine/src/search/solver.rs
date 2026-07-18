@@ -324,16 +324,30 @@ impl Solver {
                     );
                 }
 
-                if eval_solver_lv >= 18 && selectivity > 5 {
+                let first_selectivity = if n_empties >= 27 && selectivity > 5 {
+                    selectivity - 4
+                } else {
+                    selectivity
+                };
+                let mut final_selectivity = first_selectivity;
+                loop {
                     let init_w = (10 - n_empties).max(2 + predict_score.rem_euclid(2));
                     predict_score = aspiration_search_final(
-                        selectivity - 4,
+                        final_selectivity,
                         init_w,
                         predict_score,
                         &mut candidates,
                         &mut search,
                     );
-                    trace_search_stage("selective-final", predict_score, &search);
+                    trace_search_stage(
+                        if final_selectivity == selectivity {
+                            "exact-final"
+                        } else {
+                            "selective-final"
+                        },
+                        predict_score,
+                        &search,
+                    );
                     if search.is_aborted() {
                         drop(search);
                         return self.result_from_parts(
@@ -345,16 +359,16 @@ impl Solver {
                             board,
                         );
                     }
+                    if final_selectivity == selectivity {
+                        break;
+                    }
+                    // Edaxと同様、30マス未満では高コストな99%相当を省略して完全読みへ進む。
+                    final_selectivity = if n_empties < 30 && final_selectivity >= selectivity - 2 {
+                        selectivity
+                    } else {
+                        final_selectivity + 1
+                    };
                 }
-                let init_w = (10 - n_empties).max(2 + predict_score.rem_euclid(2));
-                predict_score = aspiration_search_final(
-                    selectivity,
-                    init_w,
-                    predict_score,
-                    &mut candidates,
-                    &mut search,
-                );
-                trace_search_stage("exact-final", predict_score, &search);
             }
         }
 

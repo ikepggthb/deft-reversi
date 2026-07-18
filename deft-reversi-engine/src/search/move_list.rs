@@ -140,7 +140,7 @@ pub fn assign_ordering_scores(
     alpha: i32,
     search: &mut SearchContext,
 ) {
-    assign_ordering_scores_weighted(board, move_list, lv, alpha, 1, 1, search);
+    assign_ordering_scores_weighted(board, move_list, lv, alpha, 1, 1, 0, search);
 }
 
 #[inline(always)]
@@ -151,6 +151,7 @@ pub fn assign_ordering_scores_weighted(
     alpha: i32,
     value_weight: i32,
     mobility_weight: i32,
+    tt_presence_weight: i32,
     search: &mut SearchContext,
 ) {
     assign_ordering_scores_weighted_window(
@@ -161,6 +162,7 @@ pub fn assign_ordering_scores_weighted(
         cmp::min(-alpha + 16, SCORE_MAX),
         value_weight,
         mobility_weight,
+        tt_presence_weight,
         search,
     );
 }
@@ -174,6 +176,7 @@ pub fn assign_ordering_scores_weighted_window(
     eval_beta: i32,
     value_weight: i32,
     mobility_weight: i32,
+    tt_presence_weight: i32,
     search: &mut SearchContext,
 ) {
     if lv <= 1 {
@@ -238,6 +241,9 @@ pub fn assign_ordering_scores_weighted_window(
             continue;
         }
         let move_board = board.make_move_from_flip_bit(1 << ml.move_num, ml.flip_bit);
+        if tt_presence_weight != 0 && search.tt.probe(&move_board).value().is_some() {
+            ml.score += tt_presence_weight;
+        }
         let search_eval = if lv < 1 {
             -search.ordering_evaluator.evaluate_board_slow(&move_board)
         } else {
