@@ -192,13 +192,13 @@ pub fn assign_ordering_scores_weighted_window(
                 let state = swapped.child_from_swapped(move_bit, ml.flip_bit);
 
                 let move_board = board.make_move_from_flip_bit(move_bit, ml.flip_bit);
-                if lv == 1 {
-                    search.stats.eval_search_nodes += 1;
-                    if search.check_abort() {
-                        return;
-                    }
-                    search.stats.eval_search_leaf_nodes += 1;
+
+                search.stats.eval_search_nodes += 1;
+                if search.check_abort() {
+                    return;
                 }
+                search.stats.eval_search_leaf_nodes += 1;
+                
                 let Evaluator::Pattern(evaluator) = search.ordering_evaluator.as_ref() else {
                     unreachable!("pattern fast path selected for a non-pattern evaluator");
                 };

@@ -24,8 +24,10 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-/// solve() 内で使う中盤探索の MPC selectivity。
-const EVAL_SOLVER_SELECTIVITY: i32 = 1;
+/// 反復深化で使う MPC selectivity の下限。level 2 = 85%。
+const ITERATIVE_SELECTIVITY_MIN: i32 = 2;
+const ASPIRATION_FULL_WINDOW_DEPTH: i32 = 10;
+const ASPIRATION_STABILIZE_RETRIES: i32 = 10;
 
 /// solve() に指定できる最大レベル。
 pub const SOLVE_LEVEL_MAX: i32 = 60;
@@ -274,7 +276,7 @@ impl Solver {
         .with_thread_pool(self.thread_pool.clone());
         // 開幕の評価は粗いので最大 MPC を使うが、深いレベルでは MPC を弱める。
         search.selectivity_lv = if level > 10 {
-            EVAL_SOLVER_SELECTIVITY
+            ITERATIVE_SELECTIVITY_MIN
         } else {
             SELECTIVITY_LV_MAX
         };
@@ -300,13 +302,11 @@ impl Solver {
             }
             SolverType::Final(selectivity) => {
                 let selectivity = *selectivity;
-                // Final solver 前の中盤反復深化レベル(短く)。
-                let eval_solver_lv = (n_empties - 7 - (2 - selectivity / 2))
-                    .clamp(2, 24)
-                    .min(level);
+                // Edax同様、完全読みの約8手前まで中盤反復深化を行う。
+                let eval_solver_lv = (n_empties - 8).clamp(2, 24).min(level);
                 predict_score = iterative_deepening_eval(
                     eval_solver_lv,
-                    EVAL_SOLVER_SELECTIVITY,
+                    ITERATIVE_SELECTIVITY_MIN,
                     &mut candidates,
                     predict_score,
                     &mut search,
@@ -324,15 +324,11 @@ impl Solver {
                     );
                 }
 
-                let first_selectivity = if n_empties >= 27 && selectivity > 5 {
-                    selectivity - 4
-                } else {
-                    selectivity
-                };
-                let mut final_selectivity = first_selectivity;
+                let mut final_selectivity = first_final_selectivity(selectivity);
                 loop {
                     let init_w = (10 - n_empties).max(2 + predict_score.rem_euclid(2));
                     predict_score = aspiration_search_final(
+                        n_empties,
                         final_selectivity,
                         init_w,
                         predict_score,
@@ -362,12 +358,8 @@ impl Solver {
                     if final_selectivity == selectivity {
                         break;
                     }
-                    // Edaxと同様、30マス未満では高コストな99%相当を省略して完全読みへ進む。
-                    final_selectivity = if n_empties < 30 && final_selectivity >= selectivity - 2 {
-                        selectivity
-                    } else {
-                        final_selectivity + 1
-                    };
+                    final_selectivity =
+                        next_final_selectivity(final_selectivity, selectivity, n_empties);
                 }
             }
         }
@@ -533,7 +525,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 24 {
             Final(4)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level <= 18 {
         if n_empties <= 21 {
@@ -543,7 +535,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 27 {
             Final(2)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level <= 21 {
         if n_empties <= 24 {
@@ -553,7 +545,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 30 {
             Final(2)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level <= 24 {
         if n_empties <= 24 {
@@ -565,7 +557,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 33 {
             Final(1)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level <= 27 {
         if n_empties <= 27 {
@@ -575,7 +567,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 33 {
             Final(2)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level < 30 {
         if n_empties <= 27 {
@@ -587,7 +579,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 36 {
             Final(1)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level <= 31 {
         if n_empties <= 30 {
@@ -597,7 +589,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 36 {
             Final(2)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level <= 33 {
         if n_empties <= 30 {
@@ -609,7 +601,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 39 {
             Final(1)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level <= 35 {
         if n_empties <= 30 {
@@ -621,7 +613,7 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= 39 {
             Final(2)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else if level < 60 {
         if n_empties <= level - 6 {
@@ -637,14 +629,14 @@ fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
         } else if n_empties <= level + 9 {
             Final(1)
         } else {
-            Eval(level, EVAL_SOLVER_SELECTIVITY)
+            Eval(level, ITERATIVE_SELECTIVITY_MIN)
         }
     } else {
         Final(SELECTIVITY_LV_MAX)
     }
 }
 
-/// 中盤の iterative deepening。step=4 で `target_depth` まで反復し、各反復で
+/// 中盤の iterative deepening。Edax同様step=2で`target_depth`まで反復し、各反復で
 /// アスピレーション窓を使う。最終的な fail-soft スコアを返す。
 fn iterative_deepening_eval(
     target_depth: i32,
@@ -653,8 +645,19 @@ fn iterative_deepening_eval(
     init_score: i32,
     search: &mut SearchContext,
 ) -> i32 {
-    let step = 4;
-    let start = target_depth.rem_euclid(step);
+    if target_depth <= 1 {
+        return aspiration_search_eval(
+            target_depth,
+            selectivity,
+            6,
+            init_score,
+            candidates,
+            search,
+        );
+    }
+
+    let step = 2;
+    let start = first_iterative_depth(target_depth);
     let mut score = init_score;
     let mut depth = start;
     while depth <= target_depth {
@@ -671,6 +674,39 @@ fn iterative_deepening_eval(
     score
 }
 
+#[inline(always)]
+fn first_iterative_depth(target_depth: i32) -> i32 {
+    debug_assert!(target_depth >= 2);
+    let mut start = 6 - (target_depth & 1);
+    if start > target_depth - 2 {
+        start = target_depth - 2;
+    }
+    if start <= 0 {
+        start = 2 - (target_depth & 1);
+    }
+    start
+}
+
+#[inline(always)]
+fn first_final_selectivity(target: i32) -> i32 {
+    target.min(ITERATIVE_SELECTIVITY_MIN)
+}
+
+/// Edaxの完全読み反復と同じ空き数閾値で、高価なselectivity段階を省略する。
+fn next_final_selectivity(current: i32, target: i32, n_empties: i32) -> i32 {
+    debug_assert!(current < target);
+    let next = current + 1;
+    let jump_to_target = (n_empties < 21 && next >= 1)
+        || (n_empties < 24 && next >= 2)
+        || (n_empties < 27 && next >= 3)
+        || (n_empties < 30 && next >= 4);
+    if jump_to_target {
+        target
+    } else {
+        next.min(target)
+    }
+}
+
 /// 中盤探索のアスピレーション窓ループ。fail-high/low するたびに窓を片側拡張する。
 fn aspiration_search_eval(
     depth: i32,
@@ -681,41 +717,62 @@ fn aspiration_search_eval(
     search: &mut SearchContext,
 ) -> i32 {
     search.selectivity_lv = selectivity;
-    let mut left = init_width;
-    let mut right = init_width;
-    let mut predict = predict;
-    let mut n = 0;
     let previous_best = candidates[0];
     let previous_score = predict;
-    loop {
-        n += 1;
-        let alpha = (predict - left).max(-SCORE_MAX);
-        let beta = (predict + right).min(SCORE_MAX);
-        debug_assert!(alpha <= beta);
-        predict = search_root_eval_window(depth, alpha, beta, candidates, search);
+
+    if depth <= ASPIRATION_FULL_WINDOW_DEPTH {
+        let score = search_root_eval_window(depth, -SCORE_MAX, SCORE_MAX, candidates, search);
         if search.is_aborted() {
             restore_candidate_front(candidates, previous_best);
             return previous_score;
         }
+        return score;
+    }
 
-        if (predict <= -SCORE_MAX && alpha <= -SCORE_MAX)
-            || (predict >= SCORE_MAX && beta >= SCORE_MAX)
-        {
+    let base_width = init_width.max(1);
+    let mut score = predict;
+    for retry in 0..ASPIRATION_STABILIZE_RETRIES {
+        let old_score = score;
+        let width = retry.max(1) * base_width;
+        let mut left = width;
+        let mut right = width;
+
+        loop {
+            let alpha = (score - left).max(-SCORE_MAX);
+            let beta = (score + right).min(SCORE_MAX);
+            if alpha >= beta {
+                break;
+            }
+            score = search_root_eval_window(depth, alpha, beta, candidates, search);
+            if search.is_aborted() {
+                restore_candidate_front(candidates, previous_best);
+                return previous_score;
+            }
+
+            if (score <= -SCORE_MAX && alpha <= -SCORE_MAX)
+                || (score >= SCORE_MAX && beta >= SCORE_MAX)
+            {
+                break;
+            }
+            if score <= alpha && grow_aspiration_side(&mut left, &mut right) {
+                continue;
+            }
+            if score >= beta && grow_aspiration_side(&mut right, &mut left) {
+                continue;
+            }
             break;
         }
-        if predict >= beta {
-            widen(&mut right, &mut left, n);
-        } else if predict <= alpha {
-            widen(&mut left, &mut right, n);
-        } else {
+
+        if score == old_score {
             break;
         }
     }
-    predict
+    score
 }
 
 /// 終盤探索のアスピレーション窓ループ。
 fn aspiration_search_final(
+    n_empties: i32,
     selectivity: i32,
     init_width: i32,
     predict: i32,
@@ -724,37 +781,60 @@ fn aspiration_search_final(
 ) -> i32 {
     search.selectivity_lv = selectivity;
     let mut root_bounds = [RootBound::UNBOUNDED; 64];
-    let mut left = init_width;
-    let mut right = init_width;
-    let mut predict = predict;
-    let mut n = 0;
     let previous_best = candidates[0];
     let previous_score = predict;
-    loop {
-        n += 1;
-        let alpha = (predict - left).max(-SCORE_MAX);
-        let beta = (predict + right).min(SCORE_MAX);
-        debug_assert!(alpha <= beta);
-        predict = search_root_final_window(alpha, beta, candidates, &mut root_bounds, search);
+
+    if n_empties <= ASPIRATION_FULL_WINDOW_DEPTH {
+        let score =
+            search_root_final_window(-SCORE_MAX, SCORE_MAX, candidates, &mut root_bounds, search);
         if search.is_aborted() {
             restore_candidate_front(candidates, previous_best);
             return previous_score;
         }
+        return score;
+    }
 
-        if (predict <= -SCORE_MAX && alpha <= -SCORE_MAX)
-            || (predict >= SCORE_MAX && beta >= SCORE_MAX)
-        {
+    let base_width = init_width.max(1);
+    let mut score = predict;
+    for retry in 0..ASPIRATION_STABILIZE_RETRIES {
+        let old_score = score;
+        let width = retry.max(1) * base_width;
+        let mut left = width;
+        let mut right = width;
+
+        loop {
+            // Exact Othello scores are even. Expanding outward avoids searching
+            // windows whose only distinction is an impossible odd score.
+            let alpha = even_floor((score - left).max(-SCORE_MAX));
+            let beta = even_ceil((score + right).min(SCORE_MAX));
+            if alpha >= beta {
+                break;
+            }
+            score = search_root_final_window(alpha, beta, candidates, &mut root_bounds, search);
+            if search.is_aborted() {
+                restore_candidate_front(candidates, previous_best);
+                return previous_score;
+            }
+
+            if (score <= -SCORE_MAX && alpha <= -SCORE_MAX)
+                || (score >= SCORE_MAX && beta >= SCORE_MAX)
+            {
+                break;
+            }
+            if score <= alpha && grow_aspiration_side(&mut left, &mut right) {
+                continue;
+            }
+            if score >= beta && grow_aspiration_side(&mut right, &mut left) {
+                continue;
+            }
             break;
         }
-        if predict >= beta {
-            widen(&mut right, &mut left, n);
-        } else if predict <= alpha {
-            widen(&mut left, &mut right, n);
-        } else {
+
+        if score == old_score {
             break;
         }
     }
-    predict
+    score
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -829,14 +909,24 @@ fn restore_candidate_front(candidates: &mut [(u8, Board)], previous_best: (u8, B
     }
 }
 
-/// アスピレーション窓を片側に広げる。fail 側を大きく、反対側を小さめに。
-fn widen(primary: &mut i32, secondary: &mut i32, n: i32) {
-    if n % 2 == 1 {
-        *primary += 2;
-    } else {
-        *primary += n * (n as f64).log2() as i32 + 2;
-        *secondary += 2;
+/// Edax同様、failした側を倍増し、反対側を現在のscoreで閉じる。
+fn grow_aspiration_side(failed_side: &mut i32, opposite_side: &mut i32) -> bool {
+    if *failed_side == 0 {
+        return false;
     }
+    *failed_side = failed_side.saturating_mul(2).min(2 * SCORE_MAX);
+    *opposite_side = 0;
+    true
+}
+
+#[inline(always)]
+fn even_floor(value: i32) -> i32 {
+    value - value.rem_euclid(2)
+}
+
+#[inline(always)]
+fn even_ceil(value: i32) -> i32 {
+    value + value.rem_euclid(2)
 }
 
 /// 中盤の root を [alpha, beta] 窓で 1 回探索し、最善手を `candidates[0]` に
@@ -1256,6 +1346,49 @@ mod tests {
 
         assert_eq!(bound.update(-8, -12, -8), -8);
         assert_eq!(bound.exact(), Some(-8));
+    }
+
+    #[test]
+    fn aspiration_growth_doubles_failed_side_and_closes_opposite_side() {
+        let mut failed = 2;
+        let mut opposite = 2;
+
+        assert!(grow_aspiration_side(&mut failed, &mut opposite));
+        assert_eq!((failed, opposite), (4, 0));
+        assert!(!grow_aspiration_side(&mut opposite, &mut failed));
+    }
+
+    #[test]
+    fn exact_aspiration_bounds_expand_outward_to_even_scores() {
+        assert_eq!(even_floor(3), 2);
+        assert_eq!(even_ceil(3), 4);
+        assert_eq!(even_floor(-3), -4);
+        assert_eq!(even_ceil(-3), -2);
+        assert_eq!(even_floor(8), 8);
+        assert_eq!(even_ceil(8), 8);
+    }
+
+    #[test]
+    fn iterative_deepening_starts_with_edax_parity_and_advances_by_two() {
+        assert_eq!(first_iterative_depth(2), 2);
+        assert_eq!(first_iterative_depth(3), 1);
+        assert_eq!(first_iterative_depth(8), 6);
+        assert_eq!(first_iterative_depth(9), 5);
+        assert_eq!(first_iterative_depth(20), 6);
+    }
+
+    #[test]
+    fn final_selectivity_uses_edax_endgame_jump_thresholds() {
+        assert_eq!(first_final_selectivity(6), 2);
+        assert_eq!(first_final_selectivity(2), 2);
+        assert_eq!(first_final_selectivity(1), 1);
+        assert_eq!(next_final_selectivity(2, 6, 20), 6);
+        assert_eq!(next_final_selectivity(2, 6, 23), 6);
+        assert_eq!(next_final_selectivity(2, 6, 26), 6);
+        assert_eq!(next_final_selectivity(2, 6, 29), 3);
+        assert_eq!(next_final_selectivity(3, 6, 29), 6);
+        assert_eq!(next_final_selectivity(4, 6, 30), 5);
+        assert_eq!(next_final_selectivity(5, 6, 30), 6);
     }
 
     /// 初期盤面で深さ 4 の中盤探索が合法手を返すことを確認する。

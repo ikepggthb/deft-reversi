@@ -392,9 +392,9 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
 
     // ── move ordering ─────────────────────────────────────────────────────────
     let eval_depth = match empty_count {
-        13..17 => 1,
-        17..21 => 2,
-        _ => (empty_count >> 3).max(1),
+        // 13..17 => 1,
+        // 17..21 => 2,
+        _ => (empty_count >> 3).max(1)  ,
     };
 
     assign_ordering_scores_weighted_window(

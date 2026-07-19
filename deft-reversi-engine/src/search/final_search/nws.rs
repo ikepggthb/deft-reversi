@@ -428,10 +428,11 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
     // ── move ordering ─────────────────────────────────────────────────────────
     if move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2 {
         let eval_depth = match n_empties {
-            11..13 => 0,
-            13..17 => 1,
-            17..21 => 2,
-            _ => n_empties >> 3,
+        //    11..13 => 0,
+        //    13..17 => 1,
+        //    17..21 => 2,
+            1..24 => n_empties >> 4,
+            _ => 1
         };
         assign_ordering_scores_weighted(
             board,
