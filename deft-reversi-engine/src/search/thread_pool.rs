@@ -1,4 +1,5 @@
 use crate::search::search::SearchStats;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
@@ -27,7 +28,7 @@ impl TaskHandle {
 
 struct State {
     running: bool,
-    queue: Vec<Job>,
+    queue: VecDeque<Job>,
     idle_workers: usize,
 }
 
@@ -50,7 +51,7 @@ impl ThreadPool {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 running: true,
-                queue: Vec::new(),
+                queue: VecDeque::new(),
                 idle_workers: 0,
             }),
             ready: Condvar::new(),
@@ -88,7 +89,7 @@ impl ThreadPool {
                 aborted: true,
             }
         });
-        state.queue.push(wrapped);
+        state.queue.push_back(wrapped);
         self.shared.ready.notify_one();
         Ok(TaskHandle { receiver })
     }
@@ -96,7 +97,7 @@ impl ThreadPool {
     /// キューから仕事を 1 件取り出す(join 待ちの親スレッドが「手伝う」ために使う)。
     pub fn try_pop_job(&self) -> Option<Job> {
         let mut state = self.shared.state.lock().unwrap();
-        state.queue.pop()
+        state.queue.pop_front()
     }
 
     /// 子タスクの完了を待ちながら、待ち時間でキューの仕事を実行する。
@@ -151,7 +152,7 @@ fn worker_loop(shared: Arc<Shared>) {
                 if !state.running && state.queue.is_empty() {
                     return;
                 }
-                if let Some(job) = state.queue.pop() {
+                if let Some(job) = state.queue.pop_front() {
                     break job;
                 }
                 state.idle_workers += 1;
