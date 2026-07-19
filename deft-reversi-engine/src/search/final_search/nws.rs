@@ -33,7 +33,7 @@ use crate::{
     t_table::{TTProbe, TTSlot, TTValue},
 };
 use arrayvec::ArrayVec;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{cell::UnsafeCell, cmp};
 
@@ -49,7 +49,50 @@ const SWITCH_EMPTIES_NEGA_ALPHA: i32 = 5;
 const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 13;
 
 const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 16;
+const YBWC_TAIL_SPLIT_EMPTIES: i32 = 15;
+const YBWC_TAIL_MIN_IDLE_WORKERS: usize = 4;
+const YBWC_MAX_SLAVES: usize = 3;
+const YBWC_SCORE_UNSET: i32 = SCORE_MAX + 1;
 const LEGAL_UNDEFINED: u64 = u64::MAX;
+
+struct NwsSplitPoint {
+    work: Box<[(usize, Board)]>,
+    next: AtomicUsize,
+    scores: [AtomicI32; 64],
+    searching: Arc<AtomicBool>,
+    beta: i32,
+}
+
+impl NwsSplitPoint {
+    fn new(work: Box<[(usize, Board)]>, beta: i32) -> Self {
+        Self {
+            work,
+            next: AtomicUsize::new(0),
+            scores: std::array::from_fn(|_| AtomicI32::new(YBWC_SCORE_UNSET)),
+            searching: Arc::new(AtomicBool::new(true)),
+            beta,
+        }
+    }
+
+    #[inline(always)]
+    fn next_work(&self) -> Option<(usize, usize, Board)> {
+        if !self.searching.load(Ordering::Acquire) {
+            return None;
+        }
+        let work_index = self.next.fetch_add(1, Ordering::Relaxed);
+        self.work
+            .get(work_index)
+            .map(|&(move_index, board)| (work_index, move_index, board))
+    }
+
+    #[inline(always)]
+    fn finish(&self, work_index: usize, score: i32) {
+        self.scores[work_index].store(score, Ordering::Release);
+        if score >= self.beta {
+            self.searching.store(false, Ordering::Release);
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct SimpleMove {
@@ -521,7 +564,13 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
 }
 
 fn should_split_ybwc(n_empties: i32, move_list: &[MoveBoard], search: &SearchContext) -> bool {
-    n_empties >= YBWC_END_SPLIT_MIN_EMPTIES
+    let can_split_depth = n_empties >= YBWC_END_SPLIT_MIN_EMPTIES
+        || (n_empties == YBWC_TAIL_SPLIT_EMPTIES
+            && search
+                .thread_pool
+                .as_ref()
+                .is_some_and(|pool| pool.idle_worker_count() >= YBWC_TAIL_MIN_IDLE_WORKERS));
+    can_split_depth
         && search.thread_pool.is_some()
         && move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2
 }
@@ -538,125 +587,102 @@ fn nws_final_ybwc(
     let Some(thread_pool) = search.thread_pool.clone() else {
         return alpha;
     };
-    let split_searching = Arc::new(AtomicBool::new(true));
-    let mut handles: Vec<TaskHandle> = Vec::new();
-    let mut best_score = -SCORE_MAX;
-    let mut best_move = NO_COORD;
-    let mut searched = 0usize;
-
-    for (move_index, mb) in move_list.iter().enumerate() {
-        if mb.is_skip {
-            continue;
-        }
-        if searched > 0 && !split_searching.load(Ordering::Relaxed) {
-            break;
-        }
-        let child_board = board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit);
-        if searched == 0 {
-            let score = -nws_final(&child_board, -beta, search);
-            searched += 1;
-            if search.is_aborted() {
-                split_searching.store(false, Ordering::Relaxed);
-                join_ybwc_tasks(handles, search, true);
-                return alpha;
-            }
-            if score >= beta {
-                split_searching.store(false, Ordering::Relaxed);
-                join_ybwc_tasks(handles, search, true);
-                search.tt.store(
-                    tt_slot,
-                    board,
-                    score,
-                    SCORE_MAX,
-                    FINAL_LV,
-                    search.selectivity_lv,
-                    mb.move_num,
-                );
-                return score;
-            }
-            alpha_cur = alpha_cur.max(score);
-            best_score = best_score.max(score);
-            best_move = mb.move_num;
-            continue;
-        }
-
-        let job = make_ybwc_job(
-            child_board,
-            -beta,
-            beta,
-            move_index,
-            split_searching.clone(),
-            search,
+    let Some((first_index, first_move)) = move_list.iter().enumerate().find(|(_, mv)| !mv.is_skip)
+    else {
+        return alpha;
+    };
+    let first_child = board.make_move_from_flip_bit(1 << first_move.move_num, first_move.flip_bit);
+    let first_score = -nws_final(&first_child, -beta, search);
+    if search.is_aborted() {
+        return alpha;
+    }
+    if first_score >= beta {
+        search.tt.store(
+            tt_slot,
+            board,
+            first_score,
+            SCORE_MAX,
+            FINAL_LV,
+            search.selectivity_lv,
+            first_move.move_num,
         );
+        return first_score;
+    }
+
+    alpha_cur = alpha_cur.max(first_score);
+    let mut best_score = first_score;
+    let mut best_move = first_move.move_num;
+    let work = move_list
+        .iter()
+        .enumerate()
+        .skip(first_index + 1)
+        .filter(|(_, mb)| !mb.is_skip)
+        .map(|(move_index, mb)| {
+            (
+                move_index,
+                board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit),
+            )
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    let split = Arc::new(NwsSplitPoint::new(work, beta));
+    let mut handles: Vec<TaskHandle> = Vec::with_capacity(YBWC_MAX_SLAVES);
+    for _ in 0..YBWC_MAX_SLAVES.min(split.work.len()) {
+        let job = make_nws_split_worker(split.clone(), search);
         match thread_pool.try_push(job) {
             Ok(handle) => {
                 search.stats.ybwc_splits += 1;
                 handles.push(handle);
             }
-            Err(job) => {
-                let result = job();
-                search.stats.add_assign(result.stats);
-                if result.aborted {
-                    search.stats.ybwc_split_aborts += 1;
-                    if !split_searching.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    split_searching.store(false, Ordering::Relaxed);
-                    join_ybwc_tasks(handles, search, true);
-                    search.check_abort_now();
-                    return alpha;
-                }
-                if result.score >= beta {
-                    split_searching.store(false, Ordering::Relaxed);
-                    join_ybwc_tasks(handles, search, true);
-                    let move_num = move_list[result.move_index].move_num;
-                    search.tt.store(
-                        tt_slot,
-                        board,
-                        result.score,
-                        SCORE_MAX,
-                        FINAL_LV,
-                        search.selectivity_lv,
-                        move_num,
-                    );
-                    return result.score;
-                }
-                alpha_cur = alpha_cur.max(result.score);
-                if result.score > best_score {
-                    best_score = result.score;
-                    best_move = move_list[result.move_index].move_num;
-                }
-            }
+            Err(_) => break,
         }
     }
 
-    let results = collect_ybwc_tasks(handles, search);
+    while let Some((work_index, _, child_board)) = split.next_work() {
+        search.searchings.push(split.searching.clone());
+        let score = -nws_final(&child_board, -beta, search);
+        search.searchings.pop();
+        if search.is_aborted() {
+            if search.recover_from_split_abort(&split.searching) {
+                break;
+            }
+            split.searching.store(false, Ordering::Release);
+            let _ = collect_ybwc_tasks(handles, search);
+            return alpha;
+        }
+        split.finish(work_index, score);
+        if score >= beta {
+            break;
+        }
+    }
+
+    let _ = collect_ybwc_tasks(handles, search);
     if search.check_abort_now() {
-        split_searching.store(false, Ordering::Relaxed);
+        split.searching.store(false, Ordering::Release);
         return alpha;
     }
-    for result in results {
-        if result.aborted {
+    for (work_index, &(move_index, _)) in split.work.iter().enumerate() {
+        let score = split.scores[work_index].load(Ordering::Acquire);
+        if score == YBWC_SCORE_UNSET {
             continue;
         }
-        if result.score >= beta {
-            split_searching.store(false, Ordering::Relaxed);
-            let move_num = move_list[result.move_index].move_num;
+        let mb = &move_list[move_index];
+        if score >= beta {
             search.tt.store(
                 tt_slot,
                 board,
-                result.score,
+                score,
                 SCORE_MAX,
                 FINAL_LV,
                 search.selectivity_lv,
-                move_num,
+                mb.move_num,
             );
-            return result.score;
+            return score;
         }
-        alpha_cur = alpha_cur.max(result.score);
-        if result.score > best_score {
-            best_score = result.score;
-            best_move = move_list[result.move_index].move_num;
+        alpha_cur = alpha_cur.max(score);
+        if score > best_score {
+            best_score = score;
+            best_move = mb.move_num;
         }
     }
 
@@ -685,6 +711,46 @@ fn nws_final_ybwc(
     }
 
     best_score
+}
+
+fn make_nws_split_worker(split: Arc<NwsSplitPoint>, parent: &SearchContext) -> Job {
+    let evaluator = parent.evaluator.clone();
+    let ordering_evaluator = parent.ordering_evaluator.clone();
+    let mpc_config = parent.mpc_config.clone();
+    let tt = parent.tt.clone();
+    let stop = parent.stop.clone();
+    let thread_pool = parent.thread_pool.clone();
+    let selectivity_lv = parent.selectivity_lv;
+    let mut searchings = parent.searchings.clone();
+    searchings.push(split.searching.clone());
+
+    Box::new(move || {
+        let mut stats = crate::search::search::SearchStats::default();
+        let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
+            .with_ordering_evaluator(ordering_evaluator)
+            .with_stop(stop)
+            .with_thread_pool(thread_pool)
+            .with_searchings(searchings);
+        search.selectivity_lv = selectivity_lv;
+        while let Some((work_index, _, child_board)) = split.next_work() {
+            let score = -nws_final(&child_board, -split.beta, &mut search);
+            if search.is_aborted() {
+                break;
+            }
+            split.finish(work_index, score);
+            if score >= split.beta {
+                break;
+            }
+        }
+        let aborted = search.is_aborted();
+        drop(search);
+        TaskResult {
+            score: 0,
+            move_index: 0,
+            stats,
+            aborted,
+        }
+    })
 }
 
 pub(crate) fn make_ybwc_job(
@@ -746,14 +812,6 @@ pub(crate) fn collect_ybwc_tasks(
         results.push(result);
     }
     results
-}
-
-fn join_ybwc_tasks(handles: Vec<TaskHandle>, search: &mut SearchContext, discard_scores: bool) {
-    for result in collect_ybwc_tasks(handles, search) {
-        if discard_scores && result.aborted {
-            continue;
-        }
-    }
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

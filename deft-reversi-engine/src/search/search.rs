@@ -133,6 +133,27 @@ impl<'a> SearchContext<'a> {
         }
         self.aborted
     }
+
+    /// 現在の分割点で兄弟がcutoffしたことだけが中断理由ならmaster探索を再開する。
+    /// 外部stopまたは祖先分割の中断は解除しない。
+    pub(crate) fn recover_from_split_abort(&mut self, split: &Arc<AtomicBool>) -> bool {
+        if !self.aborted || split.load(Ordering::Acquire) {
+            return false;
+        }
+        if self
+            .stop
+            .as_ref()
+            .is_some_and(|stop| stop.load(Ordering::Acquire))
+            || self
+                .searchings
+                .iter()
+                .any(|searching| !searching.load(Ordering::Acquire))
+        {
+            return false;
+        }
+        self.aborted = false;
+        true
+    }
 }
 
 impl SearchStats {

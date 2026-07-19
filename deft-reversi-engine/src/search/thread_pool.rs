@@ -1,6 +1,6 @@
 use crate::search::search::SearchStats;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 
@@ -36,6 +36,7 @@ struct Shared {
     state: Mutex<State>,
     ready: Condvar,
     has_idle_worker: AtomicBool,
+    idle_workers: AtomicUsize,
     /// キューに積める仕事数の上限。ワーカーが後から空いたときに
     /// すぐ取れる「作り置き」を許しつつ、投機的タスクの溢れを防ぐ。
     queue_cap: usize,
@@ -56,6 +57,7 @@ impl ThreadPool {
             }),
             ready: Condvar::new(),
             has_idle_worker: AtomicBool::new(false),
+            idle_workers: AtomicUsize::new(0),
             queue_cap: (n_workers / 2).max(2),
         });
         let mut workers = Vec::with_capacity(n_workers);
@@ -98,6 +100,11 @@ impl ThreadPool {
     pub fn try_pop_job(&self) -> Option<Job> {
         let mut state = self.shared.state.lock().unwrap();
         state.queue.pop_front()
+    }
+
+    #[inline(always)]
+    pub fn idle_worker_count(&self) -> usize {
+        self.shared.idle_workers.load(Ordering::Acquire)
     }
 
     /// 子タスクの完了を待ちながら、待ち時間でキューの仕事を実行する。
@@ -156,9 +163,11 @@ fn worker_loop(shared: Arc<Shared>) {
                     break job;
                 }
                 state.idle_workers += 1;
+                shared.idle_workers.fetch_add(1, Ordering::Release);
                 shared.has_idle_worker.store(true, Ordering::Relaxed);
                 state = shared.ready.wait(state).unwrap();
                 state.idle_workers -= 1;
+                shared.idle_workers.fetch_sub(1, Ordering::Release);
                 if state.idle_workers == 0 {
                     shared.has_idle_worker.store(false, Ordering::Relaxed);
                 }
