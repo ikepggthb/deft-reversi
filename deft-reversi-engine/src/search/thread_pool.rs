@@ -1,6 +1,6 @@
 use crate::search::search::SearchStats;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 
@@ -35,8 +35,9 @@ struct State {
 struct Shared {
     state: Mutex<State>,
     ready: Condvar,
-    has_idle_worker: AtomicBool,
     idle_workers: AtomicUsize,
+    /// `state.queue.len()` のロック無し複製。try_push の早期棄却に使う。
+    queue_len: AtomicUsize,
     /// キューに積める仕事数の上限。ワーカーが後から空いたときに
     /// すぐ取れる「作り置き」を許しつつ、投機的タスクの溢れを防ぐ。
     queue_cap: usize,
@@ -56,9 +57,9 @@ impl ThreadPool {
                 idle_workers: 0,
             }),
             ready: Condvar::new(),
-            has_idle_worker: AtomicBool::new(false),
             idle_workers: AtomicUsize::new(0),
-            queue_cap: (n_workers / 2).max(2),
+            queue_len: AtomicUsize::new(0),
+            queue_cap: n_workers.max(2),
         });
         let mut workers = Vec::with_capacity(n_workers);
         for _ in 0..n_workers {
@@ -69,14 +70,12 @@ impl ThreadPool {
     }
 
     pub fn try_push(&self, job: Job) -> Result<TaskHandle, Job> {
-        if !self.shared.has_idle_worker.load(Ordering::Relaxed) {
+        // ロックを取る前に、キューが埋まっている場合は棄却する。
+        if self.shared.queue_len.load(Ordering::Relaxed) >= self.shared.queue_cap {
             return Err(job);
         }
         let mut state = self.shared.state.lock().unwrap();
-        if !state.running
-            || state.queue.len() >= self.shared.queue_cap
-            || state.queue.len() >= state.idle_workers
-        {
+        if !state.running || state.queue.len() >= self.shared.queue_cap {
             return Err(job);
         }
 
@@ -92,14 +91,20 @@ impl ThreadPool {
             }
         });
         state.queue.push_back(wrapped);
+        self.shared.queue_len.store(state.queue.len(), Ordering::Relaxed);
         self.shared.ready.notify_one();
         Ok(TaskHandle { receiver })
     }
 
     /// キューから仕事を 1 件取り出す(join 待ちの親スレッドが「手伝う」ために使う)。
     pub fn try_pop_job(&self) -> Option<Job> {
+        if self.shared.queue_len.load(Ordering::Relaxed) == 0 {
+            return None;
+        }
         let mut state = self.shared.state.lock().unwrap();
-        state.queue.pop_front()
+        let job = state.queue.pop_front();
+        self.shared.queue_len.store(state.queue.len(), Ordering::Relaxed);
+        job
     }
 
     #[inline(always)]
@@ -160,17 +165,14 @@ fn worker_loop(shared: Arc<Shared>) {
                     return;
                 }
                 if let Some(job) = state.queue.pop_front() {
+                    shared.queue_len.store(state.queue.len(), Ordering::Relaxed);
                     break job;
                 }
                 state.idle_workers += 1;
                 shared.idle_workers.fetch_add(1, Ordering::Release);
-                shared.has_idle_worker.store(true, Ordering::Relaxed);
                 state = shared.ready.wait(state).unwrap();
                 state.idle_workers -= 1;
                 shared.idle_workers.fetch_sub(1, Ordering::Release);
-                if state.idle_workers == 0 {
-                    shared.has_idle_worker.store(false, Ordering::Relaxed);
-                }
             }
         };
         let _ = job();
