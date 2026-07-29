@@ -430,6 +430,12 @@ impl Solver {
                 stats.ybwc_splits, stats.ybwc_split_aborts
             );
         }
+        if crate::t_table::tt_contention_stats_enabled() {
+            eprintln!(
+                "TTSTATS {}",
+                crate::t_table::take_tt_contention_stats().summary_line()
+            );
+        }
         let best_move_opt = (best_move != NO_COORD).then_some(best_move);
         let pv = best_move_opt
             .filter(|pos| board.moves() & (1u64 << pos) != 0)
