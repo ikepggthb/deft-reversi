@@ -131,7 +131,7 @@ impl ThreadPool {
             }
             match handle
                 .receiver
-                .recv_timeout(std::time::Duration::from_micros(200))
+                .recv_timeout(std::time::Duration::from_micros(50))
             {
                 Ok(result) => return result,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
