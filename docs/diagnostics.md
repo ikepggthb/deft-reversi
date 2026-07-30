@@ -8,7 +8,7 @@
 | `DEFT_SEARCH_TRACE` | 探索段階、ルート各手の値・ノード数、TT情報 |
 | `DEFT_MPC_STATS` | MPCの試行数とカット数 |
 | `DEFT_STABILITY_STATS` | stability cutの試行数とカット数 |
-| `DEFT_YBWC_STATS` | YBWC split数とabort数 |
+| `DEFT_YBWC_STATS` | YBWC split数、abort数、仕事の渡し先の内訳 |
 | `DEFT_TT_STATS` | 置換表の排他制御でどれだけ競合したか |
 | `DEFT_PHASE_TIME` | `solve()` の段階別の所要時間とノード数 |
 
@@ -19,6 +19,23 @@ DEFT_TT_STATS=1 ./deft-reversi-cli \
   -s deft-reversi-cli/problem/fforum-40-59.obf \
   -e data/eval/eval.bin --threads 4 -l 60
 ```
+
+## DEFT_YBWC_STATS
+
+```text
+YBWCSTATS splits=7083 aborts=187 | spawn_tries=27588 handoff=343 (1.2%) pool_push=6647 failed=20598
+```
+
+分割で生まれた仕事は次の順に渡し先を探す。
+
+| 項目 | 内容 |
+|---|---|
+| `handoff` | 待機中の祖先の master へ直接渡せた回数 |
+| `pool_push` | 祖先に渡せず、ワーカープールのキューへ積んだ回数 |
+| `failed` | どこにも渡せず、master がその手を自分で直列に探索した回数 |
+
+`handoff` の割合が低い場合、分割しようとした時点で祖先の master が
+待機状態になっていないことを意味する。
 
 ## DEFT_PHASE_TIME
 

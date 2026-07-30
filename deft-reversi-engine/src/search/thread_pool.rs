@@ -1,10 +1,123 @@
 use crate::search::search::SearchStats;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 
 pub type Job = Box<dyn FnOnce() -> TaskResult + Send + 'static>;
+
+/// 完了結果を呼び出し側へ返さない仕事。
+///
+/// 結果は分割点の共有オブジェクトへ書き込むため、`mpsc::channel` を確保せずに済む。
+pub type DetachedJob = Box<dyn FnOnce() + Send + 'static>;
+
+/// 分割点で master が slave の完了を待つための受け口。
+///
+/// `completions` は単調増加のカウンタで、master は自分が観測済みの値と
+/// 比較して待機を解除する。更新はすべて mutex 下で行い、更新後に notify する
+/// ため通知の取りこぼしは起きない。
+pub struct HelperSlot {
+    /// `state.waiting` のロック無し複製。`try_offer` の早期棄却に使う。
+    waiting: AtomicBool,
+    state: Mutex<HelperState>,
+    cv: Condvar,
+}
+
+#[derive(Default)]
+struct HelperState {
+    /// この分割点で完了した slave の数。
+    completions: u64,
+    /// cutoff や外部 stop で待機を解除するためのフラグ。
+    closed: bool,
+    /// master がこの受け口で待機中か。
+    waiting: bool,
+    /// 子孫から直接渡された仕事。同時に保持するのは 1 件だけ。
+    job: Option<DetachedJob>,
+}
+
+impl Default for HelperSlot {
+    fn default() -> Self {
+        Self {
+            waiting: AtomicBool::new(false),
+            state: Mutex::new(HelperState::default()),
+            cv: Condvar::new(),
+        }
+    }
+}
+
+impl HelperSlot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// slave が 1 件終わったことを master に伝える。
+    pub fn notify_completion(&self) {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.completions = state.completions.wrapping_add(1);
+        }
+        self.cv.notify_all();
+    }
+
+
+    /// `spawned` 件すべてが完了したか。ブロックしない。
+    pub fn is_complete(&self, spawned: u64) -> bool {
+        let state = self.state.lock().unwrap();
+        state.completions >= spawned || state.closed
+    }
+
+    /// 待機中の master にこの仕事を直接渡す。渡せなければ仕事をそのまま返す。
+    ///
+    /// 呼び出し側は自分の祖先チェーンを近い順に辿ってこれを試す。
+    pub fn try_offer(&self, job: DetachedJob) -> Result<(), DetachedJob> {
+        if !self.waiting.load(Ordering::Relaxed) {
+            return Err(job);
+        }
+        let mut state = self.state.lock().unwrap();
+        if !state.waiting || state.job.is_some() || state.closed {
+            return Err(job);
+        }
+        state.job = Some(job);
+        // 同じ master へ二重に渡さないよう、ここで待機を解除しておく。
+        state.waiting = false;
+        self.waiting.store(false, Ordering::Relaxed);
+        drop(state);
+        self.cv.notify_all();
+        Ok(())
+    }
+
+    /// 渡された仕事があれば取り出す。ブロックしない。
+    pub fn take_offered_job(&self) -> Option<DetachedJob> {
+        if self.state.lock().unwrap().job.is_none() {
+            return None;
+        }
+        self.state.lock().unwrap().job.take()
+    }
+
+    /// 完了か、仕事を渡されるまで待つ。`timeout` で必ず戻る。
+    ///
+    /// 渡された仕事があればそれを返す。
+    pub fn wait_or_take_job(
+        &self,
+        spawned: u64,
+        timeout: std::time::Duration,
+    ) -> Option<DetachedJob> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(job) = state.job.take() {
+            return Some(job);
+        }
+        if state.completions >= spawned || state.closed {
+            return None;
+        }
+        state.waiting = true;
+        self.waiting.store(true, Ordering::Relaxed);
+        let (mut state, _) = self.cv.wait_timeout(state, timeout).unwrap();
+        state.waiting = false;
+        self.waiting.store(false, Ordering::Relaxed);
+        state.job.take()
+    }
+
+}
 
 #[derive(Debug)]
 pub struct TaskResult {
@@ -96,6 +209,36 @@ impl ThreadPool {
         Ok(TaskHandle { receiver })
     }
 
+    /// 結果を返さない仕事を投入する。`mpsc::channel` を確保しない分だけ軽い。
+    ///
+    /// 完了は分割点の [`HelperSlot`] で数える。
+    pub fn try_push_detached(&self, job: DetachedJob) -> Result<(), DetachedJob> {
+        // ロックを取る前に、キューが埋まっている場合は棄却する。
+        if self.shared.queue_len.load(Ordering::Relaxed) >= self.shared.queue_cap {
+            return Err(job);
+        }
+        let mut state = self.shared.state.lock().unwrap();
+        if !state.running || state.queue.len() >= self.shared.queue_cap {
+            return Err(job);
+        }
+
+        let wrapped: Job = Box::new(move || {
+            job();
+            TaskResult {
+                score: 0,
+                move_index: 0,
+                stats: SearchStats::default(),
+                aborted: false,
+            }
+        });
+        state.queue.push_back(wrapped);
+        self.shared
+            .queue_len
+            .store(state.queue.len(), Ordering::Relaxed);
+        self.shared.ready.notify_one();
+        Ok(())
+    }
+
     /// キューから仕事を 1 件取り出す(join 待ちの親スレッドが「手伝う」ために使う)。
     pub fn try_pop_job(&self) -> Option<Job> {
         if self.shared.queue_len.load(Ordering::Relaxed) == 0 {
@@ -106,6 +249,7 @@ impl ThreadPool {
         self.shared.queue_len.store(state.queue.len(), Ordering::Relaxed);
         job
     }
+
 
     #[inline(always)]
     pub fn idle_worker_count(&self) -> usize {

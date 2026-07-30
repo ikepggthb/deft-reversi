@@ -25,16 +25,16 @@ use crate::{
         },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
-        search::SearchContext,
+        search::{SearchContext, SearchStats},
         stability_cut::stability_cut_nws,
-        thread_pool::{Job, TaskHandle, TaskResult},
+        thread_pool::{DetachedJob, HelperSlot, Job, TaskHandle, TaskResult},
         tt_cut::*,
     },
     t_table::{TTProbe, TTSlot, TTValue},
 };
 use arrayvec::ArrayVec;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{cell::UnsafeCell, cmp};
 
 const TT_MOVE0_SCORE: i32 = 1 << 20;
@@ -52,6 +52,9 @@ const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 16;
 const YBWC_TAIL_SPLIT_EMPTIES: i32 = 15;
 const YBWC_TAIL_MIN_IDLE_WORKERS: usize = 4;
 const YBWC_MAX_SLAVES: usize = 3;
+/// master が待機中に「未実行の仕事がキューに残っていないか」を見に行く間隔。
+/// slave の完了自体は condvar で即座に通知されるため、完了検知の遅延ではない。
+const HELPER_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_micros(50);
 const YBWC_SCORE_UNSET: i32 = SCORE_MAX + 1;
 const LEGAL_UNDEFINED: u64 = u64::MAX;
 
@@ -61,6 +64,10 @@ struct NwsSplitPoint {
     scores: [AtomicI32; 64],
     searching: Arc<AtomicBool>,
     beta: i32,
+    /// slave の完了を master へ伝える受け口。子孫からの仕事の受け口でもある。
+    helper: Arc<HelperSlot>,
+    /// slave が積み上げた探索統計。master が最後に自分へ加算する。
+    slave_stats: Mutex<SearchStats>,
 }
 
 impl NwsSplitPoint {
@@ -71,7 +78,56 @@ impl NwsSplitPoint {
             scores: std::array::from_fn(|_| AtomicI32::new(YBWC_SCORE_UNSET)),
             searching: Arc::new(AtomicBool::new(true)),
             beta,
+            helper: Arc::new(HelperSlot::new()),
+            slave_stats: Mutex::new(SearchStats::default()),
         }
+    }
+
+    /// slave が 1 件終わったときに呼ぶ。統計を積んで master を起こす。
+    fn slave_finished(&self, stats: SearchStats, aborted: bool) {
+        {
+            let mut acc = self.slave_stats.lock().unwrap();
+            acc.add_assign(stats);
+            if aborted {
+                acc.ybwc_split_aborts += 1;
+            }
+        }
+        self.helper.notify_completion();
+    }
+
+    /// master が spawn 済みの slave をすべて待ち、統計を回収する。
+    fn join_slaves(&self, spawned: u64, search: &mut SearchContext) {
+        if spawned == 0 {
+            return;
+        }
+        // 待っている間はキューに残った仕事を実行する。
+        // ワーカー自身も分割点の master になってブロックしうるため、
+        // 待機中の master が実行を肩代わりしないと、キューの仕事を走らせる者が
+        // いなくなり停止する。
+        let pool = search.thread_pool.clone();
+        loop {
+            if self.helper.is_complete(spawned) {
+                break;
+            }
+            // 1. 子孫から直接渡された仕事
+            if let Some(job) = self.helper.take_offered_job() {
+                job();
+                continue;
+            }
+            // 2. キューに残った仕事 (誰も実行できず停止するのを防ぐ)
+            if let Some(pool) = pool.as_deref() {
+                if let Some(job) = pool.try_pop_job() {
+                    let _ = job();
+                    continue;
+                }
+            }
+            // 3. 完了か仕事の受け取りまで待つ
+            if let Some(job) = self.helper.wait_or_take_job(spawned, HELPER_POLL_INTERVAL) {
+                job();
+            }
+        }
+        let stats = std::mem::take(&mut *self.slave_stats.lock().unwrap());
+        search.stats.add_assign(stats);
     }
 
     #[inline(always)]
@@ -584,9 +640,9 @@ fn nws_final_ybwc(
     move_list: &[MoveBoard],
     search: &mut SearchContext,
 ) -> i32 {
-    let Some(thread_pool) = search.thread_pool.clone() else {
+    if search.thread_pool.is_none() {
         return alpha;
-    };
+    }
     let Some((first_index, first_move)) = move_list.iter().enumerate().find(|(_, mv)| !mv.is_skip)
     else {
         return alpha;
@@ -626,13 +682,13 @@ fn nws_final_ybwc(
         .collect::<Vec<_>>()
         .into_boxed_slice();
     let split = Arc::new(NwsSplitPoint::new(work, beta));
-    let mut handles: Vec<TaskHandle> = Vec::with_capacity(YBWC_MAX_SLAVES);
+    let mut spawned = 0u64;
     for _ in 0..YBWC_MAX_SLAVES.min(split.work.len()) {
         let job = make_nws_split_worker(split.clone(), search);
-        match thread_pool.try_push(job) {
-            Ok(handle) => {
+        match search.spawn_split_job(job) {
+            Ok(()) => {
                 search.stats.ybwc_splits += 1;
-                handles.push(handle);
+                spawned += 1;
             }
             Err(_) => break,
         }
@@ -640,14 +696,16 @@ fn nws_final_ybwc(
 
     while let Some((work_index, _, child_board)) = split.next_work() {
         search.searchings.push(split.searching.clone());
+        search.helper_chain.push(split.helper.clone());
         let score = -nws_final(&child_board, -beta, search);
+        search.helper_chain.pop();
         search.searchings.pop();
         if search.is_aborted() {
             if search.recover_from_split_abort(&split.searching) {
                 break;
             }
             split.searching.store(false, Ordering::Release);
-            let _ = collect_ybwc_tasks(handles, search);
+            split.join_slaves(spawned, search);
             return alpha;
         }
         split.finish(work_index, score);
@@ -656,7 +714,7 @@ fn nws_final_ybwc(
         }
     }
 
-    let _ = collect_ybwc_tasks(handles, search);
+    split.join_slaves(spawned, search);
     if search.check_abort_now() {
         split.searching.store(false, Ordering::Release);
         return alpha;
@@ -713,7 +771,7 @@ fn nws_final_ybwc(
     best_score
 }
 
-fn make_nws_split_worker(split: Arc<NwsSplitPoint>, parent: &SearchContext) -> Job {
+fn make_nws_split_worker(split: Arc<NwsSplitPoint>, parent: &SearchContext) -> DetachedJob {
     let evaluator = parent.evaluator.clone();
     let ordering_evaluator = parent.ordering_evaluator.clone();
     let mpc_config = parent.mpc_config.clone();
@@ -723,6 +781,8 @@ fn make_nws_split_worker(split: Arc<NwsSplitPoint>, parent: &SearchContext) -> J
     let selectivity_lv = parent.selectivity_lv;
     let mut searchings = parent.searchings.clone();
     searchings.push(split.searching.clone());
+    let mut helper_chain = parent.helper_chain.clone();
+    helper_chain.push(split.helper.clone());
 
     Box::new(move || {
         let mut stats = crate::search::search::SearchStats::default();
@@ -730,7 +790,8 @@ fn make_nws_split_worker(split: Arc<NwsSplitPoint>, parent: &SearchContext) -> J
             .with_ordering_evaluator(ordering_evaluator)
             .with_stop(stop)
             .with_thread_pool(thread_pool)
-            .with_searchings(searchings);
+            .with_searchings(searchings)
+            .with_helper_chain(helper_chain);
         search.selectivity_lv = selectivity_lv;
         while let Some((work_index, _, child_board)) = split.next_work() {
             let score = -nws_final(&child_board, -split.beta, &mut search);
@@ -744,12 +805,7 @@ fn make_nws_split_worker(split: Arc<NwsSplitPoint>, parent: &SearchContext) -> J
         }
         let aborted = search.is_aborted();
         drop(search);
-        TaskResult {
-            score: 0,
-            move_index: 0,
-            stats,
-            aborted,
-        }
+        split.slave_finished(stats, aborted);
     })
 }
 
@@ -770,6 +826,7 @@ pub(crate) fn make_ybwc_job(
     let selectivity_lv = parent.selectivity_lv;
     let mut searchings = parent.searchings.clone();
     searchings.push(split_searching.clone());
+    let helper_chain = parent.helper_chain.clone();
 
     Box::new(move || {
         let mut stats = crate::search::search::SearchStats::default();
@@ -777,7 +834,8 @@ pub(crate) fn make_ybwc_job(
             .with_ordering_evaluator(ordering_evaluator)
             .with_stop(stop)
             .with_thread_pool(thread_pool)
-            .with_searchings(searchings);
+            .with_searchings(searchings)
+            .with_helper_chain(helper_chain);
         search.selectivity_lv = selectivity_lv;
         let score = -nws_final(&child_board, child_alpha, &mut search);
         let aborted = search.is_aborted();
@@ -824,7 +882,7 @@ mod tests {
     use crate::search::mpc::MpcConfig;
     use crate::search::search::SearchStats;
     use crate::t_table::TranspositionTable;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     fn shared_resources() -> (Arc<Evaluator>, Arc<MpcConfig>, Arc<TranspositionTable>) {
         (

@@ -1,6 +1,6 @@
 use crate::eval::Evaluator;
 use crate::search::mpc::MpcConfig;
-use crate::search::thread_pool::ThreadPool;
+use crate::search::thread_pool::{DetachedJob, HelperSlot, ThreadPool};
 use crate::t_table::TranspositionTable;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -27,6 +27,12 @@ pub struct SearchStats {
     pub stability_cuts: u64,
     pub ybwc_splits: u64,
     pub ybwc_split_aborts: u64,
+    /// 待機中の祖先へ直接渡せた回数。
+    pub ybwc_handoffs: u64,
+    /// 祖先に渡せずワーカープールへ積んだ回数。
+    pub ybwc_pool_pushes: u64,
+    /// どこにも渡せず master が自分で探索した回数。
+    pub ybwc_spawn_failures: u64,
 }
 
 /// 評価探索で共有する不変資源と探索設定。
@@ -43,6 +49,11 @@ pub struct SearchContext<'a> {
     pub selectivity_lv: i32,
     pub thread_pool: Option<Arc<ThreadPool>>,
     pub searchings: Vec<Arc<AtomicBool>>,
+    /// 祖先の分割点の受け口。末尾が最も深い。
+    ///
+    /// 分割時にここを末尾から辿って待機中の master を探し、
+    /// 見つかればその master へ仕事を直接渡す。
+    pub(crate) helper_chain: Vec<Arc<HelperSlot>>,
     pub(crate) stop: Option<Arc<AtomicBool>>,
     aborted: bool,
 }
@@ -65,6 +76,7 @@ impl<'a> SearchContext<'a> {
             selectivity_lv: NO_MPC_SELECTIVITY_LV,
             thread_pool: None,
             searchings: Vec::new(),
+            helper_chain: Vec::new(),
             stop: None,
             aborted: false,
         }
@@ -94,6 +106,42 @@ impl<'a> SearchContext<'a> {
     pub fn with_searchings(mut self, searchings: Vec<Arc<AtomicBool>>) -> Self {
         self.searchings = searchings;
         self
+    }
+
+    pub(crate) fn with_helper_chain(mut self, helper_chain: Vec<Arc<HelperSlot>>) -> Self {
+        self.helper_chain = helper_chain;
+        self
+    }
+
+    /// 分割点の仕事を、待機中の祖先か、居なければワーカープールへ渡す。
+    ///
+    /// 近い祖先から順に試す。どこにも渡せなければ仕事をそのまま返し、
+    /// 呼び出し側 (master) がその手を自分で探索する。
+    pub(crate) fn spawn_split_job(&mut self, mut job: DetachedJob) -> Result<(), DetachedJob> {
+        for slot in self.helper_chain.iter().rev() {
+            match slot.try_offer(job) {
+                Ok(()) => {
+                    self.stats.ybwc_handoffs += 1;
+                    return Ok(());
+                }
+                Err(returned) => job = returned,
+            }
+        }
+        match self.thread_pool.as_deref() {
+            Some(pool) => {
+                let result = pool.try_push_detached(job);
+                if result.is_ok() {
+                    self.stats.ybwc_pool_pushes += 1;
+                } else {
+                    self.stats.ybwc_spawn_failures += 1;
+                }
+                result
+            }
+            None => {
+                self.stats.ybwc_spawn_failures += 1;
+                Err(job)
+            }
+        }
     }
 
     #[inline(always)]
@@ -172,5 +220,8 @@ impl SearchStats {
         self.stability_cuts += other.stability_cuts;
         self.ybwc_splits += other.ybwc_splits;
         self.ybwc_split_aborts += other.ybwc_split_aborts;
+        self.ybwc_handoffs += other.ybwc_handoffs;
+        self.ybwc_pool_pushes += other.ybwc_pool_pushes;
+        self.ybwc_spawn_failures += other.ybwc_spawn_failures;
     }
 }

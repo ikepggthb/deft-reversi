@@ -512,9 +512,22 @@ impl Solver {
             );
         }
         if std::env::var_os("DEFT_YBWC_STATS").is_some() {
+            let spawn_tries =
+                stats.ybwc_handoffs + stats.ybwc_pool_pushes + stats.ybwc_spawn_failures;
+            let handoff_rate = if spawn_tries == 0 {
+                0.0
+            } else {
+                100.0 * stats.ybwc_handoffs as f64 / spawn_tries as f64
+            };
             eprintln!(
-                "YBWCSTATS splits={} aborts={}",
-                stats.ybwc_splits, stats.ybwc_split_aborts
+                "YBWCSTATS splits={} aborts={} | spawn_tries={} handoff={} ({:.1}%) pool_push={} failed={}",
+                stats.ybwc_splits,
+                stats.ybwc_split_aborts,
+                spawn_tries,
+                stats.ybwc_handoffs,
+                handoff_rate,
+                stats.ybwc_pool_pushes,
+                stats.ybwc_spawn_failures,
             );
         }
         if crate::t_table::tt_contention_stats_enabled() {
