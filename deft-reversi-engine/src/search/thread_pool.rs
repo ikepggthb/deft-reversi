@@ -50,6 +50,12 @@ impl HelperSlot {
         Self::default()
     }
 
+    /// master が待機中か。ロック無しの概算。
+    #[inline(always)]
+    pub fn is_waiting(&self) -> bool {
+        self.waiting.load(Ordering::Relaxed)
+    }
+
     /// slave が 1 件終わったことを master に伝える。
     pub fn notify_completion(&self) {
         {
@@ -237,6 +243,12 @@ impl ThreadPool {
             .store(state.queue.len(), Ordering::Relaxed);
         self.shared.ready.notify_one();
         Ok(())
+    }
+
+    /// キューに空きがあるか。ロック無しの概算。
+    #[inline(always)]
+    pub fn has_queue_room(&self) -> bool {
+        self.shared.queue_len.load(Ordering::Relaxed) < self.shared.queue_cap
     }
 
     /// キューから仕事を 1 件取り出す(join 待ちの親スレッドが「手伝う」ために使う)。

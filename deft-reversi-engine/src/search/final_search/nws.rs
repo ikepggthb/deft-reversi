@@ -68,6 +68,8 @@ struct NwsSplitPoint {
     helper: Arc<HelperSlot>,
     /// slave が積み上げた探索統計。master が最後に自分へ加算する。
     slave_stats: Mutex<SearchStats>,
+    /// いま走っている slave の数。終了したら減るので、その分だけ追加投入できる。
+    active_slaves: AtomicUsize,
 }
 
 impl NwsSplitPoint {
@@ -80,11 +82,25 @@ impl NwsSplitPoint {
             beta,
             helper: Arc::new(HelperSlot::new()),
             slave_stats: Mutex::new(SearchStats::default()),
+            active_slaves: AtomicUsize::new(0),
         }
+    }
+
+    /// まだ誰にも割り当てられていない仕事が残っているか。
+    #[inline(always)]
+    fn has_unclaimed_work(&self) -> bool {
+        self.searching.load(Ordering::Acquire) && self.next.load(Ordering::Relaxed) < self.work.len()
+    }
+
+    /// slave を 1 つ追加できる状態か。
+    #[inline(always)]
+    fn can_add_slave(&self) -> bool {
+        self.active_slaves.load(Ordering::Relaxed) < YBWC_MAX_SLAVES && self.has_unclaimed_work()
     }
 
     /// slave が 1 件終わったときに呼ぶ。統計を積んで master を起こす。
     fn slave_finished(&self, stats: SearchStats, aborted: bool) {
+        self.active_slaves.fetch_sub(1, Ordering::Relaxed);
         {
             let mut acc = self.slave_stats.lock().unwrap();
             acc.add_assign(stats);
@@ -683,18 +699,35 @@ fn nws_final_ybwc(
         .into_boxed_slice();
     let split = Arc::new(NwsSplitPoint::new(work, beta));
     let mut spawned = 0u64;
-    for _ in 0..YBWC_MAX_SLAVES.min(split.work.len()) {
-        let job = make_nws_split_worker(split.clone(), search);
-        match search.spawn_split_job(job) {
-            Ok(()) => {
-                search.stats.ybwc_splits += 1;
-                spawned += 1;
+
+    // 手を1つ探索するたびに slave の追加投入を試みる。
+    //
+    // 分割点に入った瞬間だけ投入すると、その時点で全スレッドが忙しい場合に
+    // この分割点は最後まで master の直列探索になってしまう。
+    // 後から空いたスレッドを拾えるよう、edax の node_split と同様に
+    // ループの中で毎回試す。
+    macro_rules! try_add_slaves {
+        () => {
+            while split.can_add_slave() && search.can_spawn_split_job() {
+                let job = make_nws_split_worker(split.clone(), search);
+                split.active_slaves.fetch_add(1, Ordering::Relaxed);
+                match search.spawn_split_job(job) {
+                    Ok(()) => {
+                        search.stats.ybwc_splits += 1;
+                        spawned += 1;
+                    }
+                    Err(_) => {
+                        split.active_slaves.fetch_sub(1, Ordering::Relaxed);
+                        break;
+                    }
+                }
             }
-            Err(_) => break,
-        }
+        };
     }
 
+    try_add_slaves!();
     while let Some((work_index, _, child_board)) = split.next_work() {
+        try_add_slaves!();
         search.searchings.push(split.searching.clone());
         search.helper_chain.push(split.helper.clone());
         let score = -nws_final(&child_board, -beta, search);

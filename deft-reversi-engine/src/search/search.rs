@@ -113,6 +113,18 @@ impl<'a> SearchContext<'a> {
         self
     }
 
+    /// 今この瞬間に仕事を渡せる先がありそうか。ロックを取らない概算。
+    ///
+    /// 探索ループの中で毎回呼ぶため、ここで弾ければジョブの構築自体を省ける。
+    #[inline(always)]
+    pub(crate) fn can_spawn_split_job(&self) -> bool {
+        self.helper_chain.iter().any(|slot| slot.is_waiting())
+            || self
+                .thread_pool
+                .as_deref()
+                .is_some_and(|pool| pool.has_queue_room())
+    }
+
     /// 分割点の仕事を、待機中の祖先か、居なければワーカープールへ渡す。
     ///
     /// 近い祖先から順に試す。どこにも渡せなければ仕事をそのまま返し、
