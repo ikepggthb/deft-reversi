@@ -82,7 +82,7 @@ const NEIGHBOUR: [u64; 64] = [
 ];
 
 #[rustfmt::skip]
-const QUADRANT_ID: [i32; 64] = [
+pub(crate) const QUADRANT_ID: [i32; 64] = [
     1, 1, 1, 1, 2, 2, 2, 2,
     1, 1, 1, 1, 2, 2, 2, 2,
     1, 1, 1, 1, 2, 2, 2, 2,

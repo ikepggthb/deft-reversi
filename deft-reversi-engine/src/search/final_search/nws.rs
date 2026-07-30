@@ -20,6 +20,7 @@ use crate::{
     eval::evaluator_const::SCORE_MAX,
     search::{
         final_search::{
+            leaf::QUADRANT_ID,
             negaalpha::negaalpha_final,
             solve_score::{final_parity, solve_score},
         },
@@ -331,7 +332,8 @@ fn nws_final_simple_impl(
         }
         let child_board = board.make_move_from_flip_bit(move_bit, flip_bit);
         let child_moves = child_board.moves();
-        let region = 1 << (((move_num >= 32) as i32) * 2 + (((move_num & 7) >= 4) as i32));
+        // 4 分割した盤面のどこに属するか。`QUADRANT_ID` と同じ値を返す。
+        let region = QUADRANT_ID[move_num as usize];
         let mobility =
             (child_moves.count_ones() + (child_moves & 0x8100_0000_0000_0081).count_ones()) as u8;
         let score = -i32::from(mobility) * 18 + i32::from(parity & region != 0) * 17;

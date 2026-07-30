@@ -67,6 +67,36 @@ LLVM が既に共通部分式として除去していると思われる。
 
 いずれも採用していない。
 
+## nws_final_simple_impl (43.0%) の内訳
+
+`-Cdebuginfo=2` (`CARGO_PROFILE_RELEASE_DEBUG=2`) を付けて行情報を出し、
+`callgrind_annotate --auto=yes` で分解した。43.0% の内訳は次の3つ。
+
+| 由来 | 全体に対する割合 |
+|---|---:|
+| `nws.rs` のソース行 | 13.6% |
+| `core_arch/x86/avx2.rs` (flip / moves の SIMD がインライン展開されたもの) | 10.7% |
+| `core/num/uint_macros.rs` (`count_ones` / `trailing_zeros` など) | 2.8% |
+
+`nws.rs` の行別では手順付けが大きい。
+
+| Ir | 全体% | 行 |
+|---:|---:|---|
+| 338 M | 1.97% | `let region = 1 << (((move_num >= 32) as i32) * 2 + ...)` |
+| 263 M | 1.53% | `let score = -i32::from(mobility) * 18 + i32::from(parity & region != 0) * 17;` |
+| 167 M | 0.97% | `if move_list[i].score > move_list[best_index].score` (選択ソート) |
+| 150 M | 0.87% | `child_moves.count_ones() + (child_moves & CORNER).count_ones()` |
+| 113 M | 0.66% | `while moves != 0` (手の列挙) |
+
+**手順付けだけで全体の約 5.3%** を占める。残りは合法手生成 (`child_board.moves()`)
+と flip で、これは SIMD 化済みであり削りにくい。
+
+### 採用した改善: region の表引き化
+
+`region` の式は `leaf.rs` の `QUADRANT_ID` テーブルと完全に同じ値を返していた。
+テーブル参照に置き換えたところ、FFO40-45 の 1 スレッド 5 回計測の中央値で
+10.886 秒から 10.682 秒になった (約 1.9%)。
+
 ## 未着手の候補
 
 ### FeatureIndexes::refresh (9.0%)
