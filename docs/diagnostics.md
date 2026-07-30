@@ -10,6 +10,7 @@
 | `DEFT_STABILITY_STATS` | stability cutの試行数とカット数 |
 | `DEFT_YBWC_STATS` | YBWC split数とabort数 |
 | `DEFT_TT_STATS` | 置換表の排他制御でどれだけ競合したか |
+| `DEFT_PHASE_TIME` | `solve()` の段階別の所要時間とノード数 |
 
 出力は `solve()` 1回につき1行。
 
@@ -18,6 +19,46 @@ DEFT_TT_STATS=1 ./deft-reversi-cli \
   -s deft-reversi-cli/problem/fforum-40-59.obf \
   -e data/eval/eval.bin --threads 4 -l 60
 ```
+
+## DEFT_PHASE_TIME
+
+```text
+PHASETIME total=3.036s | iterative_deepening=0.208s (6.9%) nodes=1532023 | selective_final=0.190s (6.3%) nodes=6572030 | exact_final=2.638s (86.9%) nodes=317262956
+```
+
+レベル指定の探索 (`Solver::solve`) は次の順に進む。
+
+| 段階 | 内容 | 並列化 |
+|---|---|---|
+| `iterative_deepening` | 中盤の反復深化 | **無し** |
+| `selective_final` | selectivity を上げながらの終盤探索 | YBWC |
+| `exact_final` | 完全読み | YBWC |
+
+中盤探索 (`eval_search`) には並列化が入っていないため、`iterative_deepening`
+はスレッド数を増やしても短くならない。スレッド数を変えて各段階の比を見ると、
+直列部分が全体のどれだけを占めているかが分かる。
+
+MPC の事前探索と終盤の手順付けに使う浅い探索も `eval_search` だが、これらは
+`final_search` のノードから呼ばれるため、そのノードを担当するスレッド上で走る。
+`iterative_deepening` には含まれず、並列化の対象外にもならない。
+
+`SolverType::Eval` が選ばれた場合 (終盤完全読みに入らないレベル・局面) は
+すべてが `iterative_deepening` になる。
+
+### 実測値の目安
+
+FFO40-49、level 60、Intel Xeon 4コア 2.80GHz での段階別の合計。
+
+| 段階 | 1スレッド | 4スレッド | 速度向上 |
+|---|---:|---:|---:|
+| 合計 | 23.961秒 | 8.748秒 | 2.74倍 |
+| `iterative_deepening` | 0.544秒 | 0.580秒 | 0.94倍 |
+| `selective_final` | 1.376秒 | 0.871秒 | 1.58倍 |
+| `exact_final` | 22.039秒 | 7.296秒 | 3.02倍 |
+
+Amdahl の式で全体から逆算した直列率は 15.3% (1スレッド換算で 3.68秒) だが、
+そのうち `iterative_deepening` で説明できるのは 0.544秒 = 15% にとどまる。
+残りは終盤探索の中で発生している直列成分である。
 
 ## DEFT_TT_STATS
 

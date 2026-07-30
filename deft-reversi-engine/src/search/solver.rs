@@ -21,6 +21,7 @@ use crate::search::thread_pool::ThreadPool;
 use crate::t_table::TranspositionTable;
 use crate::EngineError;
 use std::num::NonZeroUsize;
+use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -74,6 +75,84 @@ impl Default for SolverOptions {
             stop: None,
             search_threads: NonZeroUsize::MIN,
         }
+    }
+}
+
+/// `DEFT_PHASE_TIME` 用の段階別計時。
+///
+/// レベル指定の探索は次の順に進む。
+///
+/// 1. 中盤の反復深化 (`iterative_deepening_eval`) — 並列化されていない
+/// 2. selectivity を上げながらの終盤探索 — YBWC で並列化される
+/// 3. 完全読み (exact) — YBWC で並列化される
+///
+/// スレッド数を変えて 1 と 2/3 の比を見ると、直列部分が全体のどれだけを
+/// 占めているか (Amdahl の直列率) が分かる。
+struct PhaseTimer {
+    start: Instant,
+    iterative_deepening: Duration,
+    iterative_deepening_nodes: u64,
+    selective_final: Duration,
+    selective_final_nodes: u64,
+}
+
+impl PhaseTimer {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            iterative_deepening: Duration::ZERO,
+            iterative_deepening_nodes: 0,
+            selective_final: Duration::ZERO,
+            selective_final_nodes: 0,
+        }
+    }
+
+    fn searched_nodes(stats: &SearchStats) -> u64 {
+        stats.eval_search_nodes + stats.final_search_nodes
+    }
+
+    /// 反復深化が終わった時点で呼ぶ。
+    fn mark_iterative_deepening_done(&mut self, stats: &SearchStats) {
+        self.iterative_deepening = self.start.elapsed();
+        self.iterative_deepening_nodes = Self::searched_nodes(stats);
+    }
+
+    /// selectivity 付きの終盤探索が 1 段終わるたびに呼ぶ。
+    /// 最後の exact 段では呼ばないため、累計は exact を含まない。
+    fn mark_selective_final_done(&mut self, stats: &SearchStats) {
+        self.selective_final = self.start.elapsed() - self.iterative_deepening;
+        self.selective_final_nodes =
+            Self::searched_nodes(stats) - self.iterative_deepening_nodes;
+    }
+
+    fn report(&self, stats: &SearchStats) -> String {
+        let total = self.start.elapsed();
+        let exact = total
+            .saturating_sub(self.iterative_deepening)
+            .saturating_sub(self.selective_final);
+        let exact_nodes = Self::searched_nodes(stats)
+            - self.iterative_deepening_nodes
+            - self.selective_final_nodes;
+        let share = |d: Duration| {
+            if total.is_zero() {
+                0.0
+            } else {
+                100.0 * d.as_secs_f64() / total.as_secs_f64()
+            }
+        };
+        format!(
+            "total={:.3}s | iterative_deepening={:.3}s ({:.1}%) nodes={} | selective_final={:.3}s ({:.1}%) nodes={} | exact_final={:.3}s ({:.1}%) nodes={}",
+            total.as_secs_f64(),
+            self.iterative_deepening.as_secs_f64(),
+            share(self.iterative_deepening),
+            self.iterative_deepening_nodes,
+            self.selective_final.as_secs_f64(),
+            share(self.selective_final),
+            self.selective_final_nodes,
+            exact.as_secs_f64(),
+            share(exact),
+            exact_nodes,
+        )
     }
 }
 
@@ -283,6 +362,8 @@ impl Solver {
 
         let mut predict_score = self.evaluator.evaluate_board_slow(board);
 
+        let mut phase = PhaseTimer::new();
+
         match &mut solver_type {
             SolverType::Eval(target_depth, selectivity) => {
                 // 序盤の評価関数の精度が低いので深いレベルでは緩める。
@@ -299,6 +380,7 @@ impl Solver {
                     predict_score,
                     &mut search,
                 );
+                phase.mark_iterative_deepening_done(search.stats);
             }
             SolverType::Final(selectivity) => {
                 let selectivity = *selectivity;
@@ -311,6 +393,7 @@ impl Solver {
                     predict_score,
                     &mut search,
                 );
+                phase.mark_iterative_deepening_done(search.stats);
                 trace_search_stage("eval", predict_score, &search);
                 if search.is_aborted() {
                     drop(search);
@@ -358,12 +441,16 @@ impl Solver {
                     if final_selectivity == selectivity {
                         break;
                     }
+                    phase.mark_selective_final_done(search.stats);
                     final_selectivity =
                         next_final_selectivity(final_selectivity, selectivity, n_empties);
                 }
             }
         }
 
+        if std::env::var_os("DEFT_PHASE_TIME").is_some() {
+            eprintln!("PHASETIME {}", phase.report(search.stats));
+        }
         let aborted = search.is_aborted();
         drop(search);
         self.result_from_parts(
