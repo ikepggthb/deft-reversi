@@ -171,9 +171,9 @@ impl NwsSplitPoint {
 struct SimpleMove {
     score: i32,
     move_num: u8,
-    mobility: u8,
     is_skip: bool,
     flip_bit: u64,
+    /// 局所TTで解決した手では `LEGAL_UNDEFINED` のまま(探索に使われない)。
     child_moves: u64,
 }
 
@@ -330,20 +330,14 @@ fn nws_final_simple_impl(
         if flip_bit == board.opponent {
             return SCORE_MAX;
         }
-        let child_board = board.make_move_from_flip_bit(move_bit, flip_bit);
-        let child_moves = child_board.moves();
         // 4 分割した盤面のどこに属するか。`QUADRANT_ID` と同じ値を返す。
         let region = QUADRANT_ID[move_num as usize];
-        let mobility =
-            (child_moves.count_ones() + (child_moves & 0x8100_0000_0000_0081).count_ones()) as u8;
-        let score = -i32::from(mobility) * 18 + i32::from(parity & region != 0) * 17;
         move_list.push(SimpleMove {
-            score,
+            score: i32::from(parity & region != 0) * 17,
             move_num,
-            mobility,
             is_skip: false,
             flip_bit,
-            child_moves,
+            child_moves: LEGAL_UNDEFINED,
         });
         moves &= moves - 1;
     }
@@ -362,11 +356,16 @@ fn nws_final_simple_impl(
                 continue;
             }
         }
-        if mb.mobility <= 1 {
+        // 局所TTで解決しなかった手にだけ合法手生成の費用を払う。
+        let child_moves = child_board.moves();
+        mb.child_moves = child_moves;
+        let mobility =
+            child_moves.count_ones() + (child_moves & 0x8100_0000_0000_0081).count_ones();
+        if mobility <= 1 {
             let score = -nws_final_simple_impl(
                 &child_board,
                 -beta,
-                mb.child_moves,
+                child_moves,
                 n_empties - 1,
                 search,
                 local_tt,
@@ -395,7 +394,9 @@ fn nws_final_simple_impl(
                 local_tt,
             );
             mb.is_skip = true;
+            continue;
         }
+        mb.score -= mobility as i32 * 18;
     }
 
     for move_index in 0..move_list.len() {
