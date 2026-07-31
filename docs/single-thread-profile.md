@@ -65,6 +65,11 @@ edax と同じ SSE2 実装へ置き換えたが、FFO40-45 の 1 スレッド 5 
 一度だけ deref して参照を使い回すようにしたが 10.616 秒で、誤差の範囲だった。
 LLVM が既に共通部分式として除去していると思われる。
 
+### get_stable_by_contact の AVX2 化
+
+安定石の伝播ループを 4 方向同時に回す Egaroucid と同じ形にしたが、
+1 スレッドの時間は変わらなかった。詳細は `docs/egaroucid-comparison.md`。
+
 いずれも採用していない。
 
 ## nws_final_simple_impl (43.0%) の内訳
@@ -110,6 +115,11 @@ edax は `search_update_midgame()` の中で `eval_update()` を呼び、
 探索の make/unmake に合わせて評価状態を増分更新している。
 deft の探索は `&Board` を値で渡し unmake を持たないため、
 累積状態を再帰に通すには広範囲の変更が必要になる。
+
+Egaroucid も同じく増分更新で、さらに終盤手順付け用には 4 グループ中
+1 グループしか更新せず、専用の小さい重みで評価する。
+これが Egaroucid との残り約 6% の差の主因と見ている。
+詳細は `docs/egaroucid-comparison.md`。
 
 ### nws_final_simple_impl (43.0%)
 
