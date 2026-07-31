@@ -59,6 +59,8 @@ pub struct SolverResult {
     pub pv: Vec<u8>,
     /// stop フラグで中断されたか。
     pub aborted: bool,
+    /// YBWC で分割点に slave を投入できた回数。1 スレッドでは常に 0。
+    pub ybwc_splits: u64,
 }
 
 pub struct SolverOptions {
@@ -318,6 +320,7 @@ impl Solver {
                     leaf_nodes: 0,
                     pv: Vec::new(),
                     aborted: false,
+                    ybwc_splits: 0,
                 };
             }
             let mut r = self.solve(&passed, level);
@@ -554,6 +557,7 @@ impl Solver {
             leaf_nodes: stats.eval_search_leaf_nodes + stats.final_search_leaf_nodes,
             pv,
             aborted,
+            ybwc_splits: stats.ybwc_splits,
         }
     }
 
@@ -1710,13 +1714,20 @@ mod tests {
 
     /// YBWC で並列に解いても、完全読みのスコアは 1 スレッドと一致する。
     ///
-    /// 分割点・直接ハンドオフ・ワーカープールを実際に動かす唯一のテスト。
-    /// 空きマスは終盤 YBWC の下限 (`YBWC_END_SPLIT_MIN_EMPTIES` = 16) を
-    /// 超えるように選ぶ。
+    /// 分割点とワーカープールを探索経由で動かす唯一のテスト。空きマスは
+    /// 終盤 YBWC の下限 (`YBWC_END_SPLIT_MIN_EMPTIES` = 16) を超えるように選ぶ。
+    /// 分割が実際に起きたことを `ybwc_splits` で確認するので、分割条件が
+    /// 変わってこのテストが空回りするようになれば気付ける。
+    ///
+    /// なお祖先への直接ハンドオフはここでは踏まれない (18空きでは部分木が
+    /// 小さく master が待機窓に入らないため、実測で `ybwc_handoffs` は 0)。
+    /// その経路は `search::tests::split_job_is_handed_to_a_waiting_ancestor`
+    /// で個別に確認している。
     #[test]
     fn parallel_search_matches_single_thread_exact_score() {
         let evaluator = Arc::new(Evaluator::default());
         let mut rng = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut checked = 0;
 
         for _ in 0..4 {
             let board = random_board(&mut rng, 18);
@@ -1750,7 +1761,18 @@ mod tests {
                 board.player, board.opponent
             );
             assert_pv_is_legal(&board, &actual.pv);
+            assert_eq!(expected.ybwc_splits, 0, "1スレッドで分割してはいけない");
+            assert!(
+                actual.ybwc_splits > 0,
+                "並列探索で一度も分割されていない。このテストは何も検証できていない: \
+                 p={:#018x} o={:#018x}",
+                board.player,
+                board.opponent
+            );
+            checked += 1;
         }
+
+        assert_eq!(checked, 4, "検証できた局面が足りない");
     }
 
     fn next_pseudo_random(state: &mut u64) -> u64 {

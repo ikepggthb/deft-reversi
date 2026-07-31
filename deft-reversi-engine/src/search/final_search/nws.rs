@@ -538,9 +538,9 @@ fn nws_final_ybwc(
     move_list: &[MoveBoard],
     search: &mut SearchContext,
 ) -> i32 {
-    if search.thread_pool.is_none() {
-        return alpha;
-    }
+    // 呼び出し前に `should_split_ybwc` が保証している。ここで `alpha` を返すと
+    // 一手も探索せずに fail-low を捏造してしまうので、握り潰さず落とす。
+    debug_assert!(search.thread_pool.is_some());
     let Some((first_index, first_move)) = move_list.iter().enumerate().find(|(_, mv)| !mv.is_skip)
     else {
         return alpha;

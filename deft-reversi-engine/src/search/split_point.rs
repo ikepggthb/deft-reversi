@@ -16,14 +16,14 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// 1 つの分割点で同時に走らせる slave の上限。
-pub(crate) const YBWC_MAX_SLAVES: usize = 3;
+const YBWC_MAX_SLAVES: usize = 3;
 
 /// master が待機中に「未実行の仕事がキューに残っていないか」を見に行く間隔。
 /// slave の完了自体は condvar で即座に通知されるため、完了検知の遅延ではない。
 const HELPER_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_micros(50);
 
 /// まだ誰も結果を書いていない手を表す番兵。取り得るスコアの外側の値。
-pub(crate) const SPLIT_SCORE_UNSET: i32 = SCORE_MAX + 1;
+const SPLIT_SCORE_UNSET: i32 = SCORE_MAX + 1;
 
 /// 1 つの分割点。master と slave が `Arc` で共有する。
 pub(crate) struct SplitPoint {
@@ -73,10 +73,8 @@ impl SplitPoint {
 
     /// `work_index` の探索結果。未探索なら `None`。
     pub(crate) fn score_at(&self, work_index: usize) -> Option<i32> {
-        match self.scores[work_index].load(Ordering::Acquire) {
-            SPLIT_SCORE_UNSET => None,
-            score => Some(score),
-        }
+        let score = self.scores[work_index].load(Ordering::Acquire);
+        (score != SPLIT_SCORE_UNSET).then_some(score)
     }
 
     /// まだ誰にも割り当てられていない仕事が残っているか。

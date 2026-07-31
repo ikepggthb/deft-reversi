@@ -346,11 +346,28 @@ mod tests {
 
     const SHORT: Duration = Duration::from_millis(5);
     const LONG: Duration = Duration::from_secs(5);
+    /// テストが待ってよい上限。超えたら panic して「失敗」にする。
+    ///
+    /// `cargo test` にはテスト単位のタイムアウトが無いため、無期限のループを
+    /// 書くと退行時にテストが落ちずに CI がハングする。待つ側は必ずこれを使う。
+    const DEADLINE: Duration = Duration::from_secs(20);
 
     fn counting_job(counter: Arc<AtomicUsize>) -> DetachedJob {
         Box::new(move || {
             counter.fetch_add(1, Ordering::SeqCst);
         })
+    }
+
+    /// `cond` が真になるまで待つ。`DEADLINE` を超えたら panic する。
+    fn wait_until(what: &str, cond: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + DEADLINE;
+        while !cond() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what} が {DEADLINE:?} 以内に成立しなかった"
+            );
+            thread::yield_now();
+        }
     }
 
     /// 誰も待機していないスロットへの `try_offer` は、仕事をそのまま返す。
@@ -380,20 +397,22 @@ mod tests {
             let counter = counter.clone();
             thread::spawn(move || {
                 // master が待機に入るまで粘る。
-                loop {
-                    if slot.is_waiting() && slot.try_offer(counting_job(counter.clone())).is_ok() {
-                        return;
-                    }
-                    std::hint::spin_loop();
-                }
+                wait_until("try_offer の成立", || {
+                    slot.is_waiting() && slot.try_offer(counting_job(counter.clone())).is_ok()
+                });
             })
         };
 
         // spawned=1 だが誰も完了しないので、仕事を受け取るまで待ち続ける。
+        let deadline = std::time::Instant::now() + DEADLINE;
         let job = loop {
             if let Some(job) = slot.wait_or_take_job(1, SHORT) {
                 break job;
             }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "渡されたはずの仕事を master が受け取れなかった"
+            );
         };
         offerer.join().unwrap();
 
@@ -414,9 +433,7 @@ mod tests {
             let slot = slot.clone();
             thread::spawn(move || slot.wait_or_take_job(1, LONG))
         };
-        while !slot.is_waiting() {
-            std::hint::spin_loop();
-        }
+        wait_until("master の待機開始", || slot.is_waiting());
 
         assert!(slot.try_offer(counting_job(counter.clone())).is_ok());
         // 1 件目を受け取った時点で waiting が下りるので 2 件目は入らない。
@@ -436,10 +453,12 @@ mod tests {
         let waiter = {
             let slot = slot.clone();
             thread::spawn(move || {
-                loop {
-                    if slot.is_complete(2) {
-                        return;
-                    }
+                let deadline = std::time::Instant::now() + DEADLINE;
+                while !slot.is_complete(2) {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "完了通知を出しても待機が解けなかった"
+                    );
                     // 完了済みなら None が返り、ループが回って is_complete で抜ける。
                     assert!(slot.wait_or_take_job(2, LONG).is_none());
                 }
@@ -465,9 +484,7 @@ mod tests {
             let slot = slot.clone();
             thread::spawn(move || slot.wait_or_take_job(1, LONG))
         };
-        while !slot.is_waiting() {
-            std::hint::spin_loop();
-        }
+        wait_until("master の待機開始", || slot.is_waiting());
         // 仕事を渡した直後に完了通知が来る、という順序を再現する。
         assert!(slot.try_offer(counting_job(counter.clone())).is_ok());
         slot.notify_completion();
@@ -494,10 +511,9 @@ mod tests {
             }
         }
 
-        let deadline = std::time::Instant::now() + LONG;
-        while counter.load(Ordering::SeqCst) < 4 && std::time::Instant::now() < deadline {
-            std::hint::spin_loop();
-        }
+        wait_until("detached job が全件実行される", || {
+            counter.load(Ordering::SeqCst) >= 4
+        });
         assert_eq!(counter.load(Ordering::SeqCst), 4);
         assert!(pool.has_queue_room());
         assert!(pool.try_pop_job().is_none());

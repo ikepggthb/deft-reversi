@@ -237,3 +237,103 @@ impl SearchStats {
         self.ybwc_spawn_failures += other.ybwc_spawn_failures;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    const DEADLINE: Duration = Duration::from_secs(20);
+
+    fn context<'a>(stats: &'a mut SearchStats) -> SearchContext<'a> {
+        SearchContext::new(
+            Arc::new(Evaluator::default()),
+            Arc::new(MpcConfig::default()),
+            Arc::new(TranspositionTable::new()),
+            stats,
+        )
+    }
+
+    /// 待機中の祖先がいれば、ワーカープールではなくそちらへ直接渡す。
+    ///
+    /// 実際の探索でこの経路が踏まれるのは分割点の入れ子が深いときだけで
+    /// (4コアの FFO40-49 で投入試行の 4.1%、18空きの局面では 0%)、
+    /// 探索経由のテストでは安定して再現できないため、ここで直接確認する。
+    #[test]
+    fn split_job_is_handed_to_a_waiting_ancestor() {
+        let slot = Arc::new(HelperSlot::new());
+        let executed = Arc::new(AtomicBool::new(false));
+
+        // 祖先の master 役。`join_slaves` の待機窓に入っている状態を作る。
+        let master = {
+            let slot = slot.clone();
+            thread::spawn(move || {
+                let deadline = Instant::now() + DEADLINE;
+                loop {
+                    if let Some(job) = slot.wait_or_take_job(1, Duration::from_millis(5)) {
+                        job();
+                        return true;
+                    }
+                    if Instant::now() >= deadline {
+                        return false;
+                    }
+                }
+            })
+        };
+
+        let mut stats = SearchStats::default();
+        // thread_pool は None。渡せる先は helper_chain しか無いので、
+        // Ok が返ったならハンドオフ経由だったことが確定する。
+        let mut search = context(&mut stats).with_helper_chain(vec![slot.clone()]);
+
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            if search.can_spawn_split_job() {
+                let executed = executed.clone();
+                let job: DetachedJob = Box::new(move || {
+                    executed.store(true, Ordering::SeqCst);
+                });
+                if search.spawn_split_job(job).is_ok() {
+                    break;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "待機中の祖先へ仕事を渡せなかった"
+            );
+            thread::yield_now();
+        }
+        drop(search);
+
+        assert!(master.join().unwrap(), "master が仕事を受け取らなかった");
+        assert!(executed.load(Ordering::SeqCst), "渡した仕事が実行されていない");
+        assert_eq!(stats.ybwc_handoffs, 1);
+        assert_eq!(stats.ybwc_pool_pushes, 0);
+        assert_eq!(stats.ybwc_spawn_failures, 0);
+    }
+
+    /// 渡せる祖先もプールも無ければ、仕事はそのまま返る (master が自分で探索する)。
+    #[test]
+    fn split_job_is_returned_when_there_is_nowhere_to_put_it() {
+        let mut stats = SearchStats::default();
+        let mut search = context(&mut stats);
+
+        let executed = Arc::new(AtomicBool::new(false));
+        let job: DetachedJob = {
+            let executed = executed.clone();
+            Box::new(move || executed.store(true, Ordering::SeqCst))
+        };
+
+        assert!(!search.can_spawn_split_job());
+        let returned = search.spawn_split_job(job);
+        assert!(returned.is_err(), "渡せないので仕事が返るはず");
+
+        // 返ってきた仕事は失われていない。
+        returned.unwrap_err()();
+        drop(search);
+        assert!(executed.load(Ordering::SeqCst));
+        assert_eq!(stats.ybwc_spawn_failures, 1);
+        assert_eq!(stats.ybwc_handoffs, 0);
+    }
+}
