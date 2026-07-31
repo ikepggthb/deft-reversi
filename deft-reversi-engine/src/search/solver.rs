@@ -1708,6 +1708,70 @@ mod tests {
         assert!(parallel.thread_pool.is_some());
     }
 
+    /// YBWC で並列に解いても、完全読みのスコアは 1 スレッドと一致する。
+    ///
+    /// 分割点・直接ハンドオフ・ワーカープールを実際に動かす唯一のテスト。
+    /// 空きマスは終盤 YBWC の下限 (`YBWC_END_SPLIT_MIN_EMPTIES` = 16) を
+    /// 超えるように選ぶ。
+    #[test]
+    fn parallel_search_matches_single_thread_exact_score() {
+        let evaluator = Arc::new(Evaluator::default());
+        let mut rng = 0x9e37_79b9_7f4a_7c15_u64;
+
+        for _ in 0..4 {
+            let board = random_board(&mut rng, 18);
+            // 合法手が無い盤面は分割まで届かないので引き直す。
+            if board.moves() == 0 {
+                continue;
+            }
+
+            let single = Solver::with_options(
+                evaluator.clone(),
+                SolverOptions {
+                    search_threads: NonZeroUsize::MIN,
+                    ..SolverOptions::default()
+                },
+            );
+            let parallel = Solver::with_options(
+                evaluator.clone(),
+                SolverOptions {
+                    search_threads: NonZeroUsize::new(4).unwrap(),
+                    ..SolverOptions::default()
+                },
+            );
+
+            let expected = single.solve(&board, 60);
+            let actual = parallel.solve(&board, 60);
+
+            assert!(!expected.aborted && !actual.aborted);
+            assert_eq!(
+                actual.score, expected.score,
+                "並列と直列でスコアが違う: p={:#018x} o={:#018x}",
+                board.player, board.opponent
+            );
+            assert_pv_is_legal(&board, &actual.pv);
+        }
+    }
+
+    fn next_pseudo_random(state: &mut u64) -> u64 {
+        *state ^= state.wrapping_shl(13);
+        *state ^= state.wrapping_shr(7);
+        *state ^= state.wrapping_shl(17);
+        *state
+    }
+
+    fn random_board(rng: &mut u64, n_empties: u32) -> Board {
+        let mut empties = 0u64;
+        while empties.count_ones() < n_empties {
+            empties |= 1u64 << (next_pseudo_random(rng) % 64) as u32;
+        }
+        let player = next_pseudo_random(rng) & !empties;
+        Board {
+            player,
+            opponent: !player & !empties,
+        }
+    }
+
     fn brute_force(board: &Board) -> i32 {
         let moves = board.moves();
         if moves == 0 {

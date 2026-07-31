@@ -26,16 +26,17 @@ use crate::{
         },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
-        search::{SearchContext, SearchStats},
+        search::SearchContext,
+        split_point::{try_add_slaves, SplitPoint},
         stability_cut::stability_cut_nws,
-        thread_pool::{DetachedJob, HelperSlot, Job, TaskHandle, TaskResult},
+        thread_pool::{DetachedJob, Job, TaskHandle, TaskResult},
         tt_cut::*,
     },
     t_table::{TTProbe, TTSlot, TTValue},
 };
 use arrayvec::ArrayVec;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{cell::UnsafeCell, cmp};
 
 const TT_MOVE0_SCORE: i32 = 1 << 20;
@@ -52,120 +53,7 @@ const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 13;
 const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 16;
 const YBWC_TAIL_SPLIT_EMPTIES: i32 = 15;
 const YBWC_TAIL_MIN_IDLE_WORKERS: usize = 4;
-const YBWC_MAX_SLAVES: usize = 3;
-/// master が待機中に「未実行の仕事がキューに残っていないか」を見に行く間隔。
-/// slave の完了自体は condvar で即座に通知されるため、完了検知の遅延ではない。
-const HELPER_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_micros(50);
-const YBWC_SCORE_UNSET: i32 = SCORE_MAX + 1;
 const LEGAL_UNDEFINED: u64 = u64::MAX;
-
-struct NwsSplitPoint {
-    work: Box<[(usize, Board)]>,
-    next: AtomicUsize,
-    scores: [AtomicI32; 64],
-    searching: Arc<AtomicBool>,
-    beta: i32,
-    /// slave の完了を master へ伝える受け口。子孫からの仕事の受け口でもある。
-    helper: Arc<HelperSlot>,
-    /// slave が積み上げた探索統計。master が最後に自分へ加算する。
-    slave_stats: Mutex<SearchStats>,
-    /// いま走っている slave の数。終了したら減るので、その分だけ追加投入できる。
-    active_slaves: AtomicUsize,
-}
-
-impl NwsSplitPoint {
-    fn new(work: Box<[(usize, Board)]>, beta: i32) -> Self {
-        Self {
-            work,
-            next: AtomicUsize::new(0),
-            scores: std::array::from_fn(|_| AtomicI32::new(YBWC_SCORE_UNSET)),
-            searching: Arc::new(AtomicBool::new(true)),
-            beta,
-            helper: Arc::new(HelperSlot::new()),
-            slave_stats: Mutex::new(SearchStats::default()),
-            active_slaves: AtomicUsize::new(0),
-        }
-    }
-
-    /// まだ誰にも割り当てられていない仕事が残っているか。
-    #[inline(always)]
-    fn has_unclaimed_work(&self) -> bool {
-        self.searching.load(Ordering::Acquire) && self.next.load(Ordering::Relaxed) < self.work.len()
-    }
-
-    /// slave を 1 つ追加できる状態か。
-    #[inline(always)]
-    fn can_add_slave(&self) -> bool {
-        self.active_slaves.load(Ordering::Relaxed) < YBWC_MAX_SLAVES && self.has_unclaimed_work()
-    }
-
-    /// slave が 1 件終わったときに呼ぶ。統計を積んで master を起こす。
-    fn slave_finished(&self, stats: SearchStats, aborted: bool) {
-        self.active_slaves.fetch_sub(1, Ordering::Relaxed);
-        {
-            let mut acc = self.slave_stats.lock().unwrap();
-            acc.add_assign(stats);
-            if aborted {
-                acc.ybwc_split_aborts += 1;
-            }
-        }
-        self.helper.notify_completion();
-    }
-
-    /// master が spawn 済みの slave をすべて待ち、統計を回収する。
-    fn join_slaves(&self, spawned: u64, search: &mut SearchContext) {
-        if spawned == 0 {
-            return;
-        }
-        // 待っている間はキューに残った仕事を実行する。
-        // ワーカー自身も分割点の master になってブロックしうるため、
-        // 待機中の master が実行を肩代わりしないと、キューの仕事を走らせる者が
-        // いなくなり停止する。
-        let pool = search.thread_pool.clone();
-        loop {
-            if self.helper.is_complete(spawned) {
-                break;
-            }
-            // 1. 子孫から直接渡された仕事
-            if let Some(job) = self.helper.take_offered_job() {
-                job();
-                continue;
-            }
-            // 2. キューに残った仕事 (誰も実行できず停止するのを防ぐ)
-            if let Some(pool) = pool.as_deref() {
-                if let Some(job) = pool.try_pop_job() {
-                    let _ = job();
-                    continue;
-                }
-            }
-            // 3. 完了か仕事の受け取りまで待つ
-            if let Some(job) = self.helper.wait_or_take_job(spawned, HELPER_POLL_INTERVAL) {
-                job();
-            }
-        }
-        let stats = std::mem::take(&mut *self.slave_stats.lock().unwrap());
-        search.stats.add_assign(stats);
-    }
-
-    #[inline(always)]
-    fn next_work(&self) -> Option<(usize, usize, Board)> {
-        if !self.searching.load(Ordering::Acquire) {
-            return None;
-        }
-        let work_index = self.next.fetch_add(1, Ordering::Relaxed);
-        self.work
-            .get(work_index)
-            .map(|&(move_index, board)| (work_index, move_index, board))
-    }
-
-    #[inline(always)]
-    fn finish(&self, work_index: usize, score: i32) {
-        self.scores[work_index].store(score, Ordering::Release);
-        if score >= self.beta {
-            self.searching.store(false, Ordering::Release);
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 struct SimpleMove {
@@ -566,15 +454,7 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
     }
 
     if should_split_ybwc(n_empties, &move_list, search) {
-        return nws_final_ybwc(
-            board,
-            alpha,
-            beta_cur,
-            alpha_cur,
-            probe.slot(),
-            &move_list,
-            search,
-        );
+        return nws_final_ybwc(board, alpha, beta_cur, probe.slot(), &move_list, search);
     }
 
     // ── 探索ループ ────────────────────────────────────────────────────────────
@@ -654,7 +534,6 @@ fn nws_final_ybwc(
     board: &Board,
     alpha: i32,
     beta: i32,
-    mut alpha_cur: i32,
     tt_slot: TTSlot,
     move_list: &[MoveBoard],
     search: &mut SearchContext,
@@ -684,7 +563,6 @@ fn nws_final_ybwc(
         return first_score;
     }
 
-    alpha_cur = alpha_cur.max(first_score);
     let mut best_score = first_score;
     let mut best_move = first_move.move_num;
     let work = move_list
@@ -700,37 +578,12 @@ fn nws_final_ybwc(
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let split = Arc::new(NwsSplitPoint::new(work, beta));
+    let split = Arc::new(SplitPoint::new(work, beta));
     let mut spawned = 0u64;
 
-    // 手を1つ探索するたびに slave の追加投入を試みる。
-    //
-    // 分割点に入った瞬間だけ投入すると、その時点で全スレッドが忙しい場合に
-    // この分割点は最後まで master の直列探索になってしまう。
-    // 後から空いたスレッドを拾えるよう、edax の node_split と同様に
-    // ループの中で毎回試す。
-    macro_rules! try_add_slaves {
-        () => {
-            while split.can_add_slave() && search.can_spawn_split_job() {
-                let job = make_nws_split_worker(split.clone(), search);
-                split.active_slaves.fetch_add(1, Ordering::Relaxed);
-                match search.spawn_split_job(job) {
-                    Ok(()) => {
-                        search.stats.ybwc_splits += 1;
-                        spawned += 1;
-                    }
-                    Err(_) => {
-                        split.active_slaves.fetch_sub(1, Ordering::Relaxed);
-                        break;
-                    }
-                }
-            }
-        };
-    }
-
-    try_add_slaves!();
+    try_add_slaves(&split, search, &mut spawned, make_nws_split_worker);
     while let Some((work_index, _, child_board)) = split.next_work() {
-        try_add_slaves!();
+        try_add_slaves(&split, search, &mut spawned, make_nws_split_worker);
         search.searchings.push(split.searching.clone());
         search.helper_chain.push(split.helper.clone());
         let score = -nws_final(&child_board, -beta, search);
@@ -740,7 +593,7 @@ fn nws_final_ybwc(
             if search.recover_from_split_abort(&split.searching) {
                 break;
             }
-            split.searching.store(false, Ordering::Release);
+            split.stop_searching();
             split.join_slaves(spawned, search);
             return alpha;
         }
@@ -752,14 +605,13 @@ fn nws_final_ybwc(
 
     split.join_slaves(spawned, search);
     if search.check_abort_now() {
-        split.searching.store(false, Ordering::Release);
+        split.stop_searching();
         return alpha;
     }
-    for (work_index, &(move_index, _)) in split.work.iter().enumerate() {
-        let score = split.scores[work_index].load(Ordering::Acquire);
-        if score == YBWC_SCORE_UNSET {
+    for (work_index, move_index) in split.work_indices() {
+        let Some(score) = split.score_at(work_index) else {
             continue;
-        }
+        };
         let mb = &move_list[move_index];
         if score >= beta {
             search.tt.store(
@@ -773,7 +625,6 @@ fn nws_final_ybwc(
             );
             return score;
         }
-        alpha_cur = alpha_cur.max(score);
         if score > best_score {
             best_score = score;
             best_move = mb.move_num;
@@ -807,7 +658,8 @@ fn nws_final_ybwc(
     best_score
 }
 
-fn make_nws_split_worker(split: Arc<NwsSplitPoint>, parent: &SearchContext) -> DetachedJob {
+fn make_nws_split_worker(split: &Arc<SplitPoint>, parent: &SearchContext) -> DetachedJob {
+    let split = split.clone();
     let evaluator = parent.evaluator.clone();
     let ordering_evaluator = parent.ordering_evaluator.clone();
     let mpc_config = parent.mpc_config.clone();
@@ -830,12 +682,12 @@ fn make_nws_split_worker(split: Arc<NwsSplitPoint>, parent: &SearchContext) -> D
             .with_helper_chain(helper_chain);
         search.selectivity_lv = selectivity_lv;
         while let Some((work_index, _, child_board)) = split.next_work() {
-            let score = -nws_final(&child_board, -split.beta, &mut search);
+            let score = -nws_final(&child_board, -split.beta(), &mut search);
             if search.is_aborted() {
                 break;
             }
             split.finish(work_index, score);
-            if score >= split.beta {
+            if score >= split.beta() {
                 break;
             }
         }
@@ -862,6 +714,10 @@ pub(crate) fn make_ybwc_job(
     let selectivity_lv = parent.selectivity_lv;
     let mut searchings = parent.searchings.clone();
     searchings.push(split_searching.clone());
+    // この分割は `SplitPoint` を持たず、master も `collect_ybwc_tasks` /
+    // `join_helping` で待つため `take_offered_job` を呼ばない。よってここでは
+    // 受け口を増やさず、親から受け継いだ祖先チェーンだけを渡す。
+    // この経路から投げた仕事のハンドオフは常に空振りしてプール投入に落ちる。
     let helper_chain = parent.helper_chain.clone();
 
     Box::new(move || {
@@ -918,7 +774,7 @@ mod tests {
     use crate::search::mpc::MpcConfig;
     use crate::search::search::SearchStats;
     use crate::t_table::TranspositionTable;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn shared_resources() -> (Arc<Evaluator>, Arc<MpcConfig>, Arc<TranspositionTable>) {
         (
@@ -1029,7 +885,7 @@ mod tests {
         for _ in 0..200 {
             let extra = (next_pseudo_random(&mut rng) % 4) as u32;
             let board = make_board_with_empties(&mut rng, 6 + extra);
-            check_nws(&board, &ev, &mpc, &tt, |b, alpha, s| nws_final(b, alpha, s));
+            check_nws(&board, &ev, &mpc, &tt, nws_final);
         }
     }
 

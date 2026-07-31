@@ -16,6 +16,11 @@ pub type DetachedJob = Box<dyn FnOnce() + Send + 'static>;
 /// `completions` は単調増加のカウンタで、master は自分が観測済みの値と
 /// 比較して待機を解除する。更新はすべて mutex 下で行い、更新後に notify する
 /// ため通知の取りこぼしは起きない。
+///
+/// 早期解除の仕組みは持たない。master は spawn した slave が全員 `slave_finished`
+/// を呼ぶまで必ず待つ。abort や beta cut がかかった場合も、slave は次の
+/// `next_work` か 1 手の探索の終わりで停止するので待ち時間は短い。
+/// 途中で待機を打ち切ると slave が書き込む統計とスコアを取りこぼす。
 pub struct HelperSlot {
     /// `state.waiting` のロック無し複製。`try_offer` の早期棄却に使う。
     waiting: AtomicBool,
@@ -27,8 +32,6 @@ pub struct HelperSlot {
 struct HelperState {
     /// この分割点で完了した slave の数。
     completions: u64,
-    /// cutoff や外部 stop で待機を解除するためのフラグ。
-    closed: bool,
     /// master がこの受け口で待機中か。
     waiting: bool,
     /// 子孫から直接渡された仕事。同時に保持するのは 1 件だけ。
@@ -65,11 +68,9 @@ impl HelperSlot {
         self.cv.notify_all();
     }
 
-
     /// `spawned` 件すべてが完了したか。ブロックしない。
     pub fn is_complete(&self, spawned: u64) -> bool {
-        let state = self.state.lock().unwrap();
-        state.completions >= spawned || state.closed
+        self.state.lock().unwrap().completions >= spawned
     }
 
     /// 待機中の master にこの仕事を直接渡す。渡せなければ仕事をそのまま返す。
@@ -80,7 +81,7 @@ impl HelperSlot {
             return Err(job);
         }
         let mut state = self.state.lock().unwrap();
-        if !state.waiting || state.job.is_some() || state.closed {
+        if !state.waiting || state.job.is_some() {
             return Err(job);
         }
         state.job = Some(job);
@@ -94,15 +95,13 @@ impl HelperSlot {
 
     /// 渡された仕事があれば取り出す。ブロックしない。
     pub fn take_offered_job(&self) -> Option<DetachedJob> {
-        if self.state.lock().unwrap().job.is_none() {
-            return None;
-        }
         self.state.lock().unwrap().job.take()
     }
 
     /// 完了か、仕事を渡されるまで待つ。`timeout` で必ず戻る。
     ///
-    /// 渡された仕事があればそれを返す。
+    /// 渡された仕事があればそれを返す。`state.job` を完了判定より先に取るので、
+    /// 渡された仕事が実行されないまま捨てられることはない。
     pub fn wait_or_take_job(
         &self,
         spawned: u64,
@@ -112,7 +111,7 @@ impl HelperSlot {
         if let Some(job) = state.job.take() {
             return Some(job);
         }
-        if state.completions >= spawned || state.closed {
+        if state.completions >= spawned {
             return None;
         }
         state.waiting = true;
@@ -122,7 +121,6 @@ impl HelperSlot {
         self.waiting.store(false, Ordering::Relaxed);
         state.job.take()
     }
-
 }
 
 #[derive(Debug)]
@@ -159,6 +157,10 @@ struct Shared {
     queue_len: AtomicUsize,
     /// キューに積める仕事数の上限。ワーカーが後から空いたときに
     /// すぐ取れる「作り置き」を許しつつ、投機的タスクの溢れを防ぐ。
+    ///
+    /// 待機中の master は `join_slaves` / `join_helping` でキューの仕事を
+    /// 自分で実行する。その仕事がまた分割点の master になって待機しうるため、
+    /// 入れ子の深さはこの値に比例する。増やす場合はスタック消費も一緒に見ること。
     queue_cap: usize,
 }
 
@@ -258,10 +260,11 @@ impl ThreadPool {
         }
         let mut state = self.shared.state.lock().unwrap();
         let job = state.queue.pop_front();
-        self.shared.queue_len.store(state.queue.len(), Ordering::Relaxed);
+        self.shared
+            .queue_len
+            .store(state.queue.len(), Ordering::Relaxed);
         job
     }
-
 
     #[inline(always)]
     pub fn idle_worker_count(&self) -> usize {
@@ -332,5 +335,171 @@ fn worker_loop(shared: Arc<Shared>) {
             }
         };
         let _ = job();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    const SHORT: Duration = Duration::from_millis(5);
+    const LONG: Duration = Duration::from_secs(5);
+
+    fn counting_job(counter: Arc<AtomicUsize>) -> DetachedJob {
+        Box::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        })
+    }
+
+    /// 誰も待機していないスロットへの `try_offer` は、仕事をそのまま返す。
+    #[test]
+    fn offer_to_idle_slot_is_rejected_and_returns_the_job() {
+        let slot = HelperSlot::new();
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        assert!(!slot.is_waiting());
+        let returned = slot.try_offer(counting_job(counter.clone()));
+        assert!(returned.is_err(), "待機していないので受け取ってはいけない");
+
+        // 返ってきた仕事は失われておらず、呼び出し側が自分で実行できる。
+        returned.unwrap_err()();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        assert!(slot.take_offered_job().is_none());
+    }
+
+    /// 待機中に渡した仕事は必ず `wait_or_take_job` から返る (取りこぼさない)。
+    #[test]
+    fn job_offered_while_waiting_is_always_returned_to_the_master() {
+        let slot = Arc::new(HelperSlot::new());
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let offerer = {
+            let slot = slot.clone();
+            let counter = counter.clone();
+            thread::spawn(move || {
+                // master が待機に入るまで粘る。
+                loop {
+                    if slot.is_waiting() && slot.try_offer(counting_job(counter.clone())).is_ok() {
+                        return;
+                    }
+                    std::hint::spin_loop();
+                }
+            })
+        };
+
+        // spawned=1 だが誰も完了しないので、仕事を受け取るまで待ち続ける。
+        let job = loop {
+            if let Some(job) = slot.wait_or_take_job(1, SHORT) {
+                break job;
+            }
+        };
+        offerer.join().unwrap();
+
+        job();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        // 受け取ったので待機は解除されている。
+        assert!(!slot.is_waiting());
+    }
+
+    /// 同時に保持できる仕事は 1 件だけ。2 件目は取り出されるまで拒否される。
+    #[test]
+    fn second_offer_is_rejected_until_the_first_is_taken() {
+        let slot = Arc::new(HelperSlot::new());
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        // master 役を待機させ、その隙に 2 件申し込む。
+        let waiter = {
+            let slot = slot.clone();
+            thread::spawn(move || slot.wait_or_take_job(1, LONG))
+        };
+        while !slot.is_waiting() {
+            std::hint::spin_loop();
+        }
+
+        assert!(slot.try_offer(counting_job(counter.clone())).is_ok());
+        // 1 件目を受け取った時点で waiting が下りるので 2 件目は入らない。
+        assert!(slot.try_offer(counting_job(counter.clone())).is_err());
+
+        let job = waiter.join().unwrap().expect("1 件目が返るはず");
+        job();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    /// `spawned` 件の完了通知で待機が解け、以降はブロックしない。
+    #[test]
+    fn completions_release_the_wait() {
+        let slot = Arc::new(HelperSlot::new());
+        assert!(!slot.is_complete(2));
+
+        let waiter = {
+            let slot = slot.clone();
+            thread::spawn(move || {
+                loop {
+                    if slot.is_complete(2) {
+                        return;
+                    }
+                    // 完了済みなら None が返り、ループが回って is_complete で抜ける。
+                    assert!(slot.wait_or_take_job(2, LONG).is_none());
+                }
+            })
+        };
+
+        slot.notify_completion();
+        slot.notify_completion();
+        waiter.join().unwrap();
+
+        assert!(slot.is_complete(2));
+        // 完了後は待機に入らずすぐ返る。
+        assert!(slot.wait_or_take_job(2, LONG).is_none());
+    }
+
+    /// 完了済みでも、先に渡された仕事は捨てずに返す。
+    #[test]
+    fn pending_job_wins_over_completion() {
+        let slot = Arc::new(HelperSlot::new());
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let waiter = {
+            let slot = slot.clone();
+            thread::spawn(move || slot.wait_or_take_job(1, LONG))
+        };
+        while !slot.is_waiting() {
+            std::hint::spin_loop();
+        }
+        // 仕事を渡した直後に完了通知が来る、という順序を再現する。
+        assert!(slot.try_offer(counting_job(counter.clone())).is_ok());
+        slot.notify_completion();
+
+        let job = waiter
+            .join()
+            .unwrap()
+            .expect("完了通知より先に渡した仕事は返らなければならない");
+        job();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    /// `try_push_detached` で積んだ仕事はワーカーが実行し、`queue_len` が戻る。
+    #[test]
+    fn detached_jobs_run_on_workers() {
+        let pool = ThreadPool::new(2);
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        for _ in 0..4 {
+            let counter = counter.clone();
+            // キューが埋まっていれば自分で実行する、という呼び出し側の作法に倣う。
+            if let Err(job) = pool.try_push_detached(counting_job(counter)) {
+                job();
+            }
+        }
+
+        let deadline = std::time::Instant::now() + LONG;
+        while counter.load(Ordering::SeqCst) < 4 && std::time::Instant::now() < deadline {
+            std::hint::spin_loop();
+        }
+        assert_eq!(counter.load(Ordering::SeqCst), 4);
+        assert!(pool.has_queue_room());
+        assert!(pool.try_pop_job().is_none());
     }
 }

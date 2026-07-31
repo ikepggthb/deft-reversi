@@ -21,11 +21,11 @@ use crate::search::final_search::solve_score::solve_score;
 use crate::search::move_list::*;
 use crate::search::mpc::{eval_search_mpc, ProbCutResult};
 use crate::search::search::{SearchContext, SearchStats};
-use crate::search::thread_pool::{DetachedJob, HelperSlot};
+use crate::search::split_point::{try_add_slaves, SplitPoint};
+use crate::search::thread_pool::DetachedJob;
 use crate::search::tt_cut::*;
 use crate::t_table::TTSlot;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const TT_MOVE0_SCORE: i32 = 1 << 8;
 const TT_MOVE1_SCORE: i32 = 1 << 7;
@@ -39,113 +39,28 @@ const SWITCH_DEPTH_ETC: i32 = 4;
 /// depth がこれ以上のノードで YBWC 分割を行う。
 /// edax の `SPLIT_MIN_DEPTH` に相当する。
 const EVAL_YBWC_MIN_DEPTH: i32 = 8;
-/// 1 つの分割点で同時に走らせる slave の上限。
-const EVAL_YBWC_MAX_SLAVES: usize = 3;
-/// master が待機中にキューを見に行く間隔。
-const EVAL_HELPER_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_micros(50);
-const EVAL_YBWC_SCORE_UNSET: i32 = SCORE_MAX + 1;
 
-/// 中盤 NWS の分割点。`final_search` の `NwsSplitPoint` と同じ構造。
-struct EvalSplitPoint {
-    work: Box<[(usize, Board)]>,
-    next: AtomicUsize,
-    scores: [AtomicI32; 64],
-    searching: Arc<AtomicBool>,
-    beta: i32,
-    depth: i32,
-    helper: Arc<HelperSlot>,
-    slave_stats: Mutex<SearchStats>,
-    active_slaves: AtomicUsize,
-}
-
-impl EvalSplitPoint {
-    fn new(work: Box<[(usize, Board)]>, beta: i32, depth: i32) -> Self {
-        Self {
-            work,
-            next: AtomicUsize::new(0),
-            scores: std::array::from_fn(|_| AtomicI32::new(EVAL_YBWC_SCORE_UNSET)),
-            searching: Arc::new(AtomicBool::new(true)),
-            beta,
-            depth,
-            helper: Arc::new(HelperSlot::new()),
-            slave_stats: Mutex::new(SearchStats::default()),
-            active_slaves: AtomicUsize::new(0),
-        }
-    }
-
-    #[inline(always)]
-    fn can_add_slave(&self) -> bool {
-        self.active_slaves.load(Ordering::Relaxed) < EVAL_YBWC_MAX_SLAVES
-            && self.searching.load(Ordering::Acquire)
-            && self.next.load(Ordering::Relaxed) < self.work.len()
-    }
-
-    #[inline(always)]
-    fn next_work(&self) -> Option<(usize, usize, Board)> {
-        if !self.searching.load(Ordering::Acquire) {
-            return None;
-        }
-        let work_index = self.next.fetch_add(1, Ordering::Relaxed);
-        self.work
-            .get(work_index)
-            .map(|&(move_index, board)| (work_index, move_index, board))
-    }
-
-    #[inline(always)]
-    fn finish(&self, work_index: usize, score: i32) {
-        self.scores[work_index].store(score, Ordering::Release);
-        if score >= self.beta {
-            self.searching.store(false, Ordering::Release);
-        }
-    }
-
-    fn slave_finished(&self, stats: SearchStats, aborted: bool) {
-        self.active_slaves.fetch_sub(1, Ordering::Relaxed);
-        {
-            let mut acc = self.slave_stats.lock().unwrap();
-            acc.add_assign(stats);
-            if aborted {
-                acc.ybwc_split_aborts += 1;
-            }
-        }
-        self.helper.notify_completion();
-    }
-
-    fn join_slaves(&self, spawned: u64, search: &mut SearchContext) {
-        if spawned == 0 {
-            return;
-        }
-        let pool = search.thread_pool.clone();
-        loop {
-            if self.helper.is_complete(spawned) {
-                break;
-            }
-            if let Some(job) = self.helper.take_offered_job() {
-                job();
-                continue;
-            }
-            if let Some(pool) = pool.as_deref() {
-                if let Some(job) = pool.try_pop_job() {
-                    let _ = job();
-                    continue;
-                }
-            }
-            if let Some(job) = self.helper.wait_or_take_job(spawned, EVAL_HELPER_POLL_INTERVAL) {
-                job();
-            }
-        }
-        let stats = std::mem::take(&mut *self.slave_stats.lock().unwrap());
-        search.stats.add_assign(stats);
-    }
-}
-
+/// この局面で YBWC 分割をする価値があるか。
+///
+/// 終盤側の `should_split_ybwc` と違い、空きスレッドの有無は見ない。
+/// `search.can_spawn_split_job()` を足す案を計測したが、初期局面 level 24 の
+/// 4 スレッドで 2.929 秒 / 2.951 秒 (各 14 回の中央値) と差が出なかったため
+/// 採用していない。`nws_eval_ybwc` は最初の手を直列に探索し終えてから
+/// 作業リストを確保するので、確保の費用は depth 8 以上の部分木全体に
+/// 償却され元から無視できる。一方でここで弾くと、直列探索の間に空いた
+/// スレッドをループ内の `try_add_slaves` で拾う機会を失う。
 fn should_split_eval_ybwc(depth: i32, move_list: &[MoveBoard], search: &SearchContext) -> bool {
     depth >= EVAL_YBWC_MIN_DEPTH
         && search.thread_pool.is_some()
         && move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2
 }
 
-fn make_eval_split_worker(split: Arc<EvalSplitPoint>, parent: &SearchContext) -> DetachedJob {
+fn make_eval_split_worker(
+    split: &Arc<SplitPoint>,
+    parent: &SearchContext,
+    depth: i32,
+) -> DetachedJob {
+    let split = split.clone();
     let evaluator = parent.evaluator.clone();
     let ordering_evaluator = parent.ordering_evaluator.clone();
     let mpc_config = parent.mpc_config.clone();
@@ -168,12 +83,12 @@ fn make_eval_split_worker(split: Arc<EvalSplitPoint>, parent: &SearchContext) ->
             .with_helper_chain(helper_chain);
         search.selectivity_lv = selectivity_lv;
         while let Some((work_index, _, child_board)) = split.next_work() {
-            let score = -nws_eval(&child_board, -split.beta, split.depth - 1, &mut search);
+            let score = -nws_eval(&child_board, -split.beta(), depth - 1, &mut search);
             if search.is_aborted() {
                 break;
             }
             split.finish(work_index, score);
-            if score >= split.beta {
+            if score >= split.beta() {
                 break;
             }
         }
@@ -184,12 +99,10 @@ fn make_eval_split_worker(split: Arc<EvalSplitPoint>, parent: &SearchContext) ->
 }
 
 /// 中盤 NWS の YBWC 分割。最初の手を master が単独で探索してから残りを配る。
-#[allow(clippy::too_many_arguments)]
 fn nws_eval_ybwc(
     board: &Board,
     alpha: i32,
     beta: i32,
-    mut alpha_cur: i32,
     depth: i32,
     tt_slot: TTSlot,
     move_list: &[MoveBoard],
@@ -217,7 +130,6 @@ fn nws_eval_ybwc(
         return first_score;
     }
 
-    alpha_cur = alpha_cur.max(first_score);
     let mut best_score = first_score;
     let mut best_move = first_move.move_num;
     let work = move_list
@@ -233,31 +145,15 @@ fn nws_eval_ybwc(
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let split = Arc::new(EvalSplitPoint::new(work, beta, depth));
+    let split = Arc::new(SplitPoint::new(work, beta));
     let mut spawned = 0u64;
+    let make_job = |split: &Arc<SplitPoint>, parent: &SearchContext| {
+        make_eval_split_worker(split, parent, depth)
+    };
 
-    macro_rules! try_add_slaves {
-        () => {
-            while split.can_add_slave() && search.can_spawn_split_job() {
-                let job = make_eval_split_worker(split.clone(), search);
-                split.active_slaves.fetch_add(1, Ordering::Relaxed);
-                match search.spawn_split_job(job) {
-                    Ok(()) => {
-                        search.stats.ybwc_splits += 1;
-                        spawned += 1;
-                    }
-                    Err(_) => {
-                        split.active_slaves.fetch_sub(1, Ordering::Relaxed);
-                        break;
-                    }
-                }
-            }
-        };
-    }
-
-    try_add_slaves!();
+    try_add_slaves(&split, search, &mut spawned, make_job);
     while let Some((work_index, _, child_board)) = split.next_work() {
-        try_add_slaves!();
+        try_add_slaves(&split, search, &mut spawned, make_job);
         search.searchings.push(split.searching.clone());
         search.helper_chain.push(split.helper.clone());
         let score = -nws_eval(&child_board, -beta, depth - 1, search);
@@ -267,7 +163,7 @@ fn nws_eval_ybwc(
             if search.recover_from_split_abort(&split.searching) {
                 break;
             }
-            split.searching.store(false, Ordering::Release);
+            split.stop_searching();
             split.join_slaves(spawned, search);
             return alpha;
         }
@@ -279,14 +175,13 @@ fn nws_eval_ybwc(
 
     split.join_slaves(spawned, search);
     if search.check_abort_now() {
-        split.searching.store(false, Ordering::Release);
+        split.stop_searching();
         return alpha;
     }
-    for (work_index, &(move_index, _)) in split.work.iter().enumerate() {
-        let score = split.scores[work_index].load(Ordering::Acquire);
-        if score == EVAL_YBWC_SCORE_UNSET {
+    for (work_index, move_index) in split.work_indices() {
+        let Some(score) = split.score_at(work_index) else {
             continue;
-        }
+        };
         let mb = &move_list[move_index];
         if score >= beta {
             search.tt.store(
@@ -300,13 +195,11 @@ fn nws_eval_ybwc(
             );
             return score;
         }
-        alpha_cur = alpha_cur.max(score);
         if score > best_score {
             best_score = score;
             best_move = mb.move_num;
         }
     }
-    let _ = alpha_cur;
 
     if best_score > alpha {
         search.tt.store(
@@ -418,16 +311,7 @@ pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContex
     }
 
     if should_split_eval_ybwc(depth, &move_list, search) {
-        return nws_eval_ybwc(
-            board,
-            alpha,
-            beta,
-            alpha_cur,
-            depth,
-            probe.slot(),
-            &move_list,
-            search,
-        );
+        return nws_eval_ybwc(board, alpha, beta, depth, probe.slot(), &move_list, search);
     }
 
     // ── 探索ループ ────────────────────────────────────────────────────────────

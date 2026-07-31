@@ -1,8 +1,8 @@
 use super::board::board::*;
 use super::board::constant::*;
 use std::mem;
-use std::sync::atomic::{fence, AtomicBool, AtomicU64, AtomicU8, Ordering};
-use std::sync::Once;
+use std::sync::atomic::{fence, AtomicU64, AtomicU8, Ordering};
+use std::sync::LazyLock;
 
 /// TT の排他制御でどれだけ競合したかを表す診断カウンタ。
 ///
@@ -59,9 +59,10 @@ impl TtContentionStats {
 /// 診断カウンタを計上するかどうか。`DEFT_TT_STATS` から一度だけ決まる。
 ///
 /// probe / store は探索中に頻繁に実行されるため、無効時は
-/// 読み取り専用の cacheline を relaxed load するだけで済むようにしている。
-static TT_STATS_ENABLED: AtomicBool = AtomicBool::new(false);
-static TT_STATS_INIT: Once = Once::new();
+/// 読み取り専用の cacheline を load するだけで済むようにしている。
+/// 初期化は最初の参照時に走るので、置換表を作る前に読んでも正しい値になる。
+static TT_STATS_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("DEFT_TT_STATS").is_some());
 
 static TT_PROBE_CALLS: AtomicU64 = AtomicU64::new(0);
 static TT_PROBE_SAW_WRITER: AtomicU64 = AtomicU64::new(0);
@@ -70,19 +71,10 @@ static TT_SAVE_CALLS: AtomicU64 = AtomicU64::new(0);
 static TT_SAVE_CAS_FAILED: AtomicU64 = AtomicU64::new(0);
 static TT_SAVE_DROPPED: AtomicU64 = AtomicU64::new(0);
 
-/// `DEFT_TT_STATS` を読んで診断カウンタの有効・無効を確定する。
-/// 複数回呼んでも最初の 1 回だけが効く。
-fn init_tt_contention_stats() {
-    TT_STATS_INIT.call_once(|| {
-        let enabled = std::env::var_os("DEFT_TT_STATS").is_some();
-        TT_STATS_ENABLED.store(enabled, Ordering::Relaxed);
-    });
-}
-
 /// 診断カウンタが有効かどうか。
 #[inline(always)]
 pub fn tt_contention_stats_enabled() -> bool {
-    TT_STATS_ENABLED.load(Ordering::Relaxed)
+    *TT_STATS_ENABLED
 }
 
 #[inline(always)]
@@ -501,7 +493,6 @@ impl TranspositionTable {
 
     fn with_cluster_count(cluster_count: usize) -> Self {
         debug_assert!(cluster_count.is_power_of_two());
-        init_tt_contention_stats();
         let clusters = (0..cluster_count)
             .map(|_| TTCluster::default())
             .collect::<Vec<_>>()
@@ -1106,7 +1097,7 @@ mod tests {
     #[test]
     #[ignore]
     fn bench_mixed_probe_store() {
-        const N: usize = 1_000_000_0;
+        const N: usize = 10_000_000;
         let tt = TranspositionTable::with_mb_size(16);
         let start = Instant::now();
 
