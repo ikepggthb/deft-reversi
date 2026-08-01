@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>deft-reversi NNUE 評価関数 図解</title>
+  <style>
+    :root {
+      --ink: #1f2933;
+      --muted: #5d6975;
+      --paper: #f7f8fa;
+      --panel: #ffffff;
+      --line: #d7dde4;
+      --blue: #e6f0fb;
+      --green: #e7f4e8;
+      --yellow: #fff1cc;
+      --rose: #fce8e8;
+      --violet: #eee8fb;
+      --teal: #dff3f1;
+      --dark: #17242c;
+      --accent: #2d6f73;
+      --black-disc: #20242a;
+      --white-disc: #f8fafc;
+      --legal: #2f8a5f;
+      --empty: #e7ebef;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.7;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 36px 0 72px;
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.25;
+    }
+
+    h1 {
+      font-size: 34px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin-top: 42px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 23px;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 17px;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #edf2f5;
+      color: #144f5a;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.95em;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+
+    th, td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eef2f5;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .lead {
+      max-width: 880px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .fact, .panel, .note, .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .fact {
+      padding: 14px;
+    }
+
+    .fact strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 20px;
+    }
+
+    .fact span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .panel {
+      padding: 18px;
+      margin-top: 14px;
+    }
+
+    .note {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: #fffdf6;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .diagram {
+      overflow: auto;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    svg {
+      display: block;
+      max-width: 100%;
+      min-width: 760px;
+      height: auto;
+      font-family: inherit;
+    }
+
+    .box {
+      stroke: #7d8b96;
+      stroke-width: 1.1;
+      rx: 8;
+    }
+
+    .arrow {
+      stroke: #6f7f89;
+      stroke-width: 1.8;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+
+    .label {
+      fill: var(--ink);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .small {
+      fill: var(--muted);
+      font-size: 12px;
+    }
+
+    .mono {
+      fill: #174f5b;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    .board-wrap {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 18px;
+      align-items: center;
+    }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      width: 220px;
+      height: 220px;
+      border: 2px solid #29343b;
+      background: #6ea57d;
+    }
+
+    .sq {
+      position: relative;
+      border: 1px solid rgba(0, 0, 0, 0.22);
+      background: #74ad83;
+    }
+
+    .sq.dark::after,
+    .sq.light::after,
+    .sq.legal::after,
+    .sq.pattern::after {
+      content: "";
+      position: absolute;
+      inset: 19%;
+      border-radius: 50%;
+    }
+
+    .sq.dark::after {
+      background: var(--black-disc);
+      box-shadow: inset 0 0 0 1px #050607;
+    }
+
+    .sq.light::after {
+      background: var(--white-disc);
+      box-shadow: inset 0 0 0 1px #aab2bb;
+    }
+
+    .sq.legal::after {
+      inset: 34%;
+      background: var(--legal);
+    }
+
+    .sq.pattern {
+      background: #f4d77c;
+    }
+
+    .legend {
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .legend-item {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .swatch {
+      width: 18px;
+      height: 18px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: var(--empty);
+      flex: 0 0 auto;
+    }
+
+    .swatch.dark {
+      background: var(--black-disc);
+    }
+
+    .swatch.light {
+      background: var(--white-disc);
+    }
+
+    .swatch.legal {
+      width: 14px;
+      height: 14px;
+      margin-left: 2px;
+      background: var(--legal);
+    }
+
+    .swatch.pattern {
+      border-radius: 3px;
+      background: #f4d77c;
+    }
+
+    .steps {
+      display: grid;
+      gap: 12px;
+      counter-reset: step;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      color: #fff;
+      background: var(--accent);
+      border-radius: 50%;
+      font-weight: 700;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(8, 18px);
+      gap: 2px;
+      margin-top: 8px;
+    }
+
+    .mini-cell {
+      width: 18px;
+      height: 18px;
+      border-radius: 2px;
+      background: #dfe5ea;
+    }
+
+    .mini-cell.on {
+      background: #2d6f73;
+    }
+
+    .formula {
+      padding: 14px 16px;
+      border-radius: 8px;
+      background: var(--dark);
+      color: #ecf5f7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      overflow: auto;
+      white-space: pre;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .pill {
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f4f7f8;
+      color: #344651;
+      font-size: 13px;
+    }
+
+    @media (max-width: 760px) {
+      main {
+        width: min(100% - 24px, 1120px);
+        padding-top: 24px;
+      }
+
+      h1 {
+        font-size: 27px;
+      }
+
+      .facts,
+      .grid-2,
+      .grid-3,
+      .board-wrap {
+        grid-template-columns: 1fr;
+      }
+
+      .board {
+        width: min(220px, 100%);
+        height: auto;
+        aspect-ratio: 1;
+      }
+
+      svg {
+        min-width: 720px;
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>deft-reversi NNUE 評価関数 図解</h1>
+    <p class="lead">
+      この資料は、現在の <code>deft_reversi_engine</code> の NNUE を、機械学習に慣れていない人にも追いやすいように説明するものです。
+      NNUE は「盤面から少数の特徴IDを作り、そのIDに対応する重みを足し、小さなニューラルネットで点数に変換する」評価関数です。
+    </p>
+    <div class="facts">
+      <div class="fact"><strong>236,358</strong><span>入力特徴の総数。実際に立つ特徴は一部だけです。</span></div>
+      <div class="fact"><strong>256 x 2</strong><span>手番側と相手側、2本の accumulator を作ります。</span></div>
+      <div class="fact"><strong>32 + 32</strong><span>accumulator の後ろに小さな2層の dense network があります。</span></div>
+      <div class="fact"><strong>-64..64</strong><span>最終的な評価値は石差相当のスコアに丸めます。</span></div>
+    </div>
+  </header>
+
+  <section>
+    <h2>1. 全体像</h2>
+    <p>
+      通常のニューラルネットでは、盤面64マスすべてを毎回行列計算に入れる設計がよくあります。
+      この NNUE は少し違います。盤面から「今ONになっている特徴ID」だけを取り出し、その特徴IDの重みだけを足します。
+      これにより、入力が236,358次元あっても、毎回すべてを計算する必要がありません。
+    </p>
+    <div class="diagram" aria-label="NNUE whole pipeline">
+      <svg viewBox="0 0 1040 330" role="img">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6 Z" fill="#6f7f89"></path>
+          </marker>
+        </defs>
+
+        <rect class="box" x="20" y="44" width="145" height="94" fill="#e7f4e8"></rect>
+        <text class="label" x="42" y="76">盤面</text>
+        <text class="small" x="42" y="101">石・合法手・空き数</text>
+        <text class="small" x="42" y="120">n-tuple pattern</text>
+
+        <path class="arrow" d="M170 91 H235"></path>
+
+        <rect class="box" x="240" y="30" width="170" height="122" fill="#fff1cc"></rect>
+        <text class="label" x="266" y="65">特徴ID化</text>
+        <text class="small" x="266" y="92">236,358次元のうち</text>
+        <text class="small" x="266" y="111">ONのIDだけ集める</text>
+        <text class="mono" x="266" y="132">active feature ids</text>
+
+        <path class="arrow" d="M415 91 H480"></path>
+
+        <rect class="box" x="485" y="28" width="185" height="125" fill="#e6f0fb"></rect>
+        <text class="label" x="510" y="61">FT / accumulator</text>
+        <text class="small" x="510" y="88">特徴IDごとの重みを足す</text>
+        <text class="mono" x="510" y="111">256 int32</text>
+        <text class="small" x="510" y="132">手番側と相手側の2本</text>
+
+        <path class="arrow" d="M675 91 H725"></path>
+
+        <rect class="box" x="730" y="28" width="135" height="125" fill="#eee8fb"></rect>
+        <text class="label" x="757" y="61">結合</text>
+        <text class="small" x="757" y="88">手番側 256</text>
+        <text class="small" x="757" y="108">相手側 256</text>
+        <text class="mono" x="757" y="131">512</text>
+
+        <path class="arrow" d="M870 91 H920"></path>
+
+        <rect class="box" x="925" y="28" width="95" height="125" fill="#fce8e8"></rect>
+        <text class="label" x="946" y="61">出力</text>
+        <text class="small" x="946" y="88">32 → 32</text>
+        <text class="small" x="946" y="108">→ 1</text>
+        <text class="mono" x="946" y="131">score</text>
+
+        <rect class="box" x="486" y="210" width="78" height="42" fill="#dff3f1"></rect>
+        <rect class="box" x="574" y="210" width="78" height="42" fill="#dff3f1"></rect>
+        <rect class="box" x="662" y="210" width="78" height="42" fill="#dff3f1"></rect>
+        <rect class="box" x="750" y="210" width="78" height="42" fill="#dff3f1"></rect>
+        <text class="small" x="501" y="236">w[id1]</text>
+        <text class="small" x="589" y="236">w[id2]</text>
+        <text class="small" x="677" y="236">w[id3]</text>
+        <text class="small" x="765" y="236">...</text>
+        <path class="arrow" d="M525 206 V160"></path>
+        <path class="arrow" d="M613 206 V160"></path>
+        <path class="arrow" d="M701 206 V160"></path>
+        <text class="small" x="506" y="286">NNUE の高速さは、ONの特徴に対応する重みだけを足す点にあります。</text>
+      </svg>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. 盤面から何を入力するか</h2>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>入力は「画像」ではなく「特徴ID」</h3>
+        <p>
+          NNUE は盤面を64個の数値としてそのまま入れるのではなく、いくつかの観点で盤面を見ます。
+          それぞれの観点で「この特徴がON」となったIDだけを集めます。
+        </p>
+        <table>
+          <thead>
+          <tr><th>特徴グループ</th><th>次元</th><th>意味</th></tr>
+          </thead>
+          <tbody>
+          <tr><td>石プレーン</td><td>128</td><td>own石64 + opp石64。どのマスに自分/相手の石があるか。</td></tr>
+          <tr><td>合法手プレーン</td><td>128</td><td>own合法手64 + opp合法手64。どこに打てるか。</td></tr>
+          <tr><td>象限空き数</td><td>68</td><td>4象限それぞれについて、空きマス数0..16をone-hot化。</td></tr>
+          <tr><td>パターン</td><td>236,034</td><td>42個のn-tuple pattern。各セルを 空=0 / own=1 / opp=2 として3進数化。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>例: 初期盤面付近の見え方</h3>
+        <div class="board-wrap">
+          <div class="board" aria-label="sample reversi board">
+            <span class="sq"></span><span class="sq"></span><span class="sq pattern"></span><span class="sq pattern"></span><span class="sq pattern"></span><span class="sq pattern"></span><span class="sq"></span><span class="sq"></span>
+            <span class="sq"></span><span class="sq"></span><span class="sq pattern"></span><span class="sq pattern"></span><span class="sq pattern"></span><span class="sq pattern"></span><span class="sq"></span><span class="sq"></span>
+            <span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq legal"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span>
+            <span class="sq"></span><span class="sq"></span><span class="sq legal"></span><span class="sq light"></span><span class="sq dark"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span>
+            <span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq dark"></span><span class="sq light"></span><span class="sq legal"></span><span class="sq"></span><span class="sq"></span>
+            <span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq legal"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span>
+            <span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span>
+            <span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span><span class="sq"></span>
+          </div>
+          <div class="legend">
+            <div class="legend-item"><span class="swatch dark"></span>own の石として見る視点と、opp の石として見る視点を両方作ります。</div>
+            <div class="legend-item"><span class="swatch light"></span>相手の石も別の入力特徴になります。</div>
+            <div class="legend-item"><span class="swatch legal"></span>合法手も64マスのone-hot特徴として入ります。</div>
+            <div class="legend-item"><span class="swatch pattern"></span>黄色部分のような形を42個見るのがn-tuple patternです。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. one-hot と sparse input</h2>
+    <p>
+      one-hot は「たくさんの候補の中から、該当する場所だけ1にする」表し方です。
+      入力全体は236,358次元ありますが、1局面でONになる特徴はその一部だけです。
+      そのため、実装では長い配列を全部作らず、ONになったIDのリストだけを持ちます。
+    </p>
+    <div class="grid-3">
+      <div class="panel">
+        <h3>石のone-hot</h3>
+        <p class="muted">own石があるマスだけON。</p>
+        <div class="mini-grid" aria-hidden="true">
+          <span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span>
+          <span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span>
+          <span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span>
+          <span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell on"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span>
+          <span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell on"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span>
+          <span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span>
+          <span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span>
+          <span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span><span class="mini-cell"></span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>象限空き数</h3>
+        <p class="muted">左上4x4の空きが12なら、17候補のうち「12」だけON。</p>
+        <div class="pill-row" aria-label="quadrant empty one-hot">
+          <span class="pill">0</span><span class="pill">1</span><span class="pill">...</span><span class="pill" style="background:#fff1cc;border-color:#d8a93c;">12</span><span class="pill">...</span><span class="pill">16</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>パターン</h3>
+        <p class="muted">
+          たとえば8マス pattern は <code>3^8 = 6561</code> 通り。
+          そのうち現在の並びに対応する1つだけONになります。
+        </p>
+        <div class="formula">[空, own, opp, 空, own, ...]
+→ 3進コード
+→ pattern offset + code</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>4. 2つの視点を作る理由</h2>
+    <p>
+      オセロの評価では「自分から見た形」と「相手から見た形」の両方が重要です。
+      同じ盤面でも、黒視点では黒石がown、白石がoppです。白視点では逆になります。
+      この実装では手番側視点と相手側視点を作り、同じ重み表でそれぞれ accumulator を作ります。
+    </p>
+    <div class="diagram" aria-label="two viewpoints">
+      <svg viewBox="0 0 1040 300" role="img">
+        <defs>
+          <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6 Z" fill="#6f7f89"></path>
+          </marker>
+        </defs>
+        <rect class="box" x="35" y="95" width="135" height="88" fill="#e7f4e8"></rect>
+        <text class="label" x="70" y="130">盤面</text>
+        <text class="small" x="59" y="154">player / opponent</text>
+
+        <path class="arrow" marker-end="url(#arrow2)" d="M175 118 H275"></path>
+        <path class="arrow" marker-end="url(#arrow2)" d="M175 164 H275"></path>
+
+        <rect class="box" x="285" y="62" width="190" height="86" fill="#fff1cc"></rect>
+        <text class="label" x="319" y="96">手番側視点</text>
+        <text class="small" x="314" y="121">own = player</text>
+
+        <rect class="box" x="285" y="160" width="190" height="86" fill="#fce8e8"></rect>
+        <text class="label" x="319" y="194">相手側視点</text>
+        <text class="small" x="314" y="219">own = opponent</text>
+
+        <path class="arrow" marker-end="url(#arrow2)" d="M480 105 H575"></path>
+        <path class="arrow" marker-end="url(#arrow2)" d="M480 203 H575"></path>
+
+        <rect class="box" x="585" y="62" width="150" height="86" fill="#e6f0fb"></rect>
+        <text class="label" x="615" y="96">acc 256</text>
+        <text class="small" x="616" y="121">手番側</text>
+
+        <rect class="box" x="585" y="160" width="150" height="86" fill="#e6f0fb"></rect>
+        <text class="label" x="615" y="194">acc 256</text>
+        <text class="small" x="616" y="219">相手側</text>
+
+        <path class="arrow" marker-end="url(#arrow2)" d="M740 105 C790 105 790 150 840 150"></path>
+        <path class="arrow" marker-end="url(#arrow2)" d="M740 203 C790 203 790 150 840 150"></path>
+
+        <rect class="box" x="850" y="108" width="150" height="86" fill="#eee8fb"></rect>
+        <text class="label" x="884" y="142">concat</text>
+        <text class="mono" x="892" y="168">512</text>
+      </svg>
+    </div>
+  </section>
+
+  <section>
+    <h2>5. accumulator は「重みの足し算」</h2>
+    <p>
+      最初の層は通常の dense layer ではありません。active feature id ごとに
+      <code>256個の重み</code> があり、それを bias に足します。
+      これが NNUE の FT accumulator です。
+    </p>
+    <div class="formula">acc = input_bias
+for id in active_feature_ids:
+    acc += input_weights[id]
+
+acc は 256 個の int32</div>
+    <div class="note">
+      <strong>機械学習の見方:</strong>
+      これは「巨大なone-hot入力に対する線形層」と同じです。
+      ただし one-hot の0がほとんどなので、ONの列だけを足す実装にしています。
+    </div>
+  </section>
+
+  <section>
+    <h2>6. dense network は何層か</h2>
+    <p>
+      accumulator の後ろには、小さなニューラルネットがあります。
+      FTを含めて数えるなら、構造は <code>FT + L2 + L3 + output</code> です。
+      通常の全結合層として見ると、accumulator後は <code>512 → 32 → 32 → 1</code> です。
+    </p>
+    <div class="diagram" aria-label="dense layers">
+      <svg viewBox="0 0 1040 340" role="img">
+        <defs>
+          <marker id="arrow3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6 Z" fill="#6f7f89"></path>
+          </marker>
+        </defs>
+        <rect class="box" x="30" y="72" width="150" height="96" fill="#e6f0fb"></rect>
+        <text class="label" x="63" y="106">accumulator</text>
+        <text class="small" x="67" y="132">256 x 2</text>
+        <text class="mono" x="77" y="152">int32</text>
+
+        <path class="arrow" marker-end="url(#arrow3)" d="M185 120 H250"></path>
+
+        <rect class="box" x="255" y="72" width="130" height="96" fill="#dff3f1"></rect>
+        <text class="label" x="283" y="106">clipped</text>
+        <text class="label" x="292" y="126">ReLU</text>
+        <text class="mono" x="275" y="151">0..4095</text>
+
+        <path class="arrow" marker-end="url(#arrow3)" d="M390 120 H455"></path>
+
+        <rect class="box" x="460" y="72" width="125" height="96" fill="#fff1cc"></rect>
+        <text class="label" x="494" y="106">L2</text>
+        <text class="mono" x="483" y="132">512 → 32</text>
+        <text class="small" x="484" y="152">int16 weights</text>
+
+        <path class="arrow" marker-end="url(#arrow3)" d="M590 120 H655"></path>
+
+        <rect class="box" x="660" y="72" width="125" height="96" fill="#fff1cc"></rect>
+        <text class="label" x="694" y="106">L3</text>
+        <text class="mono" x="686" y="132">32 → 32</text>
+        <text class="small" x="684" y="152">clipped ReLU</text>
+
+        <path class="arrow" marker-end="url(#arrow3)" d="M790 120 H855"></path>
+
+        <rect class="box" x="860" y="72" width="125" height="96" fill="#fce8e8"></rect>
+        <text class="label" x="890" y="106">出力</text>
+        <text class="mono" x="889" y="132">32 → 1</text>
+        <text class="small" x="886" y="152">-64..64</text>
+
+        <text class="small" x="260" y="236">clipped ReLU は、値を 0 未満なら0、4095超なら4095に丸めます。</text>
+        <text class="small" x="260" y="260">極端な値を抑えることで、後続層の計算を安定させます。</text>
+      </svg>
+    </div>
+    <div class="formula">dense_raw = bias + sum(input[i] * weight[i])
+dense_out = clamp(round(dense_raw / weight_scale), 0, 4095)
+
+score_raw = output_bias + sum(last[i] * output_weight[i])
+score = clamp(round(score_raw / weight_scale), -64, 64)</div>
+  </section>
+
+  <section>
+    <h2>7. 学習では何をしているか</h2>
+    <p>
+      学習は「今の重みで予測した評価値」と「教師データの評価値」の差を小さくする作業です。
+      このプロジェクトの trainer は、float の重みで計算し、最後に engine 用の <code>i16</code> / <code>i32</code> 形式に丸めて保存します。
+    </p>
+    <div class="steps">
+      <div class="step">
+        <div>
+          <h3>教師データを読む</h3>
+          <p>RD dataset から <code>own bitboard</code>、<code>opponent bitboard</code>、教師スコアを読みます。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>盤面を特徴IDに変換</h3>
+          <p>推論と同じ <code>NnueState::from_board</code> を使い、手番側視点と相手側視点のactive feature idsを作ります。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>予測して誤差を見る</h3>
+          <p>forward で評価値を出し、教師スコアとの差を Huber loss で測ります。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>Adam で重みを更新</h3>
+          <p>誤差が小さくなる方向に、入力重み、bias、dense層、出力層の重みを更新します。</p>
+        </div>
+      </div>
+      <div class="step">
+        <div>
+          <h3>EngineFile に保存</h3>
+          <p>学習後、<code>EvaluatorData::Nnue</code> として engine file に保存します。推論側はこのファイルを読んで同じネットワークを使います。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>8. 現在実装されていることと未実装のこと</h2>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>実装済み</h3>
+        <ul>
+          <li>236,358次元のNNUE入力特徴定義</li>
+          <li>手番側/相手側の2視点 accumulator</li>
+          <li><code>512 → 32 → 32 → 1</code> の推論</li>
+          <li>int16重み、int32 bias、<code>weight_scale=4096</code></li>
+          <li>NNUE trainer と EngineFile 出力</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>今後の最適化候補</h3>
+        <ul>
+          <li>探索中の make/unmake による差分 accumulator 更新</li>
+          <li>SIMD によるacc加算とdense層高速化</li>
+          <li>終盤ソルバとの境界での軽量make/unmake統合</li>
+          <li>重みスケールや初期値の品質調整</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>9. コード上の対応</h2>
+    <table>
+      <thead>
+      <tr><th>ファイル</th><th>役割</th></tr>
+      </thead>
+      <tbody>
+      <tr><td><code>src/eval/nnue_features.rs</code></td><td>特徴IDのレイアウト、パターン定義、入力次元を管理します。</td></tr>
+      <tr><td><code>src/eval/nnue_evaluator.rs</code></td><td>NNUEの状態生成、accumulator構築、forward推論を実装します。</td></tr>
+      <tr><td><code>src/file.rs</code></td><td><code>NnueEvaluatorData</code> と engine file format を定義します。</td></tr>
+      <tr><td><code>deft-reversi-train/src/nnue_train.rs</code></td><td>RD dataset からNNUEを学習し、engine file を出力します。</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>deft-reversi-engine eval architecture</title>
+  <style>
+    :root {
+      --ink: #20262c;
+      --muted: #5b6870;
+      --line: #d6dde2;
+      --paper: #fbfcfd;
+      --panel: #ffffff;
+      --soft: #f3f6f8;
+      --blue: #e7f2ff;
+      --green: #eaf7ec;
+      --yellow: #fff2d3;
+      --violet: #f1ecfb;
+      --red: #fdeeee;
+      --accent: #216f8f;
+      --code-bg: #edf5f7;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 36px 0 64px;
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.25;
+    }
+
+    h1 {
+      font-size: 32px;
+      margin-bottom: 10px;
+    }
+
+    h2 {
+      font-size: 22px;
+      margin-top: 42px;
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h3 {
+      font-size: 17px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    code {
+      color: #174a5d;
+      background: var(--code-bg);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.94em;
+    }
+
+    pre {
+      margin: 0;
+      padding: 14px 16px;
+      overflow: auto;
+      color: #eef8fa;
+      background: #10252c;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .lead {
+      max-width: 900px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+
+    .card, .note {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .card p, .note {
+      color: var(--muted);
+    }
+
+    .diagram {
+      overflow: auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+
+    svg {
+      display: block;
+      max-width: 100%;
+      min-width: 820px;
+      height: auto;
+      font-family: inherit;
+    }
+
+    .box {
+      stroke: #76858d;
+      stroke-width: 1.2;
+      rx: 8;
+    }
+
+    .arrow {
+      stroke: #69777f;
+      stroke-width: 1.8;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+
+    .label {
+      fill: var(--ink);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .small {
+      fill: var(--muted);
+      font-size: 12px;
+    }
+
+    .mono {
+      fill: #1c4f60;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 11px 12px;
+    }
+
+    th {
+      background: var(--soft);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .formula {
+      display: grid;
+      gap: 10px;
+    }
+
+    .formula div {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px 12px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      main {
+        width: min(100% - 24px, 1120px);
+        padding-top: 26px;
+      }
+
+      h1 {
+        font-size: 27px;
+      }
+
+      .summary, .split {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>deft_reversi_engine の eval 構造</h1>
+  <p class="lead">
+    `eval` は盤面を現在手番側から見た disc score に変換する内部コンポーネントです。
+    公開入口は `Evaluator` enum で、実装として通常の pattern 評価と NNUE 評価を切り替えます。
+  </p>
+
+  <div class="summary">
+    <section class="card">
+      <strong>入口</strong>
+      <p><code>Evaluator</code> が pattern / NNUE を包みます。</p>
+    </section>
+    <section class="card">
+      <strong>状態</strong>
+      <p><code>EvalState</code> が探索中の feature 状態を持ちます。</p>
+    </section>
+    <section class="card">
+      <strong>評価値</strong>
+      <p>返り値は現在手番側から見た <code>-64..64</code> の disc score です。</p>
+    </section>
+    <section class="card">
+      <strong>保存形式</strong>
+      <p><code>EngineFile v3</code> が評価重みと MPC 設定を保存します。</p>
+    </section>
+  </div>
+
+  <h2>全体の流れ</h2>
+  <div class="diagram" aria-label="eval overview">
+    <svg viewBox="0 0 1080 350" role="img">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#69777f"></path>
+        </marker>
+      </defs>
+
+      <rect class="box" x="32" y="122" width="136" height="96" fill="#f8fbfc"></rect>
+      <text class="label" x="100" y="154" text-anchor="middle">Board</text>
+      <text class="small" x="100" y="180" text-anchor="middle">current-player</text>
+      <text class="small" x="100" y="200" text-anchor="middle">relative</text>
+
+      <rect class="box" x="238" y="70" width="184" height="88" fill="var(--blue)"></rect>
+      <text class="label" x="330" y="102" text-anchor="middle">Evaluator</text>
+      <text class="small" x="330" y="128" text-anchor="middle">Pattern / Nnue</text>
+
+      <rect class="box" x="238" y="204" width="184" height="88" fill="var(--green)"></rect>
+      <text class="label" x="330" y="236" text-anchor="middle">EvalState</text>
+      <text class="small" x="330" y="262" text-anchor="middle">FeatureIndexes / NnueState</text>
+
+      <rect class="box" x="512" y="42" width="198" height="110" fill="var(--yellow)"></rect>
+      <text class="label" x="611" y="74" text-anchor="middle">PatternEvaluator</text>
+      <text class="small" x="611" y="100" text-anchor="middle">phase別 pattern重み</text>
+      <text class="small" x="611" y="122" text-anchor="middle">mobility + bias</text>
+
+      <rect class="box" x="512" y="198" width="198" height="110" fill="var(--violet)"></rect>
+      <text class="label" x="611" y="230" text-anchor="middle">NnueEvaluator</text>
+      <text class="small" x="611" y="256" text-anchor="middle">sparse input</text>
+      <text class="small" x="611" y="278" text-anchor="middle">512 -> 128 -> 32</text>
+
+      <rect class="box" x="812" y="122" width="190" height="96" fill="var(--red)"></rect>
+      <text class="label" x="907" y="154" text-anchor="middle">score</text>
+      <text class="small" x="907" y="180" text-anchor="middle">round / clamp</text>
+      <text class="small" x="907" y="200" text-anchor="middle">[-64, 64]</text>
+
+      <path class="arrow" d="M168 148 L238 114"></path>
+      <path class="arrow" d="M168 192 L238 248"></path>
+      <path class="arrow" d="M422 114 L512 96"></path>
+      <path class="arrow" d="M422 248 L512 252"></path>
+      <path class="arrow" d="M710 96 C760 108, 770 142, 812 160"></path>
+      <path class="arrow" d="M710 252 C760 238, 770 198, 812 182"></path>
+    </svg>
+  </div>
+
+  <h2>Evaluator と EvalState</h2>
+  <p>
+    `Evaluator` は評価重みを持つ immutable な型です。探索側は `Arc&lt;Evaluator&gt;` として共有します。
+    `EvalState` は局面ごとの feature 状態で、評価器の種類と一致している必要があります。
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>型</th>
+        <th>役割</th>
+        <th>中身</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Evaluator::Pattern</code></td>
+        <td>通常の pattern 評価を実行する。</td>
+        <td><code>PatternEvaluator</code></td>
+      </tr>
+      <tr>
+        <td><code>Evaluator::Nnue</code></td>
+        <td>NNUE 評価を実行する。</td>
+        <td><code>NnueEvaluator</code></td>
+      </tr>
+      <tr>
+        <td><code>EvalState::Pattern</code></td>
+        <td>pattern code を保持する。</td>
+        <td><code>FeatureIndexes</code></td>
+      </tr>
+      <tr>
+        <td><code>EvalState::Nnue</code></td>
+        <td>NNUE の active feature id を保持する。</td>
+        <td><code>NnueState</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>評価値の共通ルール</h2>
+  <p>
+    pattern 評価も NNUE も、最後は raw score を <code>SCORE_SCALE = 128</code> で丸めて disc score にします。
+    返り値は常に現在手番側から見た値で、最終的に <code>-64..64</code> に clamp されます。
+  </p>
+  <div class="formula">
+    <div>raw score -> round(raw / SCORE_SCALE) -> clamp(-64, 64)</div>
+  </div>
+
+  <h2>PatternEvaluator</h2>
+  <p>
+    通常評価は、既存の n-tuple pattern code と mobility weight を phase 別に足し合わせる構造です。
+    phase は <code>Board::move_count()</code> から求め、最大 <code>N_PHASES - 1</code> に丸めます。
+  </p>
+  <div class="split">
+    <section class="card">
+      <h3>FeatureIndexes</h3>
+      <p>
+        盤面の各マスを <code>0: empty</code>、<code>1: opponent</code>、<code>2: player</code> として base-3 encode します。
+        現在は <code>11 patterns x 4 rotations = 44</code> 個の pattern code を持ちます。
+      </p>
+    </section>
+    <section class="card">
+      <h3>重み</h3>
+      <p>
+        file 上は pattern ごとに分かれた重みを持ち、読み込み後は phase 内で flat table に変換します。
+        評価時は pattern ごとの offset を進めながら参照します。
+      </p>
+    </section>
+  </div>
+  <div class="formula">
+    <div>phase = min(board.move_count(), N_PHASES - 1)</div>
+    <div>score = sum(pattern_weight[pattern_offset + pattern_code]) + mobility_weight[mobility_idx] + bias</div>
+    <div>mobility_idx = N_MOBILITY_BASE + player_moves - opponent_moves</div>
+  </div>
+
+  <h2>NnueEvaluator</h2>
+  <p>
+    NNUE は pattern 評価とは別の評価器です。入力 feature は現状維持で、
+    n-tuple pattern、手番側/相手側の石、合法手数ペアを active feature id に変換します。
+  </p>
+  <div class="diagram" aria-label="nnue forward">
+    <svg viewBox="0 0 1080 270" role="img">
+      <defs>
+        <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#69777f"></path>
+        </marker>
+      </defs>
+
+      <rect class="box" x="28" y="90" width="150" height="82" fill="var(--soft)"></rect>
+      <text class="label" x="103" y="120" text-anchor="middle">active ids</text>
+      <text class="mono" x="103" y="146" text-anchor="middle">Vec&lt;usize&gt;</text>
+
+      <rect class="box" x="238" y="64" width="184" height="134" fill="var(--violet)"></rect>
+      <text class="label" x="330" y="94" text-anchor="middle">accumulator</text>
+      <text class="small" x="330" y="120" text-anchor="middle">512</text>
+      <text class="small" x="330" y="142" text-anchor="middle">sparse weight add</text>
+      <text class="small" x="330" y="164" text-anchor="middle">clamp</text>
+
+      <rect class="box" x="488" y="78" width="138" height="106" fill="#f7f2ff"></rect>
+      <text class="label" x="557" y="110" text-anchor="middle">dense 1</text>
+      <text class="small" x="557" y="136" text-anchor="middle">512 -> 128</text>
+      <text class="small" x="557" y="158" text-anchor="middle">clamp</text>
+
+      <rect class="box" x="686" y="78" width="138" height="106" fill="#f7f2ff"></rect>
+      <text class="label" x="755" y="110" text-anchor="middle">dense 2</text>
+      <text class="small" x="755" y="136" text-anchor="middle">128 -> 32</text>
+      <text class="small" x="755" y="158" text-anchor="middle">clamp</text>
+
+      <rect class="box" x="884" y="90" width="120" height="82" fill="var(--red)"></rect>
+      <text class="label" x="944" y="120" text-anchor="middle">output</text>
+      <text class="small" x="944" y="146" text-anchor="middle">32 -> 1</text>
+
+      <path class="arrow" d="M178 131 L238 131"></path>
+      <path class="arrow" d="M422 131 L488 131"></path>
+      <path class="arrow" d="M626 131 L686 131"></path>
+      <path class="arrow" d="M824 131 L884 131"></path>
+    </svg>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>NNUE input</th>
+        <th>内容</th>
+        <th>active 数</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>n-tuple pattern</td>
+        <td><code>FeatureIndexes</code> の pattern code を NNUE の feature id 空間に配置する。</td>
+        <td>常に 44</td>
+      </tr>
+      <tr>
+        <td>stones</td>
+        <td>手番側の石 64 features、相手側の石 64 features。</td>
+        <td>盤上の石数</td>
+      </tr>
+      <tr>
+        <td>mobility pair</td>
+        <td><code>player_moves * 34 + opponent_moves</code> の 1 feature。</td>
+        <td>常に 1</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note">
+    合法手入力は合法手のマスそのものではなく、手番側と相手側の合法手数ペアです。
+    現在の default NNUE 重みは全て 0 なので、未学習状態では評価値 0 を返します。
+  </div>
+
+  <h2>EngineFile v3</h2>
+  <p>
+    評価重みは <code>EngineFile</code> の <code>evaluator</code> に保存されます。
+    <code>EvaluatorData</code> は tagged enum で、<code>kind: pattern</code> または <code>kind: nnue</code> を持ちます。
+  </p>
+  <div class="split">
+    <section class="card">
+      <h3>Pattern data</h3>
+      <p>
+        <code>PatternEvaluatorData</code> は <code>phases: Vec&lt;PhaseData&gt;</code> を持ちます。
+        各 phase は pattern weights、mobility weights、bias を保存します。
+      </p>
+    </section>
+    <section class="card">
+      <h3>NNUE data</h3>
+      <p>
+        <code>NnueEvaluatorData</code> は input weights、input bias、dense layers、output weights を保存します。
+        shape は読み込み時に固定値と照合されます。
+      </p>
+    </section>
+  </div>
+
+  <h2>使い方</h2>
+  <pre><code>let engine_file = EngineFile::read_file("data/eval/eval.bin")?;
+let (_metadata, evaluator, _mpc) = engine_file.into_parts()?;
+
+let state = evaluator.state_from_board(&board);
+let score = evaluator.evaluate(&board, &state);
+
+// 単発評価や test 用
+let score = evaluator.evaluate_board_slow(&board);</code></pre>
+
+  <h2>関連ファイル</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ファイル</th>
+        <th>役割</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/eval/evaluator.rs</code></td>
+        <td><code>Evaluator</code> / <code>EvalState</code> の enum wrapper。</td>
+      </tr>
+      <tr>
+        <td><code>src/eval/pattern_evaluator.rs</code></td>
+        <td>通常の pattern 評価本体。</td>
+      </tr>
+      <tr>
+        <td><code>src/eval/nnue_evaluator.rs</code></td>
+        <td>NNUE v1 の feature 生成と forward。</td>
+      </tr>
+      <tr>
+        <td><code>src/eval/feature_indexes.rs</code></td>
+        <td>pattern code の生成と将来の差分更新用 table。</td>
+      </tr>
+      <tr>
+        <td><code>src/file.rs</code></td>
+        <td>EngineFile v3 schema と validation。</td>
+      </tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

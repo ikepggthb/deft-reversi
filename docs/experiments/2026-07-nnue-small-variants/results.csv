@@ -1,0 +1,10 @@
+run,label,ft_dims,acc,ft_raw_mb,valid_mae,mae_stones_ge24,mae_stones_lt24
+v2-100m,"v2 (non-shared, acc256)",944956,256,498.9,4.517,4.116,5.856
+small-S1-full-acc256,S1 shared full acc256,239770,256,126.6,4.482,4.078,5.829
+small-S2-full-acc128,S2 shared full acc128,239770,128,65.2,4.479,4.069,5.847
+small-S3-full-acc64,S3 shared full acc64,239770,64,34.5,4.602,4.201,5.938
+small-S4-no2x5-acc128,S4 no-corner2x5 acc128,121672,128,33.1,4.574,4.186,5.864
+small-S5-v1-acc128,S5 v1 acc128,62623,128,17.0,4.63,4.254,5.887
+small-S6-v1-acc64,S6 v1 acc64,62623,64,9.0,4.74,4.379,5.941
+small-R1-residual-acc256,R1 residual full acc256,239770,256,126.6,4.82,4.482,5.947
+small-R2-residual-v1-acc64,R2 residual v1 acc64,62623,64,9.0,5.048,4.736,6.088

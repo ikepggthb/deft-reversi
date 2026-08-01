@@ -1,29 +1,37 @@
-use deft_reversi_engine::*;
+use deft_reversi_engine::{
+    check_record, position_num_to_str, Evaluator, Game, Solver, SolverOptions,
+};
 
-use std::fs::OpenOptions;
 use rand::prelude::*;
+use std::fs::OpenOptions;
 use std::io::Write;
 
-
 /// 自己対戦を実行し、棋譜をファイルに保存する関数
-pub fn run_self_play(n_games: usize, level: i32, start_rand: usize, eval_path: &str, out_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_self_play(
+    n_games: usize,
+    level: i32,
+    start_rand: usize,
+    eval_path: &str,
+    out_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut rng = thread_rng();
     let mut file = OpenOptions::new()
         .create(true)
         .write(true)
-        .truncate(true)  // ファイルを上書き
+        .truncate(true) // ファイルを上書き
         .open(out_path)?;
 
     // Evaluatorを一度だけ読み込む
-    let evaluator = match Evaluator::read_file(eval_path) {
-        Ok(e) => e,
+    let solver = match Solver::from_file(eval_path, SolverOptions::default()) {
+        Ok(solver) => solver,
         Err(e) => {
-            eprintln!("Evaluatorの読み込みに失敗しました（{}）。正しい評価を計算できません。", e);
-            Evaluator::default()
+            eprintln!(
+                "Evaluatorの読み込みに失敗しました（{}）。正しい評価を計算できません。",
+                e
+            );
+            Solver::new(std::sync::Arc::new(Evaluator::default()))
         }
     };
-
-    let mut solver = Solver::new(evaluator);
 
     for game_num in 1..=n_games {
         let mut game = Game::new();
@@ -44,15 +52,18 @@ pub fn run_self_play(n_games: usize, level: i32, start_rand: usize, eval_path: &
             // ランダムに手を選択
             let rand_move_index = rng.gen_range(0..n_moves) as usize;
 
+            let mut bits = legal_moves;
             let mut rand_move_bit = 0;
-            for (i, move_bit) in MoveIterator::new(legal_moves).enumerate() {
-                if i == rand_move_index {rand_move_bit = move_bit; break;}
+            for i in 0..=rand_move_index {
+                rand_move_bit = bits & bits.wrapping_neg();
+                bits &= bits - 1;
+                if i == rand_move_index {
+                    break;
+                }
             }
-            if let Ok(move_str) = position_bit_to_str(rand_move_bit) {
-                let put_result = game.put(&move_str);
-                #[cfg(debug_assertions)]
-                if put_result.is_err() {
-                    eprintln!("err: putに失敗しました。");
+            if let Ok(move_str) = position_num_to_str(rand_move_bit.trailing_zeros() as u8) {
+                if let Err(e) = game.put(&move_str) {
+                    eprintln!("err: putに失敗しました: {e}");
                 }
             }
         }
@@ -68,26 +79,22 @@ pub fn run_self_play(n_games: usize, level: i32, start_rand: usize, eval_path: &
             }
             let solver_result = solver.solve(&game.current.board, level);
 
-            if solver_result.best_move == 0 {
+            let Some(best_move) = solver_result.best_move else {
                 #[cfg(debug_assertions)]
                 eprintln!("err: 最善手を計算できません。");
                 break;
-            }
+            };
 
-            let move_str = match position_bit_to_str(solver_result.best_move) {
+            let move_str = match position_num_to_str(best_move) {
                 Ok(s) => s,
-                Err(_) => { 
-                    eprintln!("err: position_bit_to_str");
-                    break; 
+                Err(_) => {
+                    eprintln!("err: position_num_to_str");
+                    break;
                 }
             };
 
-            
-
-            let put_result = game.put(&move_str);
-            #[cfg(debug_assertions)]
-            if put_result.is_err() {
-                eprintln!("err: putに失敗しました。");
+            if let Err(e) = game.put(&move_str) {
+                eprintln!("err: putに失敗しました: {e}");
             }
         }
 
@@ -98,9 +105,8 @@ pub fn run_self_play(n_games: usize, level: i32, start_rand: usize, eval_path: &
 
         // 棋譜を取得してファイルに書き込む
         let record = game.record();
+        check_record(&record)?;
         writeln!(file, "{}", record)?;
-
-        solver.search.t_table.set_old();
 
         // 進捗表示（オプション）
         println!("{} / {} ゲーム完了", game_num, n_games);

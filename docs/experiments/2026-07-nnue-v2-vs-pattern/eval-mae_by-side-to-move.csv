@@ -1,0 +1,4 @@
+evaluator,black_to_move_mae,black_samples,white_to_move_mae,white_samples
+nnue_v2,4.7225,125000,4.7163,120000
+pattern_lr015,5.5898,125000,5.6768,120000
+old_eval,5.7068,125000,5.5527,120000

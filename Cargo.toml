@@ -1,7 +1,8 @@
 [workspace]
 members = [ "deft-reversi-cli",
-    "deft-reversi-engine", "deft-reversi-learn",
-    "deft-reversi-web"
+    "deft-reversi-engine",
+    "deft-reversi-train",
+    "deft-reversi-web/wasm"
 ]
 
 resolver = "2"
@@ -12,6 +13,8 @@ opt-level = 3
 panic = 'abort'
 codegen-units = 1
 
+[workspace.dependencies]
+deft_reversi_engine = { path = "deft-reversi-engine" }
 
 # ビルド時に環境変数を使って設定する
 # 例: 

@@ -5,3 +5,26 @@ todo_list.md
 
 deft-reversi-cli/self-play*
 deft-reversi-cli/problem/test.obf
+
+deft-reversi-engine_old/*
+deft-reversi-engine/c.txt
+
+data/eval/*
+
+codex
+.codex
+
+# Local training datasets and run artifacts
+/egaroucid_rd_data_set/
+/egaroucid_rd_residual_data_set/
+/runs/
+/log/
+
+# Generated MPC tuning and collection logs
+/data/log/mpc-s2-collect/
+/data/log/mpc-s2-sweep/
+/data/log/mpc-tune/
+
+# Python bytecode and cache directories
+**/__pycache__/
+*.py[cod]

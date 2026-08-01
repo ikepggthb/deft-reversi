@@ -1,20 +1,20 @@
-use deft_reversi_engine::*;
+use deft_reversi_engine::Board;
 use std::time;
 
 pub struct Perft {
-    is_count_pass : bool,
-    n_leaf_node   : u64,
-    n_passed      : u64,
-    n_end         : u64, // leaf node を含まない
+    is_count_pass: bool,
+    n_leaf_node: u64,
+    n_passed: u64,
+    n_end: u64, // leaf node を含まない
 }
 
-impl Perft {        
-    fn new(count_pass: bool) -> Self{
+impl Perft {
+    fn new(count_pass: bool) -> Self {
         Self {
-            is_count_pass : count_pass,
-            n_leaf_node   : 0,
-            n_passed      : 0,
-            n_end         : 0
+            is_count_pass: count_pass,
+            n_leaf_node: 0,
+            n_passed: 0,
+            n_end: 0,
         }
     }
 
@@ -57,20 +57,26 @@ impl Perft {
                 // pass
                 self.n_passed += 1;
                 let passed_board = {
-                    let mut b = board.clone(); b.swap(); b
+                    let mut b = board.clone();
+                    b.swap();
+                    b
                 };
-                self.search(&passed_board,  depth - if self.is_count_pass {1} else {0});
+                self.search(
+                    &passed_board,
+                    depth - if self.is_count_pass { 1 } else { 0 },
+                );
             }
             return;
         }
-            
-        let move_iterator = MoveIterator::new(legal_moves);
-        for legal_move in move_iterator {
+
+        let mut bits = legal_moves;
+        while bits != 0 {
+            let legal_move = bits & bits.wrapping_neg();
+            bits &= bits - 1;
             let mut put_board = board.clone();
             put_board.put_piece_fast(legal_move);
             self.search(&put_board, depth - 1);
         }
-
 
         // let mut legal_moves = legal_moves;
         // while legal_moves != 0 {
@@ -80,7 +86,6 @@ impl Perft {
         //     put_board.put_piece_fast(put_place);
         //     self.search(&put_board, depth + 1);
         // }
-
 
         // let (move_list, n_moves) = get_put_boards_fast(board, legal_moves);
         // for move_cand in move_list.iter().take(n_moves) {
@@ -145,12 +150,11 @@ impl Perft {
     //         board.player = tmp;
     //     }
     // }
-    
+
     fn run(&mut self, depth: u64) {
         let board = Board::new();
         self.search(&board, depth);
     }
-
 }
 
 fn format_duration(duration: time::Duration) -> String {
@@ -169,7 +173,13 @@ pub fn run_perft(depth: u64, count_pass: bool) {
     for i in 1..=depth {
         perft.clear();
         perft.run(i);
-        println!(" {: >5} | {: >20} | {: >10} | {: >10} | {:>14}",
-                    i, perft.n_leaf_node, perft.n_end, perft.n_passed, format_duration(now.elapsed()));
+        println!(
+            " {: >5} | {: >20} | {: >10} | {: >10} | {:>14}",
+            i,
+            perft.n_leaf_node,
+            perft.n_end,
+            perft.n_passed,
+            format_duration(now.elapsed())
+        );
     }
 }

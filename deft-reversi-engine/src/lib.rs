@@ -1,42 +1,34 @@
-pub mod board;
-pub mod eval_simple;
-pub mod perfect_search;
-pub mod eval_search;
-pub mod solver;
-pub mod game;
-mod bit;
-pub mod cut_off;
-mod t_table;
+mod board;
+mod error;
 mod eval;
-mod mpc;
-mod human_book;
-mod count_last_flip;
-mod get_moves;
-mod flip;
-mod move_list;
-// ---
+mod file;
+mod game;
+mod search;
+mod t_table;
 
-pub use board::*;
-pub use eval_simple::*;
-pub use solver::*;
-pub use game::*;
-pub use eval::*;
-pub use t_table::*;
-pub use human_book::*;
-pub use cut_off::*;
-pub use mpc::{SELECTIVITY, SELECTIVITY_LV_MAX, N_SELECTIVITY_LV, NO_MPC};
-pub use move_list::*;
+pub use board::board::Board;
+pub use board::position::{position_num_to_str, position_str_to_num};
+pub use error::EngineError;
+pub use eval::evaluator::Evaluator;
+pub use game::{check_record, Color, Game, Position};
+pub use search::{
+    MpcConfig, Solver, SolverOptions, SolverResult, SolverType, NO_MPC_SELECTIVITY_LV,
+    SOLVE_LEVEL_MAX,
+};
 
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn run () {
-        // npc_perfect_learn();
-        // npc_learn(10);
-        // learning();
-        // console_game();
-    }
+#[cfg(feature = "train-tools")]
+pub mod train_api {
+    pub use crate::eval::evaluator_const::*;
+    pub use crate::eval::feature_indexes::FeatureIndexes;
+    pub use crate::eval::nnue_evaluator::NnueState;
+    pub use crate::eval::nnue_features::{
+        NNUE_ACCUMULATOR_SIZE, NNUE_ACTIVATION_MAX, NNUE_ACTIVATION_SCALE,
+        NNUE_DEFAULT_WEIGHT_SCALE, NNUE_DENSE_LAYER_SIZES, NNUE_INPUT_SIZE, NNUE_PATTERN_FEATURES,
+        NNUE_PATTERN_INSTANCE_COUNT, NNUE_TOWER_COUNT,
+    };
+    pub use crate::file::{
+        DenseLayerData, EngineFile, EvaluatorData, Metadata, NnueEvaluatorData, NnueTowerData,
+        PatternEvaluatorData, PhaseData,
+    };
+    pub use crate::search::mpc::MpcConfig;
 }

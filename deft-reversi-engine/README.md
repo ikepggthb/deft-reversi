@@ -16,7 +16,7 @@ Deft Reversi Engineを搭載したオセロゲームは、以下のウェブサ�
 ## 使用した技術
  - bitboard
  - negascout探索 (PVS)
- - 置換表
+ - 置換表 ([設計メモ](docs/transposition-table.md))
  - Multi Prob Cut
  - Move ordering
    - 評価関数による浅い探索を使用したMove ordering
@@ -30,6 +30,10 @@ Deft Reversi Engineを搭載したオセロゲームは、以下のウェブサ�
      - https://www.egaroucid.nyanyan.dev/ja/technology/transcript/
    - 特徴量として盤面の部分パターンと、合法手数差を使用した。
 
+## Docs
+
+- [外部 API 契約](docs/external-api-contract.md)
+- [Transposition Table](docs/transposition-table.md)
 
 ## ライセンス
 このプロジェクトは [GNU General Public License v3.0](LICENSE) の下で公開されています。

@@ -1,4 +1,7 @@
-use deft_reversi_engine::*;
+use deft_reversi_engine::{
+    check_record, position_num_to_str, Color, Evaluator, Game, Solver, SolverOptions,
+    SOLVE_LEVEL_MAX,
+};
 use std::{
     io::{self, Write},
     process::exit,
@@ -31,17 +34,17 @@ impl SettingTurn {
 
 impl OthelloCLI {
     pub fn new(ai_level: i32, eval_path: &str) -> Self {
-        let eval = match Evaluator::read_file(eval_path) {
-            Ok(e) => e,
+        let solver = match Solver::from_file(eval_path, SolverOptions::default()) {
+            Ok(solver) => solver,
             Err(e) => {
                 eprintln!("Evaluator: {}", e);
-                Evaluator::default()
+                Solver::new(std::sync::Arc::new(Evaluator::default()))
             }
         };
 
         OthelloCLI {
             game: Game::new(),
-            solver: Solver::new(eval),
+            solver,
             ai_level,
             setting_turn: SettingTurn {
                 black: Turn::Player,
@@ -138,7 +141,7 @@ impl OthelloCLI {
                     }
                     match parts[1].parse::<i32>() {
                         Ok(new_level) => {
-                            if new_level < 1 || new_level > 60 {
+                            if !(1..=SOLVE_LEVEL_MAX).contains(&new_level) {
                                 println!("Invalid level. Level must be between 1 and 60.");
                                 continue;
                             }
@@ -162,7 +165,10 @@ impl OthelloCLI {
                         eprintln!("Invalid mode command. Usage: play <record of game (f5f6...)>");
                     }
                     for position in parts[1].as_bytes().chunks_exact(2) {
-                        self.game.put(std::str::from_utf8(position).unwrap());
+                        if let Err(e) = self.game.put(std::str::from_utf8(position).unwrap()) {
+                            eprintln!("{e}");
+                            break;
+                        }
                         if self.game.is_pass() {
                             self.game.pass();
                         }
@@ -265,7 +271,8 @@ impl OthelloCLI {
 
     fn computer_turn(&mut self) {
         let result = self.solver.solve(&self.game.current.board, self.ai_level);
-        if let Ok(move_str) = position_bit_to_str(result.best_move) {
+        if let Some(best_move) = result.best_move {
+            let move_str = position_num_to_str(best_move).unwrap();
             println!("move: {}", move_str);
             self.game.put(&move_str).unwrap();
         }
@@ -296,7 +303,9 @@ impl OthelloCLI {
     /// Displays a help message showing the available commands.
     fn display_help(&self) {
         println!("Available commands:");
-        println!("  new | init                - Start a new game with the standard initial position.");
+        println!(
+            "  new | init                - Start a new game with the standard initial position."
+        );
         println!("  level | l <number>        - Set AI level (1-60).");
         println!("  play <record>             - Play a game record (e.g., f5f6...).");
         println!("  undo                      - Undo the last move.");
