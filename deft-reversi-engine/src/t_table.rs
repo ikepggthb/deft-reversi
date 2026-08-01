@@ -2,6 +2,101 @@ use super::board::board::*;
 use super::board::constant::*;
 use std::mem;
 use std::sync::atomic::{fence, AtomicU64, AtomicU8, Ordering};
+use std::sync::LazyLock;
+
+/// TT の排他制御でどれだけ競合したかを表す診断カウンタ。
+///
+/// 読み取りは seqlock の snapshot、書き込みは `seq` の CAS で行うため、
+/// 競合しても正しさは壊れないが、その代わり以下が起こり得る。
+///
+/// - probe 中に writer が entry を保持していると、その entry を読めない
+/// - store の CAS に負け続けると、探索結果を保存せずに捨てる
+///
+/// これらが実際にどの程度起きているかを数える。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TtContentionStats {
+    /// probe を呼んだ回数。
+    pub probe_calls: u64,
+    /// probe 中に writer が保持中の entry に遭遇し、その周回をやり直した回数。
+    pub probe_saw_writer: u64,
+    /// probe の retry 上限に達し、hit 判定を諦めた回数。
+    pub probe_exhausted: u64,
+    /// store から entry への保存を試みた回数。
+    pub save_calls: u64,
+    /// entry を確保する CAS に負けた回数。
+    pub save_cas_failed: u64,
+    /// retry 上限に達し、探索結果を保存せずに捨てた回数。
+    pub save_dropped: u64,
+}
+
+impl TtContentionStats {
+    fn percent(numerator: u64, denominator: u64) -> f64 {
+        if denominator == 0 {
+            0.0
+        } else {
+            100.0 * numerator as f64 / denominator as f64
+        }
+    }
+
+    /// `DEFT_TT_STATS` 用の 1 行表示。
+    pub fn summary_line(&self) -> String {
+        format!(
+            "probe={} saw_writer={} ({:.4}%) exhausted={} ({:.6}%) | save={} cas_failed={} ({:.4}%) dropped={} ({:.6}%)",
+            self.probe_calls,
+            self.probe_saw_writer,
+            Self::percent(self.probe_saw_writer, self.probe_calls),
+            self.probe_exhausted,
+            Self::percent(self.probe_exhausted, self.probe_calls),
+            self.save_calls,
+            self.save_cas_failed,
+            Self::percent(self.save_cas_failed, self.save_calls),
+            self.save_dropped,
+            Self::percent(self.save_dropped, self.save_calls),
+        )
+    }
+}
+
+/// 診断カウンタを計上するかどうか。`DEFT_TT_STATS` から一度だけ決まる。
+///
+/// probe / store は探索中に頻繁に実行されるため、無効時は
+/// 読み取り専用の cacheline を load するだけで済むようにしている。
+/// 初期化は最初の参照時に走るので、置換表を作る前に読んでも正しい値になる。
+static TT_STATS_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("DEFT_TT_STATS").is_some());
+
+static TT_PROBE_CALLS: AtomicU64 = AtomicU64::new(0);
+static TT_PROBE_SAW_WRITER: AtomicU64 = AtomicU64::new(0);
+static TT_PROBE_EXHAUSTED: AtomicU64 = AtomicU64::new(0);
+static TT_SAVE_CALLS: AtomicU64 = AtomicU64::new(0);
+static TT_SAVE_CAS_FAILED: AtomicU64 = AtomicU64::new(0);
+static TT_SAVE_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+/// 診断カウンタが有効かどうか。
+#[inline(always)]
+pub fn tt_contention_stats_enabled() -> bool {
+    *TT_STATS_ENABLED
+}
+
+#[inline(always)]
+fn bump(counter: &AtomicU64) {
+    if tt_contention_stats_enabled() {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// 現在のカウンタを読み出し、同時に 0 に戻す。
+///
+/// 無効時は常に 0 のみの値を返す。
+pub fn take_tt_contention_stats() -> TtContentionStats {
+    TtContentionStats {
+        probe_calls: TT_PROBE_CALLS.swap(0, Ordering::Relaxed),
+        probe_saw_writer: TT_PROBE_SAW_WRITER.swap(0, Ordering::Relaxed),
+        probe_exhausted: TT_PROBE_EXHAUSTED.swap(0, Ordering::Relaxed),
+        save_calls: TT_SAVE_CALLS.swap(0, Ordering::Relaxed),
+        save_cas_failed: TT_SAVE_CAS_FAILED.swap(0, Ordering::Relaxed),
+        save_dropped: TT_SAVE_DROPPED.swap(0, Ordering::Relaxed),
+    }
+}
 
 // 用語:
 // - TT: transposition table。探索済み局面を一時保存する表。
@@ -236,6 +331,7 @@ impl TranspositionTable {
     pub fn probe_with_key(&self, board: &Board, key: u64) -> TTProbe {
         const PROBE_RETRIES: usize = 3;
 
+        bump(&TT_PROBE_CALLS);
         let cluster_index = self.cluster_index(key);
         let generation = self.generation();
         let mut best_replacement_slot = TTSlot {
@@ -291,10 +387,12 @@ impl TranspositionTable {
                     slot: best_replacement_slot,
                 };
             }
+            bump(&TT_PROBE_SAW_WRITER);
 
             std::hint::spin_loop();
         }
 
+        bump(&TT_PROBE_EXHAUSTED);
         TTProbe::Miss {
             slot: if found_replacement_candidate {
                 best_replacement_slot
@@ -621,6 +719,7 @@ impl TTEntry {
     }
 
     fn save(&self, board: &Board, new_value: TTValue) {
+        bump(&TT_SAVE_CALLS);
         for _ in 0..Self::SAVE_RETRIES {
             let Some((stored_player, stored_opponent, stored_value, observed_seq)) =
                 self.try_load_snapshot()
@@ -657,9 +756,11 @@ impl TTEntry {
             if self.seqlock_write(observed_seq, board, value_to_write) {
                 return;
             }
+            bump(&TT_SAVE_CAS_FAILED);
 
             std::hint::spin_loop();
         }
+        bump(&TT_SAVE_DROPPED);
     }
 
     #[inline(always)]
@@ -727,6 +828,33 @@ fn validate_store_args(lower: i32, upper: i32, lv: i32, selectivity_lv: i32) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn contention_stats_summary_reports_ratios() {
+        let stats = TtContentionStats {
+            probe_calls: 1000,
+            probe_saw_writer: 25,
+            probe_exhausted: 1,
+            save_calls: 200,
+            save_cas_failed: 4,
+            save_dropped: 2,
+        };
+
+        let line = stats.summary_line();
+        assert!(line.contains("probe=1000"), "{line}");
+        assert!(line.contains("saw_writer=25 (2.5000%)"), "{line}");
+        assert!(line.contains("exhausted=1 (0.100000%)"), "{line}");
+        assert!(line.contains("save=200"), "{line}");
+        assert!(line.contains("cas_failed=4 (2.0000%)"), "{line}");
+        assert!(line.contains("dropped=2 (1.000000%)"), "{line}");
+    }
+
+    #[test]
+    fn contention_stats_summary_handles_zero_denominator() {
+        let line = TtContentionStats::default().summary_line();
+        assert!(line.contains("probe=0 saw_writer=0 (0.0000%)"), "{line}");
+        assert!(line.contains("save=0 cas_failed=0 (0.0000%)"), "{line}");
+    }
     use super::*;
     use std::sync::Arc;
     use std::thread;
@@ -969,7 +1097,7 @@ mod tests {
     #[test]
     #[ignore]
     fn bench_mixed_probe_store() {
-        const N: usize = 1_000_000_0;
+        const N: usize = 10_000_000;
         let tt = TranspositionTable::with_mb_size(16);
         let start = Instant::now();
 

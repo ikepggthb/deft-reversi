@@ -20,8 +20,12 @@ use crate::search::eval_search::leaf::nws_eval_leaf;
 use crate::search::final_search::solve_score::solve_score;
 use crate::search::move_list::*;
 use crate::search::mpc::{eval_search_mpc, ProbCutResult};
-use crate::search::search::SearchContext;
+use crate::search::search::{SearchContext, SearchStats};
+use crate::search::split_point::{try_add_slaves, SplitPoint};
+use crate::search::thread_pool::DetachedJob;
 use crate::search::tt_cut::*;
+use crate::t_table::TTSlot;
+use std::sync::Arc;
 
 const TT_MOVE0_SCORE: i32 = 1 << 8;
 const TT_MOVE1_SCORE: i32 = 1 << 7;
@@ -31,6 +35,196 @@ const SWITCH_DEPTH_LEAF: i32 = 2;
 
 /// depth がこれ以上のとき ETC を実行する。
 const SWITCH_DEPTH_ETC: i32 = 4;
+
+/// depth がこれ以上のノードで YBWC 分割を行う。
+/// edax の `SPLIT_MIN_DEPTH` に相当する。
+const EVAL_YBWC_MIN_DEPTH: i32 = 8;
+
+/// この局面で YBWC 分割をする価値があるか。
+///
+/// 終盤側の `should_split_ybwc` と違い、空きスレッドの有無は見ない。
+/// `search.can_spawn_split_job()` を足す案を計測したが、初期局面 level 24 の
+/// 4 スレッドで 2.929 秒 / 2.951 秒 (各 14 回の中央値) と差が出なかったため
+/// 採用していない。`nws_eval_ybwc` は最初の手を直列に探索し終えてから
+/// 作業リストを確保するので、確保の費用は depth 8 以上の部分木全体に
+/// 償却され元から無視できる。一方でここで弾くと、直列探索の間に空いた
+/// スレッドをループ内の `try_add_slaves` で拾う機会を失う。
+fn should_split_eval_ybwc(depth: i32, move_list: &[MoveBoard], search: &SearchContext) -> bool {
+    depth >= EVAL_YBWC_MIN_DEPTH
+        && search.thread_pool.is_some()
+        && move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2
+}
+
+fn make_eval_split_worker(
+    split: &Arc<SplitPoint>,
+    parent: &SearchContext,
+    depth: i32,
+) -> DetachedJob {
+    let split = split.clone();
+    let evaluator = parent.evaluator.clone();
+    let ordering_evaluator = parent.ordering_evaluator.clone();
+    let mpc_config = parent.mpc_config.clone();
+    let tt = parent.tt.clone();
+    let stop = parent.stop.clone();
+    let thread_pool = parent.thread_pool.clone();
+    let selectivity_lv = parent.selectivity_lv;
+    let mut searchings = parent.searchings.clone();
+    searchings.push(split.searching.clone());
+    let mut helper_chain = parent.helper_chain.clone();
+    helper_chain.push(split.helper.clone());
+
+    Box::new(move || {
+        let mut stats = SearchStats::default();
+        let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
+            .with_ordering_evaluator(ordering_evaluator)
+            .with_stop(stop)
+            .with_thread_pool(thread_pool)
+            .with_searchings(searchings)
+            .with_helper_chain(helper_chain);
+        search.selectivity_lv = selectivity_lv;
+        while let Some((work_index, _, child_board)) = split.next_work() {
+            let score = -nws_eval(&child_board, -split.beta(), depth - 1, &mut search);
+            if search.is_aborted() {
+                break;
+            }
+            split.finish(work_index, score);
+            if score >= split.beta() {
+                break;
+            }
+        }
+        let aborted = search.is_aborted();
+        drop(search);
+        split.slave_finished(stats, aborted);
+    })
+}
+
+/// 中盤 NWS の YBWC 分割。最初の手を master が単独で探索してから残りを配る。
+fn nws_eval_ybwc(
+    board: &Board,
+    alpha: i32,
+    beta: i32,
+    depth: i32,
+    tt_slot: TTSlot,
+    move_list: &[MoveBoard],
+    search: &mut SearchContext,
+) -> i32 {
+    let Some((first_index, first_move)) = move_list.iter().enumerate().find(|(_, mv)| !mv.is_skip)
+    else {
+        return alpha;
+    };
+    let first_child = board.make_move_from_flip_bit(1 << first_move.move_num, first_move.flip_bit);
+    let first_score = -nws_eval(&first_child, -beta, depth - 1, search);
+    if search.is_aborted() {
+        return alpha;
+    }
+    if first_score >= beta {
+        search.tt.store(
+            tt_slot,
+            board,
+            first_score,
+            SCORE_MAX,
+            depth,
+            search.selectivity_lv,
+            first_move.move_num,
+        );
+        return first_score;
+    }
+
+    let mut best_score = first_score;
+    let mut best_move = first_move.move_num;
+    let work = move_list
+        .iter()
+        .enumerate()
+        .skip(first_index + 1)
+        .filter(|(_, mb)| !mb.is_skip)
+        .map(|(move_index, mb)| {
+            (
+                move_index,
+                board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit),
+            )
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    let split = Arc::new(SplitPoint::new(work, beta));
+    let mut spawned = 0u64;
+    let make_job = |split: &Arc<SplitPoint>, parent: &SearchContext| {
+        make_eval_split_worker(split, parent, depth)
+    };
+
+    try_add_slaves(&split, search, &mut spawned, make_job);
+    while let Some((work_index, _, child_board)) = split.next_work() {
+        try_add_slaves(&split, search, &mut spawned, make_job);
+        search.searchings.push(split.searching.clone());
+        search.helper_chain.push(split.helper.clone());
+        let score = -nws_eval(&child_board, -beta, depth - 1, search);
+        search.helper_chain.pop();
+        search.searchings.pop();
+        if search.is_aborted() {
+            if search.recover_from_split_abort(&split.searching) {
+                break;
+            }
+            split.stop_searching();
+            split.join_slaves(spawned, search);
+            return alpha;
+        }
+        split.finish(work_index, score);
+        if score >= beta {
+            break;
+        }
+    }
+
+    split.join_slaves(spawned, search);
+    if search.check_abort_now() {
+        split.stop_searching();
+        return alpha;
+    }
+    for (work_index, move_index) in split.work_indices() {
+        let Some(score) = split.score_at(work_index) else {
+            continue;
+        };
+        let mb = &move_list[move_index];
+        if score >= beta {
+            search.tt.store(
+                tt_slot,
+                board,
+                score,
+                SCORE_MAX,
+                depth,
+                search.selectivity_lv,
+                mb.move_num,
+            );
+            return score;
+        }
+        if score > best_score {
+            best_score = score;
+            best_move = mb.move_num;
+        }
+    }
+
+    if best_score > alpha {
+        search.tt.store(
+            tt_slot,
+            board,
+            best_score,
+            best_score,
+            depth,
+            search.selectivity_lv,
+            best_move,
+        );
+    } else {
+        search.tt.store(
+            tt_slot,
+            board,
+            -SCORE_MAX,
+            best_score,
+            depth,
+            search.selectivity_lv,
+            best_move,
+        );
+    }
+
+    best_score
+}
 
 /// TT + ETC + MPC + 浅い eval ordering を使った中盤 NWS。
 pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContext) -> i32 {
@@ -114,6 +308,10 @@ pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContex
         };
         assign_ordering_scores(board, &mut move_list, eval_depth, alpha_cur, search);
         sort_move_list(&mut move_list);
+    }
+
+    if should_split_eval_ybwc(depth, &move_list, search) {
+        return nws_eval_ybwc(board, alpha, beta, depth, probe.slot(), &move_list, search);
     }
 
     // ── 探索ループ ────────────────────────────────────────────────────────────
