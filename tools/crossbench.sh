@@ -47,7 +47,7 @@ run_deft() { # $1=binary $2=threads
 
 run_edax() { # $1=threads
   local o
-  o=$(cd "$EDAX_DIR" && ./bin/lEdax-native -solve "$PROBLEMS_DIR/full.obf" \
+  o=$(cd "$EDAX_DIR" && ./bin/lEdax-native -eval-file bin/data/eval.dat -solve "$PROBLEMS_DIR/full.obf" \
         -level "$LEVEL" -n "$1" 2>/dev/null)
   echo "$(to_sec "$(grep -oP 'nodes in\s+\K[0-9:.]+' <<< "$o" | tail -1)") $(grep -oP '\K[0-9]+(?= nodes in)' <<< "$o" | tail -1)"
 }

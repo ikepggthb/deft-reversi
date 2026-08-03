@@ -155,13 +155,6 @@ struct Shared {
     idle_workers: AtomicUsize,
     /// `state.queue.len()` のロック無し複製。try_push の早期棄却に使う。
     queue_len: AtomicUsize,
-    /// キューに積める仕事数の上限。ワーカーが後から空いたときに
-    /// すぐ取れる「作り置き」を許しつつ、投機的タスクの溢れを防ぐ。
-    ///
-    /// 待機中の master は `join_slaves` / `join_helping` でキューの仕事を
-    /// 自分で実行する。その仕事がまた分割点の master になって待機しうるため、
-    /// 入れ子の深さはこの値に比例する。増やす場合はスタック消費も一緒に見ること。
-    queue_cap: usize,
 }
 
 pub struct ThreadPool {
@@ -170,6 +163,10 @@ pub struct ThreadPool {
 }
 
 impl ThreadPool {
+    /// `n_workers` 個のワーカーを起動する。
+    ///
+    /// 投入された仕事は、その時点で待機中のワーカー数までしか
+    /// キューに予約しない。後で空くワーカー向けの作り置きはしない。
     pub fn new(n_workers: usize) -> Self {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -180,7 +177,6 @@ impl ThreadPool {
             ready: Condvar::new(),
             idle_workers: AtomicUsize::new(0),
             queue_len: AtomicUsize::new(0),
-            queue_cap: n_workers.max(2),
         });
         let mut workers = Vec::with_capacity(n_workers);
         for _ in 0..n_workers {
@@ -191,12 +187,15 @@ impl ThreadPool {
     }
 
     pub fn try_push(&self, job: Job) -> Result<TaskHandle, Job> {
-        // ロックを取る前に、キューが埋まっている場合は棄却する。
-        if self.shared.queue_len.load(Ordering::Relaxed) >= self.shared.queue_cap {
+        // ロックを取る前に、現在待機中のワーカーに渡せない
+        // 場合は棄却する。atomic は概算なので、最終判定は lock 下で行う。
+        if self.shared.queue_len.load(Ordering::Relaxed)
+            >= self.shared.idle_workers.load(Ordering::Relaxed)
+        {
             return Err(job);
         }
         let mut state = self.shared.state.lock().unwrap();
-        if !state.running || state.queue.len() >= self.shared.queue_cap {
+        if !state.running || state.queue.len() >= state.idle_workers {
             return Err(job);
         }
 
@@ -212,7 +211,9 @@ impl ThreadPool {
             }
         });
         state.queue.push_back(wrapped);
-        self.shared.queue_len.store(state.queue.len(), Ordering::Relaxed);
+        self.shared
+            .queue_len
+            .store(state.queue.len(), Ordering::Relaxed);
         self.shared.ready.notify_one();
         Ok(TaskHandle { receiver })
     }
@@ -221,12 +222,15 @@ impl ThreadPool {
     ///
     /// 完了は分割点の [`HelperSlot`] で数える。
     pub fn try_push_detached(&self, job: DetachedJob) -> Result<(), DetachedJob> {
-        // ロックを取る前に、キューが埋まっている場合は棄却する。
-        if self.shared.queue_len.load(Ordering::Relaxed) >= self.shared.queue_cap {
+        // ロックを取る前に、現在待機中のワーカーに渡せない
+        // 場合は棄却する。atomic は概算なので、最終判定は lock 下で行う。
+        if self.shared.queue_len.load(Ordering::Relaxed)
+            >= self.shared.idle_workers.load(Ordering::Relaxed)
+        {
             return Err(job);
         }
         let mut state = self.shared.state.lock().unwrap();
-        if !state.running || state.queue.len() >= self.shared.queue_cap {
+        if !state.running || state.queue.len() >= state.idle_workers {
             return Err(job);
         }
 
@@ -247,10 +251,11 @@ impl ThreadPool {
         Ok(())
     }
 
-    /// キューに空きがあるか。ロック無しの概算。
+    /// 現在待機中のワーカーに渡せるか。ロック無しの概算。
     #[inline(always)]
     pub fn has_queue_room(&self) -> bool {
-        self.shared.queue_len.load(Ordering::Relaxed) < self.shared.queue_cap
+        self.shared.queue_len.load(Ordering::Relaxed)
+            < self.shared.idle_workers.load(Ordering::Relaxed)
     }
 
     /// キューから仕事を 1 件取り出す(join 待ちの親スレッドが「手伝う」ために使う)。
@@ -341,7 +346,7 @@ fn worker_loop(shared: Arc<Shared>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::time::Duration;
 
     const SHORT: Duration = Duration::from_millis(5);
@@ -515,7 +520,78 @@ mod tests {
             counter.load(Ordering::SeqCst) >= 4
         });
         assert_eq!(counter.load(Ordering::SeqCst), 4);
+        wait_until("ワーカーが待機に戻る", || pool.has_queue_room());
         assert!(pool.has_queue_room());
         assert!(pool.try_pop_job().is_none());
+    }
+
+    /// 全ワーカーが実行中なら新しい仕事は作り置きせず、
+    /// `try_push` / `try_push_detached` のどちらも元の仕事を返す。
+    #[test]
+    fn jobs_are_rejected_while_all_workers_are_busy() {
+        struct ReleaseWorkersOnDrop(Arc<AtomicBool>);
+
+        impl Drop for ReleaseWorkersOnDrop {
+            fn drop(&mut self) {
+                // 途中の assert が失敗しても pool の Drop をハングさせない。
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let pool = ThreadPool::new(2);
+        wait_until("全ワーカーの待機開始", || {
+            pool.idle_worker_count() == 2
+        });
+
+        let started = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(AtomicBool::new(false));
+        let _release_guard = ReleaseWorkersOnDrop(release.clone());
+        for _ in 0..2 {
+            let started = started.clone();
+            let release = release.clone();
+            let job: DetachedJob = Box::new(move || {
+                started.fetch_add(1, Ordering::SeqCst);
+                while !release.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+            });
+            assert!(pool.try_push_detached(job).is_ok());
+        }
+        wait_until("全ワーカーのジョブ開始", || {
+            started.load(Ordering::SeqCst) == 2
+        });
+        assert_eq!(pool.idle_worker_count(), 0);
+        assert!(!pool.has_queue_room());
+
+        let returned_job_ran = Arc::new(AtomicUsize::new(0));
+        let counter = returned_job_ran.clone();
+        let job: Job = Box::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            TaskResult {
+                score: 0,
+                move_index: 0,
+                stats: SearchStats::default(),
+                aborted: false,
+            }
+        });
+        let returned = match pool.try_push(job) {
+            Err(job) => job,
+            Ok(_) => panic!("アイドルワーカーがいないので拒否するはず"),
+        };
+        assert_eq!(returned_job_ran.load(Ordering::SeqCst), 0);
+        returned();
+
+        let counter = returned_job_ran.clone();
+        let job: DetachedJob = Box::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        let returned = pool
+            .try_push_detached(job)
+            .expect_err("アイドルワーカーがいないので拒否するはず");
+        assert_eq!(returned_job_ran.load(Ordering::SeqCst), 1);
+        returned();
+        assert_eq!(returned_job_ran.load(Ordering::SeqCst), 2);
+
+        release.store(true, Ordering::Release);
     }
 }
