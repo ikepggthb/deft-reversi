@@ -987,24 +987,39 @@ fn search_root_final_candidate(
     bound: &mut RootBound,
     search: &mut SearchContext,
 ) -> i32 {
-    if let Some(score) = bound.exact() {
-        return score;
-    }
-    if bound.lower >= beta {
-        return bound.lower;
-    }
-    if bound.upper <= alpha {
-        return bound.upper;
+    let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
+    if exact_selectivity {
+        if let Some(score) = bound.exact() {
+            return score;
+        }
+        if bound.lower >= beta {
+            return bound.lower;
+        }
+        if bound.upper <= alpha {
+            return bound.upper;
+        }
     }
 
-    let search_alpha = alpha.max(bound.lower);
-    let search_beta = beta.min(bound.upper);
+    let search_alpha = if exact_selectivity {
+        alpha.max(bound.lower)
+    } else {
+        alpha
+    };
+    let search_beta = if exact_selectivity {
+        beta.min(bound.upper)
+    } else {
+        beta
+    };
     debug_assert!(search_alpha < search_beta);
     let score = -pvs_final(board, -search_beta, -search_alpha, search);
     if search.is_aborted() {
         return alpha;
     }
-    bound.update(score, search_alpha, search_beta)
+    if exact_selectivity {
+        bound.update(score, search_alpha, search_beta)
+    } else {
+        score
+    }
 }
 
 fn restore_candidate_front(candidates: &mut [(u8, Board)], previous_best: (u8, Board)) {
@@ -1105,6 +1120,7 @@ fn search_root_final_siblings_ybwc(
     let Some(thread_pool) = search.thread_pool.clone() else {
         return best_score;
     };
+    let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
     let split_searching = Arc::new(AtomicBool::new(true));
     let mut handles = Vec::with_capacity(candidates.len() - 1);
     let mut results = Vec::new();
@@ -1115,12 +1131,12 @@ fn search_root_final_siblings_ybwc(
             break;
         }
         let move_num = candidates[move_index].0 as usize;
-        if root_bounds[move_num].lower >= beta {
+        if exact_selectivity && root_bounds[move_num].lower >= beta {
             known_cutoff = Some((move_index, root_bounds[move_num].lower));
             split_searching.store(false, Ordering::Relaxed);
             break;
         }
-        if root_bounds[move_num].upper <= alpha {
+        if exact_selectivity && root_bounds[move_num].upper <= alpha {
             continue;
         }
         let job = make_ybwc_job(
@@ -1162,9 +1178,11 @@ fn search_root_final_siblings_ybwc(
         return score;
     }
 
-    for result in results.iter().filter(|result| !result.aborted) {
-        let move_num = candidates[result.move_index].0 as usize;
-        root_bounds[move_num].update(result.score, alpha, alpha + 1);
+    if exact_selectivity {
+        for result in results.iter().filter(|result| !result.aborted) {
+            let move_num = candidates[result.move_index].0 as usize;
+            root_bounds[move_num].update(result.score, alpha, alpha + 1);
+        }
     }
 
     if let Some(result) = results
@@ -1218,6 +1236,7 @@ fn search_root_final_window(
     search: &mut SearchContext,
 ) -> i32 {
     let mut alpha = alpha;
+    let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
     if search.is_aborted() {
         return alpha;
     }
@@ -1261,10 +1280,7 @@ fn search_root_final_window(
         alpha = best_score;
     }
     let mut best_idx = 0;
-    if search.selectivity_lv == SELECTIVITY_LV_MAX
-        && search.thread_pool.is_some()
-        && candidates.len() > 2
-    {
+    if search.thread_pool.is_some() && candidates.len() > 2 {
         return search_root_final_siblings_ybwc(
             alpha,
             beta,
@@ -1276,11 +1292,11 @@ fn search_root_final_window(
     }
     for i in 1..candidates.len() {
         let move_num = candidates[i].0 as usize;
-        if root_bounds[move_num].lower >= beta {
+        if exact_selectivity && root_bounds[move_num].lower >= beta {
             candidates.swap(0, i);
             return root_bounds[move_num].lower;
         }
-        if root_bounds[move_num].upper <= alpha {
+        if exact_selectivity && root_bounds[move_num].upper <= alpha {
             if root_bounds[move_num].upper > best_score {
                 best_score = root_bounds[move_num].upper;
                 best_idx = i;
@@ -1291,7 +1307,9 @@ fn search_root_final_window(
         if search.is_aborted() {
             return best_score;
         }
-        s = root_bounds[move_num].update(s, alpha, alpha + 1);
+        if exact_selectivity {
+            s = root_bounds[move_num].update(s, alpha, alpha + 1);
+        }
         if s >= beta {
             candidates.swap(0, i);
             return s;
@@ -1456,6 +1474,33 @@ mod tests {
 
         assert_eq!(bound.update(-8, -12, -8), -8);
         assert_eq!(bound.exact(), Some(-8));
+    }
+
+    #[test]
+    fn non_exact_root_candidate_ignores_and_preserves_bound() {
+        let board = Board {
+            player: u64::MAX,
+            opponent: 0,
+        };
+        let mut bound = RootBound {
+            lower: 17,
+            upper: 17,
+        };
+        let original_bound = bound;
+        let mut stats = SearchStats::default();
+        let mut search = SearchContext::new(
+            Arc::new(Evaluator::default()),
+            Arc::new(MpcConfig::default()),
+            Arc::new(TranspositionTable::new()),
+            &mut stats,
+        );
+        search.selectivity_lv = ITERATIVE_SELECTIVITY_MIN;
+
+        let score =
+            search_root_final_candidate(&board, -SCORE_MAX, SCORE_MAX, &mut bound, &mut search);
+
+        assert_eq!(score, -SCORE_MAX);
+        assert_eq!(bound, original_bound);
     }
 
     #[test]
