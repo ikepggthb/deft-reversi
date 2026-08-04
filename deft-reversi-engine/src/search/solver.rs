@@ -18,7 +18,7 @@ use crate::search::final_search::nws::{collect_ybwc_tasks, make_ybwc_job};
 use crate::search::final_search::{nws_final, pvs_final, solve_score};
 use crate::search::mpc::{MpcConfig, SELECTIVITY_LV_MAX};
 use crate::search::search::{AbortNode, SearchContext, SearchStats};
-use crate::search::thread_pool::ThreadPool;
+use crate::search::thread_pool::{HelperSlot, ThreadPool};
 use crate::t_table::TranspositionTable;
 use crate::EngineError;
 use std::num::NonZeroUsize;
@@ -1125,6 +1125,7 @@ fn search_root_eval_siblings_ybwc(
         return best_score;
     };
     let split_abort = AbortNode::child(&search.abort_node);
+    let helper = Arc::new(HelperSlot::new());
     let mut handles = Vec::with_capacity(candidates.len() - 1);
     let mut results = Vec::new();
 
@@ -1139,6 +1140,7 @@ fn search_root_eval_siblings_ybwc(
             beta,
             move_index,
             split_abort.clone(),
+            helper.clone(),
             search,
         );
         match thread_pool.try_push(job) {
@@ -1161,7 +1163,7 @@ fn search_root_eval_siblings_ybwc(
         }
     }
 
-    results.extend(collect_ybwc_tasks(handles, search));
+    results.extend(collect_ybwc_tasks(handles, &helper, search));
     if search.check_abort_now() {
         split_abort.abort_subtree();
         return best_score;
@@ -1220,6 +1222,7 @@ fn search_root_final_siblings_ybwc(
     };
     let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
     let split_abort = AbortNode::child(&search.abort_node);
+    let helper = Arc::new(HelperSlot::new());
     let mut handles = Vec::with_capacity(candidates.len() - 1);
     let mut results = Vec::new();
     let mut known_cutoff = None;
@@ -1243,6 +1246,7 @@ fn search_root_final_siblings_ybwc(
             beta,
             move_index,
             split_abort.clone(),
+            helper.clone(),
             search,
         );
         match thread_pool.try_push(job) {
@@ -1265,7 +1269,7 @@ fn search_root_final_siblings_ybwc(
         }
     }
 
-    results.extend(collect_ybwc_tasks(handles, search));
+    results.extend(collect_ybwc_tasks(handles, &helper, search));
     if search.check_abort_now() {
         split_abort.abort_subtree();
         return best_score;

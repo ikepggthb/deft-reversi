@@ -29,7 +29,7 @@ use crate::{
         search::{AbortNode, SearchContext},
         split_point::{try_add_slaves, SplitPoint},
         stability_cut::stability_cut_nws,
-        thread_pool::{DetachedJob, Job, TaskHandle, TaskResult},
+        thread_pool::{DetachedJob, HelperSlot, Job, TaskHandle, TaskResult},
         tt_cut::*,
     },
     t_table::{TTProbe, TTSlot, TTValue},
@@ -702,6 +702,7 @@ pub(crate) fn make_ybwc_job(
     cutoff_score: i32,
     move_index: usize,
     split_abort: Arc<AbortNode>,
+    helper: Arc<HelperSlot>,
     parent: &SearchContext,
 ) -> Job {
     let evaluator = parent.evaluator.clone();
@@ -712,11 +713,9 @@ pub(crate) fn make_ybwc_job(
     let thread_pool = parent.thread_pool.clone();
     let selectivity_lv = parent.selectivity_lv;
     let abort_node = AbortNode::child(&split_abort);
-    // この分割は `SplitPoint` を持たず、master も `collect_ybwc_tasks` /
-    // `join_helping` で待つため `take_offered_job` を呼ばない。よってここでは
-    // 受け口を増やさず、親から受け継いだ祖先チェーンだけを渡す。
-    // この経路から投げた仕事のハンドオフは常に空振りしてプール投入に落ちる。
-    let helper_chain = parent.helper_chain.clone();
+    // `collect_ybwc_tasks` で待つ master も子孫の仕事を直接受け取れるよう、
+    // この分割専用の受け口を祖先チェーンの末尾に足して子へ渡す。
+    let helper_chain = Some(parent.helper_chain_with(helper));
 
     Box::new(move || {
         let mut stats = crate::search::search::SearchStats::default();
@@ -744,13 +743,14 @@ pub(crate) fn make_ybwc_job(
 
 pub(crate) fn collect_ybwc_tasks(
     handles: Vec<TaskHandle>,
+    helper: &HelperSlot,
     search: &mut SearchContext,
 ) -> Vec<TaskResult> {
     let pool = search.thread_pool.clone();
     let mut results = Vec::with_capacity(handles.len());
     for handle in handles {
         let result = match pool.as_deref() {
-            Some(pool) => pool.join_helping(handle),
+            Some(pool) => pool.join_helping(handle, helper),
             None => handle.join(),
         };
         search.stats.add_assign(result.stats);

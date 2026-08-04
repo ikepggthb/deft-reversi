@@ -258,6 +258,12 @@ impl<'a> SearchContext<'a> {
         self.helper_chain = Some(HelperNode::child(self.helper_chain.clone(), slot));
     }
 
+    /// 自分の祖先チェーンの末尾に `slot` を足したチェーンを作る。
+    /// 分割で投げる子ジョブに渡すため、自分自身の chain は変えない。
+    pub(crate) fn helper_chain_with(&self, slot: Arc<HelperSlot>) -> Arc<HelperNode> {
+        HelperNode::child(self.helper_chain.clone(), slot)
+    }
+
     pub(crate) fn pop_helper(&mut self) {
         self.helper_chain = self
             .helper_chain

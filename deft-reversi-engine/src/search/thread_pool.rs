@@ -280,8 +280,13 @@ impl ThreadPool {
     ///
     /// 親が join でブロックして遊ぶのを防ぎ、分割チェーンの各層の親を
     /// ワーカーとして働かせる。
-    pub fn join_helping(&self, handle: TaskHandle) -> TaskResult {
+    pub fn join_helping(&self, handle: TaskHandle, helper: &HelperSlot) -> TaskResult {
         loop {
+            // 完了とほぼ同時に渡された仕事を捨てないよう、仕事を先に取る。
+            if let Some(job) = helper.take_offered_job() {
+                job();
+                continue;
+            }
             match handle.receiver.try_recv() {
                 Ok(result) => return result,
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -293,15 +298,12 @@ impl ThreadPool {
                 let _ = job();
                 continue;
             }
-            match handle
-                .receiver
-                .recv_timeout(std::time::Duration::from_micros(50))
+            // TaskHandle の完了通知は別の mpsc に届くため、期限付きで helper に
+            // 待機登録し、どちらが先に起きても次の周回で再確認する。
+            if let Some(job) =
+                helper.wait_or_take_job(u64::MAX, std::time::Duration::from_micros(50))
             {
-                Ok(result) => return result,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    panic!("YBWC worker terminated before sending result")
-                }
+                job();
             }
         }
     }
@@ -523,6 +525,65 @@ mod tests {
         wait_until("ワーカーが待機に戻る", || pool.has_queue_room());
         assert!(pool.has_queue_room());
         assert!(pool.try_pop_job().is_none());
+    }
+
+    /// `join_helping` で待つ master は helper に登録され、子孫から直接渡された
+    /// 仕事を実行してから元の TaskHandle の完了を回収する。
+    #[test]
+    fn join_helping_accepts_and_runs_an_offered_job() {
+        let pool = Arc::new(ThreadPool::new(1));
+        wait_until("worker の待機開始", || pool.idle_worker_count() == 1);
+
+        let worker_started = Arc::new(AtomicBool::new(false));
+        let release_worker = Arc::new(AtomicBool::new(false));
+        let started = worker_started.clone();
+        let release = release_worker.clone();
+        let handle = pool
+            .try_push(Box::new(move || {
+                started.store(true, Ordering::Release);
+                while !release.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+                TaskResult {
+                    score: 42,
+                    move_index: 3,
+                    stats: SearchStats::default(),
+                    aborted: false,
+                }
+            }))
+            .unwrap_or_else(|_| panic!("待機中の worker に投入できるはず"));
+        wait_until("worker のジョブ開始", || {
+            worker_started.load(Ordering::Acquire)
+        });
+
+        let helper = Arc::new(HelperSlot::new());
+        let (done_tx, done_rx) = mpsc::channel();
+        let joiner = {
+            let pool = pool.clone();
+            let helper = helper.clone();
+            thread::spawn(move || {
+                let _ = done_tx.send(pool.join_helping(handle, &helper));
+            })
+        };
+        wait_until("join_helping の待機登録", || helper.is_waiting());
+
+        let offered_job_ran = Arc::new(AtomicUsize::new(0));
+        let ran = offered_job_ran.clone();
+        let release = release_worker.clone();
+        helper
+            .try_offer(Box::new(move || {
+                ran.fetch_add(1, Ordering::SeqCst);
+                release.store(true, Ordering::Release);
+            }))
+            .unwrap_or_else(|_| panic!("待機中の master が仕事を受け取るはず"));
+
+        let result = done_rx
+            .recv_timeout(DEADLINE)
+            .expect("直接渡した仕事を実行して TaskHandle を回収できるはず");
+        joiner.join().unwrap();
+        assert_eq!(offered_job_ran.load(Ordering::SeqCst), 1);
+        assert_eq!(result.score, 42);
+        assert_eq!(result.move_index, 3);
     }
 
     /// 全ワーカーが実行中なら新しい仕事は作り置きせず、

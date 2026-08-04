@@ -22,7 +22,7 @@ use crate::search::move_list::*;
 use crate::search::mpc::{eval_search_mpc, ProbCutResult};
 use crate::search::search::{AbortNode, SearchContext, SearchStats};
 use crate::search::split_point::{try_add_slaves, SplitPoint};
-use crate::search::thread_pool::{DetachedJob, Job, TaskResult};
+use crate::search::thread_pool::{DetachedJob, HelperSlot, Job, TaskResult};
 use crate::search::tt_cut::*;
 use crate::t_table::TTSlot;
 use std::sync::Arc;
@@ -105,6 +105,7 @@ pub(crate) fn make_eval_root_job(
     cutoff_score: i32,
     move_index: usize,
     split_abort: Arc<AbortNode>,
+    helper: Arc<HelperSlot>,
     parent: &SearchContext,
 ) -> Job {
     let evaluator = parent.evaluator.clone();
@@ -115,9 +116,8 @@ pub(crate) fn make_eval_root_job(
     let thread_pool = parent.thread_pool.clone();
     let selectivity_lv = parent.selectivity_lv;
     let abort_node = AbortNode::child(&split_abort);
-    // root 分割は SplitPoint を持たず、master は collect_ybwc_tasks で待つ。
-    // そのため新しい helper の受け口は作らず、祖先チェーンだけを引き継ぐ。
-    let helper_chain = parent.helper_chain.clone();
+    // `collect_ybwc_tasks` で待つ root master の受け口も子へ継承する。
+    let helper_chain = Some(parent.helper_chain_with(helper));
 
     Box::new(move || {
         let mut stats = SearchStats::default();

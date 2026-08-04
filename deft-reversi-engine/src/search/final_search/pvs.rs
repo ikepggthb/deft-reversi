@@ -27,9 +27,12 @@ use crate::{
         mpc::{final_search_mpc, ProbCutResult},
         search::{AbortNode, SearchContext, NO_MPC_SELECTIVITY_LV},
         stability_cut::stability_cut_pvs,
+        thread_pool::HelperSlot,
     },
     t_table::{TTProbe, TTSlot, TTValue},
 };
+use std::sync::Arc;
+
 const TT_MOVE0_SCORE: i32 = 1 << 20;
 const TT_MOVE1_SCORE: i32 = 1 << 19;
 
@@ -143,6 +146,7 @@ fn pvs_final_ybwc(
     alpha_cur = alpha_cur.max(best_score);
 
     let split_abort = AbortNode::child(&search.abort_node);
+    let helper = Arc::new(HelperSlot::new());
     let mut handles = Vec::new();
     let mut results = Vec::new();
     for (move_index, mv) in move_list.iter().enumerate().skip(first_index + 1) {
@@ -156,6 +160,7 @@ fn pvs_final_ybwc(
             beta_cur,
             move_index,
             split_abort.clone(),
+            helper.clone(),
             search,
         );
         match thread_pool.try_push(job) {
@@ -177,7 +182,7 @@ fn pvs_final_ybwc(
             }
         }
     }
-    results.extend(collect_ybwc_tasks(handles, search));
+    results.extend(collect_ybwc_tasks(handles, &helper, search));
     if search.check_abort_now() {
         split_abort.abort_subtree();
         return alpha;
