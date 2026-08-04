@@ -10,9 +10,9 @@
 
 use crate::board::board::Board;
 use crate::eval::evaluator_const::SCORE_MAX;
-use crate::search::search::{SearchContext, SearchStats};
+use crate::search::search::{AbortNode, SearchContext, SearchStats};
 use crate::search::thread_pool::{DetachedJob, HelperSlot};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// 1 つの分割点で同時に走らせる slave の上限。
@@ -33,8 +33,8 @@ pub(crate) struct SplitPoint {
     next: AtomicUsize,
     /// `work_index` ごとの探索結果。未探索は [`SPLIT_SCORE_UNSET`]。
     scores: [AtomicI32; 64],
-    /// この分割点がまだ探索を続けるべきか。beta cut で false になる。
-    pub(crate) searching: Arc<AtomicBool>,
+    /// beta cut/祖先中断を、この分割点以下の探索文脈へ伝播する。
+    pub(crate) abort_node: Arc<AbortNode>,
     beta: i32,
     /// slave の完了を master へ伝える受け口。子孫からの仕事の受け口でもある。
     pub(crate) helper: Arc<HelperSlot>,
@@ -45,13 +45,17 @@ pub(crate) struct SplitPoint {
 }
 
 impl SplitPoint {
-    pub(crate) fn new(work: Box<[(usize, Board)]>, beta: i32) -> Self {
+    pub(crate) fn new(
+        work: Box<[(usize, Board)]>,
+        beta: i32,
+        abort_parent: &Arc<AbortNode>,
+    ) -> Self {
         debug_assert!(work.len() <= 64);
         Self {
             work,
             next: AtomicUsize::new(0),
             scores: std::array::from_fn(|_| AtomicI32::new(SPLIT_SCORE_UNSET)),
-            searching: Arc::new(AtomicBool::new(true)),
+            abort_node: AbortNode::child(abort_parent),
             beta,
             helper: Arc::new(HelperSlot::new()),
             slave_stats: Mutex::new(SearchStats::default()),
@@ -80,7 +84,7 @@ impl SplitPoint {
     /// まだ誰にも割り当てられていない仕事が残っているか。
     #[inline(always)]
     fn has_unclaimed_work(&self) -> bool {
-        self.searching.load(Ordering::Acquire) && self.next.load(Ordering::Relaxed) < self.work.len()
+        !self.abort_node.is_aborted() && self.next.load(Ordering::Relaxed) < self.work.len()
     }
 
     /// slave を 1 つ追加できる状態か。
@@ -92,7 +96,7 @@ impl SplitPoint {
     /// 次の仕事を 1 件取り出す。`(work_index, move_index, 子局面)`。
     #[inline(always)]
     pub(crate) fn next_work(&self) -> Option<(usize, usize, Board)> {
-        if !self.searching.load(Ordering::Acquire) {
+        if self.abort_node.is_aborted() {
             return None;
         }
         let work_index = self.next.fetch_add(1, Ordering::Relaxed);
@@ -106,14 +110,14 @@ impl SplitPoint {
     pub(crate) fn finish(&self, work_index: usize, score: i32) {
         self.scores[work_index].store(score, Ordering::Release);
         if score >= self.beta {
-            self.searching.store(false, Ordering::Release);
+            self.abort_node.abort_subtree();
         }
     }
 
     /// これ以上の探索を止める。beta cut と abort の両方で使う。
     #[inline(always)]
     pub(crate) fn stop_searching(&self) {
-        self.searching.store(false, Ordering::Release);
+        self.abort_node.abort_subtree();
     }
 
     /// slave が 1 件終わったときに呼ぶ。統計を積んで master を起こす。
@@ -207,7 +211,7 @@ mod tests {
             .map(|i| (i * 2, Board::new()))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        Arc::new(SplitPoint::new(work, beta))
+        Arc::new(SplitPoint::new(work, beta, &AbortNode::root()))
     }
 
     /// 各仕事はちょうど 1 回だけ配られ、使い切ると `None` になる。

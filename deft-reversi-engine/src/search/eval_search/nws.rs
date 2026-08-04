@@ -20,9 +20,9 @@ use crate::search::eval_search::leaf::nws_eval_leaf;
 use crate::search::final_search::solve_score::solve_score;
 use crate::search::move_list::*;
 use crate::search::mpc::{eval_search_mpc, ProbCutResult};
-use crate::search::search::{SearchContext, SearchStats};
+use crate::search::search::{AbortNode, SearchContext, SearchStats};
 use crate::search::split_point::{try_add_slaves, SplitPoint};
-use crate::search::thread_pool::DetachedJob;
+use crate::search::thread_pool::{DetachedJob, HelperSlot, Job, TaskResult};
 use crate::search::tt_cut::*;
 use crate::t_table::TTSlot;
 use std::sync::Arc;
@@ -68,19 +68,18 @@ fn make_eval_split_worker(
     let stop = parent.stop.clone();
     let thread_pool = parent.thread_pool.clone();
     let selectivity_lv = parent.selectivity_lv;
-    let mut searchings = parent.searchings.clone();
-    searchings.push(split.searching.clone());
-    let mut helper_chain = parent.helper_chain.clone();
-    helper_chain.push(split.helper.clone());
+    let abort_node = AbortNode::child(&split.abort_node);
+    let helper_chain = parent.helper_chain.clone();
 
     Box::new(move || {
         let mut stats = SearchStats::default();
         let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
             .with_ordering_evaluator(ordering_evaluator)
-            .with_stop(stop)
+            .with_inherited_stop(stop)
             .with_thread_pool(thread_pool)
-            .with_searchings(searchings)
+            .with_abort_node(abort_node)
             .with_helper_chain(helper_chain);
+        search.push_helper(split.helper.clone());
         search.selectivity_lv = selectivity_lv;
         while let Some((work_index, _, child_board)) = split.next_work() {
             let score = -nws_eval(&child_board, -split.beta(), depth - 1, &mut search);
@@ -95,6 +94,52 @@ fn make_eval_split_worker(
         let aborted = search.is_aborted();
         drop(search);
         split.slave_finished(stats, aborted);
+    })
+}
+
+/// root の兄弟手を null-window で調べる YBWC job を作る。
+pub(crate) fn make_eval_root_job(
+    child_board: Board,
+    child_alpha: i32,
+    depth: i32,
+    cutoff_score: i32,
+    move_index: usize,
+    split_abort: Arc<AbortNode>,
+    helper: Arc<HelperSlot>,
+    parent: &SearchContext,
+) -> Job {
+    let evaluator = parent.evaluator.clone();
+    let ordering_evaluator = parent.ordering_evaluator.clone();
+    let mpc_config = parent.mpc_config.clone();
+    let tt = parent.tt.clone();
+    let stop = parent.stop.clone();
+    let thread_pool = parent.thread_pool.clone();
+    let selectivity_lv = parent.selectivity_lv;
+    let abort_node = AbortNode::child(&split_abort);
+    // `collect_ybwc_tasks` で待つ root master の受け口も子へ継承する。
+    let helper_chain = Some(parent.helper_chain_with(helper));
+
+    Box::new(move || {
+        let mut stats = SearchStats::default();
+        let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
+            .with_ordering_evaluator(ordering_evaluator)
+            .with_inherited_stop(stop)
+            .with_thread_pool(thread_pool)
+            .with_abort_node(abort_node)
+            .with_helper_chain(helper_chain);
+        search.selectivity_lv = selectivity_lv;
+        let score = -nws_eval(&child_board, child_alpha, depth - 1, &mut search);
+        let aborted = search.is_aborted();
+        drop(search);
+        if !aborted && score >= cutoff_score {
+            split_abort.abort_subtree();
+        }
+        TaskResult {
+            score,
+            move_index,
+            stats,
+            aborted,
+        }
     })
 }
 
@@ -145,7 +190,8 @@ fn nws_eval_ybwc(
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let split = Arc::new(SplitPoint::new(work, beta));
+    let split = Arc::new(SplitPoint::new(work, beta, &search.abort_node));
+    let master_abort = AbortNode::child(&split.abort_node);
     let mut spawned = 0u64;
     let make_job = |split: &Arc<SplitPoint>, parent: &SearchContext| {
         make_eval_split_worker(split, parent, depth)
@@ -154,13 +200,13 @@ fn nws_eval_ybwc(
     try_add_slaves(&split, search, &mut spawned, make_job);
     while let Some((work_index, _, child_board)) = split.next_work() {
         try_add_slaves(&split, search, &mut spawned, make_job);
-        search.searchings.push(split.searching.clone());
-        search.helper_chain.push(split.helper.clone());
+        let parent_abort = search.push_abort_node(master_abort.clone());
+        search.push_helper(split.helper.clone());
         let score = -nws_eval(&child_board, -beta, depth - 1, search);
-        search.helper_chain.pop();
-        search.searchings.pop();
+        search.pop_helper();
+        search.restore_abort_node(parent_abort);
         if search.is_aborted() {
-            if search.recover_from_split_abort(&split.searching) {
+            if search.recover_from_split_abort(&split.abort_node) {
                 break;
             }
             split.stop_searching();

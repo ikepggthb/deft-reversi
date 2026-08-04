@@ -12,18 +12,19 @@ use crate::board::constant::NO_COORD;
 use crate::eval::evaluator_const::SCORE_MAX;
 use crate::eval::Evaluator;
 use crate::file::EngineFile;
+use crate::search::eval_search::nws::make_eval_root_job;
 use crate::search::eval_search::{nws_eval, pvs_eval};
 use crate::search::final_search::nws::{collect_ybwc_tasks, make_ybwc_job};
 use crate::search::final_search::{nws_final, pvs_final, solve_score};
 use crate::search::mpc::{MpcConfig, SELECTIVITY_LV_MAX};
-use crate::search::search::{SearchContext, SearchStats};
-use crate::search::thread_pool::ThreadPool;
+use crate::search::search::{AbortNode, SearchContext, SearchStats};
+use crate::search::thread_pool::{HelperSlot, ThreadPool};
 use crate::t_table::TranspositionTable;
 use crate::EngineError;
 use std::num::NonZeroUsize;
-use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// 反復深化で使う MPC selectivity の下限。level 2 = 85%。
 const ITERATIVE_SELECTIVITY_MIN: i32 = 2;
@@ -987,24 +988,39 @@ fn search_root_final_candidate(
     bound: &mut RootBound,
     search: &mut SearchContext,
 ) -> i32 {
-    if let Some(score) = bound.exact() {
-        return score;
-    }
-    if bound.lower >= beta {
-        return bound.lower;
-    }
-    if bound.upper <= alpha {
-        return bound.upper;
+    let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
+    if exact_selectivity {
+        if let Some(score) = bound.exact() {
+            return score;
+        }
+        if bound.lower >= beta {
+            return bound.lower;
+        }
+        if bound.upper <= alpha {
+            return bound.upper;
+        }
     }
 
-    let search_alpha = alpha.max(bound.lower);
-    let search_beta = beta.min(bound.upper);
+    let search_alpha = if exact_selectivity {
+        alpha.max(bound.lower)
+    } else {
+        alpha
+    };
+    let search_beta = if exact_selectivity {
+        beta.min(bound.upper)
+    } else {
+        beta
+    };
     debug_assert!(search_alpha < search_beta);
     let score = -pvs_final(board, -search_beta, -search_alpha, search);
     if search.is_aborted() {
         return alpha;
     }
-    bound.update(score, search_alpha, search_beta)
+    if exact_selectivity {
+        bound.update(score, search_alpha, search_beta)
+    } else {
+        score
+    }
 }
 
 fn restore_candidate_front(candidates: &mut [(u8, Board)], previous_best: (u8, Board)) {
@@ -1062,6 +1078,9 @@ fn search_root_eval_window(
     if best_score > alpha {
         alpha = best_score;
     }
+    if search.thread_pool.is_some() && candidates.len() > 2 {
+        return search_root_eval_siblings_ybwc(depth, alpha, beta, best_score, candidates, search);
+    }
     let mut best_idx = 0;
     for i in 1..candidates.len() {
         let mut s = -nws_eval(&candidates[i].1, -alpha - 1, depth - 1, search);
@@ -1094,41 +1113,34 @@ fn search_root_eval_window(
     best_score
 }
 
-fn search_root_final_siblings_ybwc(
+fn search_root_eval_siblings_ybwc(
+    depth: i32,
     mut alpha: i32,
     beta: i32,
     mut best_score: i32,
     candidates: &mut [(u8, Board)],
-    root_bounds: &mut [RootBound; 64],
     search: &mut SearchContext,
 ) -> i32 {
     let Some(thread_pool) = search.thread_pool.clone() else {
         return best_score;
     };
-    let split_searching = Arc::new(AtomicBool::new(true));
+    let split_abort = AbortNode::child(&search.abort_node);
+    let helper = Arc::new(HelperSlot::new());
     let mut handles = Vec::with_capacity(candidates.len() - 1);
     let mut results = Vec::new();
-    let mut known_cutoff = None;
 
     for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
-        if !split_searching.load(Ordering::Relaxed) {
+        if split_abort.is_aborted() {
             break;
         }
-        let move_num = candidates[move_index].0 as usize;
-        if root_bounds[move_num].lower >= beta {
-            known_cutoff = Some((move_index, root_bounds[move_num].lower));
-            split_searching.store(false, Ordering::Relaxed);
-            break;
-        }
-        if root_bounds[move_num].upper <= alpha {
-            continue;
-        }
-        let job = make_ybwc_job(
+        let job = make_eval_root_job(
             *child_board,
             -(alpha + 1),
+            depth,
             beta,
             move_index,
-            split_searching.clone(),
+            split_abort.clone(),
+            helper.clone(),
             search,
         );
         match thread_pool.try_push(job) {
@@ -1151,9 +1163,115 @@ fn search_root_final_siblings_ybwc(
         }
     }
 
-    results.extend(collect_ybwc_tasks(handles, search));
+    results.extend(collect_ybwc_tasks(handles, &helper, search));
     if search.check_abort_now() {
-        split_searching.store(false, Ordering::Relaxed);
+        split_abort.abort_subtree();
+        return best_score;
+    }
+
+    if let Some(result) = results
+        .iter()
+        .find(|result| !result.aborted && result.score >= beta)
+    {
+        candidates.swap(0, result.move_index);
+        return result.score;
+    }
+
+    results.sort_unstable_by_key(|result| result.move_index);
+    let mut best_idx = 0;
+    for result in results {
+        if result.aborted || result.score <= alpha {
+            continue;
+        }
+        let score = -pvs_eval(
+            &candidates[result.move_index].1,
+            -beta,
+            -alpha,
+            depth - 1,
+            search,
+        );
+        if search.is_aborted() {
+            return best_score;
+        }
+        if score >= beta {
+            candidates.swap(0, result.move_index);
+            return score;
+        }
+        if score > alpha {
+            alpha = score;
+            best_score = score;
+            best_idx = result.move_index;
+        }
+    }
+    if best_idx > 0 {
+        candidates.swap(0, best_idx);
+    }
+    best_score
+}
+
+fn search_root_final_siblings_ybwc(
+    mut alpha: i32,
+    beta: i32,
+    mut best_score: i32,
+    candidates: &mut [(u8, Board)],
+    root_bounds: &mut [RootBound; 64],
+    search: &mut SearchContext,
+) -> i32 {
+    let Some(thread_pool) = search.thread_pool.clone() else {
+        return best_score;
+    };
+    let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
+    let split_abort = AbortNode::child(&search.abort_node);
+    let helper = Arc::new(HelperSlot::new());
+    let mut handles = Vec::with_capacity(candidates.len() - 1);
+    let mut results = Vec::new();
+    let mut known_cutoff = None;
+
+    for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
+        if split_abort.is_aborted() {
+            break;
+        }
+        let move_num = candidates[move_index].0 as usize;
+        if exact_selectivity && root_bounds[move_num].lower >= beta {
+            known_cutoff = Some((move_index, root_bounds[move_num].lower));
+            split_abort.abort_subtree();
+            break;
+        }
+        if exact_selectivity && root_bounds[move_num].upper <= alpha {
+            continue;
+        }
+        let job = make_ybwc_job(
+            *child_board,
+            -(alpha + 1),
+            beta,
+            move_index,
+            split_abort.clone(),
+            helper.clone(),
+            search,
+        );
+        match thread_pool.try_push(job) {
+            Ok(handle) => {
+                search.stats.ybwc_splits += 1;
+                handles.push(handle);
+            }
+            Err(job) => {
+                let result = job();
+                search.stats.add_assign(result.stats);
+                if result.aborted {
+                    search.stats.ybwc_split_aborts += 1;
+                }
+                let cutoff = !result.aborted && result.score >= beta;
+                results.push(result);
+                if cutoff {
+                    break;
+                }
+            }
+        }
+    }
+
+    results.extend(collect_ybwc_tasks(handles, &helper, search));
+    if search.check_abort_now() {
+        split_abort.abort_subtree();
         return best_score;
     }
 
@@ -1162,9 +1280,11 @@ fn search_root_final_siblings_ybwc(
         return score;
     }
 
-    for result in results.iter().filter(|result| !result.aborted) {
-        let move_num = candidates[result.move_index].0 as usize;
-        root_bounds[move_num].update(result.score, alpha, alpha + 1);
+    if exact_selectivity {
+        for result in results.iter().filter(|result| !result.aborted) {
+            let move_num = candidates[result.move_index].0 as usize;
+            root_bounds[move_num].update(result.score, alpha, alpha + 1);
+        }
     }
 
     if let Some(result) = results
@@ -1218,6 +1338,7 @@ fn search_root_final_window(
     search: &mut SearchContext,
 ) -> i32 {
     let mut alpha = alpha;
+    let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
     if search.is_aborted() {
         return alpha;
     }
@@ -1261,10 +1382,7 @@ fn search_root_final_window(
         alpha = best_score;
     }
     let mut best_idx = 0;
-    if search.selectivity_lv == SELECTIVITY_LV_MAX
-        && search.thread_pool.is_some()
-        && candidates.len() > 2
-    {
+    if search.thread_pool.is_some() && candidates.len() > 2 {
         return search_root_final_siblings_ybwc(
             alpha,
             beta,
@@ -1276,11 +1394,11 @@ fn search_root_final_window(
     }
     for i in 1..candidates.len() {
         let move_num = candidates[i].0 as usize;
-        if root_bounds[move_num].lower >= beta {
+        if exact_selectivity && root_bounds[move_num].lower >= beta {
             candidates.swap(0, i);
             return root_bounds[move_num].lower;
         }
-        if root_bounds[move_num].upper <= alpha {
+        if exact_selectivity && root_bounds[move_num].upper <= alpha {
             if root_bounds[move_num].upper > best_score {
                 best_score = root_bounds[move_num].upper;
                 best_idx = i;
@@ -1291,7 +1409,9 @@ fn search_root_final_window(
         if search.is_aborted() {
             return best_score;
         }
-        s = root_bounds[move_num].update(s, alpha, alpha + 1);
+        if exact_selectivity {
+            s = root_bounds[move_num].update(s, alpha, alpha + 1);
+        }
         if s >= beta {
             candidates.swap(0, i);
             return s;
@@ -1456,6 +1576,33 @@ mod tests {
 
         assert_eq!(bound.update(-8, -12, -8), -8);
         assert_eq!(bound.exact(), Some(-8));
+    }
+
+    #[test]
+    fn non_exact_root_candidate_ignores_and_preserves_bound() {
+        let board = Board {
+            player: u64::MAX,
+            opponent: 0,
+        };
+        let mut bound = RootBound {
+            lower: 17,
+            upper: 17,
+        };
+        let original_bound = bound;
+        let mut stats = SearchStats::default();
+        let mut search = SearchContext::new(
+            Arc::new(Evaluator::default()),
+            Arc::new(MpcConfig::default()),
+            Arc::new(TranspositionTable::new()),
+            &mut stats,
+        );
+        search.selectivity_lv = ITERATIVE_SELECTIVITY_MIN;
+
+        let score =
+            search_root_final_candidate(&board, -SCORE_MAX, SCORE_MAX, &mut bound, &mut search);
+
+        assert_eq!(score, -SCORE_MAX);
+        assert_eq!(bound, original_bound);
     }
 
     #[test]
@@ -1688,6 +1835,57 @@ mod tests {
             let actual = parallel.solve_final(&board, NO_MPC_SELECTIVITY_LV);
             assert!(!actual.aborted);
             assert_eq!(actual.score, expected);
+        }
+    }
+
+    /// 中盤 iterative deepening の root 兄弟分割が直列探索と同じ結果を返す。
+    #[test]
+    fn parallel_eval_root_matches_single_thread_score_and_move() {
+        let evaluator = Arc::new(Evaluator::default());
+        let single = Solver::with_options(
+            evaluator.clone(),
+            SolverOptions {
+                search_threads: NonZeroUsize::MIN,
+                ..SolverOptions::default()
+            },
+        );
+        let parallel = Solver::with_options(
+            evaluator,
+            SolverOptions {
+                search_threads: NonZeroUsize::new(4).unwrap(),
+                ..SolverOptions::default()
+            },
+        );
+        let mut rng = 0xd1b5_4a32_d192_ed03_u64;
+        let mut checked = 0;
+
+        while checked < 3 {
+            // 20 未満の着手数では level 20 が depth 16 に調整されるため、
+            // debug の全体テストでも複数局面を現実的な時間で検証できる。
+            let board = random_board(&mut rng, 48);
+            if board.moves().count_ones() < 3 {
+                continue;
+            }
+
+            let expected = single.solve(&board, 20);
+            let actual = parallel.solve(&board, 20);
+
+            assert!(!expected.aborted && !actual.aborted);
+            assert_eq!(
+                (actual.score, actual.best_move),
+                (expected.score, expected.best_move),
+                "中盤rootの並列と直列で結果が違う: p={:#018x} o={:#018x}",
+                board.player,
+                board.opponent
+            );
+            assert_eq!(expected.ybwc_splits, 0, "1スレッドで分割してはいけない");
+            assert!(
+                actual.ybwc_splits > 0,
+                "並列中盤探索で一度も分割されていない: p={:#018x} o={:#018x}",
+                board.player,
+                board.opponent
+            );
+            checked += 1;
         }
     }
 

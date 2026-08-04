@@ -26,16 +26,15 @@ use crate::{
         },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
-        search::SearchContext,
+        search::{AbortNode, SearchContext},
         split_point::{try_add_slaves, SplitPoint},
         stability_cut::stability_cut_nws,
-        thread_pool::{DetachedJob, Job, TaskHandle, TaskResult},
+        thread_pool::{DetachedJob, HelperSlot, Job, TaskHandle, TaskResult},
         tt_cut::*,
     },
     t_table::{TTProbe, TTSlot, TTValue},
 };
 use arrayvec::ArrayVec;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{cell::UnsafeCell, cmp};
 
@@ -50,8 +49,11 @@ const SWITCH_EMPTIES_NEGA_ALPHA: i32 = 5;
 /// 空きマスがこれ以下のとき `nws_final_simple` に切り替える。
 const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 13;
 
-const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 16;
-const YBWC_TAIL_SPLIT_EMPTIES: i32 = 15;
+/// この空きマス数以上で YBWC 分割する。edax の実効閾値 (`DEPTH_MIDGAME_TO_ENDGAME`
+/// により空きマス 15 以上が分割可能領域) に合わせてある。
+const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 15;
+/// 空きスレッドが十分ある時だけ、1 段浅くても分割する。
+const YBWC_TAIL_SPLIT_EMPTIES: i32 = 14;
 const YBWC_TAIL_MIN_IDLE_WORKERS: usize = 4;
 const LEGAL_UNDEFINED: u64 = u64::MAX;
 
@@ -578,19 +580,20 @@ fn nws_final_ybwc(
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let split = Arc::new(SplitPoint::new(work, beta));
+    let split = Arc::new(SplitPoint::new(work, beta, &search.abort_node));
+    let master_abort = AbortNode::child(&split.abort_node);
     let mut spawned = 0u64;
 
     try_add_slaves(&split, search, &mut spawned, make_nws_split_worker);
     while let Some((work_index, _, child_board)) = split.next_work() {
         try_add_slaves(&split, search, &mut spawned, make_nws_split_worker);
-        search.searchings.push(split.searching.clone());
-        search.helper_chain.push(split.helper.clone());
+        let parent_abort = search.push_abort_node(master_abort.clone());
+        search.push_helper(split.helper.clone());
         let score = -nws_final(&child_board, -beta, search);
-        search.helper_chain.pop();
-        search.searchings.pop();
+        search.pop_helper();
+        search.restore_abort_node(parent_abort);
         if search.is_aborted() {
-            if search.recover_from_split_abort(&split.searching) {
+            if search.recover_from_split_abort(&split.abort_node) {
                 break;
             }
             split.stop_searching();
@@ -667,19 +670,18 @@ fn make_nws_split_worker(split: &Arc<SplitPoint>, parent: &SearchContext) -> Det
     let stop = parent.stop.clone();
     let thread_pool = parent.thread_pool.clone();
     let selectivity_lv = parent.selectivity_lv;
-    let mut searchings = parent.searchings.clone();
-    searchings.push(split.searching.clone());
-    let mut helper_chain = parent.helper_chain.clone();
-    helper_chain.push(split.helper.clone());
+    let abort_node = AbortNode::child(&split.abort_node);
+    let helper_chain = parent.helper_chain.clone();
 
     Box::new(move || {
         let mut stats = crate::search::search::SearchStats::default();
         let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
             .with_ordering_evaluator(ordering_evaluator)
-            .with_stop(stop)
+            .with_inherited_stop(stop)
             .with_thread_pool(thread_pool)
-            .with_searchings(searchings)
+            .with_abort_node(abort_node)
             .with_helper_chain(helper_chain);
+        search.push_helper(split.helper.clone());
         search.selectivity_lv = selectivity_lv;
         while let Some((work_index, _, child_board)) = split.next_work() {
             let score = -nws_final(&child_board, -split.beta(), &mut search);
@@ -702,7 +704,8 @@ pub(crate) fn make_ybwc_job(
     child_alpha: i32,
     cutoff_score: i32,
     move_index: usize,
-    split_searching: Arc<AtomicBool>,
+    split_abort: Arc<AbortNode>,
+    helper: Arc<HelperSlot>,
     parent: &SearchContext,
 ) -> Job {
     let evaluator = parent.evaluator.clone();
@@ -712,28 +715,25 @@ pub(crate) fn make_ybwc_job(
     let stop = parent.stop.clone();
     let thread_pool = parent.thread_pool.clone();
     let selectivity_lv = parent.selectivity_lv;
-    let mut searchings = parent.searchings.clone();
-    searchings.push(split_searching.clone());
-    // この分割は `SplitPoint` を持たず、master も `collect_ybwc_tasks` /
-    // `join_helping` で待つため `take_offered_job` を呼ばない。よってここでは
-    // 受け口を増やさず、親から受け継いだ祖先チェーンだけを渡す。
-    // この経路から投げた仕事のハンドオフは常に空振りしてプール投入に落ちる。
-    let helper_chain = parent.helper_chain.clone();
+    let abort_node = AbortNode::child(&split_abort);
+    // `collect_ybwc_tasks` で待つ master も子孫の仕事を直接受け取れるよう、
+    // この分割専用の受け口を祖先チェーンの末尾に足して子へ渡す。
+    let helper_chain = Some(parent.helper_chain_with(helper));
 
     Box::new(move || {
         let mut stats = crate::search::search::SearchStats::default();
         let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
             .with_ordering_evaluator(ordering_evaluator)
-            .with_stop(stop)
+            .with_inherited_stop(stop)
             .with_thread_pool(thread_pool)
-            .with_searchings(searchings)
+            .with_abort_node(abort_node)
             .with_helper_chain(helper_chain);
         search.selectivity_lv = selectivity_lv;
         let score = -nws_final(&child_board, child_alpha, &mut search);
         let aborted = search.is_aborted();
         drop(search);
         if !aborted && score >= cutoff_score {
-            split_searching.store(false, Ordering::Relaxed);
+            split_abort.abort_subtree();
         }
         TaskResult {
             score,
@@ -746,13 +746,14 @@ pub(crate) fn make_ybwc_job(
 
 pub(crate) fn collect_ybwc_tasks(
     handles: Vec<TaskHandle>,
+    helper: &HelperSlot,
     search: &mut SearchContext,
 ) -> Vec<TaskResult> {
     let pool = search.thread_pool.clone();
     let mut results = Vec::with_capacity(handles.len());
     for handle in handles {
         let result = match pool.as_deref() {
-            Some(pool) => pool.join_helping(handle),
+            Some(pool) => pool.join_helping(handle, helper),
             None => handle.join(),
         };
         search.stats.add_assign(result.stats);
