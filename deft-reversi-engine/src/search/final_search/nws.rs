@@ -49,8 +49,11 @@ const SWITCH_EMPTIES_NEGA_ALPHA: i32 = 5;
 /// 空きマスがこれ以下のとき `nws_final_simple` に切り替える。
 const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 13;
 
-const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 16;
-const YBWC_TAIL_SPLIT_EMPTIES: i32 = 15;
+/// この空きマス数以上で YBWC 分割する。edax の実効閾値 (`DEPTH_MIDGAME_TO_ENDGAME`
+/// により空きマス 15 以上が分割可能領域) に合わせてある。
+const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 15;
+/// 空きスレッドが十分ある時だけ、1 段浅くても分割する。
+const YBWC_TAIL_SPLIT_EMPTIES: i32 = 14;
 const YBWC_TAIL_MIN_IDLE_WORKERS: usize = 4;
 const LEGAL_UNDEFINED: u64 = u64::MAX;
 
