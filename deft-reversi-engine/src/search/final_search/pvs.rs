@@ -25,7 +25,7 @@ use crate::{
         },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
-        search::SearchContext,
+        search::{SearchContext, NO_MPC_SELECTIVITY_LV},
         stability_cut::stability_cut_pvs,
     },
     t_table::{TTProbe, TTSlot, TTValue},
@@ -38,11 +38,21 @@ const TT_MOVE1_SCORE: i32 = 1 << 19;
 
 const FINAL_LV: i32 = 60;
 const PVS_YBWC_MIN_EMPTIES: i32 = 20;
+const SELECTIVE_PVS_YBWC_MIN_EMPTIES: i32 = 16;
 
 /// 空きマスがこれ以下のとき `negaalpha_final` に切り替える。
 ///
 /// PVS は全幅探索なので、基底は NWS ではなく厳密探索に委ねる。
 const SWITCH_EMPTIES_NEGAALPHA: i32 = 12;
+
+#[inline(always)]
+fn pvs_ybwc_min_empties(selectivity_lv: i32) -> i32 {
+    if selectivity_lv < NO_MPC_SELECTIVITY_LV {
+        SELECTIVE_PVS_YBWC_MIN_EMPTIES
+    } else {
+        PVS_YBWC_MIN_EMPTIES
+    }
+}
 
 #[inline(always)]
 fn choose_pvs_tt_value(
@@ -394,7 +404,7 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
     let eval_depth = match empty_count {
         // 13..17 => 1,
         // 17..21 => 2,
-        _ => (empty_count >> 3).max(1)  ,
+        _ => (empty_count >> 3).max(1),
     };
 
     assign_ordering_scores_weighted_window(
@@ -410,7 +420,8 @@ pub fn pvs_final(board: &Board, alpha: i32, beta: i32, search: &mut SearchContex
     );
     sort_move_list(&mut move_list);
 
-    if empty_count >= PVS_YBWC_MIN_EMPTIES
+    let pvs_split_min_empties = pvs_ybwc_min_empties(search.selectivity_lv);
+    if empty_count >= pvs_split_min_empties
         && search.thread_pool.is_some()
         && move_list.iter().filter(|mv| !mv.is_skip).take(2).count() >= 2
     {
@@ -501,6 +512,12 @@ mod tests {
     use crate::search::search::SearchStats;
     use crate::t_table::TranspositionTable;
     use std::sync::Arc;
+
+    #[test]
+    fn selective_pvs_splits_four_plies_earlier() {
+        assert_eq!(pvs_ybwc_min_empties(NO_MPC_SELECTIVITY_LV - 1), 16);
+        assert_eq!(pvs_ybwc_min_empties(NO_MPC_SELECTIVITY_LV), 20);
+    }
 
     fn shared_resources() -> (Arc<Evaluator>, Arc<MpcConfig>, Arc<TranspositionTable>) {
         (
