@@ -22,9 +22,10 @@ use crate::search::move_list::*;
 use crate::search::mpc::{eval_search_mpc, ProbCutResult};
 use crate::search::search::{SearchContext, SearchStats};
 use crate::search::split_point::{try_add_slaves, SplitPoint};
-use crate::search::thread_pool::DetachedJob;
+use crate::search::thread_pool::{DetachedJob, Job, TaskResult};
 use crate::search::tt_cut::*;
 use crate::t_table::TTSlot;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const TT_MOVE0_SCORE: i32 = 1 << 8;
@@ -95,6 +96,53 @@ fn make_eval_split_worker(
         let aborted = search.is_aborted();
         drop(search);
         split.slave_finished(stats, aborted);
+    })
+}
+
+/// root の兄弟手を null-window で調べる YBWC job を作る。
+pub(crate) fn make_eval_root_job(
+    child_board: Board,
+    child_alpha: i32,
+    depth: i32,
+    cutoff_score: i32,
+    move_index: usize,
+    split_searching: Arc<AtomicBool>,
+    parent: &SearchContext,
+) -> Job {
+    let evaluator = parent.evaluator.clone();
+    let ordering_evaluator = parent.ordering_evaluator.clone();
+    let mpc_config = parent.mpc_config.clone();
+    let tt = parent.tt.clone();
+    let stop = parent.stop.clone();
+    let thread_pool = parent.thread_pool.clone();
+    let selectivity_lv = parent.selectivity_lv;
+    let mut searchings = parent.searchings.clone();
+    searchings.push(split_searching.clone());
+    // root 分割は SplitPoint を持たず、master は collect_ybwc_tasks で待つ。
+    // そのため新しい helper の受け口は作らず、祖先チェーンだけを引き継ぐ。
+    let helper_chain = parent.helper_chain.clone();
+
+    Box::new(move || {
+        let mut stats = SearchStats::default();
+        let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
+            .with_ordering_evaluator(ordering_evaluator)
+            .with_stop(stop)
+            .with_thread_pool(thread_pool)
+            .with_searchings(searchings)
+            .with_helper_chain(helper_chain);
+        search.selectivity_lv = selectivity_lv;
+        let score = -nws_eval(&child_board, child_alpha, depth - 1, &mut search);
+        let aborted = search.is_aborted();
+        drop(search);
+        if !aborted && score >= cutoff_score {
+            split_searching.store(false, Ordering::Relaxed);
+        }
+        TaskResult {
+            score,
+            move_index,
+            stats,
+            aborted,
+        }
     })
 }
 

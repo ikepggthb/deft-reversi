@@ -12,6 +12,7 @@ use crate::board::constant::NO_COORD;
 use crate::eval::evaluator_const::SCORE_MAX;
 use crate::eval::Evaluator;
 use crate::file::EngineFile;
+use crate::search::eval_search::nws::make_eval_root_job;
 use crate::search::eval_search::{nws_eval, pvs_eval};
 use crate::search::final_search::nws::{collect_ybwc_tasks, make_ybwc_job};
 use crate::search::final_search::{nws_final, pvs_final, solve_score};
@@ -21,9 +22,9 @@ use crate::search::thread_pool::ThreadPool;
 use crate::t_table::TranspositionTable;
 use crate::EngineError;
 use std::num::NonZeroUsize;
-use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// 反復深化で使う MPC selectivity の下限。level 2 = 85%。
 const ITERATIVE_SELECTIVITY_MIN: i32 = 2;
@@ -1077,6 +1078,9 @@ fn search_root_eval_window(
     if best_score > alpha {
         alpha = best_score;
     }
+    if search.thread_pool.is_some() && candidates.len() > 2 {
+        return search_root_eval_siblings_ybwc(depth, alpha, beta, best_score, candidates, search);
+    }
     let mut best_idx = 0;
     for i in 1..candidates.len() {
         let mut s = -nws_eval(&candidates[i].1, -alpha - 1, depth - 1, search);
@@ -1101,6 +1105,100 @@ fn search_root_eval_window(
                 best_score = s;
                 best_idx = i;
             }
+        }
+    }
+    if best_idx > 0 {
+        candidates.swap(0, best_idx);
+    }
+    best_score
+}
+
+fn search_root_eval_siblings_ybwc(
+    depth: i32,
+    mut alpha: i32,
+    beta: i32,
+    mut best_score: i32,
+    candidates: &mut [(u8, Board)],
+    search: &mut SearchContext,
+) -> i32 {
+    let Some(thread_pool) = search.thread_pool.clone() else {
+        return best_score;
+    };
+    let split_searching = Arc::new(AtomicBool::new(true));
+    let mut handles = Vec::with_capacity(candidates.len() - 1);
+    let mut results = Vec::new();
+
+    for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
+        if !split_searching.load(Ordering::Relaxed) {
+            break;
+        }
+        let job = make_eval_root_job(
+            *child_board,
+            -(alpha + 1),
+            depth,
+            beta,
+            move_index,
+            split_searching.clone(),
+            search,
+        );
+        match thread_pool.try_push(job) {
+            Ok(handle) => {
+                search.stats.ybwc_splits += 1;
+                handles.push(handle);
+            }
+            Err(job) => {
+                let result = job();
+                search.stats.add_assign(result.stats);
+                if result.aborted {
+                    search.stats.ybwc_split_aborts += 1;
+                }
+                let cutoff = !result.aborted && result.score >= beta;
+                results.push(result);
+                if cutoff {
+                    break;
+                }
+            }
+        }
+    }
+
+    results.extend(collect_ybwc_tasks(handles, search));
+    if search.check_abort_now() {
+        split_searching.store(false, Ordering::Relaxed);
+        return best_score;
+    }
+
+    if let Some(result) = results
+        .iter()
+        .find(|result| !result.aborted && result.score >= beta)
+    {
+        candidates.swap(0, result.move_index);
+        return result.score;
+    }
+
+    results.sort_unstable_by_key(|result| result.move_index);
+    let mut best_idx = 0;
+    for result in results {
+        if result.aborted || result.score <= alpha {
+            continue;
+        }
+        let score = -pvs_eval(
+            &candidates[result.move_index].1,
+            -beta,
+            -alpha,
+            depth - 1,
+            search,
+        );
+        if search.is_aborted() {
+            return best_score;
+        }
+        if score >= beta {
+            candidates.swap(0, result.move_index);
+            return score;
+        }
+        if score > alpha {
+            alpha = score;
+            best_score = score;
+            best_idx = result.move_index;
         }
     }
     if best_idx > 0 {
@@ -1733,6 +1831,57 @@ mod tests {
             let actual = parallel.solve_final(&board, NO_MPC_SELECTIVITY_LV);
             assert!(!actual.aborted);
             assert_eq!(actual.score, expected);
+        }
+    }
+
+    /// 中盤 iterative deepening の root 兄弟分割が直列探索と同じ結果を返す。
+    #[test]
+    fn parallel_eval_root_matches_single_thread_score_and_move() {
+        let evaluator = Arc::new(Evaluator::default());
+        let single = Solver::with_options(
+            evaluator.clone(),
+            SolverOptions {
+                search_threads: NonZeroUsize::MIN,
+                ..SolverOptions::default()
+            },
+        );
+        let parallel = Solver::with_options(
+            evaluator,
+            SolverOptions {
+                search_threads: NonZeroUsize::new(4).unwrap(),
+                ..SolverOptions::default()
+            },
+        );
+        let mut rng = 0xd1b5_4a32_d192_ed03_u64;
+        let mut checked = 0;
+
+        while checked < 3 {
+            // 20 未満の着手数では level 20 が depth 16 に調整されるため、
+            // debug の全体テストでも複数局面を現実的な時間で検証できる。
+            let board = random_board(&mut rng, 48);
+            if board.moves().count_ones() < 3 {
+                continue;
+            }
+
+            let expected = single.solve(&board, 20);
+            let actual = parallel.solve(&board, 20);
+
+            assert!(!expected.aborted && !actual.aborted);
+            assert_eq!(
+                (actual.score, actual.best_move),
+                (expected.score, expected.best_move),
+                "中盤rootの並列と直列で結果が違う: p={:#018x} o={:#018x}",
+                board.player,
+                board.opponent
+            );
+            assert_eq!(expected.ybwc_splits, 0, "1スレッドで分割してはいけない");
+            assert!(
+                actual.ybwc_splits > 0,
+                "並列中盤探索で一度も分割されていない: p={:#018x} o={:#018x}",
+                board.player,
+                board.opponent
+            );
+            checked += 1;
         }
     }
 
