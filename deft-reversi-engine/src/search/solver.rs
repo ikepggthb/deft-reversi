@@ -17,7 +17,7 @@ use crate::search::eval_search::{nws_eval, pvs_eval};
 use crate::search::final_search::nws::{collect_ybwc_tasks, make_ybwc_job};
 use crate::search::final_search::{nws_final, pvs_final, solve_score};
 use crate::search::mpc::{MpcConfig, SELECTIVITY_LV_MAX};
-use crate::search::search::{SearchContext, SearchStats};
+use crate::search::search::{AbortNode, SearchContext, SearchStats};
 use crate::search::thread_pool::ThreadPool;
 use crate::t_table::TranspositionTable;
 use crate::EngineError;
@@ -1124,12 +1124,12 @@ fn search_root_eval_siblings_ybwc(
     let Some(thread_pool) = search.thread_pool.clone() else {
         return best_score;
     };
-    let split_searching = Arc::new(AtomicBool::new(true));
+    let split_abort = AbortNode::child(&search.abort_node);
     let mut handles = Vec::with_capacity(candidates.len() - 1);
     let mut results = Vec::new();
 
     for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
-        if !split_searching.load(Ordering::Relaxed) {
+        if split_abort.is_aborted() {
             break;
         }
         let job = make_eval_root_job(
@@ -1138,7 +1138,7 @@ fn search_root_eval_siblings_ybwc(
             depth,
             beta,
             move_index,
-            split_searching.clone(),
+            split_abort.clone(),
             search,
         );
         match thread_pool.try_push(job) {
@@ -1163,7 +1163,7 @@ fn search_root_eval_siblings_ybwc(
 
     results.extend(collect_ybwc_tasks(handles, search));
     if search.check_abort_now() {
-        split_searching.store(false, Ordering::Relaxed);
+        split_abort.abort_subtree();
         return best_score;
     }
 
@@ -1219,19 +1219,19 @@ fn search_root_final_siblings_ybwc(
         return best_score;
     };
     let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
-    let split_searching = Arc::new(AtomicBool::new(true));
+    let split_abort = AbortNode::child(&search.abort_node);
     let mut handles = Vec::with_capacity(candidates.len() - 1);
     let mut results = Vec::new();
     let mut known_cutoff = None;
 
     for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
-        if !split_searching.load(Ordering::Relaxed) {
+        if split_abort.is_aborted() {
             break;
         }
         let move_num = candidates[move_index].0 as usize;
         if exact_selectivity && root_bounds[move_num].lower >= beta {
             known_cutoff = Some((move_index, root_bounds[move_num].lower));
-            split_searching.store(false, Ordering::Relaxed);
+            split_abort.abort_subtree();
             break;
         }
         if exact_selectivity && root_bounds[move_num].upper <= alpha {
@@ -1242,7 +1242,7 @@ fn search_root_final_siblings_ybwc(
             -(alpha + 1),
             beta,
             move_index,
-            split_searching.clone(),
+            split_abort.clone(),
             search,
         );
         match thread_pool.try_push(job) {
@@ -1267,7 +1267,7 @@ fn search_root_final_siblings_ybwc(
 
     results.extend(collect_ybwc_tasks(handles, search));
     if search.check_abort_now() {
-        split_searching.store(false, Ordering::Relaxed);
+        split_abort.abort_subtree();
         return best_score;
     }
 

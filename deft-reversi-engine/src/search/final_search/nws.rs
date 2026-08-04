@@ -26,7 +26,7 @@ use crate::{
         },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
-        search::SearchContext,
+        search::{AbortNode, SearchContext},
         split_point::{try_add_slaves, SplitPoint},
         stability_cut::stability_cut_nws,
         thread_pool::{DetachedJob, Job, TaskHandle, TaskResult},
@@ -35,7 +35,6 @@ use crate::{
     t_table::{TTProbe, TTSlot, TTValue},
 };
 use arrayvec::ArrayVec;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{cell::UnsafeCell, cmp};
 
@@ -578,19 +577,20 @@ fn nws_final_ybwc(
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let split = Arc::new(SplitPoint::new(work, beta));
+    let split = Arc::new(SplitPoint::new(work, beta, &search.abort_node));
+    let master_abort = AbortNode::child(&split.abort_node);
     let mut spawned = 0u64;
 
     try_add_slaves(&split, search, &mut spawned, make_nws_split_worker);
     while let Some((work_index, _, child_board)) = split.next_work() {
         try_add_slaves(&split, search, &mut spawned, make_nws_split_worker);
-        search.searchings.push(split.searching.clone());
-        search.helper_chain.push(split.helper.clone());
+        let parent_abort = search.push_abort_node(master_abort.clone());
+        search.push_helper(split.helper.clone());
         let score = -nws_final(&child_board, -beta, search);
-        search.helper_chain.pop();
-        search.searchings.pop();
+        search.pop_helper();
+        search.restore_abort_node(parent_abort);
         if search.is_aborted() {
-            if search.recover_from_split_abort(&split.searching) {
+            if search.recover_from_split_abort(&split.abort_node) {
                 break;
             }
             split.stop_searching();
@@ -667,19 +667,18 @@ fn make_nws_split_worker(split: &Arc<SplitPoint>, parent: &SearchContext) -> Det
     let stop = parent.stop.clone();
     let thread_pool = parent.thread_pool.clone();
     let selectivity_lv = parent.selectivity_lv;
-    let mut searchings = parent.searchings.clone();
-    searchings.push(split.searching.clone());
-    let mut helper_chain = parent.helper_chain.clone();
-    helper_chain.push(split.helper.clone());
+    let abort_node = AbortNode::child(&split.abort_node);
+    let helper_chain = parent.helper_chain.clone();
 
     Box::new(move || {
         let mut stats = crate::search::search::SearchStats::default();
         let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
             .with_ordering_evaluator(ordering_evaluator)
-            .with_stop(stop)
+            .with_inherited_stop(stop)
             .with_thread_pool(thread_pool)
-            .with_searchings(searchings)
+            .with_abort_node(abort_node)
             .with_helper_chain(helper_chain);
+        search.push_helper(split.helper.clone());
         search.selectivity_lv = selectivity_lv;
         while let Some((work_index, _, child_board)) = split.next_work() {
             let score = -nws_final(&child_board, -split.beta(), &mut search);
@@ -702,7 +701,7 @@ pub(crate) fn make_ybwc_job(
     child_alpha: i32,
     cutoff_score: i32,
     move_index: usize,
-    split_searching: Arc<AtomicBool>,
+    split_abort: Arc<AbortNode>,
     parent: &SearchContext,
 ) -> Job {
     let evaluator = parent.evaluator.clone();
@@ -712,8 +711,7 @@ pub(crate) fn make_ybwc_job(
     let stop = parent.stop.clone();
     let thread_pool = parent.thread_pool.clone();
     let selectivity_lv = parent.selectivity_lv;
-    let mut searchings = parent.searchings.clone();
-    searchings.push(split_searching.clone());
+    let abort_node = AbortNode::child(&split_abort);
     // この分割は `SplitPoint` を持たず、master も `collect_ybwc_tasks` /
     // `join_helping` で待つため `take_offered_job` を呼ばない。よってここでは
     // 受け口を増やさず、親から受け継いだ祖先チェーンだけを渡す。
@@ -724,16 +722,16 @@ pub(crate) fn make_ybwc_job(
         let mut stats = crate::search::search::SearchStats::default();
         let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
             .with_ordering_evaluator(ordering_evaluator)
-            .with_stop(stop)
+            .with_inherited_stop(stop)
             .with_thread_pool(thread_pool)
-            .with_searchings(searchings)
+            .with_abort_node(abort_node)
             .with_helper_chain(helper_chain);
         search.selectivity_lv = selectivity_lv;
         let score = -nws_final(&child_board, child_alpha, &mut search);
         let aborted = search.is_aborted();
         drop(search);
         if !aborted && score >= cutoff_score {
-            split_searching.store(false, Ordering::Relaxed);
+            split_abort.abort_subtree();
         }
         TaskResult {
             score,

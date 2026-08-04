@@ -25,14 +25,11 @@ use crate::{
         },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
-        search::{SearchContext, NO_MPC_SELECTIVITY_LV},
+        search::{AbortNode, SearchContext, NO_MPC_SELECTIVITY_LV},
         stability_cut::stability_cut_pvs,
     },
     t_table::{TTProbe, TTSlot, TTValue},
 };
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
 const TT_MOVE0_SCORE: i32 = 1 << 20;
 const TT_MOVE1_SCORE: i32 = 1 << 19;
 
@@ -145,11 +142,11 @@ fn pvs_final_ybwc(
     }
     alpha_cur = alpha_cur.max(best_score);
 
-    let split_searching = Arc::new(AtomicBool::new(true));
+    let split_abort = AbortNode::child(&search.abort_node);
     let mut handles = Vec::new();
     let mut results = Vec::new();
     for (move_index, mv) in move_list.iter().enumerate().skip(first_index + 1) {
-        if mv.is_skip || !split_searching.load(Ordering::Relaxed) {
+        if mv.is_skip || split_abort.is_aborted() {
             continue;
         }
         let child = board.make_move_from_flip_bit(1 << mv.move_num, mv.flip_bit);
@@ -158,7 +155,7 @@ fn pvs_final_ybwc(
             -(alpha_cur + 1),
             beta_cur,
             move_index,
-            split_searching.clone(),
+            split_abort.clone(),
             search,
         );
         match thread_pool.try_push(job) {
@@ -182,7 +179,7 @@ fn pvs_final_ybwc(
     }
     results.extend(collect_ybwc_tasks(handles, search));
     if search.check_abort_now() {
-        split_searching.store(false, Ordering::Relaxed);
+        split_abort.abort_subtree();
         return alpha;
     }
 
