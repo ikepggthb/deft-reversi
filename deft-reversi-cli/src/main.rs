@@ -1,3 +1,4 @@
+mod book_cmd;
 mod eval_mae;
 mod match_cmd;
 mod mpc_collect;
@@ -6,6 +7,7 @@ mod play;
 mod self_play;
 mod solve;
 
+use crate::book_cmd::{run as run_book, BookCommand};
 use crate::eval_mae::run as run_eval_mae;
 use crate::match_cmd::run as run_match;
 use crate::mpc_collect::{run as run_mpc_collect, MpcCollectArgs, MpcCollectMode};
@@ -49,6 +51,14 @@ struct Args {
     #[arg(short, long, default_value_t = DEFAULT_LEVEL)]
     level: u8,
 
+    /// Path to an egaroucid compatible opening book used by the AI
+    #[arg(long)]
+    book: Option<String>,
+
+    /// Book accuracy level. 0 picks the best move, 10 is the loosest
+    #[arg(long, default_value_t = 0)]
+    book_acc_level: i32,
+
     /// Number of self-play games to run
     /// (e.g. --self-play 10 --level 16 --self-play-out "./self-play.txt" --self-play-start-rand 45)
     #[arg(long, id = "Number of games")]
@@ -71,6 +81,11 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Egaroucid 互換の定石 book を操作する
+    Book {
+        #[command(subcommand)]
+        command: BookCommand,
+    },
     EvalMae {
         #[arg(long = "eval")]
         eval_path: String,
@@ -128,6 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(command) = args.command {
         return match command {
+            Command::Book { command } => run_book(command),
             Command::EvalMae {
                 eval_path,
                 data_root,
@@ -207,6 +223,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // 通常プレイモード
         let mut game = OthelloCLI::new(level, eval_path);
+        if let Some(book_path) = args.book.as_deref() {
+            game.load_book(book_path, args.book_acc_level);
+        }
         game.play();
     }
 

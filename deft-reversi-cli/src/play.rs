@@ -1,5 +1,5 @@
 use deft_reversi_engine::{
-    check_record, position_num_to_str, Color, Evaluator, Game, Solver, SolverOptions,
+    check_record, position_num_to_str, Book, Color, Evaluator, Game, Solver, SolverOptions,
     SOLVE_LEVEL_MAX,
 };
 use std::{
@@ -11,6 +11,10 @@ pub struct OthelloCLI {
     solver: Solver,
     ai_level: i32,
     setting_turn: SettingTurn,
+    /// AI が参照する定石 book。未指定なら探索だけで着手する。
+    book: Option<Book>,
+    /// book の精度レベル。0 が最善手、大きいほど緩く選ぶ。
+    book_acc_level: i32,
 }
 
 enum Turn {
@@ -50,7 +54,33 @@ impl OthelloCLI {
                 black: Turn::Player,
                 white: Turn::Player,
             },
+            book: None,
+            book_acc_level: 0,
         }
+    }
+
+    /// AI が使う定石 book を読み込む。読み込めなければ book 無しで続行する。
+    pub fn load_book(&mut self, path: &str, acc_level: i32) {
+        match Book::load(path) {
+            Ok(book) => {
+                println!("Book: {} positions from {path}", book.len());
+                self.book = Some(book);
+                self.book_acc_level = acc_level;
+            }
+            Err(e) => eprintln!("Book: {e}"),
+        }
+    }
+
+    /// book に登録があればその手を返す。
+    fn book_move(&mut self) -> Option<String> {
+        let board = self.game.current.board;
+        let acc_level = self.book_acc_level;
+        let book = self.book.as_mut()?;
+        let mv = book.random_move(&board, acc_level)?;
+        if mv.mv >= 64 || board.moves() & (1u64 << mv.mv) == 0 {
+            return None;
+        }
+        position_num_to_str(mv.mv).ok()
     }
 
     fn display_board(&self) {
@@ -270,6 +300,12 @@ impl OthelloCLI {
     }
 
     fn computer_turn(&mut self) {
+        if let Some(move_str) = self.book_move() {
+            println!("move: {} (book)", move_str);
+            self.game.put(&move_str).unwrap();
+            return;
+        }
+
         let result = self.solver.solve(&self.game.current.board, self.ai_level);
         if let Some(best_move) = result.best_move {
             let move_str = position_num_to_str(best_move).unwrap();
