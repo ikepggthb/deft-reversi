@@ -1,7 +1,9 @@
-//! book に格納する 1 局面と、Egaroucid の対称変換。
+//! 盤面の対称形と、正規形を基準にした着手座標の変換。
 //!
-//! Egaroucid の `Book_elem` / `Leaf` (src/engine/book.hpp) と
-//! `representative_board` / `convert_coord_*` (src/engine/util.hpp) に対応する。
+//! book は 8 対称形のうち `(player, opponent)` の辞書順で最小のもの
+//! (正規形) をキーにする。この規則は Egaroucid の `representative_board` と
+//! 同じで、変換インデックス (0..8) の意味も揃えてある。Egaroucid や Edax の
+//! book をそのまま取り込めるのはこの一致のおかげ。
 //!
 //! # 座標系について
 //!
@@ -9,125 +11,15 @@
 //! 置く。この違いはビット列の 180 度回転にあたり、180 度回転は対称変換の群
 //! (D4, 位数 8) の元なので、**ある局面の 8 対称形が作る `(player, opponent)` の
 //! 集合は両者で完全に一致する**。正規形はその集合の辞書順最小なので、
-//! Egaroucid が保存する盤面のビット列はこのエンジンの [`Board::unique_board`]
-//! が返すビット列とそのまま一致する。
+//! Egaroucid が保存する盤面のビット列はこのエンジンの正規形とそのまま一致する。
 //!
-//! 着手も「u64 のどのビットか」を指すので変換不要でやり取りできる。人間向けの
-//! 表示名 (A1/H8) だけが 180 度ずれるが、盤面も同じだけずれているので
-//! 一貫している。この性質は本モジュールの
+//! 着手も「u64 のどのビットか」を指すので変換不要でやり取りできる。この性質は
 //! `representative_is_invariant_under_the_egaroucid_bit_order` で検証している。
 
 use crate::board::board::Board;
 
-/// パスを表す疑似座標。Egaroucid の `MOVE_PASS` (Edax の `PASS` と同値)。
-pub const MOVE_PASS: i8 = 64;
-/// 「もう展開する手が無い」ことを表す疑似座標。Egaroucid の `MOVE_NOMOVE`。
-pub const MOVE_NOMOVE: i8 = 65;
-/// 「未設定」を表す疑似座標。Egaroucid の `MOVE_UNDEFINED`。
-pub const MOVE_UNDEFINED: i8 = 125;
-/// 「値が無い」ことを表すスコア。Egaroucid の `SCORE_UNDEFINED`。
-pub const SCORE_UNDEFINED: i8 = -126;
-/// 「レベル未設定」。Egaroucid の `LEVEL_UNDEFINED`。
-pub const LEVEL_UNDEFINED: i8 = -1;
-/// 石差スコアの絶対値の上限。Egaroucid の `SCORE_MAX`。
-pub const SCORE_MAX: i8 = 64;
-/// `n_lines` の上限。Egaroucid の `MAX_N_LINES`。
-pub const MAX_N_LINES: u32 = 4_000_000_000;
-
-/// 有効な着手座標か。Egaroucid の `is_valid_policy`。
-pub fn is_valid_policy(policy: i8) -> bool {
-    (0..64).contains(&policy)
-}
-
-/// 有効なスコアか。Egaroucid の `is_valid_score`。
-pub fn is_valid_score(score: i8) -> bool {
-    (-SCORE_MAX..=SCORE_MAX).contains(&score)
-}
-
-/// book に登録されていない手のうち最善のもの。Egaroucid の `Leaf`。
-///
-/// Egaroucid は link を保存しないので、leaf は「まだ book に子局面が無い手」の
-/// 中での最善手を意味する。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Leaf {
-    pub value: i8,
-    /// 正規形の盤面を基準にした座標。
-    pub mv: i8,
-    /// この leaf を求めたときの探索レベル。
-    pub level: i8,
-}
-
-impl Default for Leaf {
-    fn default() -> Self {
-        Self {
-            value: SCORE_UNDEFINED,
-            mv: MOVE_UNDEFINED,
-            level: LEVEL_UNDEFINED,
-        }
-    }
-}
-
-impl Leaf {
-    /// 実際に指せる手を指しているか。
-    pub fn is_move(&self) -> bool {
-        is_valid_policy(self.mv)
-    }
-
-    /// 値と手の両方が有効か。
-    pub fn is_valid(&self) -> bool {
-        is_valid_score(self.value) && self.is_move()
-    }
-}
-
-/// book の 1 局面。Egaroucid の `Book_elem`。
-///
-/// Edax と違い着手リスト (link) を持たない。手はその都度、子局面が book に
-/// 登録されているかを引いて求める ([`Book::moves_with_value`](super::Book::moves_with_value))。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BookElem {
-    /// 手番側から見た評価値(石差)。
-    pub value: i8,
-    /// この局面を評価したときの探索レベル。
-    pub level: i8,
-    pub leaf: Leaf,
-    /// この局面以下の部分木のノード数。Egaroucid の `n_lines`。
-    pub n_lines: u32,
-}
-
-impl Default for BookElem {
-    fn default() -> Self {
-        Self {
-            value: SCORE_UNDEFINED,
-            level: LEVEL_UNDEFINED,
-            leaf: Leaf::default(),
-            n_lines: 0,
-        }
-    }
-}
-
-impl BookElem {
-    pub fn new(value: i8, level: i8) -> Self {
-        Self {
-            value,
-            level,
-            ..Self::default()
-        }
-    }
-
-    /// 値が登録されているか。
-    pub fn has_value(&self) -> bool {
-        self.value != SCORE_UNDEFINED
-    }
-}
-
-/// 問い合わせた盤面の向きに変換済みの着手。Egaroucid の `Book_value`。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BookMove {
-    /// 問い合わせた盤面での座標 (0..64)。
-    pub mv: u8,
-    /// 手番側から見た評価値。
-    pub value: i8,
-}
+/// 変換インデックスが不正なときに返す座標。
+const INVALID_COORD: u8 = 255;
 
 /// Egaroucid が対称形を調べる順序 (変換インデックス)。
 ///
@@ -237,7 +129,7 @@ pub fn convert_coord_from_representative(cell: u8, idx: usize) -> u8 {
         5 => x * 8 + y,             // white line
         6 => y * 8 + (7 - x),       // horizontal
         7 => (7 - y) * 8 + (7 - x), // 180 度回転
-        _ => return MOVE_UNDEFINED as u8,
+        _ => return INVALID_COORD,
     };
     res as u8
 }
@@ -258,32 +150,9 @@ pub fn convert_coord_to_representative(cell: u8, idx: usize) -> u8 {
         5 => x * 8 + y,
         6 => y * 8 + (7 - x),
         7 => (7 - y) * 8 + (7 - x),
-        _ => return MOVE_UNDEFINED as u8,
+        _ => return INVALID_COORD,
     };
     res as u8
-}
-
-/// `mv` を着手した後の盤面。非合法手や疑似座標では `None`。
-pub fn next_board(board: &Board, mv: i8) -> Option<Board> {
-    if mv == MOVE_PASS {
-        if board.moves() != 0 {
-            return None;
-        }
-        return Some(board.passed());
-    }
-    if !is_valid_policy(mv) {
-        return None;
-    }
-    let move_bit = 1u64 << mv;
-    if board.moves() & move_bit == 0 {
-        return None;
-    }
-    Some(board.make_move(move_bit))
-}
-
-/// 探索スコアを book の 1 バイトスコアに丸める。
-pub fn clamp_score(score: i32) -> i8 {
-    score.clamp(-(SCORE_MAX as i32), SCORE_MAX as i32) as i8
 }
 
 // ---- 盤面の対称変換 (Egaroucid の bit_*_mirror) ----
@@ -495,27 +364,5 @@ mod tests {
                 representative_board(&after_original).0
             );
         }
-    }
-
-    #[test]
-    fn next_board_handles_pass_and_illegal_moves() {
-        let board = Board::new();
-        assert!(next_board(&board, D3 as i8).is_some());
-        assert!(next_board(&board, 0).is_none());
-        assert!(next_board(&board, MOVE_PASS).is_none());
-        assert!(next_board(&board, MOVE_NOMOVE).is_none());
-        assert!(next_board(&board, MOVE_UNDEFINED).is_none());
-    }
-
-    #[test]
-    fn constants_match_egaroucid() {
-        assert_eq!(MOVE_PASS, 64);
-        assert_eq!(MOVE_NOMOVE, 65);
-        assert_eq!(MOVE_UNDEFINED, 125);
-        assert_eq!(SCORE_UNDEFINED, -126);
-        assert_eq!(LEVEL_UNDEFINED, -1);
-        assert!(!is_valid_policy(MOVE_PASS));
-        assert!(!is_valid_score(SCORE_UNDEFINED));
-        assert!(is_valid_score(-64) && is_valid_score(64));
     }
 }

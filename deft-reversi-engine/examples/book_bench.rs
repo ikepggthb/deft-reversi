@@ -1,29 +1,44 @@
-//! book の読み込みと全体走査のコストを測る一時的なベンチ。
+//! book の読み込み・全体走査・育成のコストを測るベンチ。
 //!
-//! 使い方: `book_bench enumerate <depth>` — 初期盤面から depth 手までの
-//! 全局面を book に入れ、negamax などの全体走査を計測する。
-use deft_reversi_engine::{Board, Book, BookElem, Evaluator, Solver, SolverOptions};
+//! - `book_bench enumerate <depth>` — 初期盤面から depth 手までの全局面を
+//!   book に入れ、伝播・保存・参照を計測する
+//! - `book_bench grow <positions> <level> <threads> [out.dbk]` — 育成を計測する。
+//!   出力先を渡すと育てた book を保存する
+use deft_reversi_engine::{
+    grow, Board, Book, BookValue, Evaluator, GrowthPolicy, Solver, SolverOptions,
+};
 use std::collections::BTreeSet;
+use std::num::NonZeroUsize;
 use std::time::Instant;
 
 fn main() {
     let arg = |i: usize| std::env::args().nth(i);
-    if arg(1).as_deref() == Some("expand") {
-        let rounds = arg(2).and_then(|s| s.parse().ok()).unwrap_or(6);
+    if arg(1).as_deref() == Some("grow") {
+        let positions = arg(2).and_then(|s| s.parse().ok()).unwrap_or(200);
         let level = arg(3).and_then(|s| s.parse().ok()).unwrap_or(8);
         let threads = arg(4).and_then(|s| s.parse().ok()).unwrap_or(1);
-        bench_expand(rounds, level, threads);
+        bench_grow(positions, level, threads, arg(5));
         return;
     }
-    let depth: usize = arg(1).and_then(|s| s.parse().ok()).unwrap_or(9);
+    let depth: usize = arg(2)
+        .or_else(|| arg(1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9);
+    bench_enumerate(depth);
+}
 
+fn bench_enumerate(depth: usize) {
     // 初期盤面から depth 手までの全局面を列挙して book に入れる。
     let t = Instant::now();
     let mut book = Book::empty();
     let mut frontier: Vec<Board> = vec![Board::new()];
-    let mut seen: BTreeSet<Board> = BTreeSet::new();
-    seen.insert(Board::new().unique_board());
-    book.register(&Board::new(), BookElem::new(0, 10));
+    let mut seen: BTreeSet<(u64, u64)> = BTreeSet::new();
+    let key = |b: &Board| {
+        let u = b.unique_board();
+        (u.player, u.opponent)
+    };
+    seen.insert(key(&Board::new()));
+    book.insert(&Board::new(), BookValue::exact(0));
 
     for ply in 0..depth {
         let mut next = Vec::new();
@@ -34,8 +49,8 @@ fn main() {
                     continue;
                 }
                 let passed = board.passed();
-                if seen.insert(passed.unique_board()) {
-                    book.register(&passed, BookElem::new(0, 10));
+                if seen.insert(key(&passed)) {
+                    book.insert(&passed, BookValue::exact(0));
                     next.push(passed);
                 }
                 continue;
@@ -44,10 +59,10 @@ fn main() {
                 let mv = legal.trailing_zeros();
                 legal &= legal - 1;
                 let child = board.make_move(1u64 << mv);
-                if seen.insert(child.unique_board()) {
-                    // 値は深さで散らしておく (negamax が実際に伝播するように)。
+                if seen.insert(key(&child)) {
+                    // 値は深さで散らしておく (伝播が実際に動くように)。
                     let value = ((child.player.count_ones() as i32) % 9 - 4) as i8;
-                    book.register(&child, BookElem::new(value, 10));
+                    book.insert(&child, BookValue::exact(value));
                     next.push(child);
                 }
             }
@@ -61,6 +76,23 @@ fn main() {
         t.elapsed().as_secs_f64(),
         book.len()
     );
+    println!("  table RSS            : {} MiB", peak_rss_mib());
+
+    let t = Instant::now();
+    let bytes = book.to_dbk_bytes();
+    println!(
+        "to_dbk_bytes           : {:>6.2} s ({} MB)",
+        t.elapsed().as_secs_f64(),
+        bytes.len() / 1_000_000
+    );
+
+    let t = Instant::now();
+    let reloaded = Book::from_dbk_bytes(&bytes).unwrap();
+    println!(
+        "from_dbk_bytes         : {:>6.2} s ({} positions)",
+        t.elapsed().as_secs_f64(),
+        reloaded.len()
+    );
 
     let t = Instant::now();
     let bytes = book.to_egbk3_bytes();
@@ -71,31 +103,23 @@ fn main() {
     );
 
     let t = Instant::now();
-    let n_fix = book.negamax(false);
+    let changed = book.propagate();
     println!(
-        "negamax                : {:>6.2} s ({n_fix} values updated)",
+        "propagate              : {:>6.2} s ({changed} values updated)",
         t.elapsed().as_secs_f64()
     );
 
     let t = Instant::now();
-    book.recalculate_n_lines();
+    let removed = book.prune_unreachable();
     println!(
-        "recalculate_n_lines    : {:>6.2} s (root n_lines {})",
-        t.elapsed().as_secs_f64(),
-        book.root().unwrap().n_lines
-    );
-
-    let t = Instant::now();
-    let removed = book.remove_unreachable();
-    println!(
-        "remove_unreachable     : {:>6.2} s ({removed} removed)",
+        "prune_unreachable      : {:>6.2} s ({removed} removed)",
         t.elapsed().as_secs_f64()
     );
 
     let t = Instant::now();
-    let removed = book.reduce(60, 1, 2);
+    let removed = book.reduce(2);
     println!(
-        "reduce(60, 1, 2)       : {:>6.2} s ({removed} removed, {} left)",
+        "reduce(2)              : {:>6.2} s ({removed} removed, {} left)",
         t.elapsed().as_secs_f64(),
         book.len()
     );
@@ -104,17 +128,33 @@ fn main() {
     let t = Instant::now();
     let mut n = 0;
     for _ in 0..100_000 {
-        n += book.moves_with_value(&Board::new()).len();
+        n += book.moves(&Board::new()).len();
     }
     println!(
-        "moves_with_value x100k : {:>6.2} s ({n})",
+        "moves x100k            : {:>6.2} s ({n})",
         t.elapsed().as_secs_f64()
     );
+    println!("peak RSS               : {} MiB", peak_rss_mib());
 }
 
-/// book の育成 (expand) を計測する。
-fn bench_expand(rounds: usize, level: i32, threads: usize) {
-    use std::num::NonZeroUsize;
+/// ここまでのピーク RSS (MiB)。取れない環境では 0。
+fn peak_rss_mib() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmHWM:"))?
+                .split_whitespace()
+                .nth(1)?
+                .parse::<u64>()
+                .ok()
+        })
+        .map(|kib| kib / 1024)
+        .unwrap_or(0)
+}
+
+/// book の育成を計測する。
+fn bench_grow(positions: usize, level: i32, threads: usize, out: Option<String>) {
     let threads = NonZeroUsize::new(threads).unwrap();
     let solver = Solver::with_options(
         std::sync::Arc::new(Evaluator::default()),
@@ -122,12 +162,31 @@ fn bench_expand(rounds: usize, level: i32, threads: usize) {
     );
 
     let mut book = Book::new();
-    book.add_board(&Board::new(), level, &solver);
+    let policy = GrowthPolicy {
+        level,
+        max_ply: 30,
+        player_error: 0,
+        opponent_error: 4,
+        max_positions: positions,
+        time_limit: None,
+        threads,
+        stop: None,
+    };
+
     let t = Instant::now();
-    let added = book.expand_with_threads(rounds, 4, level, &solver, threads);
+    let report = grow(&mut book, &solver, &policy);
     println!(
-        "expand rounds={rounds} level={level} threads={threads}: {:>6.2} s ({added} added, {} positions)",
+        "grow positions={positions} level={level} threads={threads}: \
+         {:>6.2} s ({} added, {} searched, {} rounds, {} total, {:?})",
         t.elapsed().as_secs_f64(),
-        book.len()
+        report.added,
+        report.searched,
+        report.rounds,
+        book.len(),
+        report.stopped_by,
     );
+    if let Some(path) = out {
+        book.save(&path).unwrap();
+        println!("saved to {path}");
+    }
 }

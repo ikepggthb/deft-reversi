@@ -51,7 +51,7 @@ struct Args {
     #[arg(short, long, default_value_t = DEFAULT_LEVEL)]
     level: u8,
 
-    /// Path to an egaroucid compatible opening book used by the AI
+    /// Path to an opening book used by the AI (.dbk / .egbk3 / edax .dat)
     #[arg(long)]
     book: Option<String>,
 
@@ -81,7 +81,7 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Egaroucid 互換の定石 book を操作する
+    /// 定石 book を操作する
     Book {
         #[command(subcommand)]
         command: BookCommand,

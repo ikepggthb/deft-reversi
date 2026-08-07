@@ -1,4 +1,4 @@
-//! Egaroucid の book ファイル (`.egbk3` / `.egbk2` / `.egbk`) の読み書き。
+//! Egaroucid の book ファイル (`.egbk3` / `.egbk2` / `.egbk`) の取り込みと書き出し。
 //!
 //! # `.egbk3` (現行形式)
 //!
@@ -23,17 +23,29 @@
 //! | 23 | 1 | `i8 leaf.move` |
 //! | 24 | 1 | `i8 leaf.level` |
 //!
-//! Edax と違い **着手リスト (link) を持たない**ため可変長部分が無い。
-//! Egaroucid はヘッダの `n_boards` の個数だけ読む (Edax は EOF まで読む)。
-//! `value` が石差の範囲外、あるいは `player & opponent != 0` のレコードは
-//! 黙って読み飛ばす。同じ盤面が複数あるときは **level が高い方を採る**。
+//! Edax と違い着手リスト (link) を持たない。`value` が石差の範囲外、あるいは
+//! `player & opponent != 0` のレコードは黙って読み飛ばす。
+//!
+//! # 値の対応
+//!
+//! Egaroucid の `level` は Egaroucid の探索表に紐づく数字なので、
+//! [`BookValue`] の深さ・選択度にそのままは移せない。ここでは
+//!
+//! - `level >= 空きマス数` なら終局まで読んでいるとみなす
+//! - そうでなければ `level` を探索深さとみなし、選択度は既定値
+//!
+//! と近似する。近似なので上下界は広めに付く。取り込んだ book をこのエンジンで
+//! 育て直すと、探索し直した局面から順に本来の幅に締まっていく。
+//!
+//! Egaroucid の `leaf` (book に無い手の中の最善) はこの book の
+//! [`Frontier`] と同じ役割なのでそのまま移す。`n_lines` は保持しない
+//! (子から数え直せるので、書き出すときに計算する)。
 //!
 //! # `.egbk2` (旧形式)
 //!
 //! ヘッダは `.egbk3` と同じ 14 バイト (version = 2)。局面は可変長で
 //! `u64 player`, `u64 opponent`, `i8 value`, `i8 level`, `u8 n_moves`,
-//! `n_moves` 個の (`i8 value`, `i8 move`)。着手リストは読み飛ばす
-//! (Egaroucid 自身も v3 では使わない)。
+//! `n_moves` 個の (`i8 value`, `i8 move`)。着手リストは読み飛ばす。
 //!
 //! # `.egbk` (最初期形式)
 //!
@@ -41,14 +53,16 @@
 //! `u64 player`, `u64 opponent`, `u8 value_raw` の 17 バイト。
 //! 評価値は `-((i8)value_raw - 64)` で復元する。
 
-use super::elem::{
-    convert_coord_to_representative, is_valid_score, representative_board, BookElem, Leaf,
+use super::layer::{ply_of, PlyLayer, N_LAYERS};
+use super::sym::{
+    convert_coord_from_representative, convert_coord_to_representative, representative_board,
 };
+use super::value::{is_valid_score, BookValue, Frontier, SELECTIVITY_EXACT};
 use super::Book;
 use crate::board::board::Board;
 use crate::EngineError;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::num::NonZeroUsize;
 
 /// `.egbk3` / `.egbk2` の magic。`EGAROUCID` の逆順。
@@ -57,9 +71,18 @@ pub const EGBK_MAGIC: &[u8; 9] = b"DICUORAGE";
 pub const EGBK_VERSION: u8 = 3;
 
 /// `.egbk3` のヘッダ長。
-pub(super) const EGBK3_HEADER_SIZE: usize = 14;
+const EGBK3_HEADER_SIZE: usize = 14;
 /// `.egbk3` の 1 局面のバイト数。
-pub(super) const EGBK3_RECORD_SIZE: usize = 25;
+const EGBK3_RECORD_SIZE: usize = 25;
+
+/// Egaroucid の level を深さに移せないときに使う選択度。
+///
+/// Egaroucid の既定の中盤探索はそれなりに枝刈りするので、完全 (6) より
+/// 落として広めの窓を付ける。
+const IMPORTED_SELECTIVITY: u8 = 3;
+
+/// 取り込んだ 1 局面。
+type Imported = (Board, BookValue, Frontier);
 
 /// バイト列から固定長を読み進めるカーソル。
 struct Reader<'a> {
@@ -110,11 +133,29 @@ fn default_load_threads() -> NonZeroUsize {
     std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN)
 }
 
-/// `.egbk3` の 1 レコード (25 バイト) をデコードし、正規形のキーと局面データを返す。
+/// Egaroucid の `level` から [`BookValue`] を組み立てる。
+fn value_from_level(score: i8, n_empties: u8, level: i8) -> BookValue {
+    let level = level.max(0) as u8;
+    if level >= n_empties {
+        BookValue::searched(score, n_empties, n_empties, SELECTIVITY_EXACT)
+    } else {
+        BookValue::searched(score, n_empties, level, IMPORTED_SELECTIVITY)
+    }
+}
+
+/// [`BookValue`] を Egaroucid の `level` に落とす。
+fn level_from_value(value: &BookValue, n_empties: u8) -> i8 {
+    if value.is_exact() {
+        return n_empties.min(60) as i8;
+    }
+    value.depth.min(60) as i8
+}
+
+/// `.egbk3` の 1 レコード (25 バイト) をデコードする。
 ///
-/// 正規化は 1 レコードにつき 1 回だけ行い、得られた変換インデックスで leaf 座標も
-/// 同時に移す。表には触らないのでスレッドから呼べる。
-fn decode_egbk3_record(record: &[u8]) -> Option<(Board, BookElem)> {
+/// 正規化は 1 レコードにつき 1 回だけ行い、得られた変換インデックスで
+/// leaf 座標も同時に移す。表には触らないのでスレッドから呼べる。
+fn decode_egbk3_record(record: &[u8]) -> Option<Imported> {
     debug_assert_eq!(record.len(), EGBK3_RECORD_SIZE);
     let player = u64::from_le_bytes(record[0..8].try_into().unwrap());
     let opponent = u64::from_le_bytes(record[8..16].try_into().unwrap());
@@ -125,23 +166,27 @@ fn decode_egbk3_record(record: &[u8]) -> Option<(Board, BookElem)> {
         return None;
     }
 
-    let (key, idx) = representative_board(&Board { player, opponent });
-    let mut leaf = Leaf {
-        value: record[22] as i8,
-        mv: record[23] as i8,
-        level: record[24] as i8,
+    let board = Board { player, opponent };
+    let n_empties = board.empties_count() as u8;
+    let (key, idx) = representative_board(&board);
+
+    let leaf_value = record[22] as i8;
+    let leaf_move = record[23] as i8;
+    let leaf_level = record[24] as i8;
+    let frontier = if (0..64).contains(&leaf_move) && is_valid_score(leaf_value) {
+        Frontier {
+            mv: convert_coord_to_representative(leaf_move as u8, idx) as i8,
+            score: leaf_value,
+            depth: leaf_level.max(0) as u8,
+        }
+    } else {
+        Frontier::unset()
     };
-    if leaf.is_move() {
-        leaf.mv = convert_coord_to_representative(leaf.mv as u8, idx) as i8;
-    }
+
     Some((
         key,
-        BookElem {
-            value,
-            level: record[17] as i8,
-            leaf,
-            n_lines: u32::from_le_bytes(record[18..22].try_into().unwrap()),
-        },
+        value_from_level(value, n_empties, record[17] as i8),
+        frontier,
     ))
 }
 
@@ -168,6 +213,74 @@ fn read_egbk_header(r: &mut Reader<'_>, expected_version: u8) -> Result<i32, Eng
     Ok(n_boards)
 }
 
+/// 取り込んだ局面を ply ごとに仕分ける入れ物。
+///
+/// 層が違えば索引が衝突しないので、最後の組み立てを層ごとに並列化できる。
+#[derive(Default)]
+struct PlyBuckets {
+    buckets: Vec<Vec<Imported>>,
+}
+
+impl PlyBuckets {
+    fn new() -> Self {
+        Self {
+            buckets: (0..N_LAYERS).map(|_| Vec::new()).collect(),
+        }
+    }
+
+    fn push(&mut self, entry: Imported) {
+        let ply = ply_of(&entry.0);
+        if ply < N_LAYERS {
+            self.buckets[ply].push(entry);
+        }
+    }
+
+    fn extend(&mut self, entries: impl IntoIterator<Item = Imported>) {
+        for entry in entries {
+            self.push(entry);
+        }
+    }
+
+    /// 層ごとに並列に索引を張って book を組み立てる。
+    fn into_book(self, threads: NonZeroUsize) -> Book {
+        let mut layers: Vec<Option<PlyLayer>> = (0..self.buckets.len()).map(|_| None).collect();
+        let buckets = self.buckets;
+        let n_threads = threads.get().min(layers.len());
+
+        std::thread::scope(|scope| {
+            let chunk = layers.len().div_ceil(n_threads.max(1));
+            let mut rest = layers.as_mut_slice();
+            let mut entries = buckets.into_iter();
+            while !rest.is_empty() {
+                let take = chunk.min(rest.len());
+                let (head, tail) = rest.split_at_mut(take);
+                rest = tail;
+                let work: Vec<Vec<Imported>> = (&mut entries).take(take).collect();
+                scope.spawn(move || {
+                    for (out, bucket) in head.iter_mut().zip(work) {
+                        if bucket.is_empty() {
+                            continue;
+                        }
+                        let mut layer = PlyLayer::with_capacity(bucket.len());
+                        for (board, value, frontier) in bucket {
+                            layer.upsert(board, value, frontier);
+                        }
+                        *out = Some(layer);
+                    }
+                });
+            }
+        });
+
+        let mut book = Book::empty();
+        for (ply, layer) in layers.into_iter().enumerate() {
+            if let Some(layer) = layer {
+                *book.table_mut().layer_mut(ply) = layer;
+            }
+        }
+        book
+    }
+}
+
 impl Book {
     /// `.egbk3` (バージョンが違えば `.egbk2`) を読み込む。
     pub fn from_egbk_bytes(bytes: &[u8]) -> Result<Self, EngineError> {
@@ -189,12 +302,12 @@ impl Book {
     pub fn from_egbk3_bytes(bytes: &[u8]) -> Result<Self, EngineError> {
         let mut r = Reader::new(bytes);
         let n_boards = read_egbk_header(&mut r, 3)?;
-
         let records = r.take(n_boards as usize * EGBK3_RECORD_SIZE)?;
-        // 局面数が分かっているので表を先に確保し、再ハッシュを避ける。
-        let mut book = Self::with_capacity(n_boards as usize);
-        book.absorb_egbk3_records(records, default_load_threads());
-        Ok(book)
+
+        let threads = default_load_threads();
+        let mut buckets = PlyBuckets::new();
+        buckets.extend(decode_records(records, threads));
+        Ok(buckets.into_book(threads))
     }
 
     /// `.egbk3` をファイルからストリームで読み込む。
@@ -241,7 +354,7 @@ impl Book {
     /// `.egbk3` をストリームから読み込む。
     ///
     /// 25 バイト固定長なので、読んだ塊をそのままスレッドに切り分けられる。
-    /// デコードと正規化を並列に行い、表への登録だけを直列にする。
+    /// デコードと正規化を並列に行い、仕分けだけを直列にする。
     fn from_egbk3_reader<R: Read>(
         mut reader: R,
         n_boards: usize,
@@ -250,7 +363,7 @@ impl Book {
         /// 1 回に読むレコード数。512K レコード = 12.8 MB。
         const CHUNK: usize = 1 << 19;
 
-        let mut book = Self::with_capacity(n_boards);
+        let mut buckets = PlyBuckets::new();
         let mut buf = vec![0u8; CHUNK.min(n_boards.max(1)) * EGBK3_RECORD_SIZE];
         let mut remaining = n_boards;
         while remaining > 0 {
@@ -258,204 +371,196 @@ impl Book {
             let bytes = &mut buf[..n * EGBK3_RECORD_SIZE];
             reader.read_exact(bytes).map_err(|_| {
                 EngineError::InvalidData(format!(
-                    "unexpected end of book file, {remaining} records missing"
+                    "book claims {n_boards} positions but the file ended early"
                 ))
             })?;
-            book.absorb_egbk3_records(bytes, threads);
+            buckets.extend(decode_records(bytes, threads));
             remaining -= n;
         }
-        Ok(book)
+        Ok(buckets.into_book(threads))
     }
 
-    /// 25 バイト固定長のレコード列を取り込む。
-    fn absorb_egbk3_records(&mut self, records: &[u8], threads: NonZeroUsize) {
-        let n = records.len() / EGBK3_RECORD_SIZE;
-        // 少量ならスレッドを起こす方が高くつく。
-        let n_threads = threads.get().min(n / 4096).max(1);
-        if n_threads == 1 {
-            for record in records.chunks_exact(EGBK3_RECORD_SIZE) {
-                if let Some((key, elem)) = decode_egbk3_record(record) {
-                    self.merge_representative(key, elem);
-                }
-            }
-            return;
-        }
-
-        // レコード境界で均等に切ってデコード + 正規化を並列に行う。
-        let per_thread = n.div_ceil(n_threads) * EGBK3_RECORD_SIZE;
-        let decoded: Vec<Vec<(Board, BookElem)>> = std::thread::scope(|scope| {
-            let handles: Vec<_> = records
-                .chunks(per_thread)
-                .map(|part| {
-                    scope.spawn(move || {
-                        let mut local = Vec::with_capacity(part.len() / EGBK3_RECORD_SIZE);
-                        for record in part.chunks_exact(EGBK3_RECORD_SIZE) {
-                            if let Some(decoded) = decode_egbk3_record(record) {
-                                local.push(decoded);
-                            }
-                        }
-                        local
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|handle| handle.join().expect("book decode thread panicked"))
-                .collect()
-        });
-
-        for part in decoded {
-            for (key, elem) in part {
-                self.merge_representative(key, elem);
-            }
-        }
-    }
-
-    /// `.egbk2` (旧形式) を読み込む。着手リストは読み飛ばす。
+    /// `.egbk2` を読み込む。着手リストは読み飛ばす。
     pub fn from_egbk2_bytes(bytes: &[u8]) -> Result<Self, EngineError> {
         let mut r = Reader::new(bytes);
         let n_boards = read_egbk_header(&mut r, 2)?;
 
-        let mut book = Self::empty();
+        let mut buckets = PlyBuckets::new();
         for _ in 0..n_boards {
             let player = r.u64()?;
             let opponent = r.u64()?;
             let value = r.i8()?;
             let level = r.i8()?;
             let n_moves = r.u8()?;
-            for _ in 0..n_moves {
-                r.i8()?; // move value
-                r.i8()?; // move coordinate
-            }
+            r.take(n_moves as usize * 2)?;
+
             if !is_valid_score(value) || player & opponent != 0 {
                 continue;
             }
-            book.merge_elem(
-                &Board { player, opponent },
-                BookElem {
-                    value,
-                    level,
-                    leaf: Leaf::default(),
-                    n_lines: 0,
-                },
-            );
+            let board = Board { player, opponent };
+            let n_empties = board.empties_count() as u8;
+            let (key, _) = representative_board(&board);
+            buckets.push((
+                key,
+                value_from_level(value, n_empties, level),
+                Frontier::unset(),
+            ));
         }
-        Ok(book)
+        Ok(buckets.into_book(default_load_threads()))
     }
 
-    /// マジックの無い最初期の `.egbk` を読み込む。`level` は補完値。
-    pub fn from_egbk1_bytes(bytes: &[u8], level: i8) -> Result<Self, EngineError> {
+    /// マジックの無い最初期の `.egbk` を読み込む。
+    pub(super) fn from_egbk1_bytes(bytes: &[u8], _version: u8) -> Result<Self, EngineError> {
         let mut r = Reader::new(bytes);
         let n_boards = r.i32()?;
         if n_boards < 0 {
-            return Err(EngineError::InvalidData(
-                "not a recognizable opening book".to_string(),
-            ));
-        }
-        // 想定サイズと食い違うなら別形式とみなす (誤判定を避ける)。
-        let expected = 4 + n_boards as usize * 17;
-        if bytes.len() != expected {
-            return Err(EngineError::InvalidData(
-                "not a recognizable opening book".to_string(),
-            ));
+            return Err(EngineError::InvalidData(format!(
+                "negative board count: {n_boards}"
+            )));
         }
 
-        let mut book = Self::empty();
+        let mut buckets = PlyBuckets::new();
         for _ in 0..n_boards {
             let player = r.u64()?;
             let opponent = r.u64()?;
-            let value_raw = r.u8()?;
-            // Egaroucid の import_file_egbk と同じ復元式。
-            let value = -((value_raw as i8) as i32 - 64);
-            if !(-64..=64).contains(&value) || player & opponent != 0 {
+            // 0..128 で保存されているので 64 を引いて符号を反転する。
+            let value = -((r.u8()? as i8).wrapping_sub(64));
+            if !is_valid_score(value) || player & opponent != 0 {
                 continue;
             }
-            book.merge_elem(
-                &Board { player, opponent },
-                BookElem {
-                    value: value as i8,
-                    level,
-                    leaf: Leaf::default(),
-                    n_lines: 0,
-                },
-            );
+            let board = Board { player, opponent };
+            let n_empties = board.empties_count() as u8;
+            let (key, _) = representative_board(&board);
+            // 探索の素性が分からないので、いちばん緩い扱いにする。
+            buckets.push((
+                key,
+                value_from_level(value, n_empties, 1),
+                Frontier::unset(),
+            ));
         }
-        Ok(book)
+        Ok(buckets.into_book(default_load_threads()))
     }
 
-    /// `.egbk3` 形式のバイト列を作る。
+    /// `.egbk3` 形式でバイト列に書き出す。
+    ///
+    /// Egaroucid が読める形にするため、`n_lines` は子から数え直す。
+    ///
+    /// **値がまだ入っていない局面は書き出さない**。`.egbk3` は「値が無い」を
+    /// 表せず、書いても Egaroucid 側で読み捨てられるため。落とした数は
+    /// [`Book::n_undefined`] で分かる。
     pub fn to_egbk3_bytes(&self) -> Vec<u8> {
-        self.to_egbk3_bytes_with_level(None)
-    }
-
-    /// `.egbk3` 形式のバイト列を作る。`level` を指定すると全局面の level と
-    /// leaf level をその値で上書きする (Egaroucid の `save_egbk3(file, level)`)。
-    pub fn to_egbk3_bytes_with_level(&self, level: Option<i8>) -> Vec<u8> {
-        let mut out = Vec::with_capacity(EGBK3_HEADER_SIZE + self.len() * EGBK3_RECORD_SIZE);
+        let n_lines = self.count_lines();
+        let n_written = self.len() - self.n_undefined();
+        let mut out = Vec::with_capacity(EGBK3_HEADER_SIZE + n_written * EGBK3_RECORD_SIZE);
         out.extend_from_slice(EGBK_MAGIC);
         out.push(EGBK_VERSION);
-        out.extend_from_slice(&(self.len() as i32).to_le_bytes());
+        out.extend_from_slice(&(n_written as i32).to_le_bytes());
 
-        for (board, elem) in self.iter() {
-            let (elem_level, leaf_level) = match level {
-                Some(level) => (level, level),
-                None => (elem.level, elem.leaf.level),
-            };
+        for (id, board, value) in self.iter() {
+            if !value.is_defined() {
+                continue;
+            }
+            let n_empties = board.empties_count() as u8;
             out.extend_from_slice(&board.player.to_le_bytes());
             out.extend_from_slice(&board.opponent.to_le_bytes());
-            out.push(elem.value as u8);
-            out.push(elem_level as u8);
-            out.extend_from_slice(&elem.n_lines.to_le_bytes());
-            out.push(elem.leaf.value as u8);
-            out.push(elem.leaf.mv as u8);
-            out.push(leaf_level as u8);
+            out.push(value.score as u8);
+            out.push(level_from_value(value, n_empties) as u8);
+            let lines = n_lines[id.ply as usize][id.slot as usize];
+            out.extend_from_slice(&lines.to_le_bytes());
+
+            let frontier = self.table().frontier(id);
+            if frontier.has_move() {
+                out.push(frontier.score as u8);
+                // 正規形の座標のまま書く。Egaroucid も正規形で保存する。
+                out.push(convert_coord_from_representative(frontier.mv as u8, 0));
+                out.push(frontier.depth.min(60));
+            } else {
+                out.push(super::value::SCORE_UNDEFINED as u8);
+                out.push(super::value::MOVE_NONE as u8);
+                out.push(0);
+            }
         }
         out
     }
 
-    /// `.egbk3` 形式でファイルに書き出す。
-    pub fn save(&self, path: &str) -> Result<(), EngineError> {
-        std::fs::write(path, self.to_egbk3_bytes())?;
+    /// `.egbk3` 形式で保存する。
+    pub fn save_egbk3(&self, path: &str) -> Result<(), EngineError> {
+        let tmp = format!("{path}.tmp");
+        {
+            let mut writer = BufWriter::new(File::create(&tmp)?);
+            writer.write_all(&self.to_egbk3_bytes())?;
+            writer.flush()?;
+        }
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
-    /// `.egbk3` 形式でファイルに書き出し、level を上書きする。
-    pub fn save_with_level(&self, path: &str, level: i8) -> Result<(), EngineError> {
-        std::fs::write(path, self.to_egbk3_bytes_with_level(Some(level)))?;
-        Ok(())
+    /// 各局面を通る変化の本数を数える。
+    ///
+    /// 子は必ず 1 つ深い層にいるので、深い層から 1 回舐めれば求まる。
+    /// Egaroucid の `n_lines` に相当し、この book では保持せず必要なときに
+    /// 数え直す (保持すると育成のたびに張り直すことになる)。
+    pub(super) fn count_lines(&self) -> Vec<Vec<u32>> {
+        let max_ply = self.max_ply().unwrap_or(0);
+        let mut counts: Vec<Vec<u32>> = (0..N_LAYERS)
+            .map(|ply| vec![0u32; self.table().layer(ply).len()])
+            .collect();
+
+        for ply in (0..=max_ply).rev() {
+            for slot in 0..self.table().layer(ply).len() {
+                let board = *self.table().layer(ply).board(slot as u32);
+                let children = self.children(&board);
+                let mut sum = 0u32;
+                for child in &children {
+                    sum = sum.saturating_add(
+                        counts[child.id.ply as usize][child.id.slot as usize].max(1),
+                    );
+                }
+                counts[ply][slot] = sum;
+            }
+        }
+        counts
     }
+}
+
+/// レコード列を並列にデコードする。
+fn decode_records(records: &[u8], threads: NonZeroUsize) -> Vec<Imported> {
+    let n = records.len() / EGBK3_RECORD_SIZE;
+    let n_threads = threads.get().min(n.div_ceil(4096).max(1));
+    if n_threads <= 1 {
+        return records
+            .chunks_exact(EGBK3_RECORD_SIZE)
+            .filter_map(decode_egbk3_record)
+            .collect();
+    }
+
+    let chunk = n.div_ceil(n_threads) * EGBK3_RECORD_SIZE;
+    let mut parts: Vec<Vec<Imported>> = (0..n_threads).map(|_| Vec::new()).collect();
+    std::thread::scope(|scope| {
+        for (out, slice) in parts.iter_mut().zip(records.chunks(chunk)) {
+            scope.spawn(move || {
+                *out = slice
+                    .chunks_exact(EGBK3_RECORD_SIZE)
+                    .filter_map(decode_egbk3_record)
+                    .collect();
+            });
+        }
+    });
+    parts.concat()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::book::value::SCORE_UNDEFINED;
 
     const D3: u8 = 19;
 
-    fn sample_book() -> Book {
-        let mut book = Book::empty();
-        let root = Board::new();
-        let child = root.make_move(1u64 << D3);
-
-        book.register_representative(
-            root.unique_board(),
-            BookElem {
-                value: 2,
-                level: 21,
-                leaf: Leaf {
-                    value: 1,
-                    mv: 26,
-                    level: 21,
-                },
-                n_lines: 7,
-            },
-        );
-        book.register(&child, BookElem::new(-2, 21));
-        book
-    }
-
     /// Egaroucid の `save_egbk3` と同じ順序の書き出しを並べた C プログラムが
     /// 実際に出力したバイト列。ヘッダ 14 B + 局面 1 つ (25 B)。
+    ///
+    /// 初期盤面の正規形、value = 2, level = 21, n_lines = 7,
+    /// leaf = (value 1, move 26, level 21)。
     const EGBK3_GOLDEN: [u8; 39] = [
         0x44, 0x49, 0x43, 0x55, 0x4f, 0x52, 0x41, 0x47, 0x45, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x10, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x10, 0x00, 0x00, 0x00,
@@ -466,227 +571,204 @@ mod tests {
     const _: () = assert!(EGBK3_GOLDEN.len() == EGBK3_HEADER_SIZE + EGBK3_RECORD_SIZE);
 
     #[test]
-    fn header_is_14_bytes_and_starts_with_the_egaroucid_magic() {
-        let bytes = Book::empty().to_egbk3_bytes();
-        assert_eq!(bytes.len(), EGBK3_HEADER_SIZE);
-        assert_eq!(&bytes[0..9], b"DICUORAGE");
-        assert_eq!(bytes[9], 3);
-        assert_eq!(i32::from_le_bytes(bytes[10..14].try_into().unwrap()), 0);
+    fn golden_egbk3_is_read_as_the_initial_position() {
+        let book = Book::from_egbk3_bytes(&EGBK3_GOLDEN).unwrap();
+        assert_eq!(book.len(), 1);
+        let value = book.value_of(&Board::new()).unwrap();
+        assert_eq!(value.score, 2);
+        // level 21 < 空きマス 60 なので中盤探索扱い。
+        assert!(!value.is_exact());
+        assert_eq!(value.depth, 21);
+
+        let frontier = book.frontier_of(&Board::new()).unwrap();
+        assert!(frontier.has_move());
+        assert_ne!(Board::new().moves() & (1u64 << frontier.mv), 0);
     }
 
     #[test]
-    fn record_is_25_bytes_with_the_egaroucid_layout() {
-        let book = sample_book();
-        let bytes = book.to_egbk3_bytes();
-        assert_eq!(
-            bytes.len(),
-            EGBK3_HEADER_SIZE + 2 * EGBK3_RECORD_SIZE,
-            "2 positions expected"
-        );
-
-        let (board, elem) = book.iter().next().unwrap();
-        let record = &bytes[EGBK3_HEADER_SIZE..EGBK3_HEADER_SIZE + EGBK3_RECORD_SIZE];
-        assert_eq!(
-            u64::from_le_bytes(record[0..8].try_into().unwrap()),
-            board.player
-        );
-        assert_eq!(
-            u64::from_le_bytes(record[8..16].try_into().unwrap()),
-            board.opponent
-        );
-        assert_eq!(record[16] as i8, elem.value);
-        assert_eq!(record[17] as i8, elem.level);
-        assert_eq!(
-            u32::from_le_bytes(record[18..22].try_into().unwrap()),
-            elem.n_lines
-        );
-        assert_eq!(record[22] as i8, elem.leaf.value);
-        assert_eq!(record[23] as i8, elem.leaf.mv);
-        assert_eq!(record[24] as i8, elem.leaf.level);
-    }
-
-    #[test]
-    fn to_egbk3_bytes_matches_the_bytes_written_by_egaroucid() {
+    fn egbk3_round_trip_keeps_the_positions_and_scores() {
         let mut book = Book::empty();
-        book.register_representative(
-            Board::new().unique_board(),
-            BookElem {
-                value: 2,
-                level: 21,
-                leaf: Leaf {
-                    value: 1,
-                    mv: 26,
-                    level: 21,
-                },
-                n_lines: 7,
+        let root = Board::new();
+        let child = root.make_move(1u64 << D3);
+        book.insert(&root, BookValue::searched(2, 60, 21, 3));
+        book.insert(&child, BookValue::exact(-2));
+        book.set_frontier(
+            &child,
+            Frontier {
+                mv: child.moves().trailing_zeros() as i8,
+                score: -1,
+                depth: 12,
             },
         );
-        assert_eq!(book.to_egbk3_bytes(), EGBK3_GOLDEN);
-    }
 
-    #[test]
-    fn from_egbk3_bytes_reads_a_book_written_by_egaroucid() {
-        let book = Book::from_bytes(&EGBK3_GOLDEN).unwrap();
-        assert_eq!(book.len(), 1);
-
-        let elem = book.root().unwrap();
-        assert_eq!(elem.value, 2);
-        assert_eq!(elem.level, 21);
-        assert_eq!(elem.n_lines, 7);
-        assert_eq!(elem.leaf.value, 1);
-        assert_eq!(elem.leaf.level, 21);
-        assert!(elem.leaf.is_move());
-    }
-
-    #[test]
-    fn egbk3_round_trip_preserves_every_field() {
-        let book = sample_book();
         let loaded = Book::from_egbk3_bytes(&book.to_egbk3_bytes()).unwrap();
-
-        assert_eq!(loaded.len(), book.len());
-        // 反復順は表の並び順なので、盤面で引いて突き合わせる。
-        for (board, elem) in book.iter() {
-            assert_eq!(loaded.get_representative(board), Some(elem), "{board:?}");
-        }
-    }
-
-    #[test]
-    fn save_with_level_overrides_every_level() {
-        let book = sample_book();
-        let loaded = Book::from_egbk3_bytes(&book.to_egbk3_bytes_with_level(Some(30))).unwrap();
-        for (_, elem) in loaded.iter() {
-            assert_eq!(elem.level, 30);
-            assert_eq!(elem.leaf.level, 30);
-        }
-    }
-
-    /// ストリーム読み ([`Book::load`]) とバイト列読みが同じ結果になること。
-    #[test]
-    fn streaming_load_matches_the_in_memory_reader() {
-        let book = sample_book();
-        let dir = std::env::temp_dir().join(format!("deft-book-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("stream.egbk3");
-        let path = path.to_str().unwrap();
-        book.save(path).unwrap();
-
-        let streamed = Book::load(path).unwrap();
-        let in_memory = Book::from_egbk3_bytes(&std::fs::read(path).unwrap()).unwrap();
-        assert_eq!(streamed.len(), in_memory.len());
-        for (board, elem) in in_memory.iter() {
-            assert_eq!(streamed.get_representative(board), Some(elem));
-        }
-        std::fs::remove_file(path).ok();
-    }
-
-    /// ヘッダの局面数が実ファイルより多い場合は、巨大な確保をせずに弾く。
-    #[test]
-    fn streaming_load_rejects_a_header_that_overstates_the_position_count() {
-        let mut bytes = sample_book().to_egbk3_bytes();
-        bytes[10..14].copy_from_slice(&1_000_000_000i32.to_le_bytes());
-
-        let dir = std::env::temp_dir().join(format!("deft-book-bad-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("bad.egbk3");
-        let path = path.to_str().unwrap();
-        std::fs::write(path, &bytes).unwrap();
-
-        let err = Book::load(path).unwrap_err();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded.value_of(&root).unwrap().score, 2);
+        assert_eq!(loaded.value_of(&child).unwrap().score, -2);
         assert!(
-            err.to_string().contains("only holds"),
-            "unexpected error: {err}"
+            loaded.value_of(&child).unwrap().is_exact(),
+            "level >= 空きマス数なら完全読みとして復元される"
         );
-        std::fs::remove_file(path).ok();
+        let frontier = loaded.frontier_of(&child).unwrap();
+        assert!(frontier.has_move());
+        assert_eq!(frontier.score, -1);
     }
 
     #[test]
-    fn from_bytes_rejects_foreign_and_broken_files() {
-        assert!(Book::from_bytes(b"JUNKJUNKJUNK").is_err());
-
-        let mut bytes = EGBK3_GOLDEN.to_vec();
-        bytes[9] = 9; // unsupported version
-        assert!(Book::from_bytes(&bytes).is_err());
-
-        let mut truncated = EGBK3_GOLDEN.to_vec();
-        truncated.truncate(truncated.len() - 3);
-        assert!(Book::from_bytes(&truncated).is_err());
+    fn a_position_without_a_frontier_writes_the_undefined_marker() {
+        let mut book = Book::empty();
+        book.insert(&Board::new(), BookValue::exact(0));
+        let bytes = book.to_egbk3_bytes();
+        assert_eq!(bytes.len(), EGBK3_HEADER_SIZE + EGBK3_RECORD_SIZE);
+        assert_eq!(bytes[EGBK3_HEADER_SIZE + 22] as i8, SCORE_UNDEFINED);
+        assert_eq!(bytes[EGBK3_HEADER_SIZE + 23] as i8, -1);
     }
 
     #[test]
-    fn from_egbk3_bytes_skips_broken_records() {
+    fn header_matches_egaroucid() {
+        let mut book = Book::empty();
+        book.insert(&Board::new(), BookValue::exact(0));
+        let bytes = book.to_egbk3_bytes();
+        assert_eq!(&bytes[0..9], EGBK_MAGIC);
+        assert_eq!(bytes[9], EGBK_VERSION);
+        assert_eq!(i32::from_le_bytes(bytes[10..14].try_into().unwrap()), 1);
+    }
+
+    #[test]
+    fn n_lines_counts_the_variations_through_a_position() {
+        let mut book = Book::empty();
+        let root = Board::new();
+        let child = root.make_move(1u64 << D3);
+        book.insert(&root, BookValue::exact(0));
+        book.insert(&child, BookValue::exact(0));
+
+        let counts = book.count_lines();
+        let root_id = book.table().locate(&root).unwrap();
+        // 初期盤面の 4 手はすべて同じ子に落ちるので 4 本と数える
+        // (Egaroucid も link ごとに数えるので同じ挙動)。
+        assert_eq!(counts[0][root_id.slot as usize], 4);
+    }
+
+    #[test]
+    fn positions_without_a_value_are_not_written() {
+        let mut book = Book::empty();
+        book.insert(&Board::new(), BookValue::undefined());
+        book.insert(
+            &Board::new().make_move(1u64 << D3),
+            BookValue::searched(1, 59, 21, 3),
+        );
+        assert_eq!(book.n_undefined(), 1);
+
+        let bytes = book.to_egbk3_bytes();
+        assert_eq!(bytes.len(), EGBK3_HEADER_SIZE + EGBK3_RECORD_SIZE);
+        assert_eq!(
+            i32::from_le_bytes(bytes[10..14].try_into().unwrap()),
+            1,
+            "ヘッダの局面数が実際のレコード数と一致すること"
+        );
+        assert_eq!(Book::from_egbk3_bytes(&bytes).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn corrupted_records_are_skipped() {
         let mut bytes = EGBK3_GOLDEN.to_vec();
-        // value を範囲外にすると、その局面は読み飛ばされる。
-        bytes[EGBK3_HEADER_SIZE + 16] = 100;
+        // value を範囲外にする。
+        bytes[30] = 100;
         let book = Book::from_egbk3_bytes(&bytes).unwrap();
         assert_eq!(book.len(), 0);
-
-        // player と opponent が重なっていても読み飛ばす。
-        let mut bytes = EGBK3_GOLDEN.to_vec();
-        let overlap = 0x0000_0018_1800_0000u64.to_le_bytes();
-        bytes[EGBK3_HEADER_SIZE..EGBK3_HEADER_SIZE + 8].copy_from_slice(&overlap);
-        bytes[EGBK3_HEADER_SIZE + 8..EGBK3_HEADER_SIZE + 16].copy_from_slice(&overlap);
-        assert_eq!(Book::from_egbk3_bytes(&bytes).unwrap().len(), 0);
     }
 
     #[test]
-    fn duplicate_boards_keep_the_higher_level() {
-        use super::super::elem::{LEVEL_UNDEFINED, MOVE_UNDEFINED, SCORE_UNDEFINED};
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(EGBK_MAGIC);
-        bytes.push(3);
-        bytes.extend_from_slice(&2i32.to_le_bytes());
-        for (value, level) in [(3i8, 5i8), (7i8, 20i8)] {
-            let board = Board::new().unique_board();
-            bytes.extend_from_slice(&board.player.to_le_bytes());
-            bytes.extend_from_slice(&board.opponent.to_le_bytes());
-            bytes.push(value as u8);
-            bytes.push(level as u8);
-            bytes.extend_from_slice(&0u32.to_le_bytes());
-            bytes.push(SCORE_UNDEFINED as u8);
-            bytes.push(MOVE_UNDEFINED as u8);
-            bytes.push(LEVEL_UNDEFINED as u8);
+    fn overlapping_stones_are_skipped() {
+        let mut bytes = EGBK3_GOLDEN.to_vec();
+        // opponent を player と同じにする。
+        let (player, opponent) = bytes.split_at_mut(22);
+        opponent[..8].copy_from_slice(&player[14..22]);
+        let book = Book::from_egbk3_bytes(&bytes).unwrap();
+        assert_eq!(book.len(), 0);
+    }
+
+    #[test]
+    fn a_bad_magic_is_rejected() {
+        let mut bytes = EGBK3_GOLDEN.to_vec();
+        bytes[0] = b'X';
+        assert!(Book::from_egbk3_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn a_truncated_file_is_rejected() {
+        assert!(Book::from_egbk3_bytes(&EGBK3_GOLDEN[..30]).is_err());
+    }
+
+    #[test]
+    fn parallel_and_serial_decodes_agree() {
+        let mut book = Book::empty();
+        let mut board = Board::new();
+        for _ in 0..20 {
+            if board.moves() == 0 {
+                break;
+            }
+            book.insert(&board, BookValue::searched(1, 60, 10, 3));
+            board = board.make_move(1u64 << board.moves().trailing_zeros());
         }
+        let bytes = book.to_egbk3_bytes();
+        let records = &bytes[EGBK3_HEADER_SIZE..];
+
+        let serial = decode_records(records, NonZeroUsize::MIN);
+        let mut parallel = decode_records(records, NonZeroUsize::new(4).unwrap());
+        assert_eq!(serial.len(), parallel.len());
+        parallel.sort_by_key(|(b, _, _)| (b.player, b.opponent));
+        let mut serial = serial;
+        serial.sort_by_key(|(b, _, _)| (b.player, b.opponent));
+        assert_eq!(serial.len(), parallel.len());
+        for (a, b) in serial.iter().zip(&parallel) {
+            assert_eq!(a.0, b.0);
+            assert_eq!(a.1, b.1);
+        }
+    }
+
+    #[test]
+    fn duplicate_records_keep_the_more_trustworthy_value() {
+        let mut bytes = EGBK3_GOLDEN.to_vec();
+        let mut second = EGBK3_GOLDEN[EGBK3_HEADER_SIZE..].to_vec();
+        second[16] = 9i8 as u8; // value
+        second[17] = 60; // level (= 完全読み扱い)
+        bytes.extend_from_slice(&second);
+        bytes[10..14].copy_from_slice(&2i32.to_le_bytes());
 
         let book = Book::from_egbk3_bytes(&bytes).unwrap();
         assert_eq!(book.len(), 1);
-        assert_eq!(book.root().unwrap().value, 7);
-        assert_eq!(book.root().unwrap().level, 20);
+        let value = book.value_of(&Board::new()).unwrap();
+        assert_eq!(value.score, 9);
+        assert!(value.is_exact());
     }
 
     #[test]
-    fn egbk2_legacy_format_is_readable() {
-        let board = Board::new().unique_board();
+    fn egbk1_scores_are_decoded_with_the_offset() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1i32.to_le_bytes());
+        bytes.extend_from_slice(&Board::new().player.to_le_bytes());
+        bytes.extend_from_slice(&Board::new().opponent.to_le_bytes());
+        bytes.push(60); // -(60 - 64) = 4
+        let book = Book::from_bytes(&bytes).unwrap();
+        assert_eq!(book.value_of(&Board::new()).unwrap().score, 4);
+    }
+
+    #[test]
+    fn egbk2_skips_the_move_list() {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(EGBK_MAGIC);
         bytes.push(2);
         bytes.extend_from_slice(&1i32.to_le_bytes());
-        bytes.extend_from_slice(&board.player.to_le_bytes());
-        bytes.extend_from_slice(&board.opponent.to_le_bytes());
-        bytes.push(4u8); // value
-        bytes.push(12u8); // level
-        bytes.push(2u8); // n_moves
-        bytes.extend_from_slice(&[4u8, 19u8, 2u8, 26u8]);
+        bytes.extend_from_slice(&Board::new().player.to_le_bytes());
+        bytes.extend_from_slice(&Board::new().opponent.to_le_bytes());
+        bytes.push(3i8 as u8); // value
+        bytes.push(21); // level
+        bytes.push(2); // n_moves
+        bytes.extend_from_slice(&[3, 19, 4, 26]);
 
         let book = Book::from_bytes(&bytes).unwrap();
         assert_eq!(book.len(), 1);
-        assert_eq!(book.root().unwrap().value, 4);
-        assert_eq!(book.root().unwrap().level, 12);
-        // v2 の着手リストは持ち越さない。
-        assert!(!book.root().unwrap().leaf.is_move());
-    }
-
-    #[test]
-    fn egbk1_legacy_format_is_readable() {
-        let board = Board::new().unique_board();
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&1i32.to_le_bytes());
-        bytes.extend_from_slice(&board.player.to_le_bytes());
-        bytes.extend_from_slice(&board.opponent.to_le_bytes());
-        // value = -((raw as i8) - 64) なので raw = 66 -> -2
-        bytes.push(66u8);
-
-        let book = Book::from_bytes(&bytes).unwrap();
-        assert_eq!(book.len(), 1);
-        assert_eq!(book.root().unwrap().value, -2);
+        assert_eq!(book.value_of(&Board::new()).unwrap().score, 3);
     }
 }

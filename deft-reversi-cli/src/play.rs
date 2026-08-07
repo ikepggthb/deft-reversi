@@ -1,6 +1,6 @@
 use deft_reversi_engine::{
-    check_record, position_num_to_str, Book, Color, Evaluator, Game, Solver, SolverOptions,
-    SOLVE_LEVEL_MAX,
+    check_record, position_num_to_str, Book, Color, Evaluator, Game, PickPolicy, Solver,
+    SolverOptions, Trust, SOLVE_LEVEL_MAX,
 };
 use std::{
     io::{self, Write},
@@ -13,8 +13,8 @@ pub struct OthelloCLI {
     setting_turn: SettingTurn,
     /// AI が参照する定石 book。未指定なら探索だけで着手する。
     book: Option<Book>,
-    /// book の精度レベル。0 が最善手、大きいほど緩く選ぶ。
-    book_acc_level: i32,
+    /// book から手を選ぶときの方針。
+    book_policy: PickPolicy,
 }
 
 enum Turn {
@@ -55,7 +55,7 @@ impl OthelloCLI {
                 white: Turn::Player,
             },
             book: None,
-            book_acc_level: 0,
+            book_policy: PickPolicy::best(),
         }
     }
 
@@ -63,24 +63,57 @@ impl OthelloCLI {
     pub fn load_book(&mut self, path: &str, acc_level: i32) {
         match Book::load(path) {
             Ok(book) => {
-                println!("Book: {} positions from {path}", book.len());
+                println!(
+                    "Book: {} positions, {} openings from {path}",
+                    book.len(),
+                    book.names().len()
+                );
                 self.book = Some(book);
-                self.book_acc_level = acc_level;
+                self.book_policy = PickPolicy::from_accuracy_level(acc_level);
             }
             Err(e) => eprintln!("Book: {e}"),
         }
     }
 
+    /// 現局面に定石名が付いていれば表示する。
+    fn announce_opening(&self) {
+        let board = self.game.current.board;
+        let Some(book) = self.book.as_ref() else {
+            return;
+        };
+        let names = book.names().names_at(&board);
+        if !names.is_empty() {
+            println!("opening: {}", names.join(", "));
+        }
+    }
+
     /// book に登録があればその手を返す。
+    ///
+    /// 値の信用度が足りない局面では book を使わず探索に任せる
+    /// ([`PickPolicy::min_trust`])。book を無条件に信じると、浅い探索で
+    /// 入れただけの値をそのまま指してしまう。
     fn book_move(&mut self) -> Option<String> {
         let board = self.game.current.board;
-        let acc_level = self.book_acc_level;
+        let policy = self.book_policy;
         let book = self.book.as_mut()?;
-        let mv = book.random_move(&board, acc_level)?;
+        let mv = book.pick(&board, &policy)?;
         if mv.mv >= 64 || board.moves() & (1u64 << mv.mv) == 0 {
             return None;
         }
-        position_num_to_str(mv.mv).ok()
+        let label = if mv.value.lower == mv.value.upper {
+            format!("book {:+}", mv.value.score)
+        } else {
+            format!(
+                "book {:+} [{:+}, {:+}], {}",
+                mv.value.score,
+                mv.value.lower,
+                mv.value.upper,
+                Trust::of(&mv.value)
+            )
+        };
+        position_num_to_str(mv.mv)
+            .ok()
+            .map(|s| format!("{s}\t{label}"))
     }
 
     fn display_board(&self) {
@@ -300,9 +333,11 @@ impl OthelloCLI {
     }
 
     fn computer_turn(&mut self) {
-        if let Some(move_str) = self.book_move() {
-            println!("move: {} (book)", move_str);
-            self.game.put(&move_str).unwrap();
+        if let Some(tagged) = self.book_move() {
+            let (move_str, label) = tagged.split_once('\t').expect("book_move tags its label");
+            println!("move: {move_str} ({label})");
+            self.game.put(move_str).unwrap();
+            self.announce_opening();
             return;
         }
 
