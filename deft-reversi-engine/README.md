@@ -25,6 +25,9 @@ Deft Reversi Engineを搭載したオセロゲームは、以下のウェブサ�
      - 終盤で使用される
    - 反復深化探索
      - キラー応手を置換表に保存し、次の探索に利用
+ - Egaroucid 互換の定石 book ([設計メモ](docs/book.md))
+   - Egaroucid の `book.egbk3` をそのまま読み書きできる
+   - 旧形式 (`.egbk2` / `.egbk`) と Edax の `book.dat` の取り込み・書き出しにも対応
  - 機械学習(線形回帰)を用いた評価関数
    - 学習データは、Egaroucid 自己対戦の棋譜を使用
      - https://www.egaroucid.nyanyan.dev/ja/technology/transcript/
@@ -33,6 +36,7 @@ Deft Reversi Engineを搭載したオセロゲームは、以下のウェブサ�
 ## Docs
 
 - [外部 API 契約](docs/external-api-contract.md)
+- [Opening Book (Egaroucid 互換)](docs/book.md)
 - [Transposition Table](docs/transposition-table.md)
 
 ## ライセンス

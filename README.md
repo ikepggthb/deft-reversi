@@ -49,6 +49,10 @@ The Human opening list is based on the one used on the following website.
       - Storing best move in the transposition table for use in the next search
   - Evaluation function using machine learning (linear regression)
     - Used board patterns and the difference in the number of legal moves as features.
+  - Egaroucid compatible opening book
+    - Reads and writes Egaroucid's `book.egbk3` as is, and converts from/to
+      legacy `.egbk2` / `.egbk` and Edax's `book.dat`
+      (see [docs](deft-reversi-engine/docs/book.md))
 
 ## License
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
