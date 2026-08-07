@@ -2,15 +2,20 @@
 //!
 //! 使い方: `book_bench enumerate <depth>` — 初期盤面から depth 手までの
 //! 全局面を book に入れ、negamax などの全体走査を計測する。
-use deft_reversi_engine::{Board, Book, BookElem};
+use deft_reversi_engine::{Board, Book, BookElem, Evaluator, Solver, SolverOptions};
 use std::collections::BTreeSet;
 use std::time::Instant;
 
 fn main() {
-    let depth: usize = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(9);
+    let arg = |i: usize| std::env::args().nth(i);
+    if arg(1).as_deref() == Some("expand") {
+        let rounds = arg(2).and_then(|s| s.parse().ok()).unwrap_or(6);
+        let level = arg(3).and_then(|s| s.parse().ok()).unwrap_or(8);
+        let threads = arg(4).and_then(|s| s.parse().ok()).unwrap_or(1);
+        bench_expand(rounds, level, threads);
+        return;
+    }
+    let depth: usize = arg(1).and_then(|s| s.parse().ok()).unwrap_or(9);
 
     // 初期盤面から depth 手までの全局面を列挙して book に入れる。
     let t = Instant::now();
@@ -104,5 +109,25 @@ fn main() {
     println!(
         "moves_with_value x100k : {:>6.2} s ({n})",
         t.elapsed().as_secs_f64()
+    );
+}
+
+/// book の育成 (expand) を計測する。
+fn bench_expand(rounds: usize, level: i32, threads: usize) {
+    use std::num::NonZeroUsize;
+    let threads = NonZeroUsize::new(threads).unwrap();
+    let solver = Solver::with_options(
+        std::sync::Arc::new(Evaluator::default()),
+        SolverOptions::default(),
+    );
+
+    let mut book = Book::new();
+    book.add_board(&Board::new(), level, &solver);
+    let t = Instant::now();
+    let added = book.expand_with_threads(rounds, 4, level, &solver, threads);
+    println!(
+        "expand rounds={rounds} level={level} threads={threads}: {:>6.2} s ({added} added, {} positions)",
+        t.elapsed().as_secs_f64(),
+        book.len()
     );
 }

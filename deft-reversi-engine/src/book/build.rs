@@ -16,7 +16,7 @@
 
 use super::elem::{
     clamp_score, is_valid_score, next_board, BookElem, Leaf, LEVEL_UNDEFINED, MAX_N_LINES,
-    MOVE_NOMOVE, MOVE_UNDEFINED, SCORE_UNDEFINED,
+    MOVE_NOMOVE, SCORE_UNDEFINED,
 };
 use super::Book;
 use crate::board::board::Board;
@@ -24,6 +24,8 @@ use crate::board::position::position_str_to_num;
 use crate::search::{solver_type_for_level, Solver, SolverType};
 use crate::EngineError;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 impl Book {
     /// 局面を探索して book に登録する。
@@ -105,79 +107,95 @@ impl Book {
 
     // ---- leaf ----
 
+    /// まだ book に子局面が無い手のビットマスク。
+    #[inline]
+    fn unregistered_moves(&self, board: &Board) -> u64 {
+        board.moves() & !self.registered_moves_mask(board)
+    }
+
     /// `board` の「まだ book に無い手」の中の最善手を探索し leaf に記録する。
     ///
     /// Egaroucid の `search_leaf`。全ての手が既に book にあるときは leaf を
     /// [`MOVE_NOMOVE`] にする。
     pub fn search_leaf(&mut self, board: &Board, level: i32, solver: &Solver) {
-        let mut remaining = board.moves();
-        for m in self.moves_with_value(board) {
-            remaining &= !(1u64 << m.mv);
+        let key = board.unique_board();
+        let leaf = search_one_leaf(&key, self.unregistered_moves(&key), level, solver);
+        self.set_leaf_representative(key, leaf);
+    }
+
+    /// `targets` (正規形) の leaf をまとめて探索し直す。探索した局面数を返す。
+    ///
+    /// 局面ごとの探索は互いに独立なので `threads` 本のスレッドに配る。
+    /// 1 局面の探索は浅いと並列化の効きが悪いため、book の育成では
+    /// 探索の中を並列化するより局面をばらまく方が効率が良い。
+    pub fn search_leaves(
+        &mut self,
+        targets: &[Board],
+        level: i32,
+        solver: &Solver,
+        threads: NonZeroUsize,
+    ) -> usize {
+        // 探索する手の集合を先に作る (表を読むだけ)。重複は落とす。
+        let mut jobs: Vec<(Board, u64)> = Vec::with_capacity(targets.len());
+        let mut seen = std::collections::HashSet::with_capacity(targets.len());
+        for board in targets {
+            if !self.contains_representative(board) || !seen.insert(*board) {
+                continue;
+            }
+            jobs.push((*board, self.unregistered_moves(board)));
+        }
+        if jobs.is_empty() {
+            return 0;
         }
 
-        let leaf = if remaining == 0 {
-            // 全ての手が book にある。
-            Leaf {
-                value: SCORE_UNDEFINED,
-                mv: MOVE_NOMOVE,
-                level: level.clamp(0, i8::MAX as i32) as i8,
-            }
-        } else {
-            let result = solver.solve_with_moves(board, level, remaining);
-            match result.best_move {
-                Some(mv) => Leaf {
-                    value: clamp_score(result.score),
-                    mv: mv as i8,
-                    level: level.clamp(0, i8::MAX as i32) as i8,
-                },
-                None => Leaf {
-                    value: SCORE_UNDEFINED,
-                    mv: MOVE_UNDEFINED,
-                    level: LEVEL_UNDEFINED,
-                },
-            }
-        };
-        self.set_leaf(board, leaf);
+        let results = search_leaf_jobs(&jobs, level, solver, threads);
+        let n = results.len();
+        for (key, leaf) in results {
+            self.set_leaf_representative(key, leaf);
+        }
+        n
     }
 
     /// leaf が古くなった局面 (leaf の手の先が book に入ってしまった、座標が
     /// 壊れている) の leaf を探索し直す。Egaroucid の `check_add_leaf_all_search`。
     ///
+    /// book 全体を走査するので、育成の途中では
+    /// [`Book::search_leaves`] に変化のあった局面だけ渡す方が速い。
     /// 探索し直した局面数を返す。
     pub fn refresh_leaves(&mut self, level: i32, solver: &Solver) -> usize {
-        let targets: Vec<Board> = self
-            .iter()
+        self.refresh_leaves_with_threads(level, solver, NonZeroUsize::MIN)
+    }
+
+    /// スレッド数を指定した [`Book::refresh_leaves`]。
+    pub fn refresh_leaves_with_threads(
+        &mut self,
+        level: i32,
+        solver: &Solver,
+        threads: NonZeroUsize,
+    ) -> usize {
+        let targets = self.stale_leaf_boards();
+        self.search_leaves(&targets, level, solver, threads)
+    }
+
+    /// leaf を書き直す必要がある局面を集める。
+    fn stale_leaf_boards(&self) -> Vec<Board> {
+        self.iter()
             .filter(|(board, elem)| self.leaf_needs_rewrite(board, &elem.leaf))
             .map(|(board, _)| *board)
-            .collect();
-
-        let n = targets.len();
-        for board in targets {
-            self.search_leaf(&board, level, solver);
-        }
-        n
+            .collect()
     }
 
     /// 全局面の leaf を無条件に探索し直す。Egaroucid の `recalculate_leaf_all`。
     pub fn recalculate_leaves(&mut self, level: i32, solver: &Solver) -> usize {
         let targets: Vec<Board> = self.boards().copied().collect();
-        let n = targets.len();
-        for board in targets {
-            self.search_leaf(&board, level, solver);
-        }
-        n
+        self.search_leaves(&targets, level, solver, NonZeroUsize::MIN)
     }
 
     /// leaf が使えない状態になっている局面の leaf を未設定に戻す。
     ///
     /// Egaroucid の `check_add_leaf_all_undefined`。探索は行わない。
     pub fn invalidate_stale_leaves(&mut self) -> usize {
-        let targets: Vec<Board> = self
-            .iter()
-            .filter(|(board, elem)| self.leaf_needs_rewrite(board, &elem.leaf))
-            .map(|(board, _)| *board)
-            .collect();
-
+        let targets = self.stale_leaf_boards();
         let n = targets.len();
         for board in targets {
             if let Some(elem) = self.elem_mut(&board) {
@@ -192,11 +210,7 @@ impl Book {
     fn leaf_needs_rewrite(&self, board: &Board, leaf: &Leaf) -> bool {
         if leaf.mv == MOVE_NOMOVE {
             // 「もう手が無い」印。子が消えて手が復活していないか確かめる。
-            let mut remaining = board.moves();
-            for m in self.moves_with_value(board) {
-                remaining &= !(1u64 << m.mv);
-            }
-            return remaining != 0;
+            return self.unregistered_moves(board) != 0;
         }
         if !leaf.is_move() || board.moves() & (1u64 << leaf.mv) == 0 {
             return true;
@@ -309,61 +323,101 @@ impl Book {
     /// 「まだ book に無い手の中の最善手」が入っているという Egaroucid の設計を
     /// そのまま使った、このエンジン側の育成 API。
     pub fn expand_leaves(&mut self, max_error: i32) -> usize {
-        let targets: Vec<(Board, Leaf, i8)> = self
-            .iter()
-            .filter(|(_, elem)| elem.leaf.is_move() && is_valid_score(elem.leaf.value))
-            .map(|(board, elem)| (*board, elem.leaf, elem.value))
-            .collect();
+        let frontier: Vec<Board> = self.expandable_boards();
+        self.expand_frontier(&frontier, max_error).n_added
+    }
 
-        let mut added = 0;
-        for (board, leaf, value) in targets {
-            if is_valid_score(value) && (value as i32 - leaf.value as i32) > max_error {
+    /// leaf を持っていて展開しうる局面をすべて集める。
+    fn expandable_boards(&self) -> Vec<Board> {
+        self.iter()
+            .filter(|(_, elem)| elem.leaf.is_move() && is_valid_score(elem.leaf.value))
+            .map(|(board, _)| *board)
+            .collect()
+    }
+
+    /// `frontier` の局面の leaf を 1 手ずつ展開する。
+    fn expand_frontier(&mut self, frontier: &[Board], max_error: i32) -> ExpandRound {
+        // 親と子の両方が「leaf を探索し直す対象」になる。
+        let mut round = ExpandRound {
+            n_added: 0,
+            dirty: Vec::with_capacity(frontier.len() * 2),
+        };
+        for &parent in frontier {
+            let Some(elem) = self.elem(&parent).copied() else {
+                continue;
+            };
+            if !elem.leaf.is_move() || !is_valid_score(elem.leaf.value) {
                 continue;
             }
-            let Some(child) = next_board(&board, leaf.mv) else {
+            if elem.has_value() && (elem.value as i32 - elem.leaf.value as i32) > max_error {
+                continue;
+            }
+            let Some(child) = next_board(&parent, elem.leaf.mv) else {
                 continue;
             };
             // パスが挟まる場合は手番が戻るので符号は反転しない。
             let (child, child_value) = if child.moves() == 0 && child.opponent_moves() != 0 {
-                (child.passed(), leaf.value as i32)
+                (child.passed(), elem.leaf.value as i32)
             } else {
-                (child, -(leaf.value as i32))
+                (child, -(elem.leaf.value as i32))
             };
+
             if self.merge_elem(
                 &child,
                 BookElem {
                     value: clamp_score(child_value),
-                    level: leaf.level,
+                    level: elem.leaf.level,
                     leaf: Leaf::default(),
                     n_lines: 1,
                 },
             ) {
-                added += 1;
+                round.n_added += 1;
             }
+            round.dirty.push(parent);
+            round.dirty.push(child.unique_board());
         }
-        added
+        round
     }
 
     /// book を広げる。leaf の探索 → 展開 → negamax を `rounds` 回繰り返す。
     ///
     /// 追加した局面数を返す。`rounds` が 0 なら変化が無くなるまで繰り返す。
     pub fn expand(&mut self, rounds: usize, max_error: i32, level: i32, solver: &Solver) -> usize {
+        self.expand_with_threads(rounds, max_error, level, solver, NonZeroUsize::MIN)
+    }
+
+    /// スレッド数を指定した [`Book::expand`]。
+    ///
+    /// 1 巡ごとに book 全体を走査せず、**前の巡で変化した局面だけ**を追う。
+    /// 1 巡の手間が book の大きさ n ではなく、その巡で広げた数 k に比例する
+    /// ので、大きな book でも巡回のたびに全走査する必要がない。
+    /// leaf の探索は局面ごとに独立なので `threads` 本に配る。
+    pub fn expand_with_threads(
+        &mut self,
+        rounds: usize,
+        max_error: i32,
+        level: i32,
+        solver: &Solver,
+        threads: NonZeroUsize,
+    ) -> usize {
+        // 最初だけ book 全体の leaf を整え、展開できる局面を集める。
+        self.refresh_leaves_with_threads(level, solver, threads);
+        let mut frontier = self.expandable_boards();
+
         let mut total = 0;
         let mut round = 0;
         loop {
-            self.refresh_leaves(level, solver);
-            let added = self.expand_leaves(max_error);
-            self.upgrade_better_leaves();
+            let ExpandRound { n_added, dirty } = self.expand_frontier(&frontier, max_error);
+            // 展開した親は leaf が book に入ったので、子と一緒に探索し直す。
+            self.search_leaves(&dirty, level, solver, threads);
             self.negamax(false);
-            total += added;
+
+            total += n_added;
             round += 1;
-            if added == 0 || (rounds != 0 && round >= rounds) {
+            if n_added == 0 || (rounds != 0 && round >= rounds) {
                 break;
             }
-        }
-        // 展開した手の leaf は古くなっているので、保存前に探索し直す。
-        if total > 0 {
-            self.refresh_leaves(level, solver);
+            frontier = dirty;
         }
         total
     }
@@ -707,6 +761,80 @@ impl Book {
         }
         self.retain_visited(generation)
     }
+}
+
+/// [`Book::expand_frontier`] の 1 巡分の結果。
+struct ExpandRound {
+    /// 新しく book に入った局面数。
+    n_added: usize,
+    /// leaf を探索し直す必要がある局面 (展開した親と、追加した子)。
+    dirty: Vec<Board>,
+}
+
+/// 1 局面分の leaf 探索。表には触らないのでスレッドから呼べる。
+fn search_one_leaf(board: &Board, remaining: u64, level: i32, solver: &Solver) -> Leaf {
+    let leaf_level = level.clamp(0, i8::MAX as i32) as i8;
+    if remaining == 0 {
+        // 全ての手が既に book にある。
+        return Leaf {
+            value: SCORE_UNDEFINED,
+            mv: MOVE_NOMOVE,
+            level: leaf_level,
+        };
+    }
+    let result = solver.solve_with_moves(board, level, remaining);
+    match result.best_move {
+        Some(mv) => Leaf {
+            value: clamp_score(result.score),
+            mv: mv as i8,
+            level: leaf_level,
+        },
+        None => Leaf::default(),
+    }
+}
+
+/// leaf 探索をスレッドに配る。
+///
+/// 局面によって探索時間が桁違いに変わるので、均等分割ではなく共有カウンタで
+/// 1 件ずつ取らせる (work stealing)。表には触らないので同期は要らない。
+fn search_leaf_jobs(
+    jobs: &[(Board, u64)],
+    level: i32,
+    solver: &Solver,
+    threads: NonZeroUsize,
+) -> Vec<(Board, Leaf)> {
+    let n_threads = threads.get().min(jobs.len()).max(1);
+    if n_threads == 1 {
+        return jobs
+            .iter()
+            .map(|&(board, remaining)| (board, search_one_leaf(&board, remaining, level, solver)))
+            .collect();
+    }
+
+    let cursor = AtomicUsize::new(0);
+    let mut results = Vec::with_capacity(jobs.len());
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..n_threads)
+            .map(|_| {
+                let cursor = &cursor;
+                scope.spawn(move || {
+                    let mut local = Vec::new();
+                    loop {
+                        let i = cursor.fetch_add(1, Ordering::Relaxed);
+                        let Some(&(board, remaining)) = jobs.get(i) else {
+                            break;
+                        };
+                        local.push((board, search_one_leaf(&board, remaining, level, solver)));
+                    }
+                    local
+                })
+            })
+            .collect();
+        for handle in handles {
+            results.extend(handle.join().expect("leaf search thread panicked"));
+        }
+    });
+    results
 }
 
 #[cfg(test)]

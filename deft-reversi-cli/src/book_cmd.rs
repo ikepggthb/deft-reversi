@@ -61,6 +61,8 @@ pub enum BookCommand {
         /// 繰り返し回数の上限 (0 で変化が無くなるまで)
         #[arg(long, default_value_t = 1)]
         rounds: usize,
+        /// 同時に探索する局面数。book の育成では探索の中を並列化するより
+        /// 局面をばらまく方が効率が良い
         #[arg(long, default_value_t = NonZeroUsize::MIN)]
         threads: NonZeroUsize,
         #[arg(long)]
@@ -188,9 +190,12 @@ pub fn run(command: BookCommand) -> Result<(), Box<dyn std::error::Error>> {
             threads,
             hash_mb,
         } => {
-            let solver = open_solver(&eval_path, threads, hash_mb)?;
+            // 探索の中 (YBWC) ではなく、局面ごとに並列化する。1 局面の探索が
+            // 浅いほど YBWC は効きにくく、局面をばらまく方がほぼ線形に伸びる。
+            let solver = open_solver(&eval_path, NonZeroUsize::MIN, hash_mb)?;
             let mut book_data = Book::load(&book)?;
-            let added = book_data.expand(rounds, max_error, book_level, &solver);
+            let added =
+                book_data.expand_with_threads(rounds, max_error, book_level, &solver, threads);
             book_data.save(&book)?;
             println!("expand: added {added} positions, {} total", book_data.len());
             Ok(())

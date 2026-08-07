@@ -353,6 +353,15 @@ impl Book {
         }
     }
 
+    /// 正規形の盤面をキーに、座標変換せず leaf を差し替える。
+    pub(super) fn set_leaf_representative(&mut self, key: Board, leaf: Leaf) {
+        self.positions
+            .entry(key)
+            .or_insert_with(|| Entry::new(BookElem::default()))
+            .elem
+            .leaf = leaf;
+    }
+
     /// leaf を差し替える。Egaroucid の `add_leaf`。
     pub fn set_leaf(&mut self, board: &Board, leaf: Leaf) {
         let (rep, idx) = representative_board(board);

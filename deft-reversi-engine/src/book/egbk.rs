@@ -49,6 +49,7 @@ use crate::board::board::Board;
 use crate::EngineError;
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::num::NonZeroUsize;
 
 /// `.egbk3` / `.egbk2` の magic。`EGAROUCID` の逆順。
 pub const EGBK_MAGIC: &[u8; 9] = b"DICUORAGE";
@@ -104,6 +105,46 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// 読み込みに使うスレッド数。
+fn default_load_threads() -> NonZeroUsize {
+    std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN)
+}
+
+/// `.egbk3` の 1 レコード (25 バイト) をデコードし、正規形のキーと局面データを返す。
+///
+/// 正規化は 1 レコードにつき 1 回だけ行い、得られた変換インデックスで leaf 座標も
+/// 同時に移す。表には触らないのでスレッドから呼べる。
+fn decode_egbk3_record(record: &[u8]) -> Option<(Board, BookElem)> {
+    debug_assert_eq!(record.len(), EGBK3_RECORD_SIZE);
+    let player = u64::from_le_bytes(record[0..8].try_into().unwrap());
+    let opponent = u64::from_le_bytes(record[8..16].try_into().unwrap());
+    let value = record[16] as i8;
+
+    // Egaroucid と同じ検査。壊れたレコードは黙って読み飛ばす。
+    if !is_valid_score(value) || player & opponent != 0 {
+        return None;
+    }
+
+    let (key, idx) = representative_board(&Board { player, opponent });
+    let mut leaf = Leaf {
+        value: record[22] as i8,
+        mv: record[23] as i8,
+        level: record[24] as i8,
+    };
+    if leaf.is_move() {
+        leaf.mv = convert_coord_to_representative(leaf.mv as u8, idx) as i8;
+    }
+    Some((
+        key,
+        BookElem {
+            value,
+            level: record[17] as i8,
+            leaf,
+            n_lines: u32::from_le_bytes(record[18..22].try_into().unwrap()),
+        },
+    ))
+}
+
 /// magic とバージョンを読み、`n_boards` を返す。
 fn read_egbk_header(r: &mut Reader<'_>, expected_version: u8) -> Result<i32, EngineError> {
     let magic = r.take(9)?;
@@ -152,9 +193,7 @@ impl Book {
         let records = r.take(n_boards as usize * EGBK3_RECORD_SIZE)?;
         // 局面数が分かっているので表を先に確保し、再ハッシュを避ける。
         let mut book = Self::with_capacity(n_boards as usize);
-        for record in records.chunks_exact(EGBK3_RECORD_SIZE) {
-            book.absorb_egbk3_record(record);
-        }
+        book.absorb_egbk3_records(records, default_load_threads());
         Ok(book)
     }
 
@@ -192,66 +231,84 @@ impl Book {
             ))));
         }
 
-        Some(Self::from_egbk3_reader(reader, n_boards as usize))
+        Some(Self::from_egbk3_reader(
+            reader,
+            n_boards as usize,
+            default_load_threads(),
+        ))
     }
 
     /// `.egbk3` をストリームから読み込む。
-    fn from_egbk3_reader<R: Read>(mut reader: R, n_boards: usize) -> Result<Self, EngineError> {
-        /// 1 回に読むレコード数。
-        const CHUNK: usize = 8192;
+    ///
+    /// 25 バイト固定長なので、読んだ塊をそのままスレッドに切り分けられる。
+    /// デコードと正規化を並列に行い、表への登録だけを直列にする。
+    fn from_egbk3_reader<R: Read>(
+        mut reader: R,
+        n_boards: usize,
+        threads: NonZeroUsize,
+    ) -> Result<Self, EngineError> {
+        /// 1 回に読むレコード数。512K レコード = 12.8 MB。
+        const CHUNK: usize = 1 << 19;
 
         let mut book = Self::with_capacity(n_boards);
-        let mut buf = vec![0u8; CHUNK * EGBK3_RECORD_SIZE];
+        let mut buf = vec![0u8; CHUNK.min(n_boards.max(1)) * EGBK3_RECORD_SIZE];
         let mut remaining = n_boards;
         while remaining > 0 {
-            let n = remaining.min(CHUNK);
+            let n = remaining.min(buf.len() / EGBK3_RECORD_SIZE);
             let bytes = &mut buf[..n * EGBK3_RECORD_SIZE];
             reader.read_exact(bytes).map_err(|_| {
                 EngineError::InvalidData(format!(
                     "unexpected end of book file, {remaining} records missing"
                 ))
             })?;
-            for record in bytes.chunks_exact(EGBK3_RECORD_SIZE) {
-                book.absorb_egbk3_record(record);
-            }
+            book.absorb_egbk3_records(bytes, threads);
             remaining -= n;
         }
         Ok(book)
     }
 
-    /// `.egbk3` の 1 レコード (25 バイト) を取り込む。
-    ///
-    /// 正規化は 1 レコードにつき 1 回だけ行い、得られた変換インデックスで
-    /// leaf 座標も同時に移す。ハッシュ表の探索も 1 回で済ませる。
-    fn absorb_egbk3_record(&mut self, record: &[u8]) {
-        debug_assert_eq!(record.len(), EGBK3_RECORD_SIZE);
-        let player = u64::from_le_bytes(record[0..8].try_into().unwrap());
-        let opponent = u64::from_le_bytes(record[8..16].try_into().unwrap());
-        let value = record[16] as i8;
-
-        // Egaroucid と同じ検査。壊れたレコードは黙って読み飛ばす。
-        if !is_valid_score(value) || player & opponent != 0 {
+    /// 25 バイト固定長のレコード列を取り込む。
+    fn absorb_egbk3_records(&mut self, records: &[u8], threads: NonZeroUsize) {
+        let n = records.len() / EGBK3_RECORD_SIZE;
+        // 少量ならスレッドを起こす方が高くつく。
+        let n_threads = threads.get().min(n / 4096).max(1);
+        if n_threads == 1 {
+            for record in records.chunks_exact(EGBK3_RECORD_SIZE) {
+                if let Some((key, elem)) = decode_egbk3_record(record) {
+                    self.merge_representative(key, elem);
+                }
+            }
             return;
         }
 
-        let (key, idx) = representative_board(&Board { player, opponent });
-        let mut leaf = Leaf {
-            value: record[22] as i8,
-            mv: record[23] as i8,
-            level: record[24] as i8,
-        };
-        if leaf.is_move() {
-            leaf.mv = convert_coord_to_representative(leaf.mv as u8, idx) as i8;
+        // レコード境界で均等に切ってデコード + 正規化を並列に行う。
+        let per_thread = n.div_ceil(n_threads) * EGBK3_RECORD_SIZE;
+        let decoded: Vec<Vec<(Board, BookElem)>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = records
+                .chunks(per_thread)
+                .map(|part| {
+                    scope.spawn(move || {
+                        let mut local = Vec::with_capacity(part.len() / EGBK3_RECORD_SIZE);
+                        for record in part.chunks_exact(EGBK3_RECORD_SIZE) {
+                            if let Some(decoded) = decode_egbk3_record(record) {
+                                local.push(decoded);
+                            }
+                        }
+                        local
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("book decode thread panicked"))
+                .collect()
+        });
+
+        for part in decoded {
+            for (key, elem) in part {
+                self.merge_representative(key, elem);
+            }
         }
-        self.merge_representative(
-            key,
-            BookElem {
-                value,
-                level: record[17] as i8,
-                leaf,
-                n_lines: u32::from_le_bytes(record[18..22].try_into().unwrap()),
-            },
-        );
     }
 
     /// `.egbk2` (旧形式) を読み込む。着手リストは読み飛ばす。
