@@ -293,9 +293,19 @@ impl Solver {
     /// 自動選択し、step=4 の iterative deepening + アスピレーション窓で TT を
     /// 暖めながら最終探索を行う。
     pub fn solve(&self, board: &Board, level: i32) -> SolverResult {
+        self.solve_with_moves(board, level, !0u64)
+    }
+
+    /// root で選べる手を `allowed_moves` に制限した [`Solver::solve`]。
+    ///
+    /// 定石 book の leaf 探索のように「既に book にある手を除いた残りの中で
+    /// 最善手を知りたい」場合に使う。`allowed_moves` と合法手の積が空のときは
+    /// `best_move: None` を返す(パス扱いにはしない)。
+    pub fn solve_with_moves(&self, board: &Board, level: i32, allowed_moves: u64) -> SolverResult {
         let level = level.clamp(1, SOLVE_LEVEL_MAX);
 
-        let legal = board.moves();
+        let all_legal = board.moves();
+        let legal = all_legal & allowed_moves;
         let n_empties = (board.player | board.opponent).count_zeros() as i32;
         let mut solver_type = level_to_solver_type(n_empties, level);
         if self.is_stopped() {
@@ -309,7 +319,7 @@ impl Solver {
                 board,
             );
         }
-        if legal == 0 {
+        if all_legal == 0 {
             let passed = board.passed();
             if passed.moves() == 0 {
                 return SolverResult {
@@ -323,10 +333,24 @@ impl Solver {
                     ybwc_splits: 0,
                 };
             }
+            // パス後は root が別局面になるので着手制限は引き継がない。
             let mut r = self.solve(&passed, level);
             r.score = -r.score;
             r.best_move = None;
             return r;
+        }
+        if legal == 0 {
+            // 合法手はあるが、許可された手が 1 つも無い。
+            return SolverResult {
+                best_move: None,
+                score: self.evaluator.evaluate_board_slow(board),
+                solver_type,
+                nodes: 0,
+                leaf_nodes: 0,
+                pv: Vec::new(),
+                aborted: false,
+                ybwc_splits: 0,
+            };
         }
 
         // A Solver is reused across positions by the CLI. Start a fresh TT
@@ -616,6 +640,14 @@ fn trace_search_stage(stage: &str, score: i32, search: &SearchContext) {
             search.stats.ybwc_splits,
         );
     }
+}
+
+/// [`Solver::solve`] が `level` と空きマス数に対して選ぶ探索構成を返す。
+///
+/// 探索そのものは行わない。book のように「その評価値が完全読みか、選択的な
+/// 終盤探索か、中盤探索か」を知りたい呼び出し側のための問い合わせ API。
+pub fn solver_type_for_level(n_empties: i32, level: i32) -> SolverType {
+    level_to_solver_type(n_empties, level.clamp(0, SOLVE_LEVEL_MAX))
 }
 
 /// レベルと残り空きマスから具体的な探索構成を決める(旧 solver の get_config 移植)。

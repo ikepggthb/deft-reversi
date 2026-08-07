@@ -14,4 +14,6 @@ pub mod tt_cut;
 pub use mpc::MpcConfig;
 pub(crate) use search::SearchContext;
 pub use search::NO_MPC_SELECTIVITY_LV;
-pub use solver::{Solver, SolverOptions, SolverResult, SolverType, SOLVE_LEVEL_MAX};
+pub use solver::{
+    solver_type_for_level, Solver, SolverOptions, SolverResult, SolverType, SOLVE_LEVEL_MAX,
+};

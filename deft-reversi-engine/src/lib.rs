@@ -1,4 +1,5 @@
 mod board;
+mod book;
 mod error;
 mod eval;
 mod file;
@@ -8,12 +9,18 @@ mod t_table;
 
 pub use board::board::Board;
 pub use board::position::{position_num_to_str, position_str_to_num};
+pub use book::{
+    convert_coord_from_representative, convert_coord_to_representative, is_valid_policy,
+    is_valid_score, representative_board, Book, BookElem, BookMove, Leaf, BOOK_ACCURACY_LEVEL_INF,
+    BOOK_LOSS_IGNORE_THRESHOLD, EDAX_BOOK_MAGIC, EGBK_MAGIC, EGBK_VERSION, LEVEL_UNDEFINED,
+    MAX_N_LINES, MOVE_NOMOVE, MOVE_PASS, MOVE_UNDEFINED, SCORE_MAX, SCORE_UNDEFINED,
+};
 pub use error::EngineError;
 pub use eval::evaluator::Evaluator;
 pub use game::{check_record, Color, Game, Position};
 pub use search::{
-    MpcConfig, Solver, SolverOptions, SolverResult, SolverType, NO_MPC_SELECTIVITY_LV,
-    SOLVE_LEVEL_MAX,
+    solver_type_for_level, MpcConfig, Solver, SolverOptions, SolverResult, SolverType,
+    NO_MPC_SELECTIVITY_LV, SOLVE_LEVEL_MAX,
 };
 
 #[cfg(feature = "train-tools")]
