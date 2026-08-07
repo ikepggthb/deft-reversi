@@ -34,6 +34,7 @@ pub mod edax;
 pub mod egbk;
 pub mod elem;
 mod random;
+mod table;
 
 pub use edax::EDAX_BOOK_MAGIC;
 pub use egbk::{EGBK_MAGIC, EGBK_VERSION};
@@ -47,7 +48,7 @@ use crate::board::board::Board;
 use crate::EngineError;
 use elem::next_board;
 use random::Random;
-use std::collections::BTreeMap;
+use table::{BoardMap, Entry, Generation, Generations};
 
 /// book の手が本譜の評価値からこれ以上離れていたら book を使わない。
 ///
@@ -69,11 +70,16 @@ struct ChildEntry {
 }
 
 /// Egaroucid 互換の opening book。
+///
+/// 局面は正規形の盤面をキーにしたハッシュ表 (`table` モジュール) に持つ。
+/// 走査中の訪問済み判定は各エントリの世代印で行うので、木を辿るときに
+/// 局面数に比例した一時領域を確保しない。
 #[derive(Clone, Debug)]
 pub struct Book {
     /// キーは正規形の盤面。着手座標もこの向きで保持する。
-    positions: BTreeMap<Board, BookElem>,
+    positions: BoardMap,
     random: Random,
+    generations: Generations,
 }
 
 impl Default for Book {
@@ -93,9 +99,68 @@ impl Book {
     /// 局面を 1 つも持たない book を作る。
     pub fn empty() -> Self {
         Self {
-            positions: BTreeMap::new(),
+            positions: BoardMap::default(),
             random: Random::from_clock(),
+            generations: Generations::default(),
         }
+    }
+
+    /// 局面数の見当がついているときに、あらかじめ領域を確保して作る。
+    /// 読み込み時の再ハッシュを避けるために使う。
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            positions: BoardMap::with_capacity_and_hasher(capacity, Default::default()),
+            random: Random::from_clock(),
+            generations: Generations::default(),
+        }
+    }
+
+    // ---- 内部アクセサ ----
+
+    /// 正規形の盤面をキーに局面データを引く。
+    #[inline]
+    pub(super) fn elem(&self, key: &Board) -> Option<&BookElem> {
+        self.positions.get(key).map(|entry| &entry.elem)
+    }
+
+    /// 正規形の盤面をキーに局面データを書き換え可能な参照で引く。
+    #[inline]
+    pub(super) fn elem_mut(&mut self, key: &Board) -> Option<&mut BookElem> {
+        self.positions.get_mut(key).map(|entry| &mut entry.elem)
+    }
+
+    /// 正規形の盤面をキーに削除する。
+    pub(super) fn remove_representative(&mut self, key: &Board) -> bool {
+        self.positions.remove(key).is_some()
+    }
+
+    /// 走査を 1 つ始める。全エントリが未訪問に戻る。
+    pub(super) fn begin_traversal(&mut self) -> Generation {
+        self.generations.next(&mut self.positions)
+    }
+
+    /// この走査で `key` を初めて訪れたなら `true`。
+    #[inline]
+    pub(super) fn mark_visited(&mut self, key: &Board, generation: Generation) -> bool {
+        match self.positions.get_mut(key) {
+            Some(entry) => entry.mark_visited(generation),
+            None => false,
+        }
+    }
+
+    /// 印の付いていない局面をすべて削除する。削除した数を返す。
+    pub(super) fn retain_visited(&mut self, generation: Generation) -> usize {
+        let before = self.positions.len();
+        self.positions
+            .retain(|_, entry| entry.is_visited(generation));
+        before - self.positions.len()
+    }
+
+    /// 条件を満たさない局面を削除する。削除した数を返す。
+    pub(super) fn retain_keys(&mut self, mut keep: impl FnMut(&Board) -> bool) -> usize {
+        let before = self.positions.len();
+        self.positions.retain(|board, _| keep(board));
+        before - self.positions.len()
     }
 
     /// 初期盤面を value 0 / leaf D3 で登録する。Egaroucid の `reg_first_board`。
@@ -110,7 +175,8 @@ impl Book {
             },
             n_lines: 0,
         };
-        self.positions.insert(Board::new().unique_board(), elem);
+        self.positions
+            .insert(Board::new().unique_board(), Entry::new(elem));
     }
 
     pub fn len(&self) -> usize {
@@ -121,12 +187,15 @@ impl Book {
         self.positions.is_empty()
     }
 
-    /// 正規形の盤面と局面データを盤面の辞書順で走査する。
+    /// 正規形の盤面と局面データを走査する。順序は内部の表の並び順で、
+    /// 辞書順ではない (Egaroucid も同じ)。
     pub fn iter(&self) -> impl Iterator<Item = (&Board, &BookElem)> {
-        self.positions.iter()
+        self.positions
+            .iter()
+            .map(|(board, entry)| (board, &entry.elem))
     }
 
-    /// 正規形の盤面を辞書順で走査する。
+    /// 正規形の盤面を走査する。順序は [`Book::iter`] と同じ。
     pub fn boards(&self) -> impl Iterator<Item = &Board> {
         self.positions.keys()
     }
@@ -150,7 +219,7 @@ impl Book {
     /// 返す。Egaroucid の `get`。
     pub fn get(&self, board: &Board) -> Option<BookElem> {
         let (rep, idx) = representative_board(board);
-        let mut elem = *self.positions.get(&rep)?;
+        let mut elem = *self.elem(&rep)?;
         if elem.leaf.is_move() {
             elem.leaf.mv = convert_coord_from_representative(elem.leaf.mv as u8, idx) as i8;
         }
@@ -159,7 +228,7 @@ impl Book {
 
     /// 正規形の盤面をキーに、座標変換せずそのまま引く。
     pub fn get_representative(&self, board: &Board) -> Option<&BookElem> {
-        self.positions.get(board)
+        self.elem(board)
     }
 
     /// 初期盤面の局面データ。
@@ -176,18 +245,18 @@ impl Book {
         if elem.leaf.mv != MOVE_UNDEFINED && elem.leaf.is_move() {
             elem.leaf.mv = convert_coord_to_representative(elem.leaf.mv as u8, idx) as i8;
         }
-        self.positions.insert(rep, elem).is_none()
+        self.positions.insert(rep, Entry::new(elem)).is_none()
     }
 
     /// 正規形の盤面をキーに、座標変換せず登録する。
     pub fn register_representative(&mut self, board: Board, elem: BookElem) -> bool {
         debug_assert_eq!(board, board.unique_board());
-        self.positions.insert(board, elem).is_none()
+        self.positions.insert(board, Entry::new(elem)).is_none()
     }
 
     /// 局面を削除する。Egaroucid の `delete_elem`。
     pub fn remove(&mut self, board: &Board) -> bool {
-        self.positions.remove(&board.unique_board()).is_some()
+        self.remove_representative(&board.unique_board())
     }
 
     /// 全局面を消して初期盤面だけに戻す。Egaroucid の `delete_all`。
@@ -200,18 +269,36 @@ impl Book {
     ///
     /// Egaroucid の `merge`。value と leaf はそれぞれ独立に判定する。
     pub fn merge_elem(&mut self, board: &Board, elem: BookElem) -> bool {
-        if !self.contains(board) {
-            return self.register(board, elem);
+        let (key, idx) = representative_board(board);
+        let mut elem = elem;
+        if elem.leaf.is_move() {
+            elem.leaf.mv = convert_coord_to_representative(elem.leaf.mv as u8, idx) as i8;
         }
-        let mut current = self.get(board).expect("contains() said it is there");
-        if elem.value != SCORE_UNDEFINED && current.level <= elem.level {
-            current.value = elem.value;
-            current.level = elem.level;
+        self.merge_representative(key, elem)
+    }
+
+    /// 正規化済みの盤面と、正規形の向きの leaf 座標を持つ局面を取り込む。
+    ///
+    /// 読み込み時のホットパス。正規化もハッシュ表の探索も 1 回で済ませる。
+    pub(super) fn merge_representative(&mut self, key: Board, elem: BookElem) -> bool {
+        use std::collections::hash_map::Entry as MapEntry;
+        match self.positions.entry(key) {
+            MapEntry::Vacant(slot) => {
+                slot.insert(Entry::new(elem));
+                true
+            }
+            MapEntry::Occupied(mut slot) => {
+                let current = &mut slot.get_mut().elem;
+                if elem.value != SCORE_UNDEFINED && current.level <= elem.level {
+                    current.value = elem.value;
+                    current.level = elem.level;
+                }
+                if elem.leaf.value != SCORE_UNDEFINED && current.leaf.level <= elem.leaf.level {
+                    current.leaf = elem.leaf;
+                }
+                false
+            }
         }
-        if elem.leaf.value != SCORE_UNDEFINED && current.leaf.level <= elem.leaf.level {
-            current.leaf = elem.leaf;
-        }
-        self.register(board, current)
     }
 
     /// 別の book の局面をすべて取り込む。追加された局面数を返す。
@@ -260,7 +347,7 @@ impl Book {
     }
 
     fn update_value(&mut self, board: &Board, value: i8, level: i8) {
-        if let Some(elem) = self.positions.get_mut(&board.unique_board()) {
+        if let Some(elem) = self.elem_mut(&board.unique_board()) {
             elem.value = value;
             elem.level = level;
         }
@@ -273,68 +360,101 @@ impl Book {
         if leaf.is_move() {
             leaf.mv = convert_coord_to_representative(leaf.mv as u8, idx) as i8;
         }
-        self.positions.entry(rep).or_default().leaf = leaf;
+        self.positions
+            .entry(rep)
+            .or_insert_with(|| Entry::new(BookElem::default()))
+            .elem
+            .leaf = leaf;
     }
 
     // ---- 手の参照 (link を持たないので子局面を引いて導出する) ----
 
-    /// `board` から 1 手進めた先が book にある手を、子局面のキーと符号付きで返す。
+    /// `board` から 1 手進めた先が book にある手を 1 つずつ渡す。
     ///
     /// Egaroucid の `get_all_moves_with_value` と同じ分岐でパス・終局を扱う。
-    fn child_entries(&self, board: &Board) -> Vec<ChildEntry> {
-        let mut entries = Vec::new();
+    /// 呼び出し側が Vec を必要としない場合に割り当てを避けられるよう、
+    /// コールバック形式にしてある。
+    fn for_each_child(&self, board: &Board, mut f: impl FnMut(ChildEntry)) {
         let mut legal = board.moves();
         while legal != 0 {
             let mv = legal.trailing_zeros() as u8;
             legal &= legal - 1;
             let child = board.make_move(1u64 << mv);
 
-            let is_end = child.moves() == 0 && child.opponent_moves() == 0;
-            if is_end {
-                // 終局局面はどちらの向きで登録されているか分からない。
-                if self.contains(&child) {
-                    entries.push(ChildEntry {
-                        mv,
-                        key: child.unique_board(),
-                        sign: -1,
-                    });
-                } else {
-                    let passed = child.passed();
-                    if self.contains(&passed) {
-                        entries.push(ChildEntry {
-                            mv,
-                            key: passed.unique_board(),
-                            sign: 1,
-                        });
-                    }
+            let child_legal = child.moves();
+            if child_legal == 0 && child.opponent_moves() == 0 {
+                // 終局。どちらの向きで登録されているか分からないので両方見る。
+                let key = child.unique_board();
+                if self.contains_representative(&key) {
+                    f(ChildEntry { mv, key, sign: -1 });
+                    continue;
                 }
-            } else if child.moves() == 0 {
-                // 相手がパスするので手番が戻る = 符号は反転しない。
-                let passed = child.passed();
-                if self.contains(&passed) {
-                    entries.push(ChildEntry {
+                let passed = child.passed().unique_board();
+                if self.contains_representative(&passed) {
+                    f(ChildEntry {
                         mv,
-                        key: passed.unique_board(),
+                        key: passed,
                         sign: 1,
                     });
                 }
-            } else if self.contains(&child) {
-                entries.push(ChildEntry {
-                    mv,
-                    key: child.unique_board(),
-                    sign: -1,
-                });
+            } else if child_legal == 0 {
+                // 相手がパスするので手番が戻る = 符号は反転しない。
+                let key = child.passed().unique_board();
+                if self.contains_representative(&key) {
+                    f(ChildEntry { mv, key, sign: 1 });
+                }
+            } else {
+                let key = child.unique_board();
+                if self.contains_representative(&key) {
+                    f(ChildEntry { mv, key, sign: -1 });
+                }
             }
         }
-        entries
     }
 
-    /// [`Book::child_entries`] を「子局面のキーと符号」の形で返す。negamax 用。
+    /// 子局面が book に登録されている手のビットマスク。Vec を作らない。
+    pub fn registered_moves_mask(&self, board: &Board) -> u64 {
+        let mut mask = 0u64;
+        self.for_each_child(board, |entry| mask |= 1u64 << entry.mv);
+        mask
+    }
+
+    /// 子局面の評価値 (親から見た符号) を 1 つずつ渡す。割り当てなし。
+    pub(super) fn for_each_child_value(&self, board: &Board, mut f: impl FnMut(i8)) {
+        self.for_each_child(board, |entry| {
+            if let Some(elem) = self.elem(&entry.key) {
+                f((entry.sign as i32 * elem.value as i32).clamp(-127, 127) as i8);
+            }
+        });
+    }
+
+    /// 子局面が book に登録されている手が 1 つでもあるか。見つけ次第打ち切る。
+    pub fn has_registered_move(&self, board: &Board) -> bool {
+        let mut legal = board.moves();
+        while legal != 0 {
+            let mv = legal.trailing_zeros() as u8;
+            legal &= legal - 1;
+            let child = board.make_move(1u64 << mv);
+            let child_legal = child.moves();
+            if child_legal == 0 {
+                if self.contains(&child.passed()) {
+                    return true;
+                }
+                if child.opponent_moves() == 0 && self.contains(&child) {
+                    return true;
+                }
+            } else if self.contains(&child) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 子局面のキーと符号の一覧。negamax 用。
     pub(super) fn child_entries_for_negamax(&self, board: &Board) -> Vec<(Board, i32)> {
-        self.child_entries(board)
-            .into_iter()
-            .map(|entry| (entry.key, entry.sign as i32))
-            .collect()
+        let mut out = Vec::new();
+        self.for_each_child(board, |entry| out.push((entry.key, entry.sign as i32)));
+        out
     }
 
     /// book に登録されている手とその評価値を、`board` の向きで返す。
@@ -342,16 +462,16 @@ impl Book {
     /// Egaroucid の `get_all_moves_with_value`。link を保存しない代わりに、
     /// 合法手を打った先が book にあるかをその都度引く。
     pub fn moves_with_value(&self, board: &Board) -> Vec<BookMove> {
-        self.child_entries(board)
-            .into_iter()
-            .filter_map(|entry| {
-                let elem = self.positions.get(&entry.key)?;
-                Some(BookMove {
+        let mut out = Vec::new();
+        self.for_each_child(board, |entry| {
+            if let Some(elem) = self.elem(&entry.key) {
+                out.push(BookMove {
                     mv: entry.mv,
                     value: (entry.sign as i32 * elem.value as i32).clamp(-127, 127) as i8,
-                })
-            })
-            .collect()
+                });
+            }
+        });
+        out
     }
 
     /// 評価値が最大の手をすべて返す。Egaroucid の `get_all_best_moves`。
@@ -408,7 +528,7 @@ impl Book {
                 sign = 1;
                 child = child.passed();
             }
-            if let Some(elem) = self.positions.get(&child.unique_board()) {
+            if let Some(elem) = self.elem(&child.unique_board()) {
                 moves.push(BookMove {
                     mv,
                     value: (sign * elem.value as i32).clamp(-127, 127) as i8,
@@ -489,8 +609,12 @@ impl Book {
     /// `.egbk3` / `.egbk2` / `.egbk` / Edax の `.dat` に対応する。拡張子が
     /// 判別できない場合は中身のマジックで判定する。
     pub fn load(path: &str) -> Result<Self, EngineError> {
-        let bytes = std::fs::read(path)?;
-        Self::from_bytes(&bytes)
+        // 大きくなりうる .egbk3 だけはストリームで読み、ファイル全体を
+        // メモリに載せないようにする。他の形式は元々小さい。
+        if let Some(result) = Self::load_egbk3_streaming(path) {
+            return result;
+        }
+        Self::from_bytes(&std::fs::read(path)?)
     }
 
     /// バイト列の先頭を見て形式を判別し読み込む。

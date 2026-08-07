@@ -23,7 +23,7 @@ use crate::board::board::Board;
 use crate::board::position::position_str_to_num;
 use crate::search::{solver_type_for_level, Solver, SolverType};
 use crate::EngineError;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::HashMap;
 
 impl Book {
     /// 局面を探索して book に登録する。
@@ -146,7 +146,6 @@ impl Book {
     /// 探索し直した局面数を返す。
     pub fn refresh_leaves(&mut self, level: i32, solver: &Solver) -> usize {
         let targets: Vec<Board> = self
-            .positions
             .iter()
             .filter(|(board, elem)| self.leaf_needs_rewrite(board, &elem.leaf))
             .map(|(board, _)| *board)
@@ -161,7 +160,7 @@ impl Book {
 
     /// 全局面の leaf を無条件に探索し直す。Egaroucid の `recalculate_leaf_all`。
     pub fn recalculate_leaves(&mut self, level: i32, solver: &Solver) -> usize {
-        let targets: Vec<Board> = self.positions.keys().copied().collect();
+        let targets: Vec<Board> = self.boards().copied().collect();
         let n = targets.len();
         for board in targets {
             self.search_leaf(&board, level, solver);
@@ -174,7 +173,6 @@ impl Book {
     /// Egaroucid の `check_add_leaf_all_undefined`。探索は行わない。
     pub fn invalidate_stale_leaves(&mut self) -> usize {
         let targets: Vec<Board> = self
-            .positions
             .iter()
             .filter(|(board, elem)| self.leaf_needs_rewrite(board, &elem.leaf))
             .map(|(board, _)| *board)
@@ -182,7 +180,7 @@ impl Book {
 
         let n = targets.len();
         for board in targets {
-            if let Some(elem) = self.positions.get_mut(&board) {
+            if let Some(elem) = self.elem_mut(&board) {
                 elem.leaf = Leaf::default();
             }
         }
@@ -226,46 +224,80 @@ impl Book {
 
     /// `board` を根として [`Book::upgrade_better_leaves`] を行う。
     pub fn upgrade_better_leaves_from(&mut self, board: &Board) -> usize {
+        let root = board.unique_board();
+        if !self.contains_representative(&root) {
+            return 0;
+        }
+        let generation = self.begin_traversal();
+        self.mark_visited(&root, generation);
+
         let mut upgraded = 0;
-        let mut visited = BTreeSet::new();
-        let mut stack = vec![board.unique_board()];
+        // 経路しか積まないので深さは 60 手で頭打ちになる。
+        let mut stack = vec![(root, 0usize, self.child_keys(&root))];
 
-        while let Some(key) = stack.pop() {
-            if !visited.insert(key) {
-                continue;
-            }
-            let Some(elem) = self.positions.get(&key).copied() else {
-                continue;
-            };
-
-            let links = self.moves_with_value(&key);
-            if !links.is_empty() && elem.leaf.is_move() && key.moves() & (1u64 << elem.leaf.mv) != 0
-            {
-                let link_max = links.iter().map(|l| l.value).max().unwrap_or(i8::MIN);
-                if is_valid_score(elem.leaf.value) && elem.leaf.value > link_max {
-                    if let Some(child) = next_board(&key, elem.leaf.mv) {
-                        self.merge_elem(
-                            &child,
-                            BookElem {
-                                value: clamp_score(-(elem.leaf.value as i32)),
-                                level: elem.leaf.level,
-                                leaf: Leaf::default(),
-                                n_lines: 1,
-                            },
-                        );
-                        upgraded += 1;
-                        stack.push(child.unique_board());
+        while let Some(top) = stack.len().checked_sub(1) {
+            if stack[top].1 == 0 {
+                // 初回訪問時に leaf の昇格を判定する。
+                let key = stack[top].0;
+                if let Some(child) = self.upgraded_leaf_child(&key) {
+                    upgraded += 1;
+                    if self.mark_visited(&child, generation) {
+                        let children = self.child_keys(&child);
+                        stack.push((child, 0, children));
+                        continue;
                     }
                 }
+                // 昇格で子が増えた可能性があるので取り直す。
+                stack[top].2 = self.child_keys(&key);
             }
 
-            for link in self.moves_with_value(&key) {
-                if let Some(child) = next_board(&key, link.mv as i8) {
-                    stack.push(child.unique_board());
+            let next = stack[top].1;
+            if next < stack[top].2.len() {
+                stack[top].1 += 1;
+                let child = stack[top].2[next];
+                if self.mark_visited(&child, generation) {
+                    let children = self.child_keys(&child);
+                    stack.push((child, 0, children));
                 }
+            } else {
+                stack.pop();
             }
         }
         upgraded
+    }
+
+    /// `key` の leaf が book 内のどの手より良ければ、その手の先を登録する。
+    /// 登録した子局面の正規形を返す。
+    fn upgraded_leaf_child(&mut self, key: &Board) -> Option<Board> {
+        let elem = *self.elem(key)?;
+        if !elem.leaf.is_move()
+            || !is_valid_score(elem.leaf.value)
+            || key.moves() & (1u64 << elem.leaf.mv) == 0
+        {
+            return None;
+        }
+
+        // Egaroucid と同じく、link を 1 つも持たない局面は対象にしない。
+        let mut link_max: Option<i8> = None;
+        self.for_each_child_value(key, |value| {
+            link_max = Some(link_max.map_or(value, |m: i8| m.max(value)));
+        });
+        let link_max = link_max?;
+        if elem.leaf.value <= link_max {
+            return None;
+        }
+
+        let child = next_board(key, elem.leaf.mv)?;
+        self.merge_elem(
+            &child,
+            BookElem {
+                value: clamp_score(-(elem.leaf.value as i32)),
+                level: elem.leaf.level,
+                leaf: Leaf::default(),
+                n_lines: 1,
+            },
+        );
+        Some(child.unique_board())
     }
 
     /// leaf の手の先を book に登録して 1 段広げる。
@@ -278,7 +310,6 @@ impl Book {
     /// そのまま使った、このエンジン側の育成 API。
     pub fn expand_leaves(&mut self, max_error: i32) -> usize {
         let targets: Vec<(Board, Leaf, i8)> = self
-            .positions
             .iter()
             .filter(|(_, elem)| elem.leaf.is_move() && is_valid_score(elem.leaf.value))
             .map(|(board, elem)| (*board, elem.leaf, elem.value))
@@ -350,20 +381,26 @@ impl Book {
     /// `board` を根として評価値を伝播させる。
     pub fn negamax_from(&mut self, board: &Board, edax_compliant: bool) -> usize {
         let mut n_fix = 0;
-        for key in self.postorder(board.unique_board()) {
-            n_fix += usize::from(self.negamax_one(key, edax_compliant));
-        }
+        self.walk_postorder(board, |book, key, children| {
+            n_fix += usize::from(book.negamax_one(key, children, edax_compliant));
+        });
         n_fix
     }
 
     /// `n_lines` だけを計算し直す。Egaroucid の `recalculate_n_lines`。
     pub fn recalculate_n_lines(&mut self) {
-        for key in self.postorder(Board::new().unique_board()) {
-            let n_lines = self.subtree_n_lines(&key);
-            if let Some(elem) = self.positions.get_mut(&key) {
+        self.walk_postorder(&Board::new(), |book, key, children| {
+            let mut n_lines: u64 = 1;
+            for (child_key, _) in children {
+                if let Some(child) = book.elem(child_key) {
+                    n_lines += child.n_lines as u64;
+                }
+            }
+            let n_lines = n_lines.min(MAX_N_LINES as u64) as u32;
+            if let Some(elem) = book.elem_mut(&key) {
                 elem.n_lines = n_lines;
             }
-        }
+        });
     }
 
     /// negamax と leaf の整合を取る。Egaroucid の `fix`。
@@ -373,6 +410,14 @@ impl Book {
         n_fix
     }
 
+    /// 子局面のキー一覧。走査用。
+    fn child_keys(&self, board: &Board) -> Vec<Board> {
+        self.successors(board)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+
     /// negamax で辿る子局面。パス局面はここで畳む。
     fn successors(&self, board: &Board) -> Vec<(Board, i32)> {
         if board.moves() == 0 {
@@ -380,7 +425,7 @@ impl Book {
                 return Vec::new();
             }
             let passed = board.passed().unique_board();
-            return if self.positions.contains_key(&passed) {
+            return if self.contains_representative(&passed) {
                 vec![(passed, -1)]
             } else {
                 Vec::new()
@@ -389,38 +434,61 @@ impl Book {
         self.child_entries_for_negamax(board)
     }
 
-    /// `root` から辿れる局面を後行順 (子が先) に並べる。
+    /// `root` から辿れる局面を後行順 (子が先) に処理する。
     ///
-    /// リバーシの局面グラフは石が増える一方なので閉路は無い。
-    fn postorder(&self, root: Board) -> Vec<Board> {
-        let mut order = Vec::new();
-        let mut visited = BTreeSet::new();
-        let mut stack = vec![(root, false)];
+    /// 訪問済み判定はエントリの世代印で行い、スタックには**今辿っている経路**
+    /// しか積まない。リバーシは 1 手ごとに石が増えるので経路の長さは 60 手で
+    /// 頭打ちになり、book が何千万局面あってもスタックは深さ 60 に収まる。
+    /// (以前は全到達局面を Vec と BTreeSet に貯めていたため、局面数に比例した
+    /// 一時領域を必要としていた)
+    fn walk_postorder(
+        &mut self,
+        root: &Board,
+        mut visit: impl FnMut(&mut Self, Board, &[(Board, i32)]),
+    ) {
+        struct Frame {
+            key: Board,
+            children: Vec<(Board, i32)>,
+            next: usize,
+        }
 
-        while let Some((board, expanded)) = stack.pop() {
-            if expanded {
-                order.push(board);
-                continue;
-            }
-            if !visited.insert(board) {
-                continue;
-            }
-            if !self.positions.contains_key(&board) {
-                continue;
-            }
-            stack.push((board, true));
-            for (child, _) in self.successors(&board) {
-                if !visited.contains(&child) {
-                    stack.push((child, false));
+        let root = root.unique_board();
+        if !self.contains_representative(&root) {
+            return;
+        }
+        let generation = self.begin_traversal();
+        self.mark_visited(&root, generation);
+
+        let mut stack = vec![Frame {
+            children: self.successors(&root),
+            key: root,
+            next: 0,
+        }];
+
+        while let Some(top) = stack.len().checked_sub(1) {
+            let next = stack[top].next;
+            if next < stack[top].children.len() {
+                stack[top].next += 1;
+                let (child, _) = stack[top].children[next];
+                // DAG なので、訪問済みの子は必ず処理が終わっている。
+                if self.mark_visited(&child, generation) {
+                    let children = self.successors(&child);
+                    stack.push(Frame {
+                        key: child,
+                        children,
+                        next: 0,
+                    });
                 }
+            } else {
+                let frame = stack.pop().expect("stack is not empty");
+                visit(self, frame.key, &frame.children);
             }
         }
-        order
     }
 
     /// 1 局面分の negamax。値を書き換えたら `true`。
-    fn negamax_one(&mut self, key: Board, edax_compliant: bool) -> bool {
-        let Some(elem) = self.positions.get(&key).copied() else {
+    fn negamax_one(&mut self, key: Board, children: &[(Board, i32)], edax_compliant: bool) -> bool {
+        let Some(elem) = self.elem(&key).copied() else {
             return false;
         };
         // 終局局面は子を持たないので、登録されている値をそのまま残す。
@@ -435,8 +503,8 @@ impl Book {
         };
         let mut n_lines: u64 = 1;
 
-        for (child_key, sign) in self.successors(&key) {
-            let Some(child) = self.positions.get(&child_key) else {
+        for (child_key, sign) in children {
+            let Some(child) = self.elem(child_key) else {
                 continue;
             };
             if !child.has_value() {
@@ -450,10 +518,7 @@ impl Book {
         }
 
         let n_lines = n_lines.min(MAX_N_LINES as u64) as u32;
-        let position = self
-            .positions
-            .get_mut(&key)
-            .expect("position exists during negamax");
+        let position = self.elem_mut(&key).expect("position exists during negamax");
         position.n_lines = n_lines;
         match best {
             Some(value) if value != position.value => {
@@ -462,16 +527,6 @@ impl Book {
             }
             _ => false,
         }
-    }
-
-    fn subtree_n_lines(&self, key: &Board) -> u32 {
-        let mut n_lines: u64 = 1;
-        for (child_key, _) in self.successors(key) {
-            if let Some(child) = self.positions.get(&child_key) {
-                n_lines += child.n_lines as u64;
-            }
-        }
-        n_lines.min(MAX_N_LINES as u64) as u32
     }
 
     // ---- 整理 ----
@@ -499,23 +554,23 @@ impl Book {
         max_line_error: i32,
     ) -> usize {
         let root = board.unique_board();
-        if !self.positions.contains_key(&root) {
+        if !self.contains_representative(&root) {
             return 0;
         }
 
         // 残す局面を「まだ許される誤差」つきで幅優先に集める。
-        let mut keep: BTreeMap<Board, i32> = BTreeMap::new();
+        let mut keep: HashMap<Board, i32> = HashMap::new();
         keep.insert(root, max_line_error);
-        let mut frontier: BTreeMap<Board, i32> = BTreeMap::new();
+        let mut frontier: HashMap<Board, i32> = HashMap::new();
         frontier.insert(root, max_line_error);
 
         for _ in 0..max_depth {
             if frontier.is_empty() {
                 break;
             }
-            let mut next: BTreeMap<Board, i32> = BTreeMap::new();
+            let mut next: HashMap<Board, i32> = HashMap::new();
             for (board, remaining_error) in &frontier {
-                let Some(elem) = self.positions.get(board) else {
+                let Some(elem) = self.elem(board) else {
                     continue;
                 };
                 let value = elem.value as i32;
@@ -547,25 +602,15 @@ impl Book {
         // 消える子を指していた手を leaf に退避させる。
         self.demote_links_to_leaf(&keep);
 
-        let to_delete: Vec<Board> = self
-            .positions
-            .keys()
-            .filter(|board| !keep.contains_key(*board))
-            .copied()
-            .collect();
-        let n = to_delete.len();
-        for board in to_delete {
-            self.positions.remove(&board);
-        }
-        n
+        self.retain_keys(|board| keep.contains_key(board))
     }
 
     /// 削除予定の子を指す手のうち最善のものを leaf に移す。
     /// Egaroucid の `reduce_book_update_leaves`。
-    fn demote_links_to_leaf(&mut self, keep: &BTreeMap<Board, i32>) {
+    fn demote_links_to_leaf(&mut self, keep: &HashMap<Board, i32>) {
         let kept: Vec<Board> = keep.keys().copied().collect();
         for board in kept {
-            let Some(elem) = self.positions.get(&board).copied() else {
+            let Some(elem) = self.elem(&board).copied() else {
                 continue;
             };
             let mut leaf = elem.leaf;
@@ -587,9 +632,8 @@ impl Book {
                         value: link.value,
                         mv: link.mv as i8,
                         level: self
-                            .positions
-                            .get(&child_key)
-                            .or_else(|| self.positions.get(&passed_key))
+                            .elem(&child_key)
+                            .or_else(|| self.elem(&passed_key))
                             .map(|e| e.level)
                             .unwrap_or(LEVEL_UNDEFINED),
                     };
@@ -598,7 +642,7 @@ impl Book {
             }
 
             if updated {
-                if let Some(elem) = self.positions.get_mut(&board) {
+                if let Some(elem) = self.elem_mut(&board) {
                     elem.leaf = leaf;
                 }
             }
@@ -611,7 +655,6 @@ impl Book {
     /// 「行き止まり」を消して、次の育成でやり直せるようにする。
     pub fn delete_terminal_midsearch(&mut self) -> usize {
         let targets: Vec<Board> = self
-            .positions
             .iter()
             .filter(|(board, elem)| {
                 if board.moves() == 0 {
@@ -631,28 +674,38 @@ impl Book {
 
         let n = targets.len();
         for board in targets {
-            self.positions.remove(&board);
+            self.remove_representative(&board);
         }
         n
     }
 
     /// 初期盤面から辿れない局面を削除する。削除した局面数を返す。
+    ///
+    /// 到達できた局面に世代印を付けてから、印の無いものを消す。到達集合を
+    /// 別に持たないので、追加の一時領域は走査スタックだけで済む。
     pub fn remove_unreachable(&mut self) -> usize {
-        let reachable: BTreeSet<Board> = self
-            .postorder(Board::new().unique_board())
-            .into_iter()
-            .collect();
-        let to_delete: Vec<Board> = self
-            .positions
-            .keys()
-            .filter(|board| !reachable.contains(*board))
-            .copied()
-            .collect();
-        let n = to_delete.len();
-        for board in to_delete {
-            self.positions.remove(&board);
+        let root = Board::new().unique_board();
+        if !self.contains_representative(&root) {
+            return 0;
         }
-        n
+        let generation = self.begin_traversal();
+        self.mark_visited(&root, generation);
+
+        let mut stack = vec![(root, 0usize, self.child_keys(&root))];
+        while let Some(top) = stack.len().checked_sub(1) {
+            let next = stack[top].1;
+            if next < stack[top].2.len() {
+                stack[top].1 += 1;
+                let child = stack[top].2[next];
+                if self.mark_visited(&child, generation) {
+                    let children = self.child_keys(&child);
+                    stack.push((child, 0, children));
+                }
+            } else {
+                stack.pop();
+            }
+        }
+        self.retain_visited(generation)
     }
 }
 
@@ -968,9 +1021,8 @@ mod tests {
 
         let loaded = Book::from_egbk3_bytes(&book.to_egbk3_bytes()).unwrap();
         assert_eq!(loaded.len(), book.len());
-        for ((ba, ea), (bb, eb)) in book.iter().zip(loaded.iter()) {
-            assert_eq!(ba, bb);
-            assert_eq!(ea, eb);
+        for (board, elem) in book.iter() {
+            assert_eq!(loaded.get_representative(board), Some(elem), "{board:?}");
         }
     }
 

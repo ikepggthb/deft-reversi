@@ -212,13 +212,7 @@ impl Book {
     pub fn to_edax_bytes(&self, level: Option<i8>, date: (i16, i8, i8, i8, i8, i8)) -> Vec<u8> {
         let header_level = level
             .map(|l| l as i32)
-            .unwrap_or_else(|| {
-                self.positions
-                    .values()
-                    .map(|e| e.level as i32)
-                    .max()
-                    .unwrap_or(1)
-            })
+            .unwrap_or_else(|| self.iter().map(|(_, e)| e.level as i32).max().unwrap_or(1))
             .max(1);
 
         // Edax はパス局面自体も book に必要とするので作って書き足す。
@@ -226,7 +220,7 @@ impl Book {
 
         // Egaroucid は 65 - n_discs (= 空きマス数 + 1) の最小値を書く。
         let mut n_empties = 64i32;
-        for board in self.positions.keys().chain(pass_boards.iter()) {
+        for board in self.boards().chain(pass_boards.iter()) {
             n_empties = n_empties.min(board.empties_count() as i32 + 1);
         }
 
@@ -247,7 +241,7 @@ impl Book {
         out.extend_from_slice(&0i32.to_le_bytes()); // midgame_error
         out.extend_from_slice(&0i32.to_le_bytes()); // endcut_error
         out.extend_from_slice(&0i32.to_le_bytes()); // verbosity
-        let n_position = (self.positions.len() + pass_boards.len()) as i32;
+        let n_position = (self.len() + pass_boards.len()) as i32;
         out.extend_from_slice(&n_position.to_le_bytes());
 
         // パス局面: 「パスする」という link 1 本だけを持つ。
@@ -273,7 +267,7 @@ impl Book {
             );
         }
 
-        for (board, elem) in self.positions.iter() {
+        for (board, elem) in self.iter() {
             let record_level = clamp_edax_level(level.unwrap_or(elem.level));
 
             if board.moves() == 0 {
@@ -370,7 +364,7 @@ impl Book {
     /// 補う。Egaroucid の `get_pass_boards`。
     fn pass_boards(&self) -> Vec<Board> {
         let mut result = BTreeSet::new();
-        for board in self.positions.keys() {
+        for board in self.boards() {
             let mut legal = board.moves();
             while legal != 0 {
                 let mv = legal.trailing_zeros() as u8;
@@ -382,7 +376,7 @@ impl Book {
                     && self.contains(&child.passed())
                 {
                     let key = child.unique_board();
-                    if !self.positions.contains_key(&key) {
+                    if !self.contains_representative(&key) {
                         result.insert(key);
                     }
                 }

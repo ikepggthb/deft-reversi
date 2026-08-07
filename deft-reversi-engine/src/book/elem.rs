@@ -129,37 +129,97 @@ pub struct BookMove {
     pub value: i8,
 }
 
+/// Egaroucid が対称形を調べる順序 (変換インデックス)。
+///
+/// 同点のときは先に出たものが残るので、この順序が正規形の決め方そのものになる。
+const SYMMETRY_ORDER: [usize; 8] = [0, 2, 1, 3, 6, 4, 7, 5];
+
 /// 8 通りの対称形のうち辞書順最小の盤面と、Egaroucid の変換インデックス
 /// (0..8) を返す。
 ///
 /// Egaroucid の `representative_board(Board, int *idx)`。インデックスの意味は
 /// [`convert_coord_from_representative`] を参照。
+///
+/// 比較は `(player, opponent)` の辞書順なので、まず `player` だけを 8 通り
+/// 作って最小を求め、`opponent` は同点だった候補についてだけ変換する。
+/// 大半の局面では同点が 1 つしかないため、盤面の変換回数が 16 回から 9 回に減る。
+/// book の読み込みも走査もこの関数が最も重いので、ここが効く。
 pub fn representative_board(board: &Board) -> (Board, usize) {
-    // Egaroucid の探索順と一致させる。
-    // 0: そのまま, 2: black line, 1: vertical, 3: black line + vertical,
-    // 6: horizontal, 4: black line + horizontal, 7: h + v, 5: white line
-    let b = *board;
-    let bt = black_line_mirror(&b);
-    let bh = horizontal_mirror(&b);
-    let bth = horizontal_mirror(&bt);
-    let candidates = [
-        (b, 0usize),
-        (bt, 2),
-        (vertical_mirror(&b), 1),
-        (vertical_mirror(&bt), 3),
-        (bh, 6),
-        (bth, 4),
-        (vertical_mirror(&bh), 7),
-        (vertical_mirror(&bth), 5),
-    ];
+    let players = symmetries_of(board.player);
 
-    let mut best = candidates[0];
-    for &cand in &candidates[1..] {
-        if cand.0 < best.0 {
-            best = cand;
+    // player が最小の候補を集める。SYMMETRY_ORDER の順に見るので、
+    // 同点なら Egaroucid と同じく先に出たインデックスが残る。
+    let mut best_player = u64::MAX;
+    let mut tied: [usize; 8] = [0; 8];
+    let mut n_tied = 0;
+    for &idx in &SYMMETRY_ORDER {
+        let player = players[idx];
+        match player.cmp(&best_player) {
+            std::cmp::Ordering::Less => {
+                best_player = player;
+                tied[0] = idx;
+                n_tied = 1;
+            }
+            std::cmp::Ordering::Equal => {
+                tied[n_tied] = idx;
+                n_tied += 1;
+            }
+            std::cmp::Ordering::Greater => {}
         }
     }
-    best
+
+    // player が同点の候補についてだけ opponent を作って決める。
+    let mut best_idx = tied[0];
+    let mut best_opponent = apply_symmetry(board.opponent, best_idx);
+    for &idx in &tied[1..n_tied] {
+        let opponent = apply_symmetry(board.opponent, idx);
+        if opponent < best_opponent {
+            best_opponent = opponent;
+            best_idx = idx;
+        }
+    }
+
+    (
+        Board {
+            player: best_player,
+            opponent: best_opponent,
+        },
+        best_idx,
+    )
+}
+
+/// 8 通りの対称変換を Egaroucid の変換インデックスで並べた配列を作る。
+/// 中間結果を共有するので変換は 8 回で済む。
+#[inline]
+fn symmetries_of(x: u64) -> [u64; 8] {
+    let t = bit_black_line_mirror(x);
+    let h = bit_horizontal_mirror(x);
+    let th = bit_horizontal_mirror(t);
+    let mut out = [0u64; 8];
+    out[0] = x;
+    out[2] = t;
+    out[1] = bit_vertical_mirror(x);
+    out[3] = bit_vertical_mirror(t);
+    out[6] = h;
+    out[4] = th;
+    out[7] = bit_vertical_mirror(h);
+    out[5] = bit_vertical_mirror(th);
+    out
+}
+
+/// 変換インデックス `idx` の対称変換を 1 つだけ適用する。
+#[inline]
+fn apply_symmetry(x: u64, idx: usize) -> u64 {
+    match idx {
+        0 => x,
+        1 => bit_vertical_mirror(x),
+        2 => bit_black_line_mirror(x),
+        3 => bit_vertical_mirror(bit_black_line_mirror(x)),
+        4 => bit_horizontal_mirror(bit_black_line_mirror(x)),
+        5 => bit_vertical_mirror(bit_horizontal_mirror(bit_black_line_mirror(x))),
+        6 => bit_horizontal_mirror(x),
+        _ => bit_vertical_mirror(bit_horizontal_mirror(x)),
+    }
 }
 
 /// 正規形の盤面での座標を、元の盤面の向きに戻す。
@@ -226,28 +286,7 @@ pub fn clamp_score(score: i32) -> i8 {
     score.clamp(-(SCORE_MAX as i32), SCORE_MAX as i32) as i8
 }
 
-// ---- 盤面の対称変換 (Egaroucid の Board::board_*_mirror) ----
-
-fn vertical_mirror(board: &Board) -> Board {
-    Board {
-        player: bit_vertical_mirror(board.player),
-        opponent: bit_vertical_mirror(board.opponent),
-    }
-}
-
-fn horizontal_mirror(board: &Board) -> Board {
-    Board {
-        player: bit_horizontal_mirror(board.player),
-        opponent: bit_horizontal_mirror(board.opponent),
-    }
-}
-
-fn black_line_mirror(board: &Board) -> Board {
-    Board {
-        player: bit_black_line_mirror(board.player),
-        opponent: bit_black_line_mirror(board.opponent),
-    }
-}
+// ---- 盤面の対称変換 (Egaroucid の bit_*_mirror) ----
 
 /// 行を反転する。Egaroucid の `vertical_mirror`。
 fn bit_vertical_mirror(x: u64) -> u64 {
@@ -280,6 +319,75 @@ mod tests {
     fn played_board() -> Board {
         let board = Board::new().make_move(1u64 << D3);
         board.make_move(1u64 << board.moves().trailing_zeros())
+    }
+
+    /// 最適化前の素直な実装。Egaroucid の `representative_board` そのまま。
+    fn representative_board_reference(board: &Board) -> (Board, usize) {
+        let sym = |f: fn(u64) -> u64, b: &Board| Board {
+            player: f(b.player),
+            opponent: f(b.opponent),
+        };
+        let b = *board;
+        let bt = sym(bit_black_line_mirror, &b);
+        let bh = sym(bit_horizontal_mirror, &b);
+        let bth = sym(bit_horizontal_mirror, &bt);
+        let candidates = [
+            (b, 0usize),
+            (bt, 2),
+            (sym(bit_vertical_mirror, &b), 1),
+            (sym(bit_vertical_mirror, &bt), 3),
+            (bh, 6),
+            (bth, 4),
+            (sym(bit_vertical_mirror, &bh), 7),
+            (sym(bit_vertical_mirror, &bth), 5),
+        ];
+        let mut best = candidates[0];
+        for &cand in &candidates[1..] {
+            if cand.0 < best.0 {
+                best = cand;
+            }
+        }
+        best
+    }
+
+    /// 高速版が素直な実装と完全に一致することを確かめる。
+    /// 正規形は book の互換性の土台なので、盤面もインデックスも一致が要る。
+    #[test]
+    fn representative_board_matches_the_reference_implementation() {
+        let mut state = 0x1234_5678_9abc_def0u64;
+        let mut next = || {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            state.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        };
+
+        // 対称性のある盤面 (player が同点になる場合) も混ぜる。
+        let mut boards = vec![Board::new(), Board::default()];
+        for _ in 0..100_000 {
+            let a = next();
+            let b = next();
+            boards.push(Board {
+                player: a & !b,
+                opponent: b & !a,
+            });
+            // player を対称にして同点を作る。
+            let symmetric = a | bit_horizontal_mirror(a);
+            boards.push(Board {
+                player: symmetric,
+                opponent: b & !symmetric,
+            });
+        }
+
+        for board in boards {
+            assert_eq!(
+                representative_board(&board),
+                representative_board_reference(&board),
+                "player={:#018x} opponent={:#018x}",
+                board.player,
+                board.opponent
+            );
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@ use super::bit::*;
 use super::flip::*;
 use super::moves::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Board {
     pub player: u64,
     pub opponent: u64,
