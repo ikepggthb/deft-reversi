@@ -18,8 +18,7 @@
 use super::sym::representative_board;
 use super::value::{BookValue, Frontier};
 use crate::board::board::Board;
-use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::Hasher;
 
 /// ply の最大値 (初期局面から 60 手)。
 pub const MAX_PLY: usize = 60;
@@ -56,8 +55,6 @@ impl Hasher for BoardHasher {
     }
 }
 
-pub type BoardBuildHasher = BuildHasherDefault<BoardHasher>;
-
 /// 盤面の ply (石数 - 4)。
 #[inline]
 pub fn ply_of(board: &Board) -> usize {
@@ -71,25 +68,48 @@ pub struct PositionId {
     pub slot: u32,
 }
 
+const EMPTY_SLOT: u32 = u32::MAX;
+
+#[inline]
+fn board_hash(board: &Board) -> u64 {
+    let mut h = BoardHasher::default();
+    h.write_u64(board.player);
+    h.write_u64(board.opponent);
+    h.finish()
+}
+
+fn ht_capacity_for(n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    (n * 4 / 3 + 1).next_power_of_two()
+}
+
 /// 手数 1 つ分の層。
 ///
 /// 盤面・値・frontier を別々の配列に持つ (列指向)。走査は 1 つの配列だけを
 /// 舐めれば済むことが多く、キャッシュに無駄が乗らない。
+///
+/// 索引はオープンアドレスのハッシュ表で、`u32` のスロット番号だけを持つ。
+/// `HashMap` が 1 局面あたり約 29 バイト使うのに対して約 5 バイトで済む。
 #[derive(Clone, Debug, Default)]
 pub struct PlyLayer {
     boards: Vec<Board>,
     values: Vec<BookValue>,
     frontiers: Vec<Frontier>,
-    index: HashMap<Board, u32, BoardBuildHasher>,
+    ht: Vec<u32>,
+    ht_mask: usize,
 }
 
 impl PlyLayer {
     pub fn with_capacity(capacity: usize) -> Self {
+        let cap = ht_capacity_for(capacity);
         Self {
             boards: Vec::with_capacity(capacity),
             values: Vec::with_capacity(capacity),
             frontiers: Vec::with_capacity(capacity),
-            index: HashMap::with_capacity_and_hasher(capacity, Default::default()),
+            ht: vec![EMPTY_SLOT; cap],
+            ht_mask: cap.wrapping_sub(1),
         }
     }
 
@@ -107,25 +127,64 @@ impl PlyLayer {
         values.resize(n, BookValue::undefined());
         frontiers.resize(n, Frontier::unset());
 
+        if n == 0 {
+            return Self::default();
+        }
+
+        let cap = ht_capacity_for(n);
+        let mask = cap - 1;
+        let mut ht = vec![EMPTY_SLOT; cap];
+        let mut dup_count = 0usize;
+
+        for (slot, board) in boards.iter().enumerate() {
+            let h = board_hash(board) as usize;
+            let mut pos = h & mask;
+            loop {
+                let s = ht[pos];
+                if s == EMPTY_SLOT {
+                    ht[pos] = slot as u32;
+                    break;
+                }
+                if boards[s as usize] == *board {
+                    dup_count += 1;
+                    break;
+                }
+                pos = (pos + 1) & mask;
+            }
+        }
+
         let mut layer = Self {
             boards,
             values,
             frontiers,
-            index: HashMap::with_capacity_and_hasher(n, Default::default()),
+            ht,
+            ht_mask: mask,
         };
-        for (slot, board) in layer.boards.iter().enumerate() {
-            layer.index.entry(*board).or_insert(slot as u32);
+
+        if dup_count > 0 {
+            let mut keep = vec![false; n];
+            for &s in &layer.ht {
+                if s != EMPTY_SLOT {
+                    keep[s as usize] = true;
+                }
+            }
+            let mut write = 0usize;
+            for read in 0..n {
+                if keep[read] {
+                    if write != read {
+                        layer.boards[write] = layer.boards[read];
+                        layer.values[write] = layer.values[read];
+                        layer.frontiers[write] = layer.frontiers[read];
+                    }
+                    write += 1;
+                }
+            }
+            layer.boards.truncate(write);
+            layer.values.truncate(write);
+            layer.frontiers.truncate(write);
+            layer.rebuild_ht();
         }
-        if layer.index.len() != n {
-            // 重複があったので、索引が指している方だけを残して詰め直す。
-            let index = std::mem::take(&mut layer.index);
-            let mut slot = 0u32;
-            layer.retain(|board, _| {
-                let keep = index.get(board) == Some(&slot);
-                slot += 1;
-                keep
-            });
-        }
+
         layer
     }
 
@@ -140,7 +199,21 @@ impl PlyLayer {
     /// 正規形の盤面から層内の添字を引く。
     #[inline]
     pub fn slot_of(&self, representative: &Board) -> Option<u32> {
-        self.index.get(representative).copied()
+        if self.ht.is_empty() {
+            return None;
+        }
+        let h = board_hash(representative) as usize;
+        let mut pos = h & self.ht_mask;
+        loop {
+            let slot = self.ht[pos];
+            if slot == EMPTY_SLOT {
+                return None;
+            }
+            if self.boards[slot as usize] == *representative {
+                return Some(slot);
+            }
+            pos = (pos + 1) & self.ht_mask;
+        }
     }
 
     #[inline]
@@ -189,7 +262,7 @@ impl PlyLayer {
         self.boards.push(representative);
         self.values.push(value);
         self.frontiers.push(frontier);
-        self.index.insert(representative, slot);
+        self.ht_put(slot);
         slot
     }
 
@@ -233,12 +306,45 @@ impl PlyLayer {
         self.boards.truncate(write);
         self.values.truncate(write);
         self.frontiers.truncate(write);
-
-        self.index.clear();
-        for (slot, board) in self.boards.iter().enumerate() {
-            self.index.insert(*board, slot as u32);
-        }
+        self.rebuild_ht();
         before - write
+    }
+
+    fn ht_put(&mut self, slot: u32) {
+        if self.ht.is_empty() || self.boards.len() * 4 > self.ht.len() * 3 {
+            self.rebuild_ht();
+            return;
+        }
+        let h = board_hash(&self.boards[slot as usize]) as usize;
+        let mut pos = h & self.ht_mask;
+        loop {
+            if self.ht[pos] == EMPTY_SLOT {
+                self.ht[pos] = slot;
+                return;
+            }
+            pos = (pos + 1) & self.ht_mask;
+        }
+    }
+
+    fn rebuild_ht(&mut self) {
+        let cap = ht_capacity_for(self.boards.len());
+        self.ht.clear();
+        self.ht.resize(cap, EMPTY_SLOT);
+        self.ht_mask = cap.wrapping_sub(1);
+        if cap == 0 {
+            return;
+        }
+        for slot in 0..self.boards.len() {
+            let h = board_hash(&self.boards[slot]) as usize;
+            let mut pos = h & self.ht_mask;
+            loop {
+                if self.ht[pos] == EMPTY_SLOT {
+                    self.ht[pos] = slot as u32;
+                    break;
+                }
+                pos = (pos + 1) & self.ht_mask;
+            }
+        }
     }
 }
 

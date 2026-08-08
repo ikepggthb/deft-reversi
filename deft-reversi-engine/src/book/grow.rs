@@ -189,13 +189,9 @@ pub fn grow(book: &mut Book, solver: &Solver, policy: &GrowthPolicy) -> GrowthRe
         }
         candidates.sort_by_key(Candidate::priority);
 
-        // 1 巡で扱う数。残りの予算を超えない範囲で、スレッドに行き渡る量を取る。
+        // 1 巡で扱う数。残りの予算を超えない範囲で全候補を取る。
         let budget = policy.max_positions - report.added;
-        let batch = candidates
-            .len()
-            .min(budget)
-            .min(policy.threads.get() * 8)
-            .max(1);
+        let batch = candidates.len().min(budget).max(1);
         candidates.truncate(batch);
 
         let expansions = search_candidates(solver, policy, &candidates);
@@ -255,24 +251,42 @@ fn is_interrupted(policy: &GrowthPolicy) -> bool {
         .is_some_and(|s| s.load(Ordering::Relaxed))
 }
 
+/// `front` に `new` を追加する。`new` を支配する点があれば捨て、
+/// `new` に支配される既存の点は取り除く。
+fn add_pareto(front: &mut Vec<Reach>, new: Reach) {
+    for existing in front.iter() {
+        if existing.player_error <= new.player_error
+            && existing.opponent_error <= new.opponent_error
+        {
+            return;
+        }
+    }
+    front.retain(|r| r.player_error < new.player_error || r.opponent_error < new.opponent_error);
+    front.push(new);
+}
+
 /// 根から損の範囲内で辿れる局面のうち、まだ掘れる手があるものを集める。
 ///
 /// 子は必ず 1 つ深い層にいるので、浅い層から 1 回舐めるだけで到達可能性が
 /// 決まる。キューも訪問済みの集合も要らない。
+///
+/// 到達経路は player_error と opponent_error の 2 次元で管理する。同じ局面に
+/// 複数の経路で届いたとき、合計で比べると片方の予算が残っている経路を捨てて
+/// しまう。パレート最適な経路だけを残すことで、予算が偏った変化も見逃さない。
 fn collect_candidates(book: &Book, policy: &GrowthPolicy) -> Vec<Candidate> {
     let Some(max_ply) = book.max_ply() else {
         return Vec::new();
     };
     let limit = max_ply.min(policy.max_ply);
 
-    let mut reach: Vec<Vec<Option<Reach>>> = (0..=max_ply)
-        .map(|ply| vec![None; book.table().layer(ply).len()])
+    let mut reach: Vec<Vec<Vec<Reach>>> = (0..=max_ply)
+        .map(|ply| vec![Vec::new(); book.table().layer(ply).len()])
         .collect();
 
     let Some(root) = book.table().locate(&Board::new()) else {
         return Vec::new();
     };
-    reach[root.ply as usize][root.slot as usize] = Some(Reach {
+    reach[root.ply as usize][root.slot as usize].push(Reach {
         player_error: 0,
         opponent_error: 0,
         side: 0,
@@ -281,9 +295,9 @@ fn collect_candidates(book: &Book, policy: &GrowthPolicy) -> Vec<Candidate> {
     let mut out = Vec::new();
     for ply in 0..=limit {
         for slot in 0..book.table().layer(ply).len() {
-            let Some(here) = reach[ply][slot] else {
+            if reach[ply][slot].is_empty() {
                 continue;
-            };
+            }
             let id = PositionId {
                 ply: ply as u8,
                 slot: slot as u32,
@@ -291,15 +305,19 @@ fn collect_candidates(book: &Book, policy: &GrowthPolicy) -> Vec<Candidate> {
             let board = *book.table().board(id);
             let children = book.children(&board);
 
-            // まだ book に無い手があれば掘る候補。
             let registered: u64 = children.iter().map(|c| 1u64 << c.mv).fold(0, |a, b| a | b);
             let unregistered = board.moves() & !registered;
             if unregistered != 0 && ply < policy.max_ply {
+                let error = reach[ply][slot]
+                    .iter()
+                    .map(|r| r.total())
+                    .min()
+                    .unwrap_or(0);
                 out.push(Candidate {
                     id,
                     board,
                     unregistered,
-                    error: here.total(),
+                    error,
                     uncertainty: book.table().value(id).uncertainty(),
                 });
             }
@@ -308,7 +326,6 @@ fn collect_candidates(book: &Book, policy: &GrowthPolicy) -> Vec<Candidate> {
                 continue;
             }
 
-            // 子へ損を伝える。
             let Some(best) = children
                 .iter()
                 .filter(|c| c.value.is_defined())
@@ -317,33 +334,36 @@ fn collect_candidates(book: &Book, policy: &GrowthPolicy) -> Vec<Candidate> {
             else {
                 continue;
             };
+
+            let (before, after) = reach.split_at_mut(ply + 1);
+            let here_front = &before[ply][slot];
+
             for child in &children {
                 if !child.value.is_defined() {
                     continue;
                 }
                 let loss = best - child.value.score as i32;
-                let next = if here.side == 0 {
-                    Reach {
-                        player_error: here.player_error + loss,
-                        opponent_error: here.opponent_error,
-                        side: if child.flips_turn { 1 } else { 0 },
+                for here in here_front.iter() {
+                    let next = if here.side == 0 {
+                        Reach {
+                            player_error: here.player_error + loss,
+                            opponent_error: here.opponent_error,
+                            side: if child.flips_turn { 1 } else { 0 },
+                        }
+                    } else {
+                        Reach {
+                            player_error: here.player_error,
+                            opponent_error: here.opponent_error + loss,
+                            side: if child.flips_turn { 0 } else { 1 },
+                        }
+                    };
+                    if next.player_error > policy.player_error
+                        || next.opponent_error > policy.opponent_error
+                    {
+                        continue;
                     }
-                } else {
-                    Reach {
-                        player_error: here.player_error,
-                        opponent_error: here.opponent_error + loss,
-                        side: if child.flips_turn { 0 } else { 1 },
-                    }
-                };
-                if next.player_error > policy.player_error
-                    || next.opponent_error > policy.opponent_error
-                {
-                    continue;
-                }
-                let cell = &mut reach[child.id.ply as usize][child.id.slot as usize];
-                // 同じ局面に別の経路で届くことがある。損の小さい方を採る。
-                if cell.is_none_or(|old| next.total() < old.total()) {
-                    *cell = Some(next);
+                    let child_layer_idx = child.id.ply as usize - (ply + 1);
+                    add_pareto(&mut after[child_layer_idx][child.id.slot as usize], next);
                 }
             }
         }

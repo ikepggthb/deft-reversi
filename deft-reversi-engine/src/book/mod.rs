@@ -603,12 +603,20 @@ impl Book {
 
     /// 局面を引く。book に何も無ければ `None`。
     pub fn probe(&self, board: &Board) -> Option<Probe<'_>> {
-        let moves = self.moves(board);
+        let all_children = self.children(board);
         let own = self.value_of(board);
+        let moves: Vec<BookMove> = all_children
+            .iter()
+            .filter(|c| c.value.is_defined())
+            .map(|c| BookMove {
+                mv: c.mv,
+                value: c.value,
+            })
+            .collect();
         if moves.is_empty() && own.is_none() {
             return None;
         }
-        let registered = self.registered_moves(board);
+        let registered = all_children.iter().fold(0u64, |a, c| a | (1u64 << c.mv));
         Some(Probe {
             value: own.unwrap_or_else(BookValue::undefined),
             complete: board.moves() == 0 || registered == board.moves(),
