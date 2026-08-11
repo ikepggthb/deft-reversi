@@ -26,16 +26,13 @@ use crate::{
         },
         move_list::*,
         mpc::{final_search_mpc, ProbCutResult},
-        search::{AbortNode, SearchContext},
-        split_point::{try_add_slaves, SplitPoint},
+        search::SearchContext,
         stability_cut::stability_cut_nws,
-        thread_pool::{DetachedJob, HelperSlot, Job, TaskHandle, TaskResult},
         tt_cut::*,
     },
-    t_table::{TTProbe, TTSlot, TTValue},
+    t_table::{TTProbe, TTValue},
 };
 use arrayvec::ArrayVec;
-use std::sync::Arc;
 use std::{cell::UnsafeCell, cmp};
 
 const TT_MOVE0_SCORE: i32 = 1 << 20;
@@ -49,12 +46,6 @@ const SWITCH_EMPTIES_NEGA_ALPHA: i32 = 5;
 /// 空きマスがこれ以下のとき `nws_final_simple` に切り替える。
 const SWITCH_EMPTIES_SIMPLE_NWS: i32 = 13;
 
-/// この空きマス数以上で YBWC 分割する。edax の実効閾値 (`DEPTH_MIDGAME_TO_ENDGAME`
-/// により空きマス 15 以上が分割可能領域) に合わせてある。
-const YBWC_END_SPLIT_MIN_EMPTIES: i32 = 15;
-/// 空きスレッドが十分ある時だけ、1 段浅くても分割する。
-const YBWC_TAIL_SPLIT_EMPTIES: i32 = 14;
-const YBWC_TAIL_MIN_IDLE_WORKERS: usize = 4;
 const LEGAL_UNDEFINED: u64 = u64::MAX;
 
 #[derive(Clone, Copy)]
@@ -436,11 +427,11 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
     // ── move ordering ─────────────────────────────────────────────────────────
     if move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2 {
         let eval_depth = match n_empties {
-        //    11..13 => 0,
-        //    13..17 => 1,
-        //    17..21 => 2,
+            //    11..13 => 0,
+            //    13..17 => 1,
+            //    17..21 => 2,
             1..24 => n_empties >> 4,
-            _ => 1
+            _ => 1,
         };
         assign_ordering_scores_weighted(
             board,
@@ -453,10 +444,6 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
             search,
         );
         sort_move_list(&mut move_list);
-    }
-
-    if should_split_ybwc(n_empties, &move_list, search) {
-        return nws_final_ybwc(board, alpha, beta_cur, probe.slot(), &move_list, search);
     }
 
     // ── 探索ループ ────────────────────────────────────────────────────────────
@@ -518,251 +505,6 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
     }
 
     best_score
-}
-
-fn should_split_ybwc(n_empties: i32, move_list: &[MoveBoard], search: &SearchContext) -> bool {
-    let can_split_depth = n_empties >= YBWC_END_SPLIT_MIN_EMPTIES
-        || (n_empties == YBWC_TAIL_SPLIT_EMPTIES
-            && search
-                .thread_pool
-                .as_ref()
-                .is_some_and(|pool| pool.idle_worker_count() >= YBWC_TAIL_MIN_IDLE_WORKERS));
-    can_split_depth
-        && search.thread_pool.is_some()
-        && move_list.iter().filter(|mb| !mb.is_skip).take(2).count() >= 2
-}
-
-fn nws_final_ybwc(
-    board: &Board,
-    alpha: i32,
-    beta: i32,
-    tt_slot: TTSlot,
-    move_list: &[MoveBoard],
-    search: &mut SearchContext,
-) -> i32 {
-    // 呼び出し前に `should_split_ybwc` が保証している。ここで `alpha` を返すと
-    // 一手も探索せずに fail-low を捏造してしまうので、握り潰さず落とす。
-    debug_assert!(search.thread_pool.is_some());
-    let Some((first_index, first_move)) = move_list.iter().enumerate().find(|(_, mv)| !mv.is_skip)
-    else {
-        return alpha;
-    };
-    let first_child = board.make_move_from_flip_bit(1 << first_move.move_num, first_move.flip_bit);
-    let first_score = -nws_final(&first_child, -beta, search);
-    if search.is_aborted() {
-        return alpha;
-    }
-    if first_score >= beta {
-        search.tt.store(
-            tt_slot,
-            board,
-            first_score,
-            SCORE_MAX,
-            FINAL_LV,
-            search.selectivity_lv,
-            first_move.move_num,
-        );
-        return first_score;
-    }
-
-    let mut best_score = first_score;
-    let mut best_move = first_move.move_num;
-    let work = move_list
-        .iter()
-        .enumerate()
-        .skip(first_index + 1)
-        .filter(|(_, mb)| !mb.is_skip)
-        .map(|(move_index, mb)| {
-            (
-                move_index,
-                board.make_move_from_flip_bit(1 << mb.move_num, mb.flip_bit),
-            )
-        })
-        .collect::<Vec<_>>()
-        .into_boxed_slice();
-    let split = Arc::new(SplitPoint::new(work, beta, &search.abort_node));
-    let master_abort = AbortNode::child(&split.abort_node);
-    let mut spawned = 0u64;
-
-    try_add_slaves(&split, search, &mut spawned, make_nws_split_worker);
-    while let Some((work_index, _, child_board)) = split.next_work() {
-        try_add_slaves(&split, search, &mut spawned, make_nws_split_worker);
-        let parent_abort = search.push_abort_node(master_abort.clone());
-        search.push_helper(split.helper.clone());
-        let score = -nws_final(&child_board, -beta, search);
-        search.pop_helper();
-        search.restore_abort_node(parent_abort);
-        if search.is_aborted() {
-            if search.recover_from_split_abort(&split.abort_node) {
-                break;
-            }
-            split.stop_searching();
-            split.join_slaves(spawned, search);
-            return alpha;
-        }
-        split.finish(work_index, score);
-        if score >= beta {
-            break;
-        }
-    }
-
-    split.join_slaves(spawned, search);
-    if search.check_abort_now() {
-        split.stop_searching();
-        return alpha;
-    }
-    for (work_index, move_index) in split.work_indices() {
-        let Some(score) = split.score_at(work_index) else {
-            continue;
-        };
-        let mb = &move_list[move_index];
-        if score >= beta {
-            search.tt.store(
-                tt_slot,
-                board,
-                score,
-                SCORE_MAX,
-                FINAL_LV,
-                search.selectivity_lv,
-                mb.move_num,
-            );
-            return score;
-        }
-        if score > best_score {
-            best_score = score;
-            best_move = mb.move_num;
-        }
-    }
-
-    debug_assert_ne!(best_move, NO_COORD);
-
-    if best_score > alpha {
-        search.tt.store(
-            tt_slot,
-            board,
-            best_score,
-            best_score,
-            FINAL_LV,
-            search.selectivity_lv,
-            best_move,
-        );
-    } else {
-        search.tt.store(
-            tt_slot,
-            board,
-            -SCORE_MAX,
-            best_score,
-            FINAL_LV,
-            search.selectivity_lv,
-            best_move,
-        );
-    }
-
-    best_score
-}
-
-fn make_nws_split_worker(split: &Arc<SplitPoint>, parent: &SearchContext) -> DetachedJob {
-    let split = split.clone();
-    let evaluator = parent.evaluator.clone();
-    let ordering_evaluator = parent.ordering_evaluator.clone();
-    let mpc_config = parent.mpc_config.clone();
-    let tt = parent.tt.clone();
-    let stop = parent.stop.clone();
-    let thread_pool = parent.thread_pool.clone();
-    let selectivity_lv = parent.selectivity_lv;
-    let abort_node = AbortNode::child(&split.abort_node);
-    let helper_chain = parent.helper_chain.clone();
-
-    Box::new(move || {
-        let mut stats = crate::search::search::SearchStats::default();
-        let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
-            .with_ordering_evaluator(ordering_evaluator)
-            .with_inherited_stop(stop)
-            .with_thread_pool(thread_pool)
-            .with_abort_node(abort_node)
-            .with_helper_chain(helper_chain);
-        search.push_helper(split.helper.clone());
-        search.selectivity_lv = selectivity_lv;
-        while let Some((work_index, _, child_board)) = split.next_work() {
-            let score = -nws_final(&child_board, -split.beta(), &mut search);
-            if search.is_aborted() {
-                break;
-            }
-            split.finish(work_index, score);
-            if score >= split.beta() {
-                break;
-            }
-        }
-        let aborted = search.is_aborted();
-        drop(search);
-        split.slave_finished(stats, aborted);
-    })
-}
-
-pub(crate) fn make_ybwc_job(
-    child_board: Board,
-    child_alpha: i32,
-    cutoff_score: i32,
-    move_index: usize,
-    split_abort: Arc<AbortNode>,
-    helper: Arc<HelperSlot>,
-    parent: &SearchContext,
-) -> Job {
-    let evaluator = parent.evaluator.clone();
-    let ordering_evaluator = parent.ordering_evaluator.clone();
-    let mpc_config = parent.mpc_config.clone();
-    let tt = parent.tt.clone();
-    let stop = parent.stop.clone();
-    let thread_pool = parent.thread_pool.clone();
-    let selectivity_lv = parent.selectivity_lv;
-    let abort_node = AbortNode::child(&split_abort);
-    // `collect_ybwc_tasks` で待つ master も子孫の仕事を直接受け取れるよう、
-    // この分割専用の受け口を祖先チェーンの末尾に足して子へ渡す。
-    let helper_chain = Some(parent.helper_chain_with(helper));
-
-    Box::new(move || {
-        let mut stats = crate::search::search::SearchStats::default();
-        let mut search = SearchContext::new(evaluator, mpc_config, tt, &mut stats)
-            .with_ordering_evaluator(ordering_evaluator)
-            .with_inherited_stop(stop)
-            .with_thread_pool(thread_pool)
-            .with_abort_node(abort_node)
-            .with_helper_chain(helper_chain);
-        search.selectivity_lv = selectivity_lv;
-        let score = -nws_final(&child_board, child_alpha, &mut search);
-        let aborted = search.is_aborted();
-        drop(search);
-        if !aborted && score >= cutoff_score {
-            split_abort.abort_subtree();
-        }
-        TaskResult {
-            score,
-            move_index,
-            stats,
-            aborted,
-        }
-    })
-}
-
-pub(crate) fn collect_ybwc_tasks(
-    handles: Vec<TaskHandle>,
-    helper: &HelperSlot,
-    search: &mut SearchContext,
-) -> Vec<TaskResult> {
-    let pool = search.thread_pool.clone();
-    let mut results = Vec::with_capacity(handles.len());
-    for handle in handles {
-        let result = match pool.as_deref() {
-            Some(pool) => pool.join_helping(handle, helper),
-            None => handle.join(),
-        };
-        search.stats.add_assign(result.stats);
-        if result.aborted {
-            search.stats.ybwc_split_aborts += 1;
-        }
-        results.push(result);
-    }
-    results
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

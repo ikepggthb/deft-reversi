@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Edax 4.6のYBWC実装を、共有Node、動的手配、停止処理まで再実装可能な粒度で解説する技術資料">
+  <title>Edax YBWC 実装詳解</title>
+  <style>
+:root{--bg:#f4f1e9;--paper:#fffdf8;--ink:#17201d;--muted:#5b6762;--line:#d9d5c9;--teal:#087f72;--teal2:#d9f2ec;--orange:#da6b2c;--orange2:#ffeadc;--red:#bb3d46;--red2:#fbe2e2;--blue:#236aa0;--blue2:#e2eff9;--code:#102722;--shadow:0 18px 50px rgba(38,47,42,.10)}
+[data-theme="dark"]{--bg:#101613;--paper:#18201c;--ink:#edf4ef;--muted:#aab7b0;--line:#34423b;--teal:#4ed8c1;--teal2:#183d36;--orange:#ff995f;--orange2:#462b1d;--red:#ff7d84;--red2:#462326;--blue:#75bced;--blue2:#19364a;--code:#09120f;--shadow:0 18px 50px rgba(0,0,0,.28)}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,"Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.78}button{font:inherit}.page{width:min(1500px,100%);margin:auto}.hero{position:relative;overflow:hidden;padding:68px clamp(22px,6vw,90px) 58px;color:#f5fffb;background:linear-gradient(125deg,#0a2923 0%,#0c4d43 55%,#12695a 100%)}.hero:after{content:"";position:absolute;width:520px;height:520px;border:1px solid rgba(255,255,255,.14);border-radius:50%;right:-130px;top:-250px;box-shadow:0 0 0 70px rgba(255,255,255,.035),0 0 0 150px rgba(255,255,255,.025)}.eyebrow{color:#8ee9d7;font-size:.78rem;letter-spacing:.16em;text-transform:uppercase;font-weight:800}.hero h1{max-width:950px;margin:10px 0 16px;font-size:clamp(2.1rem,5vw,4.4rem);line-height:1.08;letter-spacing:-.04em}.hero p{max-width:880px;color:#cce4dd;font-size:1.08rem}.meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:25px}.pill{padding:7px 12px;border:1px solid rgba(255,255,255,.22);border-radius:99px;background:rgba(255,255,255,.08);font-size:.82rem}.layout{display:grid;grid-template-columns:270px minmax(0,920px);gap:42px;justify-content:center;padding:38px 28px 90px}.sidebar{position:sticky;top:18px;align-self:start;max-height:calc(100vh - 36px);overflow:auto;padding:20px;background:color-mix(in srgb,var(--paper) 88%,transparent);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.sidebar strong{display:block;margin-bottom:9px}.sidebar a{display:block;padding:4px 7px;color:var(--muted);text-decoration:none;border-left:2px solid transparent;font-size:.83rem;line-height:1.45}.sidebar a.sub{padding-left:18px;font-size:.78rem}.sidebar a:hover,.sidebar a.active{color:var(--teal);border-color:var(--teal)}.tools{display:flex;gap:8px;margin-bottom:14px}.icon-btn{cursor:pointer;border:1px solid var(--line);color:var(--ink);background:var(--paper);padding:7px 10px;border-radius:9px}.content{min-width:0}.content>h1{display:none}.content h2{margin:58px 0 18px;padding:0 0 10px;border-bottom:1px solid var(--line);font-size:clamp(1.5rem,3vw,2.05rem);line-height:1.35}.content h3{margin:31px 0 10px;font-size:1.2rem}.anchor{opacity:0;margin-left:.35em;color:var(--teal);text-decoration:none;font-weight:400}.content h2:hover .anchor,.content h3:hover .anchor{opacity:1}.content p{margin:0 0 17px}.content ul,.content ol{padding-left:1.45rem;margin:0 0 20px}.content li{margin:5px 0}.content code{padding:.12em .38em;border-radius:5px;color:var(--teal);background:var(--teal2);font-family:"SFMono-Regular",Consolas,monospace;font-size:.9em}.content pre{position:relative;overflow:auto;margin:18px 0 24px;padding:18px 20px;color:#dff8ed;background:var(--code);border-radius:12px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);font-size:.84rem;line-height:1.62}.content pre code{padding:0;color:inherit;background:none}.table-wrap{overflow:auto;margin:18px 0 27px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}table{width:100%;border-collapse:collapse;font-size:.9rem}th{color:var(--teal);background:var(--teal2)}th,td{padding:11px 13px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}tr:last-child td{border:0}.check{display:flex;align-items:flex-start;gap:8px;list-style:none;margin-left:-1.4rem!important}.check input{margin-top:.48em;accent-color:var(--teal)}.visual{margin:30px 0;padding:clamp(16px,3vw,28px);background:var(--paper);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}.visual-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px}.visual h2,.visual h3{margin:0!important;padding:0!important;border:0!important}.visual p{color:var(--muted);margin:5px 0 0}.diagram{overflow:auto}.diagram svg{display:block;min-width:760px;width:100%;height:auto;font-family:inherit}.diagram .lane{fill:var(--bg);stroke:var(--line)}.diagram .task{stroke-width:1.5}.diagram .label{fill:var(--ink);font-weight:750;font-size:15px}.diagram .small{fill:var(--muted);font-size:12px}.diagram .line{stroke:var(--muted);stroke-width:2;fill:none}.diagram .dash{stroke-dasharray:7 7}.legend{display:flex;flex-wrap:wrap;gap:13px;margin-top:12px;color:var(--muted);font-size:.8rem}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:26px 0}.card{padding:17px;background:var(--paper);border:1px solid var(--line);border-radius:14px}.card b{display:block;color:var(--teal);font-size:1.45rem}.card span{color:var(--muted);font-size:.83rem}.callout{margin:22px 0;padding:16px 18px;border-left:4px solid var(--orange);border-radius:0 10px 10px 0;background:var(--orange2)}.decision{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:10px;margin-top:15px}.decision .node{padding:15px;border:1px solid var(--line);border-radius:12px;background:var(--bg);text-align:center}.decision .arrow{align-self:center;color:var(--teal);font-size:1.5rem}.node.good{background:var(--teal2)}.node.warn{background:var(--orange2)}.node.stop{background:var(--red2)}.anim-btn{white-space:nowrap;cursor:pointer;border:1px solid var(--line);border-radius:9px;padding:7px 11px;color:var(--ink);background:var(--bg)}.footer{padding:30px;text-align:center;color:var(--muted);border-top:1px solid var(--line)}
+@media(max-width:1050px){.layout{grid-template-columns:1fr}.sidebar{position:relative;top:0;max-height:none}.sidebar nav{columns:2}.cards{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:650px){.hero{padding-top:45px}.layout{padding:20px 14px 60px}.sidebar nav{columns:1}.cards{grid-template-columns:1fr 1fr}.decision{grid-template-columns:1fr}.decision .arrow{transform:rotate(90deg);justify-self:center}.visual-head{display:block}.anim-btn{margin-top:10px}}
+@media print{body{background:#fff}.hero{color:#000;background:#fff;border-bottom:2px solid #000}.hero p,.eyebrow{color:#333}.sidebar,.tools,.anim-btn{display:none}.layout{display:block;padding:20px}.visual,.table-wrap{box-shadow:none}.content h2{break-after:avoid}pre,.visual{break-inside:avoid}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+
+.edax-accent{color:var(--orange)}
+.formula{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:18px 0}.formula span{padding:10px 13px;border-radius:10px;background:var(--teal2);border:1px solid var(--teal);font-family:ui-monospace,monospace;font-size:.88rem}.formula b{color:var(--orange)}
+.compare-strip{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}.compare-strip>div{padding:16px;border-radius:12px;border:1px solid var(--line)}
+@media(max-width:650px){.compare-strip{grid-template-columns:1fr}}
+</style>
+</head>
+<body><div class="page">
+  <header class="hero">
+    <div class="eyebrow">Shared split point / dynamic work distribution / implementation reference</div>
+    <h1>Edax<br>YBWC 実装詳解</h1>
+    <p>共有分割点、候補手の動的な配布、αの共有、停止と再開、待機中の祖先による手伝いまで、Edax 4.6の並列探索を実装可能な粒度でまとめる。</p>
+    <div class="meta"><span class="pill">Edax 4.6</span><span class="pill">commit 713a434f</span><span class="pill">用語ガイド + 25節</span><span class="pill">単体で閲覧可能</span></div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="tools"><button class="icon-btn" id="theme" aria-label="配色を切り替える">◐ 配色</button><button class="icon-btn" onclick="window.print()" aria-label="印刷">⌁ 印刷</button></div>
+      <strong>目次</strong><nav><a href="#glossary" class="">読む前に：用語はこれだけ</a>
+<a href="#section-1" class="">1. 参照ソース</a>
+<a href="#section-2" class="">2. この実装の要点</a>
+<a href="#section-3" class="">3. 設定値と分割の有効化</a>
+<a href="#section-3-1" class="sub">3.1 <code>SPLIT_MIN_MOVES_TODO = 1</code> の正確な意味</a>
+<a href="#section-4" class="">4. 三つの中心データ構造</a>
+<a href="#section-4-1" class="sub">4.1 <code>Node</code>：共有分割点</a>
+<a href="#section-4-2" class="sub">4.2 <code>Task</code>：一つの常駐作業スレッド</a>
+<a href="#section-4-3" class="sub">4.3 <code>TaskStack</code>：空いている作業スレッドの一覧</a>
+<a href="#section-5" class="">5. 作業スレッドの生成と待機</a>
+<a href="#section-6" class="">6. 共有分割点の初期化</a>
+<a href="#section-7" class="">7. 最初の子を必ず直列探索する仕組み</a>
+<a href="#section-8" class="">8. 分割条件 <code>node_split()</code></a>
+<a href="#section-9" class="">9. 通常の子探索を開始する手順</a>
+<a href="#section-10" class="">10. <code>Search</code> の複製範囲</a>
+<a href="#section-10-1" class="sub">10.1 値として複製・再構築するもの</a>
+<a href="#section-10-2" class="sub">10.2 共有するもの</a>
+<a href="#section-10-3" class="sub">10.3 親子関係</a>
+<a href="#section-11" class="">11. 候補手を重複なく配る仕組み</a>
+<a href="#section-12" class="">12. 作業スレッドの探索 <code>task_search()</code></a>
+<a href="#section-13" class="">13. NWS局面からの呼び出し</a>
+<a href="#section-14" class="">14. PVS局面とルート局面からの呼び出し</a>
+<a href="#section-14-1" class="sub">14.1 内部PVS局面</a>
+<a href="#section-14-2" class="sub">14.2 ルート局面</a>
+<a href="#section-15" class="">15. 最善値とαの共有更新</a>
+<a href="#section-16" class="">16. 子探索が主探索を止める仕組み</a>
+<a href="#section-17" class="">17. 子探索の停止と完了待ち</a>
+<a href="#section-17-1" class="sub">17.1 不要な子探索を止める</a>
+<a href="#section-17-2" class="sub">17.2 全子探索の終了を待つ</a>
+<a href="#section-17-3" class="sub">17.3 主探索を再開する</a>
+<a href="#section-18" class="">18. 待機中の祖先スレッドを手伝い役にする</a>
+<a href="#section-19" class="">19. 子探索の完了処理と探索ノード数</a>
+<a href="#section-20" class="">20. 同期規則</a>
+<a href="#section-21" class="">21. 実装上の注意点</a>
+<a href="#section-21-1" class="sub">21.1 一部の共有読み取りはlock外で行われる</a>
+<a href="#section-21-2" class="sub">21.2 <code>Node</code> の寿命は全子探索より長くする</a>
+<a href="#section-21-3" class="sub">21.3 候補手一覧の寿命も維持する</a>
+<a href="#section-21-4" class="sub">21.4 古い宣言とコメントをそのまま実装要件にしない</a>
+<a href="#section-21-5" class="sub">21.5 αは探索中に変わり得る</a>
+<a href="#section-22" class="">22. 忠実な擬似コード</a>
+<a href="#section-22-1" class="sub">22.1 主探索側</a>
+<a href="#section-22-2" class="sub">22.2 分割処理</a>
+<a href="#section-22-3" class="sub">22.3 子探索側</a>
+<a href="#section-23" class="">23. 検証計画</a>
+<a href="#section-23-1" class="sub">23.1 探索値</a>
+<a href="#section-23-2" class="sub">23.2 分割境界</a>
+<a href="#section-23-3" class="sub">23.3 動的な候補手配布</a>
+<a href="#section-23-4" class="sub">23.4 停止と再開</a>
+<a href="#section-23-5" class="sub">23.5 祖先の手伝い</a>
+<a href="#section-23-6" class="sub">23.6 データ競合と探索ノード数</a>
+<a href="#section-24" class="">24. 再実装チェックリスト</a>
+<a href="#section-25" class="">25. Egaroucid版との違い</a></nav>
+    </aside>
+    <main class="content"><h1 id="top">Edax の YBWC 実装詳解<a class="anchor" href="#top" aria-label="この節へのリンク">#</a></h1>
+<p>この文書は、Edax のソースを再参照しなくても、同じ並列探索を別のプログラムへ実装できる粒度で YBWC（Young Brothers Wait Concept）を説明する。</p>
+<p>対象は <code>/home/azure/dev/edax-reversi</code> の commit <code>713a434f13b3d15fb69c61b9ba3641aed82c496c</code>（2024-12-18、Edax 4.6）である。対象ワークツリーには未追跡の補助ディレクトリがあるが、<code>src</code> 以下の参照ファイルはこの commit と一致する。</p>
+<h2 id="glossary">読む前に：用語はこれだけ<a class="anchor" href="#glossary" aria-label="この節へのリンク">#</a></h2>
+<p>本文では、ソースコード上の名前と説明用の日本語を区別する。まず次の意味だけ押さえれば読み進められる。</p>
+<div class="table-wrap"><table><thead><tr><th>この文書での表現</th><th>意味</th></tr></thead><tbody><tr><td>局面、親、子</td><td>探索木上の一つの盤面を「局面」と呼ぶ。一手進んだ局面が「子」、一手前が「親」である。</td></tr><tr><td>最初の子</td><td>手順の並べ替えで最善と予想された子。YBWCでは必ず先に直列探索する。elder brother / eldest child に相当する。</td></tr><tr><td>残りの子</td><td>最初の子以外の候補手。並列化の対象であり、young brothers に相当する。</td></tr><tr><td>共有分割点</td><td>複数のスレッドが共同で読む <code>Node</code>。現在の α、β、最善手、次に渡す候補手、実行中の子探索を持つ。</td></tr><tr><td>主探索</td><td>共有分割点を作った側の探索。ソース中の master に相当する。</td></tr><tr><td>子探索</td><td>主探索から分けられた独立 <code>Search</code> による探索。ソース中の slave に相当する。</td></tr><tr><td>作業スレッド</td><td>子探索を実行する常駐スレッド。ソース中の <code>Task</code> 一つにつき一つ存在する。</td></tr><tr><td>NWS（幅1の探索窓）</td><td>「値が α を上回るか」を判定する探索。Null Window Search の略。</td></tr><tr><td>α以下 / α超過</td><td>子の結果 <code>g</code> が <code>g &lt;= α</code> なら α以下、<code>g &gt; α</code> なら α超過。一般的な fail-low / fail-high と同じ意味である。</td></tr><tr><td>通常幅の探索窓</td><td>αとβの間を探索して値を確かめ直す探索。NegaScout/PVSで必要になる。</td></tr><tr><td>停止理由</td><td><code>Search.stop</code> に入る値。通常実行、並列探索内だけの停止、時間切れ、外部要求による停止などを区別する。</td></tr></tbody></table></div>
+<p>Edax の <code>Node</code> は盤面そのものではない。盤面は各 <code>Search</code> が個別に持ち、<code>Node</code> は複数の探索を調整する共有情報である。</p>
+
+<section class="visual" aria-labelledby="overview-title">
+  <div class="visual-head"><div><h2 id="overview-title">30秒でつかむ Edax YBWC</h2><p>Edax版を特徴づける四つの規則。</p></div></div>
+  <div class="cards">
+    <div class="card"><b>最初</b><span>最初の子は必ず主探索が直列に調べる</span></div>
+    <div class="card"><b>共有Node</b><span>α・最善値・次の候補手を複数スレッドで共有する</span></div>
+    <div class="card"><b>最大3</b><span>同じ分割点へ登録する子探索は最大三つ</span></div>
+    <div class="card"><b>祖先も働く</b><span>待機中の祖先スレッドを深い分割の手伝いへ戻す</span></div>
+  </div>
+  <div class="decision" aria-label="Edax YBWCの主要フロー">
+    <div class="node good"><strong>最初の子を直列探索</strong><br><small>αを更新</small></div><div class="arrow">→</div>
+    <div class="node warn"><strong>共有Nodeを分割</strong><br><small>空きスレッドを登録</small></div><div class="arrow">→</div>
+    <div class="node stop"><strong>次の手を共同取得</strong><br><small>β以上なら全員停止</small></div>
+  </div>
+</section>
+
+<h2 id="section-1">1. 参照ソース<a class="anchor" href="#section-1" aria-label="この節へのリンク">#</a></h2>
+<p>中心となるファイルは次の通りである。行番号は上記 commit に対するもの。</p>
+<div class="table-wrap"><table><thead><tr><th>ファイル</th><th>主な範囲</th><th>役割</th></tr></thead><tbody><tr><td><code>src/ybwc.h</code></td><td>25-109</td><td><code>Task</code>、<code>Node</code>、<code>TaskStack</code> の定義</td></tr><tr><td><code>src/ybwc.c</code></td><td>64-97</td><td>共有分割点の初期化と破棄</td></tr><tr><td><code>src/ybwc.c</code></td><td>117-144</td><td>待機中の祖先スレッドを手伝い役にする処理</td></tr><tr><td><code>src/ybwc.c</code></td><td>171-207</td><td>分割条件と子探索の開始</td></tr><tr><td><code>src/ybwc.c</code></td><td>216-254</td><td>子探索の停止、完了待ち、主探索の再開</td></tr><tr><td><code>src/ybwc.c</code></td><td>265-291</td><td>最善値と α の共有更新</td></tr><tr><td><code>src/ybwc.c</code></td><td>301-360</td><td>候補手を一件ずつ安全に配る処理</td></tr><tr><td><code>src/ybwc.c</code></td><td>366-445</td><td>作業スレッドが行う NWS/PVS と完了処理</td></tr><tr><td><code>src/ybwc.c</code></td><td>461-480</td><td>常駐作業スレッドの待機ループ</td></tr><tr><td><code>src/ybwc.c</code></td><td>488-675</td><td>作業スレッドと空き処理一覧の生成・回収</td></tr><tr><td><code>src/midgame.c</code></td><td>448-550</td><td>NWS局面からYBWCを呼ぶ処理</td></tr><tr><td><code>src/midgame.c</code></td><td>569-699</td><td>PVS局面からYBWCを呼ぶ処理</td></tr><tr><td><code>src/root.c</code></td><td>350-432</td><td>ルート局面のYBWC処理</td></tr><tr><td><code>src/search.c</code></td><td>522-555</td><td>子探索用 <code>Search</code> の複製</td></tr><tr><td><code>src/search.c</code></td><td>1319-1343</td><td>子孫を含む停止通知と状態変更</td></tr><tr><td><code>src/search.h</code></td><td>53-127</td><td><code>Search</code> の盤面、親子関係、停止状態、ノード数</td></tr><tr><td><code>src/settings.h</code></td><td>177-184</td><td>分割深さ、残手数、同一分割点の子探索数</td></tr><tr><td><code>src/const.h</code></td><td>76-83</td><td>停止理由 <code>Stop</code></td></tr></tbody></table></div>
+<h2 id="section-2">2. この実装の要点<a class="anchor" href="#section-2" aria-label="この節へのリンク">#</a></h2>
+<p>Edax は、候補手ごとに一回限りの処理を作る方式ではない。一つの共有分割点を作り、主探索と最大三つの子探索が、そこから次の候補手を順番に受け取る。</p>
+<pre><code class="language-text">候補手を良さそうな順に並べる
+  |
+  +-- 最初の子を主探索が直列探索
+  |      |
+  |      +-- ここで枝刈りできれば分割しない
+  |
+  +-- 残りの子について分割を試す
+         |
+         +-- 空き作業スレッドあり -&gt; 子探索を一つ追加
+         |
+         +-- 空きなし -&gt; 主探索がその子を直列探索
+         |
+         +-- 各子探索は一手で終了せず、共有分割点から次の手も受け取る
+         |
+         +-- αがβ以上 -&gt; 主探索と不要な子探索を止める
+         |
+         +-- 主探索は全子探索の終了を待つ</code></pre>
+<p>Egaroucid版との最も大きな違いは、作業スレッドが一つの手だけを担当するのではなく、探索を終えるたびに同じ共有分割点から次の手を取得することである。候補手の割り当ては動的に変わる。</p>
+<p>もう一つの特徴は、子探索を待っている主探索スレッドを眠らせたままにしないことである。別の子探索がさらに深い場所で分割したい場合、待機中の祖先スレッドがその深い分割を手伝える。</p>
+<h2 id="section-3">3. 設定値と分割の有効化<a class="anchor" href="#section-3" aria-label="この節へのリンク">#</a></h2>
+<p>設定値は次である。</p>
+<pre><code class="language-c">#define SPLIT_MIN_DEPTH 5
+#define SPLIT_MIN_MOVES_TODO 1
+#define SPLIT_MAX_SLAVES 3</code></pre>
+<p>意味は次の通り。</p>
+<ul><li>現在の共有分割点の <code>depth</code> が 5 以上でなければ分割しない。</li><li><code>n_moves_todo</code> が 1 以上でなければ分割しない。</li><li>同じ共有分割点に同時登録できる子探索は最大 3 個である。</li></ul>
+<p><code>options.n_task</code> は主探索を含む総スレッド数である。<code>TaskStack</code> は要素 0 を主探索に使い、要素 1 以降を常駐作業スレッドにする。そのため、利用できる追加作業スレッド数は <code>options.n_task - 1</code> である。</p>
+<pre><code class="language-c">search-&gt;allow_node_splitting = (search-&gt;tasks-&gt;n &gt; 1);</code></pre>
+<p>総スレッド数が 1 ならYBWCは完全に無効になる。コマンド設定の <code>n-tasks</code> は 1 以上、実行環境の最大スレッド数以下へ制限される。</p>
+<h3 id="section-3-1">3.1 <code>SPLIT_MIN_MOVES_TODO = 1</code> の正確な意味<a class="anchor" href="#section-3-1" aria-label="この節へのリンク">#</a></h3>
+<p><code>n_moves_todo</code> は、最初に候補手数で初期化される。次の手へ進むたびに一つ減るため、現在渡されている手を含む残数として働く。</p>
+<p>名前に反して、複数スレッドが動き始めた後の <code>n_moves_done</code> は「探索完了した手の数」ではなく、共有カーソルが通過して各スレッドへ割り当てた手の数に近い。<code>n_moves_todo</code> も厳密な未完了処理数ではなく、共有カーソルより後ろに残る手を数えるための値である。最初の子については、主探索がその探索を終えて <code>node_next_move()</code> を呼ぶまで <code>n_moves_done == 0</code> なので、YBWCの最初の子を直列にする条件として正しく働く。</p>
+<p>設定値が 1 なので、残りがちょうど一手でも分割条件を満たす。ソースのコメントは「最後の手を分割しない」と説明しているが、現在値 1 では最後の一手も作業スレッドへ渡せる。最後の数手を主探索へ残したい場合は、この定数を 2 以上にする必要がある。</p>
+
+<section class="visual" aria-labelledby="architecture-title">
+  <div class="visual-head"><div><h3 id="architecture-title">共有するもの、分離するもの</h3><p>盤面と評価状態は各Searchが持ち、探索の調整情報だけをNodeへ集める。</p></div></div>
+  <div class="diagram"><svg viewBox="0 0 900 430" role="img" aria-label="中央の共有Nodeを主探索と三つの子探索が利用する構造">
+    <defs><marker id="edax-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="var(--muted)"/></marker></defs>
+    <rect x="315" y="115" width="270" height="205" rx="18" fill="var(--teal2)" stroke="var(--teal)" stroke-width="2"/>
+    <text x="415" y="145" class="label">共有 Node</text>
+    <text x="350" y="178" class="small">alpha / beta</text><text x="350" y="202" class="small">bestscore / bestmove</text><text x="350" y="226" class="small">次の候補手を指す move</text><text x="350" y="250" class="small">n_moves_done / todo</text><text x="350" y="274" class="small">実行中の子探索 slave[]</text><text x="350" y="298" class="small">mutex + condition</text>
+    <rect x="38" y="42" width="200" height="105" rx="14" fill="var(--orange2)" stroke="var(--orange)"/><text x="93" y="72" class="label">主探索 Search</text><text x="65" y="102" class="small">専用の盤面・評価状態</text><text x="65" y="124" class="small">親スレッドで実行</text>
+    <rect x="662" y="32" width="200" height="90" rx="14" fill="var(--blue2)" stroke="var(--blue)"/><text x="713" y="62" class="label">子 Search 1</text><text x="690" y="91" class="small">専用盤面 + 作業スレッド</text>
+    <rect x="662" y="167" width="200" height="90" rx="14" fill="var(--blue2)" stroke="var(--blue)"/><text x="713" y="197" class="label">子 Search 2</text><text x="690" y="226" class="small">専用盤面 + 作業スレッド</text>
+    <rect x="662" y="302" width="200" height="90" rx="14" fill="var(--blue2)" stroke="var(--blue)"/><text x="713" y="332" class="label">子 Search 3</text><text x="690" y="361" class="small">専用盤面 + 作業スレッド</text>
+    <path d="M238 95 C285 95 285 165 315 165" class="line" marker-end="url(#edax-arrow)"/><path d="M662 77 C620 77 620 165 585 165" class="line" marker-end="url(#edax-arrow)"/><path d="M662 212 H585" class="line" marker-end="url(#edax-arrow)"/><path d="M662 347 C620 347 620 275 585 275" class="line" marker-end="url(#edax-arrow)"/>
+    <text x="55" y="385" class="small">置換表・TaskStack・最終ResultはSearch間でも共有する</text>
+  </svg></div>
+</section>
+
+<h2 id="section-4">4. 三つの中心データ構造<a class="anchor" href="#section-4" aria-label="この節へのリンク">#</a></h2>
+<h3 id="section-4-1">4.1 <code>Node</code>：共有分割点<a class="anchor" href="#section-4-1" aria-label="この節へのリンク">#</a></h3>
+<p><code>Node</code> は複数スレッドが共同更新する調整用構造体である。</p>
+<pre><code class="language-c">typedef struct Node {
+    Search *search;                         // 主探索
+    Search *slave[SPLIT_MAX_SLAVES];        // 実行中の子探索
+    Node *parent;                           // 一つ外側の共有分割点
+    Move *move;                             // 次の候補手を指す位置
+    Task help;                              // 待機中の主探索が使う一時処理
+    mtx_t mutex;
+    cnd_t condition;
+    int bestmove;
+    int bestscore;
+    int alpha;
+    int beta;
+    int n_slave;
+    int depth;
+    int height;
+    int n_moves_done;
+    int n_moves_todo;
+    bool is_helping;
+    bool pv_node;
+    bool stop_point;
+    bool is_waiting;
+} Node;</code></pre>
+<p>共有するものは α、β、最善値、最善手、候補手を配る位置、実行中の子探索一覧である。盤面、評価状態、再帰の作業領域は共有しない。</p>
+<p><code>beta</code> は初期化後に変えない。<code>alpha</code> と <code>bestscore</code> は結果が届くたびに単調増加する。<code>move</code> は候補手一覧を前へ進むだけで、前の手へ戻らない。</p>
+<h3 id="section-4-2">4.2 <code>Task</code>：一つの常駐作業スレッド<a class="anchor" href="#section-4-2" aria-label="この節へのリンク">#</a></h3>
+<p><code>Task</code> はスレッド、条件変数、再利用する <code>Search</code> をひとまとめにする。</p>
+<pre><code class="language-c">typedef struct Task {
+    Search *search;
+    Node *node;
+    Move *move;
+    TaskStack *container;
+    thrd_t thread;
+    mtx_t mutex;
+    cnd_t condition;
+    bool loop;
+    bool run;
+} Task;</code></pre>
+<p><code>run == false</code> の間は条件変数で待機する。<code>node_split()</code> が <code>node</code>、<code>move</code>、複製済み <code>search</code> を設定し、<code>run = true</code> にして起こす。一つの子探索が終わると同じ <code>Task</code> は空き一覧へ戻り、別の分割で再利用される。</p>
+<h3 id="section-4-3">4.3 <code>TaskStack</code>：空いている作業スレッドの一覧<a class="anchor" href="#section-4-3" aria-label="この節へのリンク">#</a></h3>
+<pre><code class="language-c">typedef struct TaskStack {
+    Task **stack;
+    Task *task;
+    mtx_t mutex;
+    int n;
+    int n_idle;
+} TaskStack;</code></pre>
+<p>名前どおり後入れ先出しである。<code>task_stack_get_idle_task()</code> は末尾から一件取り出し、空きがなければ <code>NULL</code> を返す。待ち行列へ処理を蓄積しないため、空きがない場合は主探索が直列探索へ戻る。</p>
+<p>ファイル冒頭のコメントには FIFO とあるが、ヘッダと実装は FILO/LIFO である。探索結果には影響しないが、同じ作業スレッドの再利用順まで合わせる場合は後入れ先出しにする。</p>
+<h2 id="section-5">5. 作業スレッドの生成と待機<a class="anchor" href="#section-5" aria-label="この節へのリンク">#</a></h2>
+<p><code>task_stack_init(stack, n)</code> は <code>n</code> 個の <code>Task</code> 領域を確保する。</p>
+<pre><code class="language-text">task[0]      主探索が現在のスレッドで使用する。新しいスレッドは作らない。
+task[1..n-1] task_init() 後に thrd_create() し、task_loop() で常駐待機する。</code></pre>
+<p>各常駐スレッドは次のループを実行する。</p>
+<pre><code class="language-text">Taskのmutexを取得
+loopがtrueの間:
+    runがfalseなら条件変数で待つ
+    runがtrueなら:
+        task_search(task)
+        このTaskを空き一覧へ戻す</code></pre>
+<p>作業のたびにスレッドを生成・破棄しないことが重要である。分割は探索木の多くの場所で発生するため、スレッド生成費用を毎回払うとYBWCの利点が失われる。</p>
+<p><code>task_free()</code> は待機ループを終了させ、スレッドを <code>thrd_join()</code> してから条件変数、mutex、専用 <code>Search</code> を破棄する。</p>
+<h2 id="section-6">6. 共有分割点の初期化<a class="anchor" href="#section-6" aria-label="この節へのリンク">#</a></h2>
+<p>探索関数は候補手を生成した後、スタック上に <code>Node node</code> を作り、次で初期化する。</p>
+<pre><code class="language-c">node_init(&amp;node, search, alpha, beta, depth, movelist.n_moves, parent);</code></pre>
+<p>主な初期値は次の通り。</p>
+<pre><code class="language-text">alpha / beta       呼び出し元の探索窓
+bestscore          -SCORE_INF
+bestmove           NOMOVE
+n_moves_todo       候補手数
+n_moves_done       0
+n_slave            0
+parent             一つ外側の共有分割点
+search             主探索のSearch
+is_waiting         false
+is_helping         false
+stop_point         false</code></pre>
+<p><code>parent</code> は盤面上の親局面ではなく、「現在の探索を生んだ外側の共有分割点」を指す。この連鎖が、待機中の祖先スレッドを探すために使われる。</p>
+<p><code>Node</code> はmutexと条件変数を含むため、探索終了時に必ず <code>node_free()</code> する。ただし、その前に全子探索が終了していなければならない。</p>
+<h2 id="section-7">7. 最初の子を必ず直列探索する仕組み<a class="anchor" href="#section-7" aria-label="この節へのリンク">#</a></h2>
+<p><code>node_first_move()</code> は候補手一覧の先頭を返し、同時に次を初期化する。</p>
+<pre><code class="language-c">node-&gt;n_moves_todo = movelist-&gt;n_moves;
+node-&gt;n_moves_done = 0;
+node-&gt;move = movelist_first(movelist);</code></pre>
+<p>NWS局面では最初の手もループ内で <code>node_split()</code> へ渡される。しかし分割条件には次がある。</p>
+<pre><code class="language-c">node-&gt;n_moves_done</code></pre>
+<p>最初の手では 0 なので分割に失敗し、主探索が直列探索する。PVS局面とルート局面は、ソース構造上も最初の手をループ外で通常幅探索してから、二手目以降に <code>node_split()</code> を呼ぶ。</p>
+<p>このため、どの呼び出し経路でも最初の子が完了する前に残りの子は並列化されない。</p>
+<h2 id="section-8">8. 分割条件 <code>node_split()</code><a class="anchor" href="#section-8" aria-label="この節へのリンク">#</a></h2>
+<p>分割を試す条件は五つすべての論理積である。</p>
+<pre><code class="language-c">search-&gt;allow_node_splitting
+&amp;&amp; node-&gt;depth &gt;= SPLIT_MIN_DEPTH
+&amp;&amp; node-&gt;n_moves_done
+&amp;&amp; node-&gt;n_slave &lt; SPLIT_MAX_SLAVES
+&amp;&amp; node-&gt;n_moves_todo &gt;= SPLIT_MIN_MOVES_TODO</code></pre>
+<p>日本語にすると次になる。</p>
+<ol><li>複数スレッド探索が有効である。</li><li>現在の深さが 5 以上である。</li><li>少なくとも最初の一手を探索済みである。</li><li>この共有分割点の子探索が 3 個未満である。</li><li>残り候補手数が設定値以上である。</li></ol>
+<p>条件を満たしても、実際に手伝えるスレッドがなければ分割は失敗する。失敗時、呼び出し元は同じ手をその場で直列探索する。</p>
+<p>成功時は次のどちらかを使う。</p>
+<ol><li>待機中の祖先主探索を手伝い役にする。</li><li>それがなければ、全体の空き作業スレッド一覧から一つ取る。</li></ol>
+<p>この順序は重要である。眠っている祖先スレッドを先に再利用し、実際に空いている作業スレッドを他の分割へ残す。</p>
+<h2 id="section-9">9. 通常の子探索を開始する手順<a class="anchor" href="#section-9" aria-label="この節へのリンク">#</a></h2>
+<p>空き作業スレッドを得た場合、<code>node_split()</code> は次を行う。</p>
+<pre><code class="language-text">1. task.node = 現在の共有分割点
+2. task.move = 今回渡す候補手
+3. search_clone(task.search, 主探索のSearch)
+4. 共有分割点のmutex内で slave[] に task.search を追加
+5. task.run = true
+6. task.condition をsignalして作業スレッドを起こす</code></pre>
+<p><code>search_clone()</code> の前には、主探索がまだ候補手を盤面へ適用していない。子探索用 <code>Search</code> は親局面の盤面を複製し、<code>task_search()</code> が担当手を適用する。</p>
+<p>子探索の登録後、主探索は同じ手を探索しない。ループ末尾の <code>node_next_move()</code> で次の候補手を取得し、さらに分割または直列探索を試す。</p>
+<h2 id="section-10">10. <code>Search</code> の複製範囲<a class="anchor" href="#section-10" aria-label="この節へのリンク">#</a></h2>
+<p><code>search_clone(child, master)</code> は子探索専用の変更可能な状態を作る。</p>
+<h3 id="section-10-1">10.1 値として複製・再構築するもの<a class="anchor" href="#section-10-1" aria-label="この節へのリンク">#</a></h3>
+<ul><li>盤面と手番</li><li>空きマス一覧、評価状態、パリティなど <code>search_setup()</code> が作る盤面依存状態</li><li>深さ、選択率、ProbCut再帰レベル、PV延長深さ</li><li>時間設定、探索オプション、現在の高さと局面種別</li><li>安定石によるスコア上下限</li><li><code>allow_node_splitting</code></li></ul>
+<p>子の <code>n_nodes</code> と <code>child_nodes</code> は 0 へ戻す。</p>
+<h3 id="section-10-2">10.2 共有するもの<a class="anchor" href="#section-10-2" aria-label="この節へのリンク">#</a></h3>
+<ul><li>通常の置換表、PV用置換表、浅い探索用置換表</li><li><code>TaskStack</code></li><li>表示用コールバック</li><li>最終結果 <code>Result</code></li><li>最上位の主探索を指す <code>master</code></li></ul>
+<h3 id="section-10-3">10.3 親子関係<a class="anchor" href="#section-10-3" aria-label="この節へのリンク">#</a></h3>
+<p>主探索の <code>Search.child[]</code> へ子 <code>Search</code> を追加し、子の <code>parent</code> を主探索へ向ける。この更新は主探索のspin lockで守る。</p>
+<p>この親子関係は探索値の共有ではなく、停止通知と探索ノード数の回収に使う。<code>search_stop_all()</code> はこの木を再帰的にたどり、子孫探索をまとめて停止する。</p>
+
+<section class="visual" aria-labelledby="dynamic-title">
+  <div class="visual-head"><div><h3 id="dynamic-title">アニメーション：終了したスレッドが次の手を取る</h3><p>候補手を一回ずつ固定配布せず、早く終わったスレッドが共有Nodeから次を取得する。</p></div><button class="anim-btn" data-animation="dynamic-svg">一時停止</button></div>
+  <div class="diagram"><svg id="dynamic-svg" viewBox="0 0 900 410" role="img" aria-label="親と作業スレッドが候補手AからGを動的に取得する">
+    <text x="22" y="36" class="label">候補手一覧</text>
+    <g class="label"><rect x="150" y="12" width="62" height="44" rx="8" fill="var(--teal2)" stroke="var(--teal)"/><text x="176" y="40">A</text><rect x="222" y="12" width="62" height="44" rx="8" fill="var(--teal2)" stroke="var(--teal)"/><text x="248" y="40">B</text><rect x="294" y="12" width="62" height="44" rx="8" fill="var(--teal2)" stroke="var(--teal)"/><text x="320" y="40">C</text><rect x="366" y="12" width="62" height="44" rx="8" fill="var(--teal2)" stroke="var(--teal)"/><text x="392" y="40">D</text><rect x="438" y="12" width="62" height="44" rx="8" fill="var(--teal2)" stroke="var(--teal)"/><text x="464" y="40">E</text><rect x="510" y="12" width="62" height="44" rx="8" fill="var(--teal2)" stroke="var(--teal)"/><text x="536" y="40">F</text><rect x="582" y="12" width="62" height="44" rx="8" fill="var(--teal2)" stroke="var(--teal)"/><text x="608" y="40">G</text></g>
+    <rect class="lane" x="145" y="100" width="710" height="72" rx="12"/><rect class="lane" x="145" y="205" width="710" height="72" rx="12"/><rect class="lane" x="145" y="310" width="710" height="72" rx="12"/>
+    <text x="28" y="140" class="label">主探索</text><text x="28" y="245" class="label">作業1</text><text x="28" y="350" class="label">作業2</text>
+    <rect x="165" y="115" width="140" height="42" rx="9" fill="var(--orange2)" stroke="var(--orange)"/><text x="213" y="142" class="label">A 直列</text>
+    <rect x="330" y="115" width="205" height="42" rx="9" fill="var(--orange2)" stroke="var(--orange)"/><text x="386" y="142" class="label">D を探索</text>
+    <rect x="560" y="115" width="250" height="42" rx="9" fill="var(--orange2)" stroke="var(--orange)"/><text x="626" y="142" class="label">G を探索</text>
+    <rect x="235" y="220" width="250" height="42" rx="9" fill="var(--blue2)" stroke="var(--blue)"/><text x="300" y="247" class="label">B を探索</text>
+    <rect x="510" y="220" width="160" height="42" rx="9" fill="var(--blue2)" stroke="var(--blue)"/><text x="543" y="247" class="label">E を探索</text>
+    <rect x="310" y="325" width="140" height="42" rx="9" fill="var(--blue2)" stroke="var(--blue)"/><text x="342" y="352" class="label">C を探索</text>
+    <rect x="475" y="325" width="260" height="42" rx="9" fill="var(--blue2)" stroke="var(--blue)"/><text x="540" y="352" class="label">F を探索</text>
+    <circle r="9" fill="var(--teal)"><animateMotion path="M180 75 H610" dur="7s" repeatCount="indefinite"/></circle>
+    <text x="150" y="402" class="small">棒の長さは処理時間の違いを表す。終了順に次の未処理手を取得する。</text>
+  </svg></div>
+</section>
+
+<h2 id="section-11">11. 候補手を重複なく配る仕組み<a class="anchor" href="#section-11" aria-label="この節へのリンク">#</a></h2>
+<p>主探索とすべての子探索は、同じ <code>Node.move</code>、<code>n_moves_done</code>、<code>n_moves_todo</code> を使う。</p>
+<p>次の手を取得する本体は次である。</p>
+<pre><code class="language-c">if (node-&gt;move &amp;&amp; node-&gt;alpha &lt; node-&gt;beta &amp;&amp; !node-&gt;search-&gt;stop) {
+    ++node-&gt;n_moves_done;
+    --node-&gt;n_moves_todo;
+    move = node-&gt;move = move_next(node-&gt;move);
+} else {
+    move = NULL;
+}</code></pre>
+<p>主探索は <code>node_next_move()</code> を使い、関数内でmutexを取得する。子探索は既にmutexを持って結果更新をしているため、lockless版をそのまま呼ぶ。</p>
+<p>mutex内でポインタを一度だけ前へ進めるため、同じ候補手が二つのスレッドへ渡ることはない。先に探索を終えたスレッドが次の手を取得するので、候補手数がスレッド数より多くても動的に負荷分散できる。</p>
+<p>ここで <code>n_moves_done</code> が増えるのは、直前の手の探索完了を全体として確認した時ではなく、共有カーソルを次へ進めた時である。別スレッドが担当中の手もあり得るため、この値を「全スレッドで完了済みの手数」として使ってはいけない。</p>
+<p>次のどれかが成立すると、新しい手は配られない。</p>
+<ul><li>候補手をすべて配り終えた。</li><li><code>alpha &gt;= beta</code> となり枝刈りが成立した。</li><li>主探索に停止理由が設定された。</li></ul>
+<h2 id="section-12">12. 作業スレッドの探索 <code>task_search()</code><a class="anchor" href="#section-12" aria-label="この節へのリンク">#</a></h2>
+<p>作業スレッドは、一つの手を探索して終了するとは限らない。共有分割点から手が返らなくなるまで次を繰り返す。</p>
+<pre><code class="language-text">while 担当手があり、子Searchが停止していない:
+    共有alphaを読み取る
+    alpha &gt;= beta なら終了
+
+    子Searchへ担当手を適用
+    g = 幅1の探索窓で探索
+
+    alpha &lt; g &lt; beta なら:
+        通常幅の探索窓で再探索
+
+    子Searchの盤面を元へ戻す
+    共有分割点のmutexを取得
+        結果が最善なら bestscore / bestmove / alpha を更新
+        必要なら主探索へ停止を通知
+        次の候補手を取得
+    mutexを解放</code></pre>
+<p>実際の呼び出しは次である。</p>
+<pre><code class="language-c">move-&gt;score = -NWS_midgame(search, -alpha - 1, node-&gt;depth - 1, node);
+if (alpha &lt; move-&gt;score &amp;&amp; move-&gt;score &lt; node-&gt;beta) {
+    move-&gt;score = -PVS_midgame(search, -node-&gt;beta, -alpha,
+                              node-&gt;depth - 1, node);
+}</code></pre>
+<p>NWS局面では <code>node-&gt;beta == node-&gt;alpha + 1</code> なので、整数スコアに <code>alpha &lt; g &lt; beta</code> は存在しない。したがって通常幅の再探索は起こらない。</p>
+<p>PVS局面とルート局面ではβまで幅があるため、α超過かつβ未満の手を通常幅で再探索する。<code>node-&gt;pv_node == true</code> のassertionは、この経路がPVS局面だけで起きることを確認している。</p>
+<h2 id="section-13">13. NWS局面からの呼び出し<a class="anchor" href="#section-13" aria-label="この節へのリンク">#</a></h2>
+<p><code>NWS_midgame()</code> は置換表、ProbCut、手順の並べ替え、ETCを処理した後に共有分割点を作る。</p>
+<pre><code class="language-text">for 最初の手から順に:
+    node_split() を試す
+    失敗した場合:
+        主探索が幅1の探索窓でその手を探索
+        node_update() で共有結果を更新
+
+全候補手を配り終えたら node_wait_slaves()</code></pre>
+<p>最初の手でも <code>node_split()</code> は呼ばれるが、<code>n_moves_done == 0</code> によって必ず直列になる。</p>
+<p>NWSの探索窓は <code>[alpha, alpha + 1]</code> である。どれか一手がαを上回ればβ以上になるため、残りの兄弟を停止してよい。</p>
+<h2 id="section-14">14. PVS局面とルート局面からの呼び出し<a class="anchor" href="#section-14" aria-label="この節へのリンク">#</a></h2>
+<h3 id="section-14-1">14.1 内部PVS局面<a class="anchor" href="#section-14-1" aria-label="この節へのリンク">#</a></h3>
+<p><code>PVS_midgame()</code> は最初の手をループ外で通常幅探索する。共有 <code>alpha</code> を更新した後、二手目以降で分割を試す。</p>
+<p>分割に失敗した手は、主探索がまずNWSする。結果が <code>alpha &lt; g &lt; beta</code> なら同じ手を通常幅で再探索する。これは作業スレッド側と同じ処理である。</p>
+<h3 id="section-14-2">14.2 ルート局面<a class="anchor" href="#section-14-2" aria-label="この節へのリンク">#</a></h3>
+<p>ルートの処理も同じだが、次の追加条件がある。</p>
+<pre><code class="language-c">depth &gt; search-&gt;options.multipv_depth</code></pre>
+<p>MultiPVを求める深さでは各手の値が必要になるため、YBWC分割を行わない。また、その範囲では現在αではなく <code>SCORE_MIN</code> をNWS基準に使う。</p>
+<p>ルートでは各手の探索費用、進捗表示、時間延長、安定石による値の制限、候補手一覧の並べ直しも行う。これらはYBWCの分割規則ではないが、同じルートループ内にある。</p>
+<h2 id="section-15">15. 最善値とαの共有更新<a class="anchor" href="#section-15" aria-label="この節へのリンク">#</a></h2>
+<p>主探索は <code>node_update()</code>、子探索は <code>task_search()</code> 内の同等処理で共有結果を更新する。どちらも <code>node-&gt;mutex</code> 内で次を行う。</p>
+<pre><code class="language-text">探索が停止しておらず、今回のscoreがbestscoreより大きい場合:
+    bestscore = score
+    bestmove = move
+    必要ならルートの表示情報を更新
+    score &gt; alpha なら alpha = score</code></pre>
+<p>同点では更新しないため、先に登録された手が最善手として残る。</p>
+<p>主探索側の <code>node_update()</code> は、更新後に <code>alpha &gt;= beta</code> なら実行中の全子探索へ停止通知を送る。停止通知は各子 <code>Search</code> の子孫にも再帰的に伝わる。</p>
+<p>共有αは単調に上がる。各スレッドは一手の探索開始時にαを読み取り、その手の探索中はその値を使う。探索中に他スレッドがαを上げても、既に始まった探索窓は途中変更しない。結果を共有へ戻す時点で、新しい <code>bestscore</code> と比較する。</p>
+
+<section class="visual" aria-labelledby="stop-title">
+  <div class="visual-head"><div><h3 id="stop-title">子探索がβ以上を見つけた時</h3><p>局所的な停止理由だけを後で解除し、時間切れや外部停止は解除しない。</p></div></div>
+  <div class="decision">
+    <div class="node stop"><strong>子探索：α ≥ β</strong><br><small>stop_point = true<br>主探索を一時停止</small></div><div class="arrow">→</div>
+    <div class="node warn"><strong>主探索が戻る</strong><br><small>全子探索を停止・待機</small></div><div class="arrow">→</div>
+    <div class="node good"><strong>局所停止だけ解除</strong><br><small>STOP_PARALLEL_SEARCH<br>→ RUNNING</small></div>
+  </div>
+  <div class="callout"><strong>解除条件：</strong><code>stop == STOP_PARALLEL_SEARCH</code> と <code>stop_point == true</code> の両方が必要。</div>
+</section>
+
+<h2 id="section-16">16. 子探索が主探索を止める仕組み<a class="anchor" href="#section-16" aria-label="この節へのリンク">#</a></h2>
+<p>子探索が <code>node-&gt;alpha &gt;= node-&gt;beta</code> にした場合、同じ共有分割点を作った主探索は別の手を深く探索中かもしれない。不要な探索を早く止めるため、子探索はmutex内で次を行う。</p>
+<pre><code class="language-c">if (node-&gt;alpha &gt;= node-&gt;beta &amp;&amp; node-&gt;search-&gt;stop == RUNNING) {
+    node-&gt;stop_point = true;
+    node-&gt;search-&gt;stop = STOP_PARALLEL_SEARCH;
+}</code></pre>
+<p><code>STOP_PARALLEL_SEARCH</code> は時間切れや外部停止とは異なる。この共有分割点内で枝刈りが成立したため、主探索を一時中断するという意味である。</p>
+<p>主探索の再帰関数は <code>search-&gt;stop</code> を定期確認し、値を早く返す。主探索が共有分割点へ戻ると、全子探索の終了を待つ。</p>
+<h2 id="section-17">17. 子探索の停止と完了待ち<a class="anchor" href="#section-17" aria-label="この節へのリンク">#</a></h2>
+<p><code>node_wait_slaves()</code> は三段階で動く。</p>
+<h3 id="section-17-1">17.1 不要な子探索を止める<a class="anchor" href="#section-17-1" aria-label="この節へのリンク">#</a></h3>
+<p>次のどちらかなら、登録済みの全子探索に <code>STOP_PARALLEL_SEARCH</code> を再帰通知する。</p>
+<pre><code class="language-c">node-&gt;alpha &gt;= node-&gt;beta || node-&gt;search-&gt;stop</code></pre>
+<h3 id="section-17-2">17.2 全子探索の終了を待つ<a class="anchor" href="#section-17-2" aria-label="この節へのリンク">#</a></h3>
+<p><code>n_slave &gt; 0</code> の間、共有分割点の条件変数で待つ。子探索は終了時に自身を <code>slave[]</code> から外し、<code>n_slave</code> を減らし、同じ条件変数をbroadcastする。</p>
+<p>条件変数待ちはmutexを一時解放し、起床時に再取得する。したがって子探索は待機中でも共有分割点を更新できる。</p>
+<h3 id="section-17-3">17.3 主探索を再開する<a class="anchor" href="#section-17-3" aria-label="この節へのリンク">#</a></h3>
+<p>全子探索が終了し、次を両方満たす場合だけ主探索の停止理由を <code>RUNNING</code> へ戻す。</p>
+<pre><code class="language-c">node-&gt;search-&gt;stop == STOP_PARALLEL_SEARCH
+&amp;&amp; node-&gt;stop_point</code></pre>
+<p><code>stop_point</code> は、この共有分割点の子探索が主探索を止めた時だけtrueになる。時間切れ、思考中止、外側の分割による停止はここで解除しない。この区別が、局所的な枝刈り通知を安全に元へ戻す鍵である。</p>
+
+<section class="visual" aria-labelledby="helper-title">
+  <div class="visual-head"><div><h3 id="helper-title">アニメーション：待機中の祖先が深い分割を手伝う</h3><p>子探索Xを待つ祖先スレッドを起こし、Xの深部で生じた新しい分割へ一時的に参加させる。</p></div><button class="anim-btn" data-animation="helper-svg">一時停止</button></div>
+  <div class="diagram"><svg id="helper-svg" viewBox="0 0 900 400" role="img" aria-label="待機中の祖先スレッドが子探索の深い分割を手伝う流れ">
+    <defs><marker id="helper-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="var(--muted)"/></marker></defs>
+    <rect x="55" y="105" width="225" height="105" rx="15" fill="var(--orange2)" stroke="var(--orange)"/><text x="106" y="140" class="label">祖先の主探索</text><text x="93" y="172" class="small">子探索Xの完了待ち</text>
+    <rect x="350" y="105" width="195" height="105" rx="15" fill="var(--blue2)" stroke="var(--blue)"/><text x="394" y="140" class="label">子探索 X</text><text x="382" y="172" class="small">さらに深く探索中</text>
+    <rect x="625" y="245" width="220" height="105" rx="15" fill="var(--teal2)" stroke="var(--teal)"/><text x="672" y="280" class="label">深い共有分割点</text><text x="665" y="312" class="small">新しい手伝いが必要</text>
+    <path d="M280 157 H350" class="line" marker-end="url(#helper-arrow)"/><path d="M545 180 C610 195 620 245 660 260" class="line" marker-end="url(#helper-arrow)"/>
+    <path d="M165 210 C220 335 510 360 625 315" stroke="var(--red)" stroke-width="3" fill="none" stroke-dasharray="8 7" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;.25;.33;.83;1" dur="6s" repeatCount="indefinite"/></path>
+    <circle r="11" fill="var(--red)"><animateMotion path="M165 210 C220 335 510 360 625 315" dur="6s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.28;.78;1" calcMode="linear"/></circle>
+    <text x="290" y="335" fill="var(--red)" font-weight="750" opacity="0">待機を中断して手伝う<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;.25;.33;.83;1" dur="6s" repeatCount="indefinite"/></text>
+    <text x="80" y="385" class="small">手伝い終了後、祖先スレッドは子探索Xの完了待ちへ戻る。</text>
+  </svg></div>
+</section>
+
+<h2 id="section-18">18. 待機中の祖先スレッドを手伝い役にする<a class="anchor" href="#section-18" aria-label="この節へのリンク">#</a></h2>
+<p>Edax固有の重要な最適化が <code>get_helper()</code> である。</p>
+<p>ある子探索が深い局面で分割しようとした時、まず <code>node-&gt;parent</code> から外側の共有分割点をたどる。次を満たす祖先を探す。</p>
+<pre><code class="language-text">祖先が子探索の終了待ちである
+祖先がまだ別の手伝いをしていない
+祖先自身に実行中の子探索がある</code></pre>
+<p>見つけた場合、その祖先 <code>Node</code> に埋め込まれた一時 <code>Task help</code> を初期化する。現在の深い局面から <code>Search</code> を複製し、深い共有分割点の <code>slave[]</code> へ登録してから、祖先の条件変数をbroadcastする。</p>
+<p>待機中の祖先スレッドは起きると、通常の待機を続ける代わりに自分で <code>task_search(&amp;node-&gt;help)</code> を実行する。終了後に一時 <code>Task</code> を破棄し、元の子探索待ちへ戻る。</p>
+<pre><code class="language-text">祖先の主探索 ── 子探索Xの終了待ち
+                       |
+                       +-- Xの深部で新しい分割が必要
+                              |
+                              +-- 待機中の祖先を起こす
+                                      |
+                                      +-- 祖先が深い分割を手伝う
+                                      +-- 完了後、Xの終了待ちへ戻る</code></pre>
+<p>この処理により、主探索と子探索の依存関係で眠っているCPUを、さらに深い分割へ再投入できる。通常の空き一覧より先に祖先を探すのは、この待機CPUを優先的に活用するためである。</p>
+<p>一時 <code>Task help</code> は新しいスレッドを作らない。待機していたスレッド上で同期実行するため、<code>task_init()</code> はするが <code>thrd_create()</code> はしない。<code>task_free()</code> でも <code>loop == false</code> なのでスレッド完了待ちは発生しない。</p>
+<h2 id="section-19">19. 子探索の完了処理と探索ノード数<a class="anchor" href="#section-19" aria-label="この節へのリンク">#</a></h2>
+<p><code>task_search()</code> が担当手をすべて処理すると次を行う。</p>
+<pre><code class="language-text">1. 子Searchの状態を STOP_END にする
+2. 親Searchのspin lockを取得
+3. 親Search.child[] から自分を外す
+4. 自分と子孫が探索したノード数を親の child_nodes へ加算
+5. 共有分割点のmutexを取得
+6. task.run = false
+7. Node.slave[] から自分を外し n_slave を減らす
+8. Node.condition をbroadcast</code></pre>
+<p>探索ノード数は <code>search-&gt;n_nodes + search-&gt;child_nodes</code> で数える。子探索がさらに分割した場合、その孫の探索量は子の <code>child_nodes</code> に集約され、最後に主探索へ足される。</p>
+<p><code>Search.child[]</code> と <code>Node.slave[]</code> は似ているが役割が異なる。</p>
+<div class="table-wrap"><table><thead><tr><th>一覧</th><th>役割</th><th>保護するlock</th></tr></thead><tbody><tr><td><code>Search.child[]</code></td><td>停止通知の伝播と探索ノード数の親子集計</td><td>親 <code>Search.spin</code></td></tr><tr><td><code>Node.slave[]</code></td><td>一つの共有分割点で動く子探索の停止と完了待ち</td><td><code>Node.mutex</code></td></tr></tbody></table></div>
+<h2 id="section-20">20. 同期規則<a class="anchor" href="#section-20" aria-label="この節へのリンク">#</a></h2>
+<p>忠実な再実装では、どの共有値をどのlockで守るかを固定する。</p>
+<div class="table-wrap"><table><thead><tr><th>共有対象</th><th>主な操作</th><th>保護</th></tr></thead><tbody><tr><td><code>Node.alpha</code>, <code>bestscore</code>, <code>bestmove</code></td><td>結果の反映</td><td><code>Node.mutex</code></td></tr><tr><td><code>Node.move</code>, <code>n_moves_done</code>, <code>n_moves_todo</code></td><td>次の候補手の取得</td><td><code>Node.mutex</code></td></tr><tr><td><code>Node.slave[]</code>, <code>n_slave</code></td><td>子探索の登録・解除</td><td><code>Node.mutex</code></td></tr><tr><td><code>Node.is_waiting</code>, <code>is_helping</code>, <code>stop_point</code></td><td>待機と手伝い、局所停止</td><td><code>Node.mutex</code> を中心に使用</td></tr><tr><td><code>TaskStack.stack</code>, <code>n_idle</code></td><td>空き作業スレッドの取得・返却</td><td><code>TaskStack.mutex</code></td></tr><tr><td><code>Task.run</code> と起床通知</td><td>作業開始と待機</td><td><code>Task.mutex</code> と <code>Task.condition</code></td></tr><tr><td><code>Search.child[]</code>, <code>n_child</code></td><td>子探索の登録・解除</td><td><code>Search.spin</code></td></tr><tr><td><code>Search.stop</code> と子孫停止</td><td>停止状態</td><td><code>Search.spin</code> を使う関数がある</td></tr></tbody></table></div>
+<p>lockを同時に取る主な順序は次である。</p>
+<ul><li>通常分割: 空き一覧のmutexを解放してから <code>Node.mutex</code>、その後 <code>Task.mutex</code>。</li><li>子探索完了: 親 <code>Search.spin</code> を解放してから <code>Node.mutex</code>。</li><li>祖先の手伝い: 祖先 <code>Node.mutex</code> を持ち、深い <code>Node.mutex</code> を一時取得する。</li></ul>
+<p>別実装ではこの順序を文書化し、逆順取得を作らない。特に祖先手伝い機能は複数の共有分割点に触れるため、通常分割より慎重な設計が必要である。</p>
+<h2 id="section-21">21. 実装上の注意点<a class="anchor" href="#section-21" aria-label="この節へのリンク">#</a></h2>
+<h3 id="section-21-1">21.1 一部の共有読み取りはlock外で行われる<a class="anchor" href="#section-21-1" aria-label="この節へのリンク">#</a></h3>
+<p>原実装は多くの更新をmutexやspin lockで守るが、すべての読み取りが同じlock内にあるわけではない。</p>
+<ul><li><code>node_split()</code> は <code>n_slave</code> などをlock外で条件判定する。</li><li><code>task_search()</code> は <code>node-&gt;alpha</code> や停止状態をlock外で読む箇所がある。</li><li><code>Search.stop</code> はlock付き関数で書く経路と直接代入する経路が混在する。</li></ul>
+<p>C11のメモリモデルでは、別スレッドが同時更新する通常の整数やenumを同期なしで読むとデータ競合になり得る。別実装では、同じmutexで読み書きするか、適切なatomic型を使用する。探索アルゴリズムの意味は保ちつつ、原実装の未保証動作まで模倣しない。</p>
+<h3 id="section-21-2">21.2 <code>Node</code> の寿命は全子探索より長くする<a class="anchor" href="#section-21-2" aria-label="この節へのリンク">#</a></h3>
+<p>各 <code>Task</code> は <code>task-&gt;node</code> をポインタで参照する。<code>node_wait_slaves()</code> が戻る前に <code>Node</code> を破棄してはいけない。正しい順序は必ず次である。</p>
+<pre><code class="language-text">候補手の配布を終了
+-&gt; 不要な子探索を停止
+-&gt; n_slave == 0 まで待つ
+-&gt; 共有結果を保存
+-&gt; node_free()
+-&gt; Nodeの有効範囲を抜ける</code></pre>
+<h3 id="section-21-3">21.3 候補手一覧の寿命も維持する<a class="anchor" href="#section-21-3" aria-label="この節へのリンク">#</a></h3>
+<p><code>Task.move</code> と <code>Node.move</code> は呼び出し元スタック上の <code>MoveList</code> 内を指す。全子探索が終わる前に候補手一覧を破棄または並べ替えてはいけない。</p>
+<h3 id="section-21-4">21.4 古い宣言とコメントをそのまま実装要件にしない<a class="anchor" href="#section-21-4" aria-label="この節へのリンク">#</a></h3>
+<p><code>ybwc.h</code> にはこの <code>ybwc.c</code> で実装されていない <code>node_stop_slaves</code>、<code>task_help</code>、<code>task_update</code>、<code>task_stack_stop</code>、<code>task_stack_clear</code>、<code>task_stack_count_nodes</code> の宣言が残る。現行YBWCの通常経路はこれらを呼ばない。</p>
+<p>また、ファイル冒頭の FIFO という記述と実際のLIFO、最後の手を分割しないというコメントと設定値1の挙動に差がある。再実装では実行コードを基準にする。</p>
+<h3 id="section-21-5">21.5 αは探索中に変わり得る<a class="anchor" href="#section-21-5" aria-label="この節へのリンク">#</a></h3>
+<p>各手は開始時点のαでNWSする。別スレッドが後からαを上げても、その手を新しいαで自動再探索しない。返ってきた値が共有 <code>bestscore</code> 以下なら更新されず、正しさはαβ探索の上下限として維持される。この「開始時にαを写す」動作も再現する。</p>
+<h2 id="section-22">22. 忠実な擬似コード<a class="anchor" href="#section-22" aria-label="この節へのリンク">#</a></h2>
+<h3 id="section-22-1">22.1 主探索側<a class="anchor" href="#section-22-1" aria-label="この節へのリンク">#</a></h3>
+<pre><code class="language-text">function search_node(search, alpha, beta, depth, moves, parent_split):
+    shared = Node(search, alpha, beta, depth, len(moves), parent_split)
+
+    move = first_move(shared, moves)
+    while move exists:
+        if try_split(shared, move):
+            // 子探索がこの手を担当する
+        else:
+            score = search_one_move_on_master(search, move, shared.alpha, beta)
+            update_shared_result(shared, move, score)
+
+        move = next_move(shared)
+
+    stop_and_wait_all_children(shared)
+    result = shared.bestscore
+    destroy(shared)
+    return result</code></pre>
+<p>PVS局面では最初の手を通常幅で直列探索してから、二手目以降をこのループへ入れる。</p>
+<h3 id="section-22-2">22.2 分割処理<a class="anchor" href="#section-22-2" aria-label="この節へのリンク">#</a></h3>
+<pre><code class="language-text">function try_split(shared, move):
+    if parallel_disabled: return false
+    if shared.depth &lt; 5: return false
+    if shared.n_moves_done == 0: return false
+    if shared.n_slave &gt;= 3: return false
+    if shared.n_moves_todo &lt; 1: return false
+
+    if wake_waiting_ancestor_as_helper(shared.parent, shared, move):
+        return true
+
+    task = take_idle_task()
+    if task does not exist:
+        return false
+
+    task.node = shared
+    task.move = move
+    clone_search(task.search, shared.search)
+
+    lock(shared)
+        shared.slave.append(task.search)
+    unlock(shared)
+
+    wake(task)
+    return true</code></pre>
+<h3 id="section-22-3">22.3 子探索側<a class="anchor" href="#section-22-3" aria-label="この節へのリンク">#</a></h3>
+<pre><code class="language-text">function run_child(task):
+    shared = task.node
+    child = task.search
+    move = task.move
+    child.stop = shared.search.stop
+
+    while move exists and child is running:
+        alpha_snapshot = shared.alpha
+        if alpha_snapshot &gt;= shared.beta: break
+
+        score = NWS(child, move, alpha_snapshot, shared.depth - 1)
+        if alpha_snapshot &lt; score &lt; shared.beta:
+            score = PVS(child, move, alpha_snapshot, shared.beta,
+                        shared.depth - 1)
+
+        lock(shared)
+            if child is running and score &gt; shared.bestscore:
+                shared.bestscore = score
+                shared.bestmove = move
+                shared.alpha = max(shared.alpha, score)
+
+                if shared.alpha &gt;= shared.beta and master is running:
+                    shared.stop_point = true
+                    master.stop = STOP_PARALLEL_SEARCH
+
+            move = take_next_move_without_relocking(shared)
+        unlock(shared)
+
+    detach_child_search_from_parent(child)
+
+    lock(shared)
+        task.run = false
+        shared.slave.remove(child)
+        signal_all(shared.condition)
+    unlock(shared)</code></pre>
+<h2 id="section-23">23. 検証計画<a class="anchor" href="#section-23" aria-label="この節へのリンク">#</a></h2>
+<h3 id="section-23-1">23.1 探索値<a class="anchor" href="#section-23-1" aria-label="この節へのリンク">#</a></h3>
+<ul><li>1スレッドと複数スレッドで値が一致する。</li><li>PVS、NWS、ルート探索の各入口で一致する。</li><li>α以下、<code>alpha &lt; g &lt; beta</code>、β以上の三種類を作る。</li><li>MultiPVの対象深さでは分割しない。</li></ul>
+<h3 id="section-23-2">23.2 分割境界<a class="anchor" href="#section-23-2" aria-label="この節へのリンク">#</a></h3>
+<ul><li>depth 4では分割しない。</li><li>depth 5では最初の子の完了後に分割できる。</li><li>最初の子は空きスレッドがあっても直列になる。</li><li>同じ共有分割点の子探索は3個を超えない。</li><li><code>n_moves_todo == 1</code> でも現在設定では分割できる。</li><li>空き作業スレッドがなければ主探索が直列探索する。</li></ul>
+<h3 id="section-23-3">23.3 動的な候補手配布<a class="anchor" href="#section-23-3" aria-label="この節へのリンク">#</a></h3>
+<ul><li>一つの子探索が複数の候補手を順に取得できる。</li><li>同じ候補手が二つのスレッドへ渡らない。</li><li>αがβ以上になった後、新しい候補手を配らない。</li><li>主探索停止後、新しい候補手を配らない。</li></ul>
+<h3 id="section-23-4">23.4 停止と再開<a class="anchor" href="#section-23-4" aria-label="この節へのリンク">#</a></h3>
+<ul><li>主探索がβ以上を見つけた場合、全子孫へ停止が届く。</li><li>子探索がβ以上を見つけた場合、主探索が <code>STOP_PARALLEL_SEARCH</code> で中断する。</li><li>その停止を発生させた共有分割点だけが主探索を <code>RUNNING</code> に戻す。</li><li>時間切れや外部停止を誤って解除しない。</li><li>全終了経路で <code>n_slave == 0</code> になってから <code>Node</code> を破棄する。</li></ul>
+<h3 id="section-23-5">23.5 祖先の手伝い<a class="anchor" href="#section-23-5" aria-label="この節へのリンク">#</a></h3>
+<ul><li>祖先が待機中なら、全体の空き一覧より祖先を優先する。</li><li>同じ祖先が同時に二件を手伝わない。</li><li>手伝い終了後、祖先は元の子探索待ちへ戻る。</li><li>手伝い先の <code>n_slave</code> と <code>Search.child[]</code> が正しく減る。</li></ul>
+<h3 id="section-23-6">23.6 データ競合と探索ノード数<a class="anchor" href="#section-23-6" aria-label="この節へのリンク">#</a></h3>
+<ul><li>ThreadSanitizer等で共有α、停止状態、子探索数のデータ競合を検査する。</li><li>子探索が再分割した場合も探索ノード数を一度だけ親へ足す。</li><li><code>Search.child[]</code> と <code>Node.slave[]</code> の登録数が終了時に0へ戻る。</li></ul>
+<h2 id="section-24">24. 再実装チェックリスト<a class="anchor" href="#section-24" aria-label="この節へのリンク">#</a></h2>
+<ul><li class="check"><input type="checkbox" disabled> <span>最初の子を必ず直列探索する。</span></li><li class="check"><input type="checkbox" disabled> <span>depth 5以上でだけ分割する。</span></li><li class="check"><input type="checkbox" disabled> <span>同じ共有分割点の子探索を最大3個にする。</span></li><li class="check"><input type="checkbox" disabled> <span>空き作業スレッドがない場合は直列探索へ戻る。</span></li><li class="check"><input type="checkbox" disabled> <span>作業スレッドを探索ごとに作らず、常駐・再利用する。</span></li><li class="check"><input type="checkbox" disabled> <span>盤面と評価状態は子 <code>Search</code> ごとに分離する。</span></li><li class="check"><input type="checkbox" disabled> <span>α、β、最善値、候補手を配る位置は共有分割点に置く。</span></li><li class="check"><input type="checkbox" disabled> <span>候補手の取得と共有結果の更新を同じmutexで守る。</span></li><li class="check"><input type="checkbox" disabled> <span>子探索は一手の終了後、同じ共有分割点から次の手を取得する。</span></li><li class="check"><input type="checkbox" disabled> <span>PVS局面で <code>alpha &lt; g &lt; beta</code> なら通常幅で再探索する。</span></li><li class="check"><input type="checkbox" disabled> <span>β以上になったら不要な子探索と主探索を停止する。</span></li><li class="check"><input type="checkbox" disabled> <span>並列探索内だけの停止と、時間切れ・外部停止を区別する。</span></li><li class="check"><input type="checkbox" disabled> <span>停止を発生させた共有分割点だけが主探索を再開する。</span></li><li class="check"><input type="checkbox" disabled> <span>全子探索の終了前に <code>Node</code> と候補手一覧を破棄しない。</span></li><li class="check"><input type="checkbox" disabled> <span>待機中の祖先を深い分割の手伝いへ再利用する。</span></li><li class="check"><input type="checkbox" disabled> <span>子探索の親子関係を使って停止を子孫へ伝える。</span></li><li class="check"><input type="checkbox" disabled> <span>子孫の探索ノード数を重複なく親へ集計する。</span></li><li class="check"><input type="checkbox" disabled> <span>原実装の同期されていない共有読み取りは安全な同期へ直す。</span></li></ul>
+<h2 id="section-25">25. Egaroucid版との違い<a class="anchor" href="#section-25" aria-label="この節へのリンク">#</a></h2>
+<div class="table-wrap"><table><thead><tr><th>項目</th><th>Edax</th><th>Egaroucid</th></tr></thead><tbody><tr><td>分割の単位</td><td>共有 <code>Node</code> に複数スレッドが参加</td><td>候補手ごとに独立した非同期処理</td></tr><tr><td>候補手の配布</td><td>終了したスレッドが次の手を動的取得</td><td>親が候補手ごとに処理を登録</td></tr><tr><td>同一分割点の子探索数</td><td>最大3</td><td>空きスレッド数に依存</td></tr><tr><td>末子の扱い</td><td>設定値1では分割可能</td><td>親スレッドへ残す</td></tr><tr><td>αの共有</td><td><code>Node.alpha</code> を更新</td><td>一回の処理へ値コピー</td></tr><tr><td>最善値の共有</td><td>mutex内で即時更新</td><td>親が非同期結果を回収して更新</td></tr><tr><td>主探索の停止</td><td>子探索が <code>STOP_PARALLEL_SEARCH</code> を設定</td><td>分割専用停止フラグをfalseにする</td></tr><tr><td>候補手一件後</td><td>同じ子探索が次の手を取得できる</td><td>処理は一件で終了</td></tr><tr><td>待機中スレッド</td><td>祖先を深い分割の手伝いへ再利用</td><td>非同期結果を待つだけ</td></tr><tr><td>完了待ち</td><td>条件変数と <code>n_slave</code></td><td><code>std::future::get()</code></td></tr></tbody></table></div>
+<p>両者とも「最初の子を先に直列探索し、その結果で更新したαを使って残りの子を並列探索する」というYBWCの原則は共通である。異なるのは、残りの子をどう配り、どこでαと停止状態を共有するかである。</p></main>
+  </div>
+  <footer class="footer">Edax commit 713a434f13b3d15fb69c61b9ba3641aed82c496c を参照して作成</footer>
+</div>
+<script>
+const root=document.documentElement;
+document.getElementById('theme').addEventListener('click',()=>{root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';});
+document.querySelectorAll('[data-animation]').forEach(btn=>{let paused=false;const svg=document.getElementById(btn.dataset.animation);btn.addEventListener('click',()=>{paused=!paused;paused?svg.pauseAnimations():svg.unpauseAnimations();btn.textContent=paused?'再生':'一時停止';});if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){svg.pauseAnimations();paused=true;btn.textContent='再生';}});
+const links=[...document.querySelectorAll('.sidebar a')];
+const observer=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){links.forEach(a=>a.classList.toggle('active',a.hash==='#'+e.target.id));}})},{rootMargin:'-10% 0px -80%'});
+document.querySelectorAll('.content h2,.content h3').forEach(h=>observer.observe(h));
+if(location.hash) requestAnimationFrame(()=>document.querySelector(location.hash)?.scrollIntoView());
+</script></body></html>

@@ -14,7 +14,6 @@ use crate::play::*;
 use crate::self_play::*;
 use crate::solve::*;
 use clap::{Parser, Subcommand};
-use std::num::NonZeroUsize;
 
 const DEFAULT_LEVEL: u8 = 10;
 
@@ -36,10 +35,6 @@ struct Args {
     /// Optional evaluator used only for endgame move ordering
     #[arg(long)]
     ordering_eval: Option<String>,
-
-    /// Total number of threads that execute search nodes, including the main thread
-    #[arg(long, default_value_t = NonZeroUsize::MIN)]
-    threads: NonZeroUsize,
 
     /// Transposition table size in MiB
     #[arg(long)]
@@ -197,7 +192,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eval_path,
             level,
             args.ordering_eval.as_deref(),
-            args.threads,
             args.hash_mb,
         );
     } else if let Some(depth) = &args.perft {

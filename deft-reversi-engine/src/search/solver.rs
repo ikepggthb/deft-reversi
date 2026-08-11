@@ -2,9 +2,9 @@
 //!
 //! ## 機能
 //!
-//! - [`Solver::solve_eval`]: 中盤(指定 depth まで)の単発 PVS 探索
-//! - [`Solver::solve_final`]: 終盤完全読み (game end まで) の単発 PVS
-//! - [`Solver::solve`]: レベル指定で iterative deepening + アスピレーション窓を
+//! - [`Solver::solve_eval`]: 中盤（指定深さまで）の単発 PVS 探索
+//! - [`Solver::solve_final`]: 終盤完全読み（終局まで）の単発 PVS 探索
+//! - [`Solver::solve`]: レベル指定で反復深化 + アスピレーション窓を
 //!   組む高レベル API。レベルに応じて中盤探索/終盤完全読み/MPC 強度を自動選択する。
 
 use crate::board::board::Board;
@@ -12,23 +12,21 @@ use crate::board::constant::NO_COORD;
 use crate::eval::evaluator_const::SCORE_MAX;
 use crate::eval::Evaluator;
 use crate::file::EngineFile;
-use crate::search::eval_search::nws::make_eval_root_job;
 use crate::search::eval_search::{nws_eval, pvs_eval};
-use crate::search::final_search::nws::{collect_ybwc_tasks, make_ybwc_job};
 use crate::search::final_search::{nws_final, pvs_final, solve_score};
 use crate::search::mpc::{MpcConfig, SELECTIVITY_LV_MAX};
-use crate::search::search::{AbortNode, SearchContext, SearchStats};
-use crate::search::thread_pool::{HelperSlot, ThreadPool};
+use crate::search::search::{SearchContext, SearchStats};
 use crate::t_table::TranspositionTable;
 use crate::EngineError;
-use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// 反復深化で使う MPC selectivity の下限。level 2 = 85%。
+/// 反復深化で使う MPC 選択率レベルの下限。レベル 2 は 85%。
 const ITERATIVE_SELECTIVITY_MIN: i32 = 2;
+/// この深さ（終盤では空きマス数）以下では、狭い窓で再探索せず最初から全幅探索する。
 const ASPIRATION_FULL_WINDOW_DEPTH: i32 = 10;
+/// 予測スコアが変化し続けた場合に、アスピレーション探索を安定化させる試行回数の上限。
 const ASPIRATION_STABILIZE_RETRIES: i32 = 10;
 
 /// solve() に指定できる最大レベル。
@@ -37,9 +35,9 @@ pub const SOLVE_LEVEL_MAX: i32 = 60;
 /// solve() 内部で選択される具体的な探索構成。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolverType {
-    /// 中盤探索: (depth, selectivity_lv)
+    /// 中盤探索。第1要素が探索深さ、第2要素が MPC 選択率レベル。
     Eval(i32, i32),
-    /// 終盤完全読み: (selectivity_lv)
+    /// 終盤探索。要素は MPC 選択率レベルで、最大値なら完全読み。
     Final(i32),
 }
 
@@ -60,15 +58,13 @@ pub struct SolverResult {
     pub pv: Vec<u8>,
     /// stop フラグで中断されたか。
     pub aborted: bool,
-    /// YBWC で分割点に slave を投入できた回数。1 スレッドでは常に 0。
-    pub ybwc_splits: u64,
 }
 
 pub struct SolverOptions {
+    /// 置換表に割り当てる容量（MiB）。`None` の場合は既定値を使う。
     pub tt_capacity: Option<usize>,
+    /// 呼び出し側から探索を中断するための共有フラグ。
     pub stop: Option<Arc<AtomicBool>>,
-    /// 探索ノードを処理する総スレッド数。メイン探索スレッドを含む。
-    pub search_threads: NonZeroUsize,
 }
 
 impl Default for SolverOptions {
@@ -76,7 +72,6 @@ impl Default for SolverOptions {
         Self {
             tt_capacity: None,
             stop: None,
-            search_threads: NonZeroUsize::MIN,
         }
     }
 }
@@ -85,16 +80,16 @@ impl Default for SolverOptions {
 ///
 /// レベル指定の探索は次の順に進む。
 ///
-/// 1. 中盤の反復深化 (`iterative_deepening_eval`) — 並列化されていない
-/// 2. selectivity を上げながらの終盤探索 — YBWC で並列化される
-/// 3. 完全読み (exact) — YBWC で並列化される
-///
-/// スレッド数を変えて 1 と 2/3 の比を見ると、直列部分が全体のどれだけを
-/// 占めているか (Amdahl の直列率) が分かる。
+/// 1. 中盤の反復深化 (`iterative_deepening_eval`)
+/// 2. selectivity を上げながらの終盤探索
+/// 3. 完全読み (exact)
 struct PhaseTimer {
+    /// 全段階に共通する計測開始時刻。
     start: Instant,
+    /// 中盤反復深化が完了するまでの累積時間とノード数。
     iterative_deepening: Duration,
     iterative_deepening_nodes: u64,
+    /// 中盤終了後から、最後の完全読み直前までの累積時間とノード数。
     selective_final: Duration,
     selective_final_nodes: u64,
 }
@@ -162,20 +157,26 @@ impl PhaseTimer {
 /// 探索ドライバ。`evaluator` / `mpc` / `tt` を Arc で保持し、複数回の探索で
 /// TT を再利用できる。
 pub struct Solver {
+    /// 探索値の計算に使う本評価器。
     evaluator: Arc<Evaluator>,
+    /// 候補手の並べ替えに使う評価器。本評価器とは別に差し替えられる。
     ordering_evaluator: Arc<Evaluator>,
+    /// MPC の深さ・誤差分布・選択率設定。
     mpc: Arc<MpcConfig>,
+    /// 通常探索用と PV 復元優先用の置換表。
     tt: Arc<TranspositionTable>,
     pv_tt: Arc<TranspositionTable>,
+    /// 外部中断フラグ。`None` なら時間制限なしで探索する。
     stop: Option<Arc<AtomicBool>>,
-    thread_pool: Option<Arc<ThreadPool>>,
 }
 
 impl Solver {
+    /// 既定の MPC、置換表容量、1 スレッド構成で探索器を生成する。
     pub fn new(evaluator: Arc<Evaluator>) -> Self {
         Self::with_options(evaluator, SolverOptions::default())
     }
 
+    /// 評価器と実行時オプションを指定して探索器を生成する。
     pub fn with_options(evaluator: Arc<Evaluator>, opts: SolverOptions) -> Self {
         Self::with_mpc(evaluator, Arc::new(MpcConfig::default()), opts)
     }
@@ -185,6 +186,7 @@ impl Solver {
             Some(mb) => TranspositionTable::with_mb_size(mb),
             None => TranspositionTable::new(),
         };
+        // PV 復元専用の表は通常 TT より小さくてよいが、最低 1 MiB は確保する。
         let pv_tt = TranspositionTable::with_mb_size((tt.actual_mb_size() / 16).max(1));
         Self {
             ordering_evaluator: evaluator.clone(),
@@ -193,11 +195,11 @@ impl Solver {
             tt: Arc::new(tt),
             pv_tt: Arc::new(pv_tt),
             stop: opts.stop,
-            thread_pool: (opts.search_threads.get() > 1)
-                .then(|| Arc::new(ThreadPool::new(opts.search_threads.get() - 1))),
         }
     }
 
+    /// ファイルから評価器と MPC 設定を読み込む。
+    /// UTF-8 テキストとして解釈できなければバイナリ形式として読み直す。
     pub fn from_file(path: &str, opts: SolverOptions) -> Result<Self, EngineError> {
         let bytes = std::fs::read(path)?;
         match std::str::from_utf8(&bytes) {
@@ -210,6 +212,7 @@ impl Solver {
         }
     }
 
+    /// 文字列を現行のエンジン形式、失敗した場合は旧評価器形式として読み込む。
     pub fn from_str_data(input: &str, opts: SolverOptions) -> Result<Self, EngineError> {
         match EngineFile::read_string(input) {
             Ok(file) => Self::from_engine_file(file, opts),
@@ -228,14 +231,17 @@ impl Solver {
         Ok(Self::with_mpc(Arc::new(evaluator), Arc::new(mpc), opts))
     }
 
+    /// 現在使用中の MPC 設定を返す。
     pub fn mpc_config(&self) -> &MpcConfig {
         &self.mpc
     }
 
+    /// 着手順序付け専用の評価器を差し替える。
     pub fn set_ordering_evaluator(&mut self, ev: Evaluator) {
         self.ordering_evaluator = Arc::new(ev);
     }
 
+    /// 置換表の世代を進め、過去のエントリを優先的な置換対象にする。
     pub fn clear_tt(&self) {
         self.tt.advance_generation();
         self.pv_tt.advance_generation();
@@ -243,7 +249,7 @@ impl Solver {
 
     /// 中盤の PVS 探索を `depth` まで実行する。
     ///
-    // Single-shot eval search entry point used by internal tests and debugging.
+    // 内部テストやデバッグから反復深化を介さず呼ぶための単発探索 API。
     #[allow(dead_code)]
     pub fn solve_eval(&self, board: &Board, depth: i32, selectivity_lv: i32) -> SolverResult {
         let mut stats = SearchStats::default();
@@ -255,8 +261,7 @@ impl Solver {
         )
         .with_pv_tt(self.pv_tt.clone(), board.empties_count() as i32)
         .with_ordering_evaluator(self.ordering_evaluator.clone())
-        .with_stop(self.stop.clone())
-        .with_thread_pool(self.thread_pool.clone());
+        .with_stop(self.stop.clone());
         search.selectivity_lv = selectivity_lv;
 
         let solver_type = SolverType::Eval(depth, selectivity_lv);
@@ -266,8 +271,8 @@ impl Solver {
         self.result_from_parts(best_move, score, solver_type, &stats, aborted, board)
     }
 
-    /// 終盤完全読み(game end まで)を実行する。
-    // Single-shot final search entry point used by internal tests and debugging.
+    /// 終盤完全読み（終局まで）を実行する。
+    // 内部テストやデバッグから反復深化を介さず呼ぶための単発探索 API。
     #[allow(dead_code)]
     pub fn solve_final(&self, board: &Board, selectivity_lv: i32) -> SolverResult {
         let mut stats = SearchStats::default();
@@ -279,8 +284,7 @@ impl Solver {
         )
         .with_pv_tt(self.pv_tt.clone(), board.empties_count() as i32)
         .with_ordering_evaluator(self.ordering_evaluator.clone())
-        .with_stop(self.stop.clone())
-        .with_thread_pool(self.thread_pool.clone());
+        .with_stop(self.stop.clone());
         search.selectivity_lv = selectivity_lv;
 
         let solver_type = SolverType::Final(selectivity_lv);
@@ -291,7 +295,7 @@ impl Solver {
     }
 
     /// レベル指定の高レベル探索。`level` (1..=60) に応じて中盤/終盤の構成を
-    /// 自動選択し、step=4 の iterative deepening + アスピレーション窓で TT を
+    /// 自動選択し、2 手刻みの反復深化 + アスピレーション窓で TT を
     /// 暖めながら最終探索を行う。
     pub fn solve(&self, board: &Board, level: i32) -> SolverResult {
         let level = level.clamp(1, SOLVE_LEVEL_MAX);
@@ -299,6 +303,7 @@ impl Solver {
         let legal = board.moves();
         let n_empties = (board.player | board.opponent).count_zeros() as i32;
         let mut solver_type = level_to_solver_type(n_empties, level);
+        // 開始前から停止済みでも、呼び出し側が着手できるよう静的評価で合法手を返す。
         if self.is_stopped() {
             let (best_move, score) = self.fallback_move(board);
             return self.result_from_parts(
@@ -310,6 +315,7 @@ impl Solver {
                 board,
             );
         }
+        // 合法手がなければパスする。相手にも合法手がなければ終局である。
         if legal == 0 {
             let passed = board.passed();
             if passed.moves() == 0 {
@@ -321,7 +327,6 @@ impl Solver {
                     leaf_nodes: 0,
                     pv: Vec::new(),
                     aborted: false,
-                    ybwc_splits: 0,
                 };
             }
             let mut r = self.solve(&passed, level);
@@ -330,13 +335,13 @@ impl Solver {
             return r;
         }
 
-        // A Solver is reused across positions by the CLI. Start a fresh TT
-        // generation so entries from earlier positions are replacement
-        // candidates instead of competing with the current search.
+        // CLI は同じ Solver を複数局面で再利用する。探索開始時に世代を進め、
+        // 以前の局面のエントリを現在の探索結果より置換されやすくする。
         self.tt.advance_generation();
         self.pv_tt.advance_generation();
 
-        // root 候補手リスト(再順序の効率化のため Vec で保持)。
+        // (着手座標, 着手後の子局面) の一覧。candidates[0] を現在の最善手とし、
+        // 反復のたびに先頭を入れ替えて次の探索順へ引き継ぐ。
         let mut candidates: Vec<(u8, Board)> = Vec::with_capacity(legal.count_ones() as usize);
         let mut bits = legal;
         while bits != 0 {
@@ -355,8 +360,7 @@ impl Solver {
         )
         .with_pv_tt(self.pv_tt.clone(), n_empties)
         .with_ordering_evaluator(self.ordering_evaluator.clone())
-        .with_stop(self.stop.clone())
-        .with_thread_pool(self.thread_pool.clone());
+        .with_stop(self.stop.clone());
         // 開幕の評価は粗いので最大 MPC を使うが、深いレベルでは MPC を弱める。
         search.selectivity_lv = if level > 10 {
             ITERATIVE_SELECTIVITY_MIN
@@ -411,6 +415,8 @@ impl Solver {
                     );
                 }
 
+                // 安価な選択的探索から目標の選択率へ段階的に近づける。前段階の
+                // 予測スコアと root の着手順は、次段階の初期値として再利用する。
                 let mut final_selectivity = first_final_selectivity(selectivity);
                 loop {
                     let init_w = (10 - n_empties).max(2 + predict_score.rem_euclid(2));
@@ -456,6 +462,7 @@ impl Solver {
             eprintln!("PHASETIME {}", phase.report(search.stats));
         }
         let aborted = search.is_aborted();
+        // SearchContext が stats を可変借用しているため、結果構築前に借用を解放する。
         drop(search);
         self.result_from_parts(
             candidates[0].0,
@@ -473,6 +480,7 @@ impl Solver {
             .is_some_and(|stop| stop.load(Ordering::Relaxed))
     }
 
+    /// 停止済みの場合に返す手を、1 手先の静的評価だけで選ぶ。
     fn fallback_move(&self, board: &Board) -> (u8, i32) {
         let legal = board.moves();
         if legal == 0 {
@@ -494,6 +502,7 @@ impl Solver {
         (best_move, best_score)
     }
 
+    /// 探索内部の値を公開用の結果へ変換し、可能なら PV も復元する。
     fn result_from_parts(
         &self,
         best_move: u8,
@@ -515,25 +524,6 @@ impl Solver {
                 stats.stability_tries, stats.stability_cuts
             );
         }
-        if std::env::var_os("DEFT_YBWC_STATS").is_some() {
-            let spawn_tries =
-                stats.ybwc_handoffs + stats.ybwc_pool_pushes + stats.ybwc_spawn_failures;
-            let handoff_rate = if spawn_tries == 0 {
-                0.0
-            } else {
-                100.0 * stats.ybwc_handoffs as f64 / spawn_tries as f64
-            };
-            eprintln!(
-                "YBWCSTATS splits={} aborts={} | spawn_tries={} handoff={} ({:.1}%) pool_push={} failed={}",
-                stats.ybwc_splits,
-                stats.ybwc_split_aborts,
-                spawn_tries,
-                stats.ybwc_handoffs,
-                handoff_rate,
-                stats.ybwc_pool_pushes,
-                stats.ybwc_spawn_failures,
-            );
-        }
         if crate::t_table::tt_contention_stats_enabled() {
             eprintln!(
                 "TTSTATS {}",
@@ -541,6 +531,7 @@ impl Solver {
             );
         }
         let best_move_opt = (best_move != NO_COORD).then_some(best_move);
+        // 中断直後などで root 手が不正なら、壊れた PV を返さず空にする。
         let pv = best_move_opt
             .filter(|pos| board.moves() & (1u64 << pos) != 0)
             .map_or_else(Vec::new, |best_move| {
@@ -558,10 +549,11 @@ impl Solver {
             leaf_nodes: stats.eval_search_leaf_nodes + stats.final_search_leaf_nodes,
             pv,
             aborted,
-            ybwc_splits: stats.ybwc_splits,
         }
     }
 
+    /// root の最善手を起点に、PV 用 TT（なければ通常 TT）をたどる。
+    /// パスは着手列に含めず、TT の手が不正または終局なら復元を打ち切る。
     fn restore_pv(&self, board: &Board, best_move: u8, depth: i32) -> Vec<u8> {
         let max_len = depth
             .max(0)
@@ -602,25 +594,26 @@ impl Solver {
     }
 }
 
+/// 環境変数で有効化されたときだけ、探索段階ごとの統計を標準エラーへ出す。
 fn trace_search_stage(stage: &str, score: i32, search: &SearchContext) {
     if std::env::var_os("DEFT_SEARCH_TRACE").is_some() {
         eprintln!(
             "SEARCHTRACE stage={stage} score={score:+} eval_nodes={} final_nodes={} \
-             mpc={}/{} stability={}/{} ybwc={}/{}",
+             mpc={}/{} stability={}/{}",
             search.stats.eval_search_nodes,
             search.stats.final_search_nodes,
             search.stats.mpc_cuts,
             search.stats.mpc_tries,
             search.stats.stability_cuts,
             search.stats.stability_tries,
-            search.stats.ybwc_split_aborts,
-            search.stats.ybwc_splits,
         );
     }
 }
 
 /// レベルと残り空きマスから具体的な探索構成を決める(旧 solver の get_config 移植)。
 fn level_to_solver_type(n_empties: i32, level: i32) -> SolverType {
+    // レベルが上がるほど、より空きマスの多い局面から終盤探索へ移る。
+    // Final の引数が小さい段階は、MPC を強く使う選択的な終盤探索である。
     use SolverType::*;
     if level == 0 {
         Eval(0, SELECTIVITY_LV_MAX)
@@ -767,6 +760,7 @@ fn iterative_deepening_eval(
         );
     }
 
+    // 目標深さと同じ偶奇を保ち、直前の探索結果を予測値として使いながら深くする。
     let step = 2;
     let start = first_iterative_depth(target_depth);
     let mut score = init_score;
@@ -788,6 +782,7 @@ fn iterative_deepening_eval(
 #[inline(always)]
 fn first_iterative_depth(target_depth: i32) -> i32 {
     debug_assert!(target_depth >= 2);
+    // 可能なら深さ 5/6 から開始し、目標深さと同じ偶奇にそろえる。
     let mut start = 6 - (target_depth & 1);
     if start > target_depth - 2 {
         start = target_depth - 2;
@@ -800,6 +795,7 @@ fn first_iterative_depth(target_depth: i32) -> i32 {
 
 #[inline(always)]
 fn first_final_selectivity(target: i32) -> i32 {
+    // 完全読みが目標でも、最初は安価な選択的探索で着手順を整える。
     target.min(ITERATIVE_SELECTIVITY_MIN)
 }
 
@@ -832,6 +828,7 @@ fn aspiration_search_eval(
     let previous_score = predict;
 
     if depth <= ASPIRATION_FULL_WINDOW_DEPTH {
+        // 浅い探索では窓を広げ直す費用が利点を上回るため、最初から全幅で読む。
         let score = search_root_eval_window(depth, -SCORE_MAX, SCORE_MAX, candidates, search);
         if search.is_aborted() {
             restore_candidate_front(candidates, previous_best);
@@ -842,6 +839,7 @@ fn aspiration_search_eval(
 
     let base_width = init_width.max(1);
     let mut score = predict;
+    // 窓内に収まってもスコアが予測値から動いた場合は、その値を中心に再度安定させる。
     for retry in 0..ASPIRATION_STABILIZE_RETRIES {
         let old_score = score;
         let width = retry.max(1) * base_width;
@@ -856,6 +854,7 @@ fn aspiration_search_eval(
             }
             score = search_root_eval_window(depth, alpha, beta, candidates, search);
             if search.is_aborted() {
+                // 未完了探索のスコアと着手順を、確定結果として上位へ返さない。
                 restore_candidate_front(candidates, previous_best);
                 return previous_score;
             }
@@ -896,6 +895,7 @@ fn aspiration_search_final(
     let previous_score = predict;
 
     if n_empties <= ASPIRATION_FULL_WINDOW_DEPTH {
+        // 残り手数が少なければ、狭い窓の再探索より全幅探索の方が安い。
         let score =
             search_root_final_window(-SCORE_MAX, SCORE_MAX, candidates, &mut root_bounds, search);
         if search.is_aborted() {
@@ -914,8 +914,8 @@ fn aspiration_search_final(
         let mut right = width;
 
         loop {
-            // Exact Othello scores are even. Expanding outward avoids searching
-            // windows whose only distinction is an impossible odd score.
+            // 終局スコアは偶数なので、窓端を外側の偶数へ丸める。
+            // 発生しない奇数スコアだけを区別する再探索を避けられる。
             let alpha = even_floor((score - left).max(-SCORE_MAX));
             let beta = even_ceil((score + right).min(SCORE_MAX));
             if alpha >= beta {
@@ -948,9 +948,13 @@ fn aspiration_search_final(
     score
 }
 
+/// root の各着手について、完全読みで判明したスコアの上下限を保持する。
+/// アスピレーション窓を広げた際、既知の範囲で探索を省略・縮小するために使う。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RootBound {
+    /// この着手のスコアが少なくともこの値以上、という既知の下限。
     lower: i32,
+    /// この着手のスコアがこの値以下、という既知の上限。
     upper: i32,
 }
 
@@ -967,6 +971,7 @@ impl RootBound {
 
     #[inline(always)]
     fn update(&mut self, score: i32, alpha: i32, beta: i32) -> i32 {
+        // fail-low は上限、fail-high は下限、窓内の値は確定値として記録する。
         if score <= alpha {
             self.upper = self.upper.min(score);
         } else if score >= beta {
@@ -990,6 +995,7 @@ fn search_root_final_candidate(
 ) -> i32 {
     let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
     if exact_selectivity {
+        // 選択的探索の値は厳密な上下限ではないため、完全読み時だけ再利用する。
         if let Some(score) = bound.exact() {
             return score;
         }
@@ -1023,6 +1029,7 @@ fn search_root_final_candidate(
     }
 }
 
+/// 中断前に確定していた最善手を候補配列の先頭へ戻す。
 fn restore_candidate_front(candidates: &mut [(u8, Board)], previous_best: (u8, Board)) {
     if candidates[0].0 == previous_best.0 {
         return;
@@ -1068,6 +1075,7 @@ fn search_root_eval_window(
     if search.is_aborted() {
         return alpha;
     }
+    // 前回の最善手は現在の [alpha, beta] 窓全体で読み、alpha を先に引き上げる。
     let mut best_score = -pvs_eval(&candidates[0].1, -beta, -alpha, depth - 1, search);
     if search.is_aborted() {
         return alpha;
@@ -1078,11 +1086,9 @@ fn search_root_eval_window(
     if best_score > alpha {
         alpha = best_score;
     }
-    if search.thread_pool.is_some() && candidates.len() > 2 {
-        return search_root_eval_siblings_ybwc(depth, alpha, beta, best_score, candidates, search);
-    }
     let mut best_idx = 0;
     for i in 1..candidates.len() {
+        // 2 手目以降は null-window で候補を絞り、alpha を超えた手だけ読み直す。
         let mut s = -nws_eval(&candidates[i].1, -alpha - 1, depth - 1, search);
         if search.is_aborted() {
             return best_score;
@@ -1105,221 +1111,6 @@ fn search_root_eval_window(
                 best_score = s;
                 best_idx = i;
             }
-        }
-    }
-    if best_idx > 0 {
-        candidates.swap(0, best_idx);
-    }
-    best_score
-}
-
-fn search_root_eval_siblings_ybwc(
-    depth: i32,
-    mut alpha: i32,
-    beta: i32,
-    mut best_score: i32,
-    candidates: &mut [(u8, Board)],
-    search: &mut SearchContext,
-) -> i32 {
-    let Some(thread_pool) = search.thread_pool.clone() else {
-        return best_score;
-    };
-    let split_abort = AbortNode::child(&search.abort_node);
-    let helper = Arc::new(HelperSlot::new());
-    let mut handles = Vec::with_capacity(candidates.len() - 1);
-    let mut results = Vec::new();
-
-    for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
-        if split_abort.is_aborted() {
-            break;
-        }
-        let job = make_eval_root_job(
-            *child_board,
-            -(alpha + 1),
-            depth,
-            beta,
-            move_index,
-            split_abort.clone(),
-            helper.clone(),
-            search,
-        );
-        match thread_pool.try_push(job) {
-            Ok(handle) => {
-                search.stats.ybwc_splits += 1;
-                handles.push(handle);
-            }
-            Err(job) => {
-                let result = job();
-                search.stats.add_assign(result.stats);
-                if result.aborted {
-                    search.stats.ybwc_split_aborts += 1;
-                }
-                let cutoff = !result.aborted && result.score >= beta;
-                results.push(result);
-                if cutoff {
-                    break;
-                }
-            }
-        }
-    }
-
-    results.extend(collect_ybwc_tasks(handles, &helper, search));
-    if search.check_abort_now() {
-        split_abort.abort_subtree();
-        return best_score;
-    }
-
-    if let Some(result) = results
-        .iter()
-        .find(|result| !result.aborted && result.score >= beta)
-    {
-        candidates.swap(0, result.move_index);
-        return result.score;
-    }
-
-    results.sort_unstable_by_key(|result| result.move_index);
-    let mut best_idx = 0;
-    for result in results {
-        if result.aborted || result.score <= alpha {
-            continue;
-        }
-        let score = -pvs_eval(
-            &candidates[result.move_index].1,
-            -beta,
-            -alpha,
-            depth - 1,
-            search,
-        );
-        if search.is_aborted() {
-            return best_score;
-        }
-        if score >= beta {
-            candidates.swap(0, result.move_index);
-            return score;
-        }
-        if score > alpha {
-            alpha = score;
-            best_score = score;
-            best_idx = result.move_index;
-        }
-    }
-    if best_idx > 0 {
-        candidates.swap(0, best_idx);
-    }
-    best_score
-}
-
-fn search_root_final_siblings_ybwc(
-    mut alpha: i32,
-    beta: i32,
-    mut best_score: i32,
-    candidates: &mut [(u8, Board)],
-    root_bounds: &mut [RootBound; 64],
-    search: &mut SearchContext,
-) -> i32 {
-    let Some(thread_pool) = search.thread_pool.clone() else {
-        return best_score;
-    };
-    let exact_selectivity = search.selectivity_lv == SELECTIVITY_LV_MAX;
-    let split_abort = AbortNode::child(&search.abort_node);
-    let helper = Arc::new(HelperSlot::new());
-    let mut handles = Vec::with_capacity(candidates.len() - 1);
-    let mut results = Vec::new();
-    let mut known_cutoff = None;
-
-    for (move_index, (_, child_board)) in candidates.iter().enumerate().skip(1) {
-        if split_abort.is_aborted() {
-            break;
-        }
-        let move_num = candidates[move_index].0 as usize;
-        if exact_selectivity && root_bounds[move_num].lower >= beta {
-            known_cutoff = Some((move_index, root_bounds[move_num].lower));
-            split_abort.abort_subtree();
-            break;
-        }
-        if exact_selectivity && root_bounds[move_num].upper <= alpha {
-            continue;
-        }
-        let job = make_ybwc_job(
-            *child_board,
-            -(alpha + 1),
-            beta,
-            move_index,
-            split_abort.clone(),
-            helper.clone(),
-            search,
-        );
-        match thread_pool.try_push(job) {
-            Ok(handle) => {
-                search.stats.ybwc_splits += 1;
-                handles.push(handle);
-            }
-            Err(job) => {
-                let result = job();
-                search.stats.add_assign(result.stats);
-                if result.aborted {
-                    search.stats.ybwc_split_aborts += 1;
-                }
-                let cutoff = !result.aborted && result.score >= beta;
-                results.push(result);
-                if cutoff {
-                    break;
-                }
-            }
-        }
-    }
-
-    results.extend(collect_ybwc_tasks(handles, &helper, search));
-    if search.check_abort_now() {
-        split_abort.abort_subtree();
-        return best_score;
-    }
-
-    if let Some((move_index, score)) = known_cutoff {
-        candidates.swap(0, move_index);
-        return score;
-    }
-
-    if exact_selectivity {
-        for result in results.iter().filter(|result| !result.aborted) {
-            let move_num = candidates[result.move_index].0 as usize;
-            root_bounds[move_num].update(result.score, alpha, alpha + 1);
-        }
-    }
-
-    if let Some(result) = results
-        .iter()
-        .find(|result| !result.aborted && result.score >= beta)
-    {
-        candidates.swap(0, result.move_index);
-        return result.score;
-    }
-
-    results.sort_unstable_by_key(|result| result.move_index);
-    let mut best_idx = 0;
-    for result in results {
-        if result.aborted || result.score <= alpha {
-            continue;
-        }
-        let move_num = candidates[result.move_index].0 as usize;
-        let score = search_root_final_candidate(
-            &candidates[result.move_index].1,
-            alpha,
-            beta,
-            &mut root_bounds[move_num],
-            search,
-        );
-        if search.is_aborted() {
-            return best_score;
-        }
-        if score >= beta {
-            candidates.swap(0, result.move_index);
-            return score;
-        }
-        if score > alpha {
-            alpha = score;
-            best_score = score;
-            best_idx = result.move_index;
         }
     }
     if best_idx > 0 {
@@ -1356,6 +1147,7 @@ fn search_root_final_window(
     }
     let mut nodes_before = search.stats.eval_search_nodes + search.stats.final_search_nodes;
     let first_move = candidates[0].0 as usize;
+    // 前段階で先頭になった手を最初に読み、残りの探索に使う alpha を確定させる。
     let mut best_score = search_root_final_candidate(
         &candidates[0].1,
         alpha,
@@ -1382,18 +1174,9 @@ fn search_root_final_window(
         alpha = best_score;
     }
     let mut best_idx = 0;
-    if search.thread_pool.is_some() && candidates.len() > 2 {
-        return search_root_final_siblings_ybwc(
-            alpha,
-            beta,
-            best_score,
-            candidates,
-            root_bounds,
-            search,
-        );
-    }
     for i in 1..candidates.len() {
         let move_num = candidates[i].0 as usize;
+        // 完全読みでは、過去の窓探索で得た上下限だけでカットできる場合がある。
         if exact_selectivity && root_bounds[move_num].lower >= beta {
             candidates.swap(0, i);
             return root_bounds[move_num].lower;
@@ -1454,7 +1237,7 @@ fn search_root_final_window(
 }
 
 /// 中盤 PVS の root 探索。最善手と fail-soft スコアを返す。
-// Root helper for the single-shot eval search entry point.
+// 単発の中盤探索 API から使う root 用ヘルパー。
 #[allow(dead_code)]
 fn search_root_eval(board: &Board, depth: i32, search: &mut SearchContext) -> (u8, i32) {
     let moves_bit = board.moves();
@@ -1505,7 +1288,7 @@ fn search_root_eval(board: &Board, depth: i32, search: &mut SearchContext) -> (u
 }
 
 /// 終盤 PVS の root 探索。最善手と完全読みスコアを返す。
-// Root helper for the single-shot final search entry point.
+// 単発の終盤探索 API から使う root 用ヘルパー。
 #[allow(dead_code)]
 fn search_root_final(board: &Board, search: &mut SearchContext) -> (u8, i32) {
     let moves_bit = board.moves();
@@ -1795,200 +1578,6 @@ mod tests {
                 "score mismatch p={:#018x} o={:#018x}",
                 board.player, board.opponent
             );
-        }
-    }
-
-    #[test]
-    fn parallel_final_search_matches_single_thread() {
-        let single = Solver::with_options(
-            Arc::new(Evaluator::default()),
-            SolverOptions {
-                tt_capacity: Some(16),
-                ..SolverOptions::default()
-            },
-        );
-        let parallel = Solver::with_options(
-            Arc::new(Evaluator::default()),
-            SolverOptions {
-                tt_capacity: Some(16),
-                search_threads: NonZeroUsize::new(8).unwrap(),
-                ..SolverOptions::default()
-            },
-        );
-        let mut rng = 0x7b31_d4a9_2f68_c05e_u64;
-        let mut empties = 0u64;
-        while empties.count_ones() < 14 {
-            rng ^= rng.wrapping_shl(13);
-            rng ^= rng.wrapping_shr(7);
-            rng ^= rng.wrapping_shl(17);
-            empties |= 1u64 << (rng % 64);
-        }
-        let board = Board {
-            player: rng & !empties,
-            opponent: !rng & !empties,
-        };
-        let expected = single.solve_final(&board, NO_MPC_SELECTIVITY_LV).score;
-
-        // 並列実行順は非決定的なので、同じ局面を世代を分けて繰り返す。
-        for _ in 0..4 {
-            parallel.clear_tt();
-            let actual = parallel.solve_final(&board, NO_MPC_SELECTIVITY_LV);
-            assert!(!actual.aborted);
-            assert_eq!(actual.score, expected);
-        }
-    }
-
-    /// 中盤 iterative deepening の root 兄弟分割が直列探索と同じ結果を返す。
-    #[test]
-    fn parallel_eval_root_matches_single_thread_score_and_move() {
-        let evaluator = Arc::new(Evaluator::default());
-        let single = Solver::with_options(
-            evaluator.clone(),
-            SolverOptions {
-                search_threads: NonZeroUsize::MIN,
-                ..SolverOptions::default()
-            },
-        );
-        let parallel = Solver::with_options(
-            evaluator,
-            SolverOptions {
-                search_threads: NonZeroUsize::new(4).unwrap(),
-                ..SolverOptions::default()
-            },
-        );
-        let mut rng = 0xd1b5_4a32_d192_ed03_u64;
-        let mut checked = 0;
-
-        while checked < 3 {
-            // 20 未満の着手数では level 20 が depth 16 に調整されるため、
-            // debug の全体テストでも複数局面を現実的な時間で検証できる。
-            let board = random_board(&mut rng, 48);
-            if board.moves().count_ones() < 3 {
-                continue;
-            }
-
-            let expected = single.solve(&board, 20);
-            let actual = parallel.solve(&board, 20);
-
-            assert!(!expected.aborted && !actual.aborted);
-            assert_eq!(
-                (actual.score, actual.best_move),
-                (expected.score, expected.best_move),
-                "中盤rootの並列と直列で結果が違う: p={:#018x} o={:#018x}",
-                board.player,
-                board.opponent
-            );
-            assert_eq!(expected.ybwc_splits, 0, "1スレッドで分割してはいけない");
-            assert!(
-                actual.ybwc_splits > 0,
-                "並列中盤探索で一度も分割されていない: p={:#018x} o={:#018x}",
-                board.player,
-                board.opponent
-            );
-            checked += 1;
-        }
-    }
-
-    #[test]
-    fn search_thread_count_includes_main_thread() {
-        let single = Solver::with_options(
-            Arc::new(Evaluator::default()),
-            SolverOptions {
-                search_threads: NonZeroUsize::MIN,
-                ..SolverOptions::default()
-            },
-        );
-        assert!(single.thread_pool.is_none());
-
-        let parallel = Solver::with_options(
-            Arc::new(Evaluator::default()),
-            SolverOptions {
-                search_threads: NonZeroUsize::new(2).unwrap(),
-                ..SolverOptions::default()
-            },
-        );
-        assert!(parallel.thread_pool.is_some());
-    }
-
-    /// YBWC で並列に解いても、完全読みのスコアは 1 スレッドと一致する。
-    ///
-    /// 分割点とワーカープールを探索経由で動かす唯一のテスト。空きマスは
-    /// 終盤 YBWC の下限 (`YBWC_END_SPLIT_MIN_EMPTIES` = 16) を超えるように選ぶ。
-    /// 分割が実際に起きたことを `ybwc_splits` で確認するので、分割条件が
-    /// 変わってこのテストが空回りするようになれば気付ける。
-    ///
-    /// なお祖先への直接ハンドオフはここでは踏まれない (18空きでは部分木が
-    /// 小さく master が待機窓に入らないため、実測で `ybwc_handoffs` は 0)。
-    /// その経路は `search::tests::split_job_is_handed_to_a_waiting_ancestor`
-    /// で個別に確認している。
-    #[test]
-    fn parallel_search_matches_single_thread_exact_score() {
-        let evaluator = Arc::new(Evaluator::default());
-        let mut rng = 0x9e37_79b9_7f4a_7c15_u64;
-        let mut checked = 0;
-
-        for _ in 0..4 {
-            let board = random_board(&mut rng, 18);
-            // 合法手が無い盤面は分割まで届かないので引き直す。
-            if board.moves() == 0 {
-                continue;
-            }
-
-            let single = Solver::with_options(
-                evaluator.clone(),
-                SolverOptions {
-                    search_threads: NonZeroUsize::MIN,
-                    ..SolverOptions::default()
-                },
-            );
-            let parallel = Solver::with_options(
-                evaluator.clone(),
-                SolverOptions {
-                    search_threads: NonZeroUsize::new(4).unwrap(),
-                    ..SolverOptions::default()
-                },
-            );
-
-            let expected = single.solve(&board, 60);
-            let actual = parallel.solve(&board, 60);
-
-            assert!(!expected.aborted && !actual.aborted);
-            assert_eq!(
-                actual.score, expected.score,
-                "並列と直列でスコアが違う: p={:#018x} o={:#018x}",
-                board.player, board.opponent
-            );
-            assert_pv_is_legal(&board, &actual.pv);
-            assert_eq!(expected.ybwc_splits, 0, "1スレッドで分割してはいけない");
-            assert!(
-                actual.ybwc_splits > 0,
-                "並列探索で一度も分割されていない。このテストは何も検証できていない: \
-                 p={:#018x} o={:#018x}",
-                board.player,
-                board.opponent
-            );
-            checked += 1;
-        }
-
-        assert_eq!(checked, 4, "検証できた局面が足りない");
-    }
-
-    fn next_pseudo_random(state: &mut u64) -> u64 {
-        *state ^= state.wrapping_shl(13);
-        *state ^= state.wrapping_shr(7);
-        *state ^= state.wrapping_shl(17);
-        *state
-    }
-
-    fn random_board(rng: &mut u64, n_empties: u32) -> Board {
-        let mut empties = 0u64;
-        while empties.count_ones() < n_empties {
-            empties |= 1u64 << (next_pseudo_random(rng) % 64) as u32;
-        }
-        let player = next_pseudo_random(rng) & !empties;
-        Board {
-            player,
-            opponent: !player & !empties,
         }
     }
 

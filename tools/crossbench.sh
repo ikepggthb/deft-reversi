@@ -39,9 +39,9 @@ to_sec() {
   awk -F: '{n=NF; s=$n; if(n>=2) s+=$(n-1)*60; if(n>=3) s+=$(n-2)*3600; printf "%.3f", s}' <<< "$1"
 }
 
-run_deft() { # $1=binary $2=threads
+run_deft() { # $1=binary
   local o
-  o=$("$1" -s "$PROBLEMS_DIR/deft.obf" -e "$EVAL" --threads "$2" -l "$LEVEL" 2>/dev/null)
+  o=$("$1" -s "$PROBLEMS_DIR/deft.obf" -e "$EVAL" -l "$LEVEL" 2>/dev/null)
   echo "$(to_sec "$(awk '/^total/{print $NF}' <<< "$o")") $(awk '/^total/{print $2}' <<< "$o")"
 }
 
@@ -62,9 +62,11 @@ run_ega() { # $1=threads
 for th in $THREAD_LIST; do
   for r in $(seq 1 "$ROUNDS"); do
     echo "round $r threads=$th" >&2
-    for spec in ${DEFT_BINS:-}; do
-      printf '%s\t%s\t%s\n' "$th" "${spec%%=*}" "$(run_deft "${spec#*=}" "$th")" >> "$OUT"
-    done
+    if [ "$th" = 1 ]; then
+      for spec in ${DEFT_BINS:-}; do
+        printf '%s\t%s\t%s\n' "$th" "${spec%%=*}" "$(run_deft "${spec#*=}")" >> "$OUT"
+      done
+    fi
     [ -n "${EDAX_DIR:-}" ] && printf '%s\t%s\t%s\n' "$th" edax "$(run_edax "$th")" >> "$OUT"
     [ -n "${EGAROUCID_DIR:-}" ] && printf '%s\t%s\t%s\n' "$th" Egaroucid "$(run_ega "$th")" >> "$OUT"
   done

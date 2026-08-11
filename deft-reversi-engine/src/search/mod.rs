@@ -6,9 +6,7 @@ pub mod mpc;
 pub mod search;
 pub mod solve_score;
 pub mod solver;
-pub mod split_point;
 pub mod stability_cut;
-pub mod thread_pool;
 pub mod tt_cut;
 
 pub use mpc::MpcConfig;
