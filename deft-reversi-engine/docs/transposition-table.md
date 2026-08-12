@@ -37,11 +37,11 @@ TTEntry (32 byte)
 
 1 cluster は cache line 1 本に収まる。1 回の probe は同じ cluster 内の 2 entry だけを見る。
 
-`TTEntryData` は 8 byte に pack する。
+`TTValue` は 8 byte に pack する。
 
 ```text
-min            i8
-max            i8
+lower          i8
+upper          i8
 lv             u8
 selectivity_lv u8
 move0          u8
@@ -77,100 +77,67 @@ let actual_mib = tt.actual_mb_size();
 
 TT key は `Board::player` と `Board::opponent` から deterministic mixer で生成する。
 
-```rust
-let key = TranspositionTable::key(board);
-let cluster = key as usize & cluster_mask;
-```
-
 乱数表は使わない。TT 内では key は index 用であり、一致判定は保存済みの `player` / `opponent` と現在の board を直接比較して行う。
 
 ## 推奨アクセスパターン
 
-探索側では、1 度 key を作って prefetch、probe、store まで使い回す。
+探索側では `probe` の結果を保持し、探索後の `store` で slot を再利用する。
 
 ```rust
-let key = TranspositionTable::key(board);
-tt.prefetch_key(key);
-
-let probe = tt.probe_with_key(board, key);
-if let Some(data) = probe.data() {
-    // data.min(), data.max(), data.moves() を使って枝刈りや move ordering を行う。
+let probe = tt.probe(board);
+if let Some(value) = probe.value() {
+    // value を枝刈りや move ordering に使う。
 }
 
 // 探索後、probe で得た slot に保存する。
 tt.store(
     probe.slot(),
     board,
-    min,
-    max,
+    lower,
+    upper,
     lv,
     selectivity_lv,
     best_move,
 );
 ```
-
-単純な互換 API として `lookup` / `get` / `add` も残している。
-
-```rust
-let hit = tt.lookup(board);
-tt.add(board, min, max, lv, selectivity_lv, best_move);
-```
-
-ただし高速化する探索では `probe_with_key` と `store` を分け、同じ cluster を二度探さない形を優先する。
 
 ## 使い方
 
 探索中の基本的な流れは次の通りである。
 
-1. `TranspositionTable::key(&board)` で key を 1 回だけ作る。
-2. `prefetch_key(key)` で対象 cluster を先読みする。
-3. `probe_with_key(&board, key)` で hit / miss を判定する。
-4. `TTProbe::data()` で保存済みの探索結果を読む。
-5. 探索後に `TTProbe::slot()` をそのまま `store()` に渡す。
+1. `probe(&board)` で hit / miss を判定する。
+2. `TTProbe::value()` で保存済みの探索結果を読む。
+3. 探索後に `TTProbe::slot()` をそのまま `store()` に渡す。
 
 ```rust
-let key = TranspositionTable::key(&board);
-tt.prefetch_key(key);
-
-let probe = tt.probe_with_key(&board, key);
-if let Some(data) = probe.data() {
-    let min = data.min();
-    let max = data.max();
-    let moves = data.moves();
+let probe = tt.probe(&board);
+if let Some(value) = probe.value() {
+    let lower = value.lower;
+    let upper = value.upper;
 
     // ここで枝刈りや move ordering に使う
 }
 
-let (min, max, lv, selectivity_lv, best_move) = search_result;
+let (lower, upper, lv, selectivity_lv, best_move) = search_result;
 
 tt.store(
     probe.slot(),
     &board,
-    min,
-    max,
+    lower,
+    upper,
     lv,
     selectivity_lv,
     best_move,
 );
 ```
 
-`probe()` だけでも使えるが、速度を詰める探索では `probe_with_key()` を優先する。`probe()` は board から key を内部で作り直すため、`prefetch_key()` や `store()` と組み合わせるときは key を外で保持した方が無駄が少ない。
-
-`lookup()` と `get()` は保存済みデータだけ欲しいときの簡易 API である。
+`get()` は保存済みの値だけが必要な場合の簡易 API である。
 
 ```rust
-if let Some(data) = tt.lookup(&board) {
+if let Some(value) = tt.get(&board) {
     // hit
 }
 ```
-
-`add()` は `probe()` と `store()` を 1 回で済ませる互換 helper である。
-
-```rust
-tt.add(&board, min, max, lv, selectivity_lv, best_move);
-```
-
-ただし探索ループでは、`probe()` で得た `slot` を `store()` に渡す形が基本になる。
 
 ## Probe
 
@@ -212,8 +179,6 @@ tt.add(&board, min, max, lv, selectivity_lv, best_move);
 
 同世代では深い探索結果を残しやすくする。世代が違う entry は大きく低く評価し、反復深化や次 root 探索で自然に入れ替わるようにする。
 
-`set_old()` は旧コード向けの互換 API で、内部では `advance_generation()` を呼ぶ。新規コードでは `advance_generation()` を直接使う。
-
 ## 世代管理
 
 `generation` は `u8` の atomic counter である。
@@ -224,9 +189,8 @@ tt.advance_generation();
 
 探索の root が変わるタイミングや、反復深化の区切りで進める。探索 worker が同じ TT を読んでいる最中に頻繁に進める用途は想定しない。
 
-generation が 0 に wrap した場合は entry を clear し、generation を 1 に戻す。
-
-互換 API として `set_old()` は `advance_generation()` を呼ぶ。
+counter は wrap を許容する。entry は現世代かどうかだけを比較し、
+探索中に表全体を消去する処理は持たない。
 
 ## 並列性
 
@@ -247,33 +211,18 @@ TT は複数 thread から `&TranspositionTable` で共有できる。
 
 この方式は reader 側を lock-free にできる。writer 側は短時間だけ entry を占有するが、失敗時は retry 後に store を諦められる。
 
-## Prefetch
-
-`prefetch_key` は x86_64 では `_mm_prefetch` を使って対象 cluster を L1 に寄せる。非 x86_64 では no-op である。
-
-探索側では、子局面を作る前後や move ordering の直前など、実際に probe する少し前に呼ぶと効果が出やすい。
-
-```rust
-let key = TranspositionTable::key(next_board);
-tt.prefetch_key(key);
-```
-
 ## Safety
 
 実装内では速度のために限定的に `unsafe` を使う。
 
 - `get_unchecked`: cluster index は `key & cluster_mask`、entry index は固定範囲から作る。
-- `write_bytes` in `clear(&mut self)`: `&mut self` により concurrent access がないことを要求する。zero bit pattern は atomic 整数と TT entry に対して有効である。
-- `mem::transmute`: `TTDataFields` は `#[repr(C)]` かつ compile-time assert で 8 byte を確認する。
-- `_mm_prefetch`: x86_64 のみで呼び、pointer は cluster 配列内を指す。
-
-探索中に共有 TT を clear したい場合は `clear(&mut self)` ではなく、全 worker を止めてから実行する。古い entry を使い捨てたいだけなら `advance_generation()` を使う。
+- `mem::transmute`: `TTValue` は `#[repr(C)]` かつ compile-time assert で 8 byte を確認する。
 
 ## 値の範囲
 
-`TTEntryData` は compact にするため score と depth を小さい型に詰める。
+`TTValue` は compact にするため score と depth を小さい型に詰める。
 
-- `min`, `max`: `i8`
+- `lower`, `upper`: `i8`
 - `lv`, `selectivity_lv`: `u8`
 - `best_move`: `u8`
 

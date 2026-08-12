@@ -107,11 +107,6 @@ pub fn take_tt_contention_stats() -> TtContentionStats {
 // - hit / miss: hit は同じ局面が見つかった状態。miss は見つからなかった状態。
 // - generation: entry の世代。古い entry を置換しやすくするための番号。
 
-/// 各 TT エントリに保存する候補手の数。
-// Documented TT layout constant kept for compatibility and layout tests.
-#[allow(dead_code)]
-pub const TT_MOVES_CAPACITY: usize = 2;
-
 /// デフォルトの transposition table サイズ。単位は MiB。
 pub const DEFAULT_TT_MB_SIZE: usize = 256;
 
@@ -119,7 +114,6 @@ const CLUSTER_SIZE: usize = 2;
 const CLUSTER_BYTES: usize = 64;
 const MIB: usize = 1024 * 1024;
 const OCCUPIED_FLAG: u8 = 1;
-const AGE_WEIGHT: i32 = 8;
 
 /// transposition table のエントリに保存する探索結果本体。
 ///
@@ -145,8 +139,7 @@ const _: () = assert!(mem::size_of::<TTValue>() == 8);
 
 /// table 内のエントリ保存先位置。
 ///
-/// 探索側は [`TranspositionTable::probe`] または
-/// [`TranspositionTable::probe_with_key`] が返した保存先位置を保持し、
+/// 探索側は [`TranspositionTable::probe`] が返した保存先位置を保持し、
 /// [`TranspositionTable::store`] に渡す。これにより store 時の cluster 再探索を避ける。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TTSlot {
@@ -211,52 +204,23 @@ impl TranspositionTable {
     }
 
     /// TT cluster 用に実際に確保された byte 数を返す。
-    // Diagnostic API used when tuning TT allocation sizes.
-    #[allow(dead_code)]
     pub fn actual_byte_size(&self) -> usize {
         self.clusters.len() * mem::size_of::<TTCluster>()
     }
 
     /// TT cluster 用に実際に確保されたサイズを MiB 単位で返す。
-    // Diagnostic API used when tuning TT allocation sizes.
-    #[allow(dead_code)]
     pub fn actual_mb_size(&self) -> usize {
         self.actual_byte_size() / MIB
-    }
-
-    /// すべての entry を消去し、generation を `1` に戻す。
-    ///
-    /// `&mut self` を要求するため、worker thread が共有参照を持ったまま clear できない。
-    /// 通常の探索中に entry を古く扱いたい場合は [`Self::advance_generation`] を使う。
-    // Explicit clear API kept for tooling that owns the table mutably.
-    #[allow(dead_code)]
-    pub fn clear(&mut self) {
-        // SAFETY: &mut self により並行 reader / writer が存在しないことが保証される。
-        // AtomicU64 と TTCluster は全 byte 0 の bit pattern が有効。
-        unsafe {
-            std::ptr::write_bytes(
-                self.clusters.as_mut_ptr() as *mut u8,
-                0,
-                self.clusters.len() * mem::size_of::<TTCluster>(),
-            );
-        }
-        self.generation.store(1, Ordering::Relaxed);
     }
 
     /// 論理 generation を進め、新しい値を返す。
     ///
     /// 古い generation の entry は置換候補として優先される。
-    /// `u8` generation が 0 に wrap した場合、全 entry を消去して generation を `1` に戻す。
+    /// generation は wrapping counter で、更新は複数 thread 間でも不可分に行う。
     pub fn advance_generation(&self) -> u8 {
-        let next = self.generation.load(Ordering::Relaxed).wrapping_add(1);
-        if next == 0 {
-            self.clear_entries_relaxed();
-            self.generation.store(1, Ordering::Relaxed);
-            1
-        } else {
-            self.generation.store(next, Ordering::Relaxed);
-            next
-        }
+        self.generation
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1)
     }
 
     /// 現在の論理 generation を返す。
@@ -269,70 +233,26 @@ impl TranspositionTable {
     /// これは hit 判定の材料ではない。hit 時は完全な `player` / `opponent`
     /// bitboard を比較する。
     #[inline(always)]
-    pub fn key(board: &Board) -> u64 {
+    fn key(board: &Board) -> u64 {
         Self::mix_board(board.player, board.opponent)
     }
 
     /// `board` の cluster index を返す。
     ///
     /// 主に test や診断用。
-    // Diagnostic API for collision and distribution checks.
-    #[allow(dead_code)]
+    #[cfg(test)]
     #[inline(always)]
-    pub fn hash_board(&self, board: &Board) -> usize {
+    fn hash_board(&self, board: &Board) -> usize {
         self.cluster_index(Self::key(board))
     }
 
-    /// 対応 architecture で `board` の cluster を prefetch する。
-    // Prefetch hook kept for search hot-path experiments.
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub fn prefetch(&self, board: &Board) {
-        self.prefetch_key(Self::key(board));
-    }
-
-    /// 計算済み key に対応する cluster を prefetch する。
-    ///
-    /// `x86_64` では L1 hint 付きの `_mm_prefetch` を発行する。
-    /// それ以外の architecture では no-op。
-    // Prefetch hook kept for search hot-path experiments.
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub fn prefetch_key(&self, key: u64) {
-        #[cfg(target_arch = "x86_64")]
-        unsafe {
-            let cluster_index = self.cluster_index(key);
-            // SAFETY: cluster_index は key を確保済み cluster 範囲に mask するため、
-            // `add(cluster_index)` は slice 内に留まる。
-            let cluster_ptr = self.clusters.as_ptr().add(cluster_index) as *const i8;
-            std::arch::x86_64::_mm_prefetch(cluster_ptr, std::arch::x86_64::_MM_HINT_T0);
-        }
-
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            let _ = key;
-        }
-    }
-
     /// `board` を table から probe する。
-    ///
-    /// 速度を優先する場合、[`Self::key`] を 1 回だけ計算し、
-    /// prefetch や store でも使うなら [`Self::probe_with_key`] を使う。
     #[inline(always)]
     pub fn probe(&self, board: &Board) -> TTProbe {
-        self.probe_with_key(board, Self::key(board))
-    }
-
-    /// 計算済み key を使って table を probe する。
-    ///
-    /// hit は保存済みの完全な board が `board` と一致したことを意味する。
-    /// miss の場合でも、probe した cluster から選ばれた保存先位置を返す。
-    #[inline(always)]
-    pub fn probe_with_key(&self, board: &Board, key: u64) -> TTProbe {
         const PROBE_RETRIES: usize = 3;
 
         bump(&TT_PROBE_CALLS);
-        let cluster_index = self.cluster_index(key);
+        let cluster_index = self.cluster_index(Self::key(board));
         let generation = self.generation();
         let mut best_replacement_slot = TTSlot {
             cluster_index,
@@ -344,7 +264,7 @@ impl TranspositionTable {
             // SAFETY: cluster_index は `cluster_index` が作り、table 長の範囲に mask される。
             let cluster = unsafe { self.clusters.get_unchecked(cluster_index) };
             let mut saw_writer = false;
-            let mut best_replacement_score = i32::MAX;
+            let mut best_replacement_score = (true, u16::MAX);
 
             for entry_index in 0..CLUSTER_SIZE {
                 // SAFETY: entry_index は `0..CLUSTER_SIZE` から来る。
@@ -388,7 +308,6 @@ impl TranspositionTable {
                 };
             }
             bump(&TT_PROBE_SAW_WRITER);
-
             std::hint::spin_loop();
         }
 
@@ -446,14 +365,9 @@ impl TranspositionTable {
         entry.save(board, new_value);
     }
 
-    /// probe と store を 1 回で行う互換 helper。
-    ///
-    /// 探索中に頻繁に実行される処理では、選ばれた保存先位置を再利用するために
-    /// [`Self::probe`] / [`Self::probe_with_key`] と [`Self::store`] を分けて使う。
-    // Compatibility helper retained for older TT call sites and tests.
-    #[allow(dead_code)]
+    #[cfg(test)]
     #[inline(always)]
-    pub fn add(
+    fn add(
         &self,
         board: &Board,
         lower: i32,
@@ -469,12 +383,8 @@ impl TranspositionTable {
         self.store(slot, board, lower, upper, lv, selectivity_lv, best_move);
     }
 
-    /// 使用中の entry 数を数える。
-    ///
-    /// table 全体を走査するため、探索中に頻繁に実行される処理ではなく test や診断向け。
-    // Diagnostic API for TT occupancy checks.
-    #[allow(dead_code)]
-    pub fn count_used_tt(&self) -> usize {
+    #[cfg(test)]
+    fn count_used_tt(&self) -> usize {
         self.clusters
             .iter()
             .map(|cluster| {
@@ -540,16 +450,6 @@ impl TranspositionTable {
         debug_assert!(n > 0);
         1usize << (usize::BITS - 1 - n.leading_zeros())
     }
-
-    fn clear_entries_relaxed(&self) {
-        // generation wrap 時だけ使う。sweep 中の通常 reader は miss か古い値を観測しうるが、
-        // TT は一時保存領域なのでどちらも許容できる。
-        for cluster in self.clusters.iter() {
-            for entry in cluster.entries.iter() {
-                entry.clear_relaxed();
-            }
-        }
-    }
 }
 
 impl TTProbe {
@@ -573,14 +473,6 @@ impl TTProbe {
             TTProbe::Miss { .. } => None,
         }
     }
-
-    /// probe が完全一致 board を見つけた場合に `true` を返す。
-    // Convenience API kept for callers that only need hit/miss status.
-    #[allow(dead_code)]
-    #[inline(always)]
-    pub fn is_hit(&self) -> bool {
-        matches!(self, TTProbe::Hit { .. })
-    }
 }
 
 impl TTValue {
@@ -590,18 +482,8 @@ impl TTValue {
     }
 
     #[inline(always)]
-    fn relative_age(self, generation: u8) -> i32 {
-        generation.wrapping_sub(self.generation) as i32
-    }
-
-    #[inline(always)]
-    fn replacement_score(self, generation: u8) -> i32 {
-        let age = self.relative_age(generation);
-        if age == 0 {
-            self.quality() as i32
-        } else {
-            i32::MIN / 2 + self.quality() as i32 - age * AGE_WEIGHT
-        }
+    fn replacement_score(self, generation: u8) -> (bool, u16) {
+        (self.generation == generation, self.quality())
     }
 
     #[inline(always)]
@@ -757,7 +639,6 @@ impl TTEntry {
                 return;
             }
             bump(&TT_SAVE_CAS_FAILED);
-
             std::hint::spin_loop();
         }
         bump(&TT_SAVE_DROPPED);
@@ -794,13 +675,6 @@ impl TTEntry {
             .store(expected_seq.wrapping_add(2), Ordering::Release);
         true
     }
-
-    fn clear_relaxed(&self) {
-        self.player.store(0, Ordering::Relaxed);
-        self.opponent.store(0, Ordering::Relaxed);
-        self.packed_value.store(0, Ordering::Relaxed);
-        self.seq.store(0, Ordering::Relaxed);
-    }
 }
 
 impl Default for TTCluster {
@@ -828,6 +702,10 @@ fn validate_store_args(lower: i32, upper: i32, lv: i32, selectivity_lv: i32) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Instant;
 
     #[test]
     fn contention_stats_summary_reports_ratios() {
@@ -855,10 +733,6 @@ mod tests {
         assert!(line.contains("probe=0 saw_writer=0 (0.0000%)"), "{line}");
         assert!(line.contains("save=0 cas_failed=0 (0.0000%)"), "{line}");
     }
-    use super::*;
-    use std::sync::Arc;
-    use std::thread;
-    use std::time::Instant;
 
     fn board(player: u64, opponent: u64) -> Board {
         Board { player, opponent }
@@ -1033,6 +907,47 @@ mod tests {
         assert!(tt.get(&old).is_none());
         assert!(tt.get(&current).is_some());
         assert!(tt.get(&new).is_some());
+    }
+
+    #[test]
+    fn generation_wrap_does_not_clear_entries() {
+        let tt = tiny_tt();
+        let board = board(0x01, 0x02);
+        tt.add(&board, -1, 1, 1, 0, 10);
+
+        for _ in 0..u8::MAX {
+            tt.advance_generation();
+        }
+
+        assert_eq!(tt.generation(), 0);
+        assert!(tt.get(&board).is_some());
+    }
+
+    #[test]
+    fn concurrent_generation_updates_are_not_lost() {
+        const THREADS: usize = 4;
+        const UPDATES_PER_THREAD: usize = 1_000;
+
+        let tt = Arc::new(tiny_tt());
+        let handles = (0..THREADS)
+            .map(|_| {
+                let tt = Arc::clone(&tt);
+                thread::spawn(move || {
+                    for _ in 0..UPDATES_PER_THREAD {
+                        tt.advance_generation();
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(
+            tt.generation(),
+            1u8.wrapping_add((THREADS * UPDATES_PER_THREAD) as u8)
+        );
     }
 
     #[test]
