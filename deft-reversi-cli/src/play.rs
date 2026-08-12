@@ -1,5 +1,5 @@
 use deft_reversi_engine::{
-    check_record, position_num_to_str, Color, Evaluator, Game, Solver, SolverOptions,
+    check_record, default_evaluator, position_num_to_str, Color, Game, Solver, SolverOptions,
     SOLVE_LEVEL_MAX,
 };
 use std::{
@@ -38,7 +38,7 @@ impl OthelloCLI {
             Ok(solver) => solver,
             Err(e) => {
                 eprintln!("Evaluator: {}", e);
-                Solver::new(std::sync::Arc::new(Evaluator::default()))
+                Solver::new(default_evaluator())
             }
         };
 

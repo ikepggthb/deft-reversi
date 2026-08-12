@@ -1,5 +1,5 @@
 use deft_reversi_engine::{
-    check_record, position_num_to_str, Evaluator, Game, Solver, SolverOptions,
+    check_record, default_evaluator, position_num_to_str, Game, Solver, SolverOptions,
 };
 
 use rand::prelude::*;
@@ -29,7 +29,7 @@ pub fn run_self_play(
                 "Evaluatorの読み込みに失敗しました（{}）。正しい評価を計算できません。",
                 e
             );
-            Solver::new(std::sync::Arc::new(Evaluator::default()))
+            Solver::new(default_evaluator())
         }
     };
 

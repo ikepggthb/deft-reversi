@@ -2,6 +2,7 @@ use crate::board::board::Board;
 use crate::file::{invalid_data, PatternEvaluatorData, PhaseData};
 use std::io;
 
+use super::evaluator::Evaluator;
 use super::evaluator_const::*;
 use super::feature_indexes::FeatureIndexes;
 use super::util::{div_round_to_disc_score, fixed_vec};
@@ -119,6 +120,21 @@ impl PatternEvaluator {
     }
 }
 
+impl Evaluator for PatternEvaluator {
+    #[inline(always)]
+    fn evaluate(&self, board: &Board) -> i32 {
+        self.evaluate_board_slow(board)
+    }
+
+    #[inline(always)]
+    fn evaluate_move(&self, board: &Board, move_bit: u64, flip_bit: u64) -> i32 {
+        let state =
+            FeatureIndexes::from_board(&board.passed()).child_from_swapped(move_bit, flip_bit);
+        let child = board.make_move_from_flip_bit(move_bit, flip_bit);
+        PatternEvaluator::evaluate(self, &child, &state)
+    }
+}
+
 impl EvalWeights {
     fn from_data(data: PatternEvaluatorData) -> io::Result<Self> {
         let phases = fixed_vec::<_, N_PHASES>(data.phases, "phase count")?
@@ -200,7 +216,6 @@ fn phase_from_board(board: &Board) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::Evaluator;
     use crate::file::{EngineFile, EvaluatorData};
     use crate::search::mpc::MpcConfig;
     use std::hint::black_box;
@@ -239,7 +254,7 @@ mod tests {
     fn invalid_pattern_weight_lengths_return_invalid_data() {
         let mut engine_file = EngineFile::from_parts(
             crate::file::Metadata::default(),
-            &Evaluator::default(),
+            EvaluatorData::Pattern(PatternEvaluatorData::default()),
             &MpcConfig::default(),
         );
         match &mut engine_file.evaluator {
@@ -321,10 +336,9 @@ mod tests {
     fn benchmark_evaluate_checked_vs_unchecked() {
         let boards = sample_boards(256);
         let engine_file = EngineFile::read_file("../data/eval/eval.bin").unwrap();
-        let (_, evaluator, _) = engine_file.into_parts().unwrap();
-        let evaluator = match evaluator {
-            Evaluator::Pattern(evaluator) => evaluator,
-            Evaluator::Nnue(_) => panic!("benchmark requires pattern evaluator"),
+        let evaluator = match engine_file.evaluator {
+            EvaluatorData::Pattern(data) => PatternEvaluator::from_data(data).unwrap(),
+            EvaluatorData::Nnue(_) => panic!("benchmark requires pattern evaluator"),
         };
         let states: Vec<_> = boards.iter().map(FeatureIndexes::from_board).collect();
         let iterations = 20_000;

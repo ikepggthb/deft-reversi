@@ -180,16 +180,16 @@ pub fn nws_eval(board: &Board, alpha: i32, depth: i32, search: &mut SearchContex
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::Evaluator;
+    use crate::eval::{default_evaluator, Evaluator};
     use crate::search::eval_search::leaf::nws_eval_leaf_no_mpc;
     use crate::search::mpc::MpcConfig;
     use crate::search::search::SearchStats;
     use crate::t_table::TranspositionTable;
     use std::sync::Arc;
 
-    fn shared_resources() -> (Arc<Evaluator>, Arc<MpcConfig>, Arc<TranspositionTable>) {
+    fn shared_resources() -> (Arc<dyn Evaluator>, Arc<MpcConfig>, Arc<TranspositionTable>) {
         (
-            Arc::new(Evaluator::default()),
+            default_evaluator(),
             Arc::new(MpcConfig::default()),
             Arc::new(TranspositionTable::new()),
         )

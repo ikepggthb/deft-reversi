@@ -9,7 +9,10 @@ mod t_table;
 pub use board::board::Board;
 pub use board::position::{position_num_to_str, position_str_to_num};
 pub use error::EngineError;
-pub use eval::evaluator::Evaluator;
+pub use eval::evaluator::{
+    default_evaluator, evaluator_from_bytes, evaluator_from_path, evaluator_from_str_data,
+    Evaluator,
+};
 pub use game::{check_record, Color, Game, Position};
 pub use search::{
     MpcConfig, Solver, SolverOptions, SolverResult, SolverType, NO_MPC_SELECTIVITY_LV,

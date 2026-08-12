@@ -3,7 +3,7 @@ use std::time;
 use std::fs::File;
 use std::io::{self, BufRead};
 
-use deft_reversi_engine::{position_num_to_str, Board, Evaluator, Solver, SolverOptions};
+use deft_reversi_engine::{evaluator_from_path, position_num_to_str, Board, Solver, SolverOptions};
 
 // hh:mm:ss.mmm の形式にフォーマット
 fn format_duration(duration: time::Duration) -> String {
@@ -31,7 +31,7 @@ pub fn solve(
     )
     .unwrap();
     if let Some(path) = ordering_eval_path {
-        solver.set_ordering_evaluator(Evaluator::from_path(path).unwrap());
+        solver.set_ordering_evaluator(evaluator_from_path(path).unwrap());
     }
 
     let board_list: Vec<Board> = match read_solve_file(path) {
@@ -154,7 +154,7 @@ fn read_solve_file(path: &str) -> Result<Vec<Board>, std::io::Error> {
         // 手番を解析
         match turn_char.to_ascii_uppercase().chars().next().unwrap() {
             'X' => (),           // 手番がXならそのまま
-            'O' => board.swap(), // 手番がOならプレイヤーと相手をスワップ
+            'O' => board.make_pass(), // 手番がOならプレイヤーと相手をスワップ
             _ => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,

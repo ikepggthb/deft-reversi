@@ -1,4 +1,4 @@
-use deft_reversi_engine::{Board, Evaluator};
+use deft_reversi_engine::{evaluator_from_path, Board};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
@@ -106,7 +106,7 @@ pub fn run(
     phase_range: &str,
     limit_per_phase: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let evaluator = Evaluator::from_path(eval_path)?;
+    let evaluator = evaluator_from_path(eval_path)?;
     let (phase_start, phase_end) = parse_phase_range(phase_range)?;
     let mut total = Bucket::default();
     let mut by_empties: BTreeMap<u32, Bucket> = BTreeMap::new();
@@ -119,7 +119,7 @@ pub fn run(
             continue;
         }
         for record in read_rd_records(&path, limit_per_phase)? {
-            let score = evaluator.evaluate_board_slow(&record.board);
+            let score = evaluator.evaluate(&record.board);
             // .rd の value は手番側視点の最終石差そのもの(学習側と同じ解釈)
             let target = i32::from(record.value);
             let abs_error = (score - target).unsigned_abs() as u64;

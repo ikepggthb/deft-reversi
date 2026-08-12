@@ -1,4 +1,4 @@
-use crate::eval::evaluator::Evaluator;
+use crate::eval::evaluator::{evaluator_from_data, validate_evaluator_data, Evaluator};
 use crate::eval::evaluator_const::{
     N_MOBILITY_MAX, N_PATTERNS, N_PHASES, PATTERN_TABLE_SIZES, SCORE_SCALE,
 };
@@ -11,6 +11,7 @@ use crate::search::mpc::MpcConfig;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fs;
 use std::io::{self, BufReader, BufWriter, Write};
+use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct EngineFile {
@@ -205,18 +206,18 @@ impl EngineFile {
         file.flush()
     }
 
-    pub fn into_parts(self) -> io::Result<(Metadata, Evaluator, MpcConfig)> {
-        let evaluator = Evaluator::from_data(self.evaluator)?;
+    pub fn into_parts(self) -> io::Result<(Metadata, Arc<dyn Evaluator>, MpcConfig)> {
+        let evaluator = evaluator_from_data(self.evaluator)?;
         Ok((self.metadata, evaluator, self.mpc))
     }
 
     // Constructor retained for engine conversion/export tooling.
     #[allow(dead_code)]
-    pub fn from_parts(metadata: Metadata, evaluator: &Evaluator, mpc: &MpcConfig) -> Self {
+    pub fn from_parts(metadata: Metadata, evaluator: EvaluatorData, mpc: &MpcConfig) -> Self {
         Self {
             format_version: 4,
             metadata,
-            evaluator: evaluator.to_data(),
+            evaluator,
             mpc: mpc.clone(),
         }
     }
@@ -230,7 +231,7 @@ impl EngineFile {
         }
         self.metadata.validate()?;
         self.mpc.validate()?;
-        Evaluator::validate_data(&self.evaluator)?;
+        validate_evaluator_data(&self.evaluator)?;
         Ok(())
     }
 }
@@ -451,8 +452,8 @@ pub(crate) fn invalid_data(error: impl std::fmt::Display) -> io::Error {
 mod tests {
     use super::*;
     use crate::board::board::Board;
+    use crate::eval::default_evaluator;
     use crate::eval::nnue_evaluator::NnueEvaluator;
-    use crate::eval::Evaluator;
 
     const D3: u64 = 1u64 << 19;
 
@@ -474,7 +475,7 @@ mod tests {
     fn engine_file_round_trip_uses_v4_pattern_schema() {
         let engine_file = EngineFile::from_parts(
             Metadata::default(),
-            &Evaluator::default(),
+            EvaluatorData::Pattern(PatternEvaluatorData::default()),
             &MpcConfig::default(),
         );
         let json = serde_json::to_string(&engine_file).unwrap();
@@ -488,8 +489,8 @@ mod tests {
         let (_, evaluator, _) = loaded.into_parts().unwrap();
         let board = played_board();
         assert_eq!(
-            Evaluator::default().evaluate_board_slow(&board),
-            evaluator.evaluate_board_slow(&board)
+            default_evaluator().evaluate(&board),
+            evaluator.evaluate(&board)
         );
     }
 
@@ -497,7 +498,7 @@ mod tests {
     fn engine_file_round_trip_uses_v4_nnue_schema() {
         let engine_file = EngineFile::from_parts(
             Metadata::default(),
-            &Evaluator::Nnue(NnueEvaluator::default()),
+            EvaluatorData::Nnue(NnueEvaluatorData::default()),
             &MpcConfig::default(),
         );
         let json = serde_json::to_string(&engine_file).unwrap();
@@ -508,8 +509,8 @@ mod tests {
         let (_, evaluator, _) = loaded.into_parts().unwrap();
         let board = played_board();
         assert_eq!(
-            Evaluator::Nnue(NnueEvaluator::default()).evaluate_board_slow(&board),
-            evaluator.evaluate_board_slow(&board)
+            NnueEvaluator::default().evaluate_board_slow(&board),
+            evaluator.evaluate(&board)
         );
     }
 
@@ -525,7 +526,7 @@ mod tests {
     fn format_version_2_returns_invalid_data() {
         let mut engine_file = EngineFile::from_parts(
             Metadata::default(),
-            &Evaluator::default(),
+            EvaluatorData::Pattern(PatternEvaluatorData::default()),
             &MpcConfig::default(),
         );
         engine_file.format_version = 2;
@@ -540,7 +541,7 @@ mod tests {
     fn metadata_round_trip_matches_default() {
         let engine_file = EngineFile::from_parts(
             Metadata::default(),
-            &Evaluator::default(),
+            EvaluatorData::Pattern(PatternEvaluatorData::default()),
             &MpcConfig::default(),
         );
         let loaded =
@@ -568,7 +569,7 @@ mod tests {
     fn invalid_mpc_search_level_returns_invalid_data() {
         let mut engine_file = EngineFile::from_parts(
             Metadata::default(),
-            &Evaluator::default(),
+            EvaluatorData::Pattern(PatternEvaluatorData::default()),
             &MpcConfig::default(),
         );
         engine_file.mpc.eval_search.search_lv_by_depth[10] = 61;

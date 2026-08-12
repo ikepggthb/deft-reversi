@@ -58,7 +58,7 @@ impl Perft {
                 self.n_passed += 1;
                 let passed_board = {
                     let mut b = board.clone();
-                    b.swap();
+                    b.make_pass();
                     b
                 };
                 self.search(

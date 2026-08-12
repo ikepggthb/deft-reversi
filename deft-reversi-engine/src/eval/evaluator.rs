@@ -4,119 +4,84 @@ use crate::EngineError;
 use serde::Deserialize;
 use std::fs;
 use std::io;
+use std::sync::Arc;
 
-use super::feature_indexes::FeatureIndexes;
-use super::nnue_evaluator::{NnueEvaluator, NnueState};
+use super::nnue_evaluator::NnueEvaluator;
 use super::pattern_evaluator::PatternEvaluator;
 
-pub enum Evaluator {
-    Pattern(PatternEvaluator),
-    Nnue(NnueEvaluator),
-}
+/// 盤面を手番側から評価する評価関数の共通インターフェース。
+///
+/// 実行時に使用する具体的な評価器は、エンジンファイルの読み込み時に決まり、
+/// 探索中は `dyn Evaluator` を通して呼び出される。
+pub trait Evaluator: Send + Sync {
+    fn evaluate(&self, board: &Board) -> i32;
 
-// Incremental evaluation state for the planned fast evaluator path.
-#[allow(dead_code)]
-pub enum EvalState {
-    Pattern(FeatureIndexes),
-    Nnue(NnueState),
-}
-
-impl Default for Evaluator {
-    fn default() -> Self {
-        Self::Pattern(PatternEvaluator::default())
+    /// `board`への着手後の局面を評価する。
+    ///
+    /// 評価器が増分更新を持たない場合は、着手後の盤面を作って通常評価する。
+    fn evaluate_move(&self, board: &Board, move_bit: u64, flip_bit: u64) -> i32 {
+        self.evaluate(&board.make_move_from_flip_bit(move_bit, flip_bit))
     }
 }
 
-impl Evaluator {
-    pub fn from_path(path: &str) -> Result<Self, EngineError> {
-        let bytes = fs::read(path)?;
-        Self::from_bytes(&bytes)
-    }
+/// 既定のパターン評価器を生成する。
+pub fn default_evaluator() -> Arc<dyn Evaluator> {
+    Arc::new(PatternEvaluator::default())
+}
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, EngineError> {
-        let engine_file = match std::str::from_utf8(&bytes) {
-            Ok(s) => return Self::from_str_data(s),
-            Err(_) => EngineFile::from_bytes(bytes)
-                .map_err(|e| EngineError::InvalidData(e.to_string()))?,
-        };
-        let (_, evaluator, _) = engine_file
-            .into_parts()
-            .map_err(|e| EngineError::InvalidData(e.to_string()))?;
-        Ok(evaluator)
-    }
+/// ファイルから評価器を読み込む。
+pub fn evaluator_from_path(path: &str) -> Result<Arc<dyn Evaluator>, EngineError> {
+    let bytes = fs::read(path)?;
+    evaluator_from_bytes(&bytes)
+}
 
-    pub fn from_str_data(input: &str) -> Result<Self, EngineError> {
-        match EngineFile::read_string(input) {
-            Ok(file) => {
-                let (_, evaluator, _) = file
-                    .into_parts()
-                    .map_err(|e| EngineError::InvalidData(e.to_string()))?;
-                Ok(evaluator)
+/// バイト列から評価器を読み込む。
+pub fn evaluator_from_bytes(bytes: &[u8]) -> Result<Arc<dyn Evaluator>, EngineError> {
+    let engine_file = match std::str::from_utf8(bytes) {
+        Ok(s) => return evaluator_from_str_data(s),
+        Err(_) => {
+            EngineFile::from_bytes(bytes).map_err(|e| EngineError::InvalidData(e.to_string()))?
+        }
+    };
+    let (_, evaluator, _) = engine_file
+        .into_parts()
+        .map_err(|e| EngineError::InvalidData(e.to_string()))?;
+    Ok(evaluator)
+}
+
+/// JSON文字列から評価器を読み込む。旧パターン評価器形式にも対応する。
+pub fn evaluator_from_str_data(input: &str) -> Result<Arc<dyn Evaluator>, EngineError> {
+    match EngineFile::read_string(input) {
+        Ok(file) => {
+            let (_, evaluator, _) = file
+                .into_parts()
+                .map_err(|e| EngineError::InvalidData(e.to_string()))?;
+            Ok(evaluator)
+        }
+        Err(v3_error) => {
+            #[derive(Deserialize)]
+            struct LegacyPatternFile {
+                evaluator: PatternEvaluatorData,
             }
-            Err(v3_error) => {
-                #[derive(Deserialize)]
-                struct LegacyPatternFile {
-                    evaluator: PatternEvaluatorData,
-                }
-                let legacy: LegacyPatternFile = serde_json::from_str(input)
-                    .map_err(|_| EngineError::InvalidData(v3_error.to_string()))?;
-                Self::from_data(EvaluatorData::Pattern(legacy.evaluator))
-                    .map_err(|e| EngineError::InvalidData(e.to_string()))
-            }
+            let legacy: LegacyPatternFile = serde_json::from_str(input)
+                .map_err(|_| EngineError::InvalidData(v3_error.to_string()))?;
+            evaluator_from_data(EvaluatorData::Pattern(legacy.evaluator))
+                .map_err(|e| EngineError::InvalidData(e.to_string()))
         }
     }
+}
 
-    // Builds incremental state for the planned fast evaluator path.
-    #[allow(dead_code)]
-    pub(crate) fn state_from_board(&self, board: &Board) -> EvalState {
-        match self {
-            Self::Pattern(_) => EvalState::Pattern(FeatureIndexes::from_board(board)),
-            Self::Nnue(evaluator) => EvalState::Nnue(evaluator.state_from_board(board)),
-        }
+pub(crate) fn evaluator_from_data(data: EvaluatorData) -> io::Result<Arc<dyn Evaluator>> {
+    match data {
+        EvaluatorData::Pattern(data) => Ok(Arc::new(PatternEvaluator::from_data(data)?)),
+        EvaluatorData::Nnue(data) => Ok(Arc::new(NnueEvaluator::from_data(data)?)),
     }
+}
 
-    #[inline(always)]
-    // Uses incremental state for the planned fast evaluator path.
-    #[allow(dead_code)]
-    pub(crate) fn evaluate(&self, board: &Board, state: &EvalState) -> i32 {
-        match (self, state) {
-            (Self::Pattern(evaluator), EvalState::Pattern(state)) => {
-                evaluator.evaluate(board, state)
-            }
-            (Self::Nnue(evaluator), EvalState::Nnue(state)) => evaluator.evaluate(board, state),
-            _ => panic!("evaluator/state kind mismatch"),
-        }
-    }
-
-    #[inline(always)]
-    pub fn evaluate_board_slow(&self, board: &Board) -> i32 {
-        match self {
-            Self::Pattern(evaluator) => evaluator.evaluate_board_slow(board),
-            Self::Nnue(evaluator) => evaluator.evaluate_board_slow(board),
-        }
-    }
-
-    pub(crate) fn from_data(data: EvaluatorData) -> io::Result<Self> {
-        Ok(match data {
-            EvaluatorData::Pattern(data) => Self::Pattern(PatternEvaluator::from_data(data)?),
-            EvaluatorData::Nnue(data) => Self::Nnue(NnueEvaluator::from_data(data)?),
-        })
-    }
-
-    // Serialization hook retained for engine-file export tooling.
-    #[allow(dead_code)]
-    pub(crate) fn to_data(&self) -> EvaluatorData {
-        match self {
-            Self::Pattern(evaluator) => EvaluatorData::Pattern(evaluator.to_data()),
-            Self::Nnue(evaluator) => EvaluatorData::Nnue(evaluator.to_data()),
-        }
-    }
-
-    pub(crate) fn validate_data(data: &EvaluatorData) -> io::Result<()> {
-        match data {
-            EvaluatorData::Pattern(data) => PatternEvaluator::validate_data(data),
-            EvaluatorData::Nnue(data) => NnueEvaluator::validate_data(data),
-        }
+pub(crate) fn validate_evaluator_data(data: &EvaluatorData) -> io::Result<()> {
+    match data {
+        EvaluatorData::Pattern(data) => PatternEvaluator::validate_data(data),
+        EvaluatorData::Nnue(data) => NnueEvaluator::validate_data(data),
     }
 }
 
@@ -133,30 +98,24 @@ mod tests {
     }
 
     #[test]
-    fn default_evaluator_is_pattern() {
-        assert!(matches!(Evaluator::default(), Evaluator::Pattern(_)));
-    }
-
-    #[test]
-    fn enum_state_eval_matches_slow_eval() {
-        let evaluator = Evaluator::default();
+    fn default_evaluator_is_callable_through_trait_object() {
+        let evaluator = default_evaluator();
         for board in [Board::new(), played_board()] {
-            let state = evaluator.state_from_board(&board);
             assert_eq!(
-                evaluator.evaluate_board_slow(&board),
-                evaluator.evaluate(&board, &state)
+                PatternEvaluator::default().evaluate_board_slow(&board),
+                evaluator.evaluate(&board)
             );
         }
     }
 
     #[test]
-    fn nnue_state_eval_matches_slow_eval() {
-        let evaluator = Evaluator::Nnue(NnueEvaluator::default());
+    fn nnue_evaluator_is_callable_through_trait_object() {
+        let concrete = NnueEvaluator::default();
+        let evaluator: Arc<dyn Evaluator> = Arc::new(NnueEvaluator::default());
         for board in [Board::new(), played_board()] {
-            let state = evaluator.state_from_board(&board);
             assert_eq!(
-                evaluator.evaluate_board_slow(&board),
-                evaluator.evaluate(&board, &state)
+                concrete.evaluate_board_slow(&board),
+                evaluator.evaluate(&board)
             );
         }
     }

@@ -1,6 +1,6 @@
 use crate::dataset::{PhaseRange, RD_MAGIC, RD_RECORD_SIZE};
 use clap::Args;
-use deft_reversi_engine::{Board, Evaluator};
+use deft_reversi_engine::{evaluator_from_path, Board, Evaluator};
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -25,14 +25,12 @@ pub struct AnnotateResidualArgs {
 }
 
 pub fn run(args: AnnotateResidualArgs) -> Result<(), String> {
-    let evaluator = Arc::new(
-        Evaluator::from_path(
-            args.eval
-                .to_str()
-                .ok_or_else(|| format!("eval path is not valid UTF-8: {}", args.eval.display()))?,
-        )
-        .map_err(|err| err.to_string())?,
-    );
+    let evaluator = evaluator_from_path(
+        args.eval
+            .to_str()
+            .ok_or_else(|| format!("eval path is not valid UTF-8: {}", args.eval.display()))?,
+    )
+    .map_err(|err| err.to_string())?;
     let tasks = collect_tasks(&args.data, &args.out, args.phase_range)?;
     process_tasks_parallel(tasks, evaluator, args.verify_samples)?;
     Ok(())
@@ -79,7 +77,7 @@ fn collect_tasks(data: &Path, out: &Path, range: PhaseRange) -> Result<Vec<Task>
 
 fn process_tasks_parallel(
     tasks: Vec<Task>,
-    evaluator: Arc<Evaluator>,
+    evaluator: Arc<dyn Evaluator>,
     verify_samples: usize,
 ) -> Result<(), String> {
     let tasks = Arc::new(tasks);
@@ -120,7 +118,7 @@ fn process_tasks_parallel(
     result
 }
 
-fn process_file(task: &Task, evaluator: &Evaluator, verify_samples: usize) -> io::Result<()> {
+fn process_file(task: &Task, evaluator: &dyn Evaluator, verify_samples: usize) -> io::Result<()> {
     if let Some(parent) = task.output.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -153,7 +151,7 @@ fn process_file(task: &Task, evaluator: &Evaluator, verify_samples: usize) -> io
             player: own,
             opponent,
         };
-        let eval_score = evaluator.evaluate_board_slow(&board);
+        let eval_score = evaluator.evaluate(&board);
         let raw_residual = i32::from(value) - eval_score;
         let residual = raw_residual.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
         if raw_residual != i32::from(residual) {

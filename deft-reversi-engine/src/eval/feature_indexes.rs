@@ -25,6 +25,7 @@ impl FeatureIndexes {
         state
     }
 
+    #[allow(dead_code)]
     pub fn indexes(&self) -> &[u16; N_FEATURES] {
         &self.feature_indexes
     }
@@ -34,6 +35,7 @@ impl FeatureIndexes {
     /// `delta` は empty/opponent/player = 0/1/2 の差で、合法着手から
     /// 作る場合は -1, +1, +2 のいずれかになる。
     #[inline(always)]
+    #[allow(dead_code)]
     pub(crate) fn add_square_delta(&mut self, square: usize, delta: i16) {
         debug_assert!(square < N_BOARD_SQUARES);
         let square_features = unsafe { SQUARE_TO_FEATURES.get_unchecked(square) };
@@ -50,6 +52,7 @@ impl FeatureIndexes {
 
     /// 親盤面を手番反転して作った index から、合法手後の index を作る。
     #[inline(always)]
+    #[allow(dead_code)]
     pub(crate) fn child_from_swapped(mut self, move_bit: u64, flip_bit: u64) -> Self {
         let mut flips = flip_bit;
         while flips != 0 {
@@ -63,6 +66,7 @@ impl FeatureIndexes {
 
     /// 現手番の index から、合法手後の盤面をさらに pass した視点の index を作る。
     #[inline(always)]
+    #[allow(dead_code)]
     pub(crate) fn child_passed_from_current(mut self, move_bit: u64, flip_bit: u64) -> Self {
         let mut flips = flip_bit;
         while flips != 0 {

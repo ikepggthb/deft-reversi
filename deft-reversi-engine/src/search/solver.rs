@@ -9,6 +9,7 @@
 
 use crate::board::board::Board;
 use crate::board::constant::NO_COORD;
+use crate::eval::evaluator::evaluator_from_str_data;
 use crate::eval::evaluator_const::SCORE_MAX;
 use crate::eval::Evaluator;
 use crate::file::EngineFile;
@@ -119,8 +120,7 @@ impl PhaseTimer {
     /// 最後の exact 段では呼ばないため、累計は exact を含まない。
     fn mark_selective_final_done(&mut self, stats: &SearchStats) {
         self.selective_final = self.start.elapsed() - self.iterative_deepening;
-        self.selective_final_nodes =
-            Self::searched_nodes(stats) - self.iterative_deepening_nodes;
+        self.selective_final_nodes = Self::searched_nodes(stats) - self.iterative_deepening_nodes;
     }
 
     fn report(&self, stats: &SearchStats) -> String {
@@ -158,9 +158,9 @@ impl PhaseTimer {
 /// TT を再利用できる。
 pub struct Solver {
     /// 探索値の計算に使う本評価器。
-    evaluator: Arc<Evaluator>,
+    evaluator: Arc<dyn Evaluator>,
     /// 候補手の並べ替えに使う評価器。本評価器とは別に差し替えられる。
-    ordering_evaluator: Arc<Evaluator>,
+    ordering_evaluator: Arc<dyn Evaluator>,
     /// MPC の深さ・誤差分布・選択率設定。
     mpc: Arc<MpcConfig>,
     /// 通常探索用と PV 復元優先用の置換表。
@@ -172,16 +172,16 @@ pub struct Solver {
 
 impl Solver {
     /// 既定の MPC、置換表容量、1 スレッド構成で探索器を生成する。
-    pub fn new(evaluator: Arc<Evaluator>) -> Self {
+    pub fn new(evaluator: Arc<dyn Evaluator>) -> Self {
         Self::with_options(evaluator, SolverOptions::default())
     }
 
     /// 評価器と実行時オプションを指定して探索器を生成する。
-    pub fn with_options(evaluator: Arc<Evaluator>, opts: SolverOptions) -> Self {
+    pub fn with_options(evaluator: Arc<dyn Evaluator>, opts: SolverOptions) -> Self {
         Self::with_mpc(evaluator, Arc::new(MpcConfig::default()), opts)
     }
 
-    fn with_mpc(evaluator: Arc<Evaluator>, mpc: Arc<MpcConfig>, opts: SolverOptions) -> Self {
+    fn with_mpc(evaluator: Arc<dyn Evaluator>, mpc: Arc<MpcConfig>, opts: SolverOptions) -> Self {
         let tt = match opts.tt_capacity {
             Some(mb) => TranspositionTable::with_mb_size(mb),
             None => TranspositionTable::new(),
@@ -217,9 +217,9 @@ impl Solver {
         match EngineFile::read_string(input) {
             Ok(file) => Self::from_engine_file(file, opts),
             Err(v3_error) => {
-                let evaluator = Evaluator::from_str_data(input)
+                let evaluator = evaluator_from_str_data(input)
                     .map_err(|_| EngineError::InvalidData(v3_error.to_string()))?;
-                Ok(Self::with_options(Arc::new(evaluator), opts))
+                Ok(Self::with_options(evaluator, opts))
             }
         }
     }
@@ -228,7 +228,7 @@ impl Solver {
         let (_, evaluator, mpc) = file
             .into_parts()
             .map_err(|e| EngineError::InvalidData(e.to_string()))?;
-        Ok(Self::with_mpc(Arc::new(evaluator), Arc::new(mpc), opts))
+        Ok(Self::with_mpc(evaluator, Arc::new(mpc), opts))
     }
 
     /// 現在使用中の MPC 設定を返す。
@@ -237,8 +237,8 @@ impl Solver {
     }
 
     /// 着手順序付け専用の評価器を差し替える。
-    pub fn set_ordering_evaluator(&mut self, ev: Evaluator) {
-        self.ordering_evaluator = Arc::new(ev);
+    pub fn set_ordering_evaluator(&mut self, ev: Arc<dyn Evaluator>) {
+        self.ordering_evaluator = ev;
     }
 
     /// 置換表の世代を進め、過去のエントリを優先的な置換対象にする。
@@ -368,7 +368,7 @@ impl Solver {
             SELECTIVITY_LV_MAX
         };
 
-        let mut predict_score = self.evaluator.evaluate_board_slow(board);
+        let mut predict_score = self.evaluator.evaluate(board);
 
         let mut phase = PhaseTimer::new();
 
@@ -484,7 +484,7 @@ impl Solver {
     fn fallback_move(&self, board: &Board) -> (u8, i32) {
         let legal = board.moves();
         if legal == 0 {
-            return (NO_COORD, self.evaluator.evaluate_board_slow(board));
+            return (NO_COORD, self.evaluator.evaluate(board));
         }
         let mut best_move = NO_COORD;
         let mut best_score = -SCORE_MAX;
@@ -493,7 +493,7 @@ impl Solver {
             let mb = bits & bits.wrapping_neg();
             bits &= bits - 1;
             let pos = mb.trailing_zeros() as u8;
-            let score = -self.evaluator.evaluate_board_slow(&board.make_move(mb));
+            let score = -self.evaluator.evaluate(&board.make_move(mb));
             if score > best_score {
                 best_score = score;
                 best_move = pos;
@@ -1329,7 +1329,7 @@ mod tests {
     use std::time::Duration;
 
     fn make_solver() -> Solver {
-        Solver::new(Arc::new(Evaluator::default()))
+        Solver::new(crate::eval::default_evaluator())
     }
 
     #[test]
@@ -1374,7 +1374,7 @@ mod tests {
         let original_bound = bound;
         let mut stats = SearchStats::default();
         let mut search = SearchContext::new(
-            Arc::new(Evaluator::default()),
+            crate::eval::default_evaluator(),
             Arc::new(MpcConfig::default()),
             Arc::new(TranspositionTable::new()),
             &mut stats,
@@ -1510,7 +1510,7 @@ mod tests {
     fn solve_observes_stop_flag_during_search() {
         let stop = Arc::new(AtomicBool::new(false));
         let solver = Solver::with_options(
-            Arc::new(Evaluator::default()),
+            crate::eval::default_evaluator(),
             SolverOptions {
                 tt_capacity: Some(16),
                 stop: Some(stop.clone()),

@@ -8,10 +8,8 @@ use arrayvec::ArrayVec;
 use std::cmp;
 
 use crate::board::board::Board;
-use crate::eval::evaluator::Evaluator;
 use crate::eval::evaluator_const::SCORE_MAX;
-use crate::eval::feature_indexes::FeatureIndexes;
-use crate::search::eval_search::{negaalpha_eval_ordering, negaalpha_eval_ordering_depth_one};
+use crate::search::eval_search::negaalpha_eval_ordering;
 use crate::search::SearchContext;
 
 /// オセロの最大合法手数。
@@ -179,73 +177,23 @@ pub fn assign_ordering_scores_weighted_window(
     tt_presence_weight: i32,
     search: &mut SearchContext,
 ) {
-    if lv <= 1 {
-        if matches!(search.ordering_evaluator.as_ref(), Evaluator::Pattern(_)) {
-            // 子盤面では手番が交代するため、親の反転視点を共通の基準にする。
-            // 各候補は反転石と着手マスだけ差分更新すればよい。
-            let swapped = FeatureIndexes::from_board(&board.passed());
-            for ml in move_list.iter_mut() {
-                if ml.is_skip {
-                    continue;
-                }
-                let move_bit = 1u64 << ml.move_num;
-                let state = swapped.child_from_swapped(move_bit, ml.flip_bit);
-
-                let move_board = board.make_move_from_flip_bit(move_bit, ml.flip_bit);
-
-                search.stats.eval_search_nodes += 1;
-                if search.check_abort() {
-                    return;
-                }
-                search.stats.eval_search_leaf_nodes += 1;
-                
-                let Evaluator::Pattern(evaluator) = search.ordering_evaluator.as_ref() else {
-                    unreachable!("pattern fast path selected for a non-pattern evaluator");
-                };
-                let search_eval = -evaluator.evaluate(&move_board, &state);
-                let opp_moves = move_board.moves();
-                let mobility_score = -(opp_moves.count_ones() as i32) * 2
-                    - ((opp_moves & CORNER_MASK).count_ones() as i32);
-                ml.score += search_eval * value_weight + mobility_score * mobility_weight;
-            }
-            return;
-        }
-    }
-
-    if lv == 2 && matches!(search.ordering_evaluator.as_ref(), Evaluator::Pattern(_)) {
-        let current = FeatureIndexes::from_board(board);
-        for ml in move_list.iter_mut() {
-            if ml.is_skip {
-                continue;
-            }
-            let move_bit = 1u64 << ml.move_num;
-            let move_board = board.make_move_from_flip_bit(move_bit, ml.flip_bit);
-            let child_swapped = current.child_passed_from_current(move_bit, ml.flip_bit);
-            let search_eval = -negaalpha_eval_ordering_depth_one(
-                &move_board,
-                &child_swapped,
-                eval_alpha,
-                eval_beta,
-                search,
-            );
-            let opp_moves = move_board.moves();
-            let mobility_score = -(opp_moves.count_ones() as i32) * 2
-                - ((opp_moves & CORNER_MASK).count_ones() as i32);
-            ml.score += search_eval * value_weight + mobility_score * mobility_weight;
-        }
-        return;
-    }
-
     for ml in move_list.iter_mut() {
         if ml.is_skip {
             continue;
         }
         let move_board = board.make_move_from_flip_bit(1 << ml.move_num, ml.flip_bit);
-        if tt_presence_weight != 0 && search.tt.probe(&move_board).value().is_some() {
+        if lv > 2 && tt_presence_weight != 0 && search.tt.probe(&move_board).value().is_some() {
             ml.score += tt_presence_weight;
         }
         let search_eval = if lv < 1 {
-            -search.ordering_evaluator.evaluate_board_slow(&move_board)
+            search.stats.eval_search_nodes += 1;
+            if search.check_abort() {
+                return;
+            }
+            search.stats.eval_search_leaf_nodes += 1;
+            -search
+                .ordering_evaluator
+                .evaluate_move(board, 1 << ml.move_num, ml.flip_bit)
         } else {
             -negaalpha_eval_ordering(&move_board, eval_alpha, eval_beta, lv - 1, search)
         };
@@ -381,27 +329,28 @@ impl Iterator for MoveIteratorParity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::Evaluator;
+    use crate::eval::evaluator::evaluator_from_data;
+    use crate::eval::{default_evaluator, Evaluator};
     use crate::file::{EvaluatorData, PatternEvaluatorData};
     use crate::search::mpc::MpcConfig;
     use crate::search::search::SearchStats;
     use crate::t_table::TranspositionTable;
     use std::sync::Arc;
 
-    fn bias_evaluator(raw_bias: i16) -> Arc<Evaluator> {
+    fn bias_evaluator(raw_bias: i16) -> Arc<dyn Evaluator> {
         let mut data = PatternEvaluatorData::default();
         for phase in &mut data.phases {
             phase.bias = raw_bias;
         }
-        Arc::new(Evaluator::from_data(EvaluatorData::Pattern(data)).unwrap())
+        evaluator_from_data(EvaluatorData::Pattern(data)).unwrap()
     }
 
     fn search_with_ordering<'a>(
         stats: &'a mut SearchStats,
-        ordering: Arc<Evaluator>,
+        ordering: Arc<dyn Evaluator>,
     ) -> SearchContext<'a> {
         SearchContext::new(
-            Arc::new(Evaluator::default()),
+            default_evaluator(),
             Arc::new(MpcConfig::default()),
             Arc::new(TranspositionTable::new()),
             stats,
@@ -424,10 +373,7 @@ mod tests {
             let opp_moves = child.moves();
             let mobility_score = -(opp_moves.count_ones() as i32) * 2
                 - ((opp_moves & CORNER_MASK).count_ones() as i32);
-            assert_eq!(
-                mv.score,
-                -ordering.evaluate_board_slow(&child) + mobility_score
-            );
+            assert_eq!(mv.score, -ordering.evaluate(&child) + mobility_score);
         }
     }
 

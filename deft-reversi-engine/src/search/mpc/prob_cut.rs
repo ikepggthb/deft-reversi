@@ -124,7 +124,7 @@ fn multi_prob_cut(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::Evaluator;
+    use crate::eval::default_evaluator;
     use crate::search::mpc::MpcConfig;
     use crate::t_table::TranspositionTable;
     use std::sync::Arc;
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn eval_search_mpc_is_disabled_by_default_selectivity() {
         let board = Board::new();
-        let evaluator = Arc::new(Evaluator::default());
+        let evaluator = default_evaluator();
         let mpc = Arc::new(MpcConfig::default());
         let tt = Arc::new(TranspositionTable::new());
         let mut stats = crate::search::search::SearchStats::default();
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn multi_prob_cut_can_cut_high() {
         let board = Board::new();
-        let evaluator = Arc::new(Evaluator::default());
+        let evaluator = default_evaluator();
         let mpc = Arc::new(MpcConfig::default());
         let tt = Arc::new(TranspositionTable::new());
         let mut stats = crate::search::search::SearchStats::default();
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn multi_prob_cut_can_cut_low() {
         let board = Board::new();
-        let evaluator = Arc::new(Evaluator::default());
+        let evaluator = default_evaluator();
         let mpc = Arc::new(MpcConfig::default());
         let tt = Arc::new(TranspositionTable::new());
         let mut stats = crate::search::search::SearchStats::default();

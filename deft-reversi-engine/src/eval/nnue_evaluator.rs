@@ -3,6 +3,7 @@ use crate::file::{invalid_data, DenseLayerData, NnueEvaluatorData, NnueTowerData
 use std::io;
 use std::sync::OnceLock;
 
+use super::evaluator::Evaluator;
 use super::evaluator_const::{N_BOARD_SQUARES, POW3, SCORE_MAX};
 use super::nnue_features::*;
 
@@ -125,6 +126,12 @@ impl NnueEvaluator {
 
     fn build_accumulator(&self, active_features: &[usize]) -> Vec<i32> {
         build_accumulator_dispatch(&self.weights, active_features)
+    }
+}
+
+impl Evaluator for NnueEvaluator {
+    fn evaluate(&self, board: &Board) -> i32 {
+        self.evaluate_board_slow(board)
     }
 }
 
@@ -272,6 +279,7 @@ unsafe fn build_accumulator_avx2(weights: &NnueWeights, active_features: &[usize
 }
 
 impl NnueState {
+    #[allow(dead_code)]
     pub fn from_board(board: &Board) -> Self {
         Self::from_board_with_layout(board, &NnueFeatureLayout::default_v2())
     }
@@ -309,6 +317,7 @@ impl NnueState {
         &self.accumulators[view][..self.accumulator_len]
     }
 
+    #[allow(dead_code)]
     pub fn active_features(&self) -> &[usize] {
         self.active_features_for_view(PLAYER_VIEW)
     }
@@ -1247,7 +1256,7 @@ mod tests {
 
         assert!(fixture.cases.len() >= 20);
         for case in fixture.cases {
-            let actual = evaluator.evaluate_board_slow(&board_from_case(case.own, case.opponent));
+            let actual = evaluator.evaluate(&board_from_case(case.own, case.opponent));
             assert_eq!(actual, case.expected, "score mismatch case={}", case.name);
         }
     }

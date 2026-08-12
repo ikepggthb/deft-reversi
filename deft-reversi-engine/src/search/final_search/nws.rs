@@ -512,16 +512,16 @@ pub fn nws_final(board: &Board, alpha: i32, search: &mut SearchContext) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::Evaluator;
+    use crate::eval::{default_evaluator, Evaluator};
     use crate::search::final_search::solve_score::solve_score;
     use crate::search::mpc::MpcConfig;
     use crate::search::search::SearchStats;
     use crate::t_table::TranspositionTable;
     use std::sync::Arc;
 
-    fn shared_resources() -> (Arc<Evaluator>, Arc<MpcConfig>, Arc<TranspositionTable>) {
+    fn shared_resources() -> (Arc<dyn Evaluator>, Arc<MpcConfig>, Arc<TranspositionTable>) {
         (
-            Arc::new(Evaluator::default()),
+            default_evaluator(),
             Arc::new(MpcConfig::default()),
             Arc::new(TranspositionTable::new()),
         )
@@ -573,7 +573,7 @@ mod tests {
     /// - `alpha = T`   → beta=T+1 → true_score=T ≤ alpha=T → fail-low → result ≤ T
     fn check_nws<F>(
         board: &Board,
-        ev: &Arc<Evaluator>,
+        ev: &Arc<dyn Evaluator>,
         mpc: &Arc<MpcConfig>,
         tt: &Arc<TranspositionTable>,
         mut nws: F,

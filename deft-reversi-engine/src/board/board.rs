@@ -28,11 +28,6 @@ impl Board {
     }
 
     #[inline(always)]
-    pub fn swap(&mut self) {
-        self.make_pass();
-    }
-
-    #[inline(always)]
     pub fn passed(&self) -> Board {
         Board {
             player: self.opponent,

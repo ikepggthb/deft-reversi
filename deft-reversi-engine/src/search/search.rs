@@ -29,8 +29,8 @@ pub struct SearchStats {
 ///
 /// board や alpha/beta/depth のようなノードごとに変わる状態は持たない。
 pub struct SearchContext<'a> {
-    pub evaluator: Arc<Evaluator>,
-    pub ordering_evaluator: Arc<Evaluator>,
+    pub evaluator: Arc<dyn Evaluator>,
+    pub ordering_evaluator: Arc<dyn Evaluator>,
     pub mpc_config: Arc<MpcConfig>,
     pub tt: Arc<TranspositionTable>,
     pub pv_tt: Option<Arc<TranspositionTable>>,
@@ -43,7 +43,7 @@ pub struct SearchContext<'a> {
 
 impl<'a> SearchContext<'a> {
     pub fn new(
-        evaluator: Arc<Evaluator>,
+        evaluator: Arc<dyn Evaluator>,
         mpc_config: Arc<MpcConfig>,
         tt: Arc<TranspositionTable>,
         stats: &'a mut SearchStats,
@@ -67,7 +67,7 @@ impl<'a> SearchContext<'a> {
         self
     }
 
-    pub fn with_ordering_evaluator(mut self, ev: Arc<Evaluator>) -> Self {
+    pub fn with_ordering_evaluator(mut self, ev: Arc<dyn Evaluator>) -> Self {
         self.ordering_evaluator = ev;
         self
     }
