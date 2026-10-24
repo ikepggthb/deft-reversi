@@ -1,0 +1,70 @@
+{
+  "cpu": "Intel Core Ultra 7 265K",
+  "cpu_affinity": [
+    1
+  ],
+  "threads": 1,
+  "rounds": 5,
+  "main_tt_mib": 256,
+  "pv_tt_mib": 16,
+  "local_tt_max_kib": 384,
+  "old_model": "../deft-reversi-feature/data/eval/eval-v4.bin",
+  "new_model": "../deft-reversi-feature/data/eval/eval-v4.bin",
+  "reference_api": "Solver::from_file + solve(board,60)",
+  "new_api": "Engine::from_file + solve(board,60)",
+  "mpc_parameters": "all loaded midgame/final regression parameters verified bit-for-bit before timing",
+  "verification": "scores match; both complete Exact/100%; new PV legal and ends with returned score (verification outside timer, PV recovery inside timer)",
+  "rustflags": "-Ctarget-cpu=native",
+  "profile": {
+    "opt_level": 3,
+    "lto": "fat",
+    "codegen_units": 1,
+    "panic": "unwind"
+  },
+  "reference_commit": "f4192a0bfe62f456d6ffe5716fb797d697f6c6d3",
+  "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)\nbinary: rustc\ncommit-hash: ded5c06cf21d2b93bffd5d884aa6e96934ee4234\ncommit-date: 2025-12-08\nhost: x86_64-unknown-linux-gnu\nrelease: 1.92.0\nLLVM version: 21.1.3\n",
+  "hashes": {
+    "tools/engine-compare/target/release/deft-engine-compare": "126d0b101daaad1905c9c033cdb8c72cbe8820d00351c9e6b870748b3b76a0ab",
+    "../deft-reversi-feature/data/eval/eval-v4.bin": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+    "docs/benchmarks/2026-10-24-ffo40-49/ffo40-49.obf": "f855c6181c11b539faed53125be1aff85b8c16b77817a036313533a43e2f1d16",
+    "../deft-reversi-feature/deft-reversi-cli/problem/fforum-1-19.obf": "4cf624e94984dcbaa8e0eb6be60f71ef3f1837bfb84004bacc5ccf312b919af1"
+  },
+  "source_hashes": {
+    "deft_reversi_engine_v2/src/board/bitboard.rs": "9e9af20b0113108318fc12393bd09f75683e050893abb00446e7a9f461eda071",
+    "deft_reversi_engine_v2/src/board/edge_stability.rs": "0ee50a2885cb92c450cf535be7533a39d23a64c56d814b1337994d12e627cdc1",
+    "deft_reversi_engine_v2/src/board/flip.rs": "6f53b00502285617bf6f11a8549f2a2dbd37459bf4aecd3b551a0f7b3adeb013",
+    "deft_reversi_engine_v2/src/board/last.rs": "5339a79b6480c7fa6e8ae40bb9c137498f99e1a23822e219eaa4227fe8e7ed58",
+    "deft_reversi_engine_v2/src/board/mod.rs": "cad1bf36d0ca6e91e25f6d453e62de32d801d844f83761baf39b73b40c1f0368",
+    "deft_reversi_engine_v2/src/board/moves.rs": "1ec145ec5744b6d562b238fefe445b61e658fdacbbeb3430554adf07b3bea4f5",
+    "deft_reversi_engine_v2/src/board/pos.rs": "e07aa628d15c5649d865f0f01c51758e3eccf2363f867a37c439d92e693bc391",
+    "deft_reversi_engine_v2/src/board/stability.rs": "b64e35318e37a12800add566a3f73838e7932d39ba495eebfff8b03245b2adde",
+    "deft_reversi_engine_v2/src/diagnostics.rs": "5e03b0ce8e6ff88e3878795a2c0f04b52ba364ad740d7cd049537ea339a877e6",
+    "deft_reversi_engine_v2/src/evaluation/mod.rs": "9fa89efc8eddd3e33799222bc7ca086c2da0f04e82163c5b8bbb5ce4905b592f",
+    "deft_reversi_engine_v2/src/evaluation/pattern/definition.rs": "0326d61f77ea29b4972021be61fb107836ab8df42028dd7a00399bec36f15deb",
+    "deft_reversi_engine_v2/src/evaluation/pattern/mod.rs": "c55b4d92a84e3be82b75affb69e809a987c4df57572eff44b3df49385a491c2e",
+    "deft_reversi_engine_v2/src/lib.rs": "699383e9a11fac70293258914b5489ab3f5f6ae22a4c4b63f0d80b486a07c3ff",
+    "deft_reversi_engine_v2/src/model.rs": "14e7f9b222c44d775e5d2cd126af9c3895d342b93f4b68f634c5a5a2c0226291",
+    "deft_reversi_engine_v2/src/mpc.rs": "546a66c6cac5a9bc81a91a38059e8744a3e9570cd7d977f86a8597c160b191ae",
+    "deft_reversi_engine_v2/src/parallel.rs": "faaba93cab37ecb8ab52b432ffeb6a14eb912d52a9f28474fdd963677d1c12af",
+    "deft_reversi_engine_v2/src/search/api.rs": "10e852f50d9425107f5ab766cd6fcebd56da3a0ea2d4a1e0fd4d2485a1159dc5",
+    "deft_reversi_engine_v2/src/search/last_four.rs": "8be8510dc792a0ed6073d59aa619dec31599287bacb09af249cc1b0a89383784",
+    "deft_reversi_engine_v2/src/search/level.rs": "91923372c98318f4b4b4eae69611238b68d748a59c80596dbf2a349969bd3835",
+    "deft_reversi_engine_v2/src/search/ordering.rs": "39b1b8e7054fc7b86bcee691bb46836b35d931991224c0937ae15e0be27d0686",
+    "deft_reversi_engine_v2/src/search/pv.rs": "c8084fe719109bfcc0326a62d5513ebc41f9df17f49d7a1b42cc9e95dbc3acc8",
+    "deft_reversi_engine_v2/src/search/root.rs": "f9a4b2dbd624aa8c926e45dd13482b3721f7070d1148c5d5ba3dca2da7a0e330",
+    "deft_reversi_engine_v2/src/search/session.rs": "abb98dd8c956b7dd4e529bf79c3e38124f21c02c79fc4e5b0ddfa5c4a4dd0c1e",
+    "deft_reversi_engine_v2/src/search/small.rs": "5446e6294a5e83da68f800ca7d55b01e72d330707915be5b4dae73933e9bd456",
+    "deft_reversi_engine_v2/src/search/tail.rs": "ff5a0b5db90ae0227b7d6fa6b07ca26c7e612f6cc21de8db97abdee5d3a2d06a",
+    "deft_reversi_engine_v2/src/search/tree.rs": "d5b08a4d76d34159ee2c28aa3a5af2122deef901f6724dea7815b5911c47fe0c",
+    "deft_reversi_engine_v2/src/search/ybwc.rs": "70975fc9b00b43e9b0db3c35ef6df5f51bae4dc1d3577080482dab9f99b1b463",
+    "deft_reversi_engine_v2/src/search.rs": "73f25edef9b8d48e6d530836508eaf706b1d26ce2fda89ffe4bde31ed5a17bce",
+    "deft_reversi_engine_v2/src/transposition.rs": "6f52bb64cd6e01fb38944882e3f167d4dc0ad671c4dd35c5e06ce46d11dc374e",
+    "deft_reversi_engine_v2/src/types.rs": "fbbe342b8b8b7032efb9cab0dc20982229dac4aba5533744544dd1d0b37610f3",
+    "tools/engine-compare/src/main.rs": "7487d29f3d938ee4161789e058f11f17e69a3b9c319bfd97549b2fd1b0143ce3"
+  },
+  "tests": {
+    "native_release_including_stress": 50
+  },
+  "previous_comparison_binary_sha256": "4eeeff778c7f818771fb9997ef36c421e75619b2593734c17596164f0230d799",
+  "reference_engine_tracked_sources_clean": true
+}

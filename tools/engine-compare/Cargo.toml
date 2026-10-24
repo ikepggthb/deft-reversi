@@ -1,0 +1,17 @@
+[package]
+name = "deft-engine-compare"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# This optional validation tool is deliberately outside the application workspace.
+[workspace]
+
+[dependencies]
+old = { package = "deft_reversi_engine", path = "../../../deft-reversi-feature/deft-reversi-engine" }
+new = { package = "deft_reversi_engine", path = "../../deft-reversi-engine" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "unwind"

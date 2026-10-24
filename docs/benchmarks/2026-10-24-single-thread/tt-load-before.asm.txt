@@ -1,0 +1,50 @@
+
+/tmp/deft-single-before:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+000000000002f600 <deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node+0x9d0>:
+   2f600:	48 8b 50 60          	mov    0x60(%rax),%rdx
+   2f604:	48 8b 72 18          	mov    0x18(%rdx),%rsi
+   2f608:	c4 e3 fb f0 c1 29    	rorx   $0x29,%rcx,%rax
+   2f60e:	4c 01 d0             	add    %r10,%rax
+   2f611:	49 89 c0             	mov    %rax,%r8
+   2f614:	49 c1 e8 1e          	shr    $0x1e,%r8
+   2f618:	49 31 c0             	xor    %rax,%r8
+   2f61b:	48 b8 b9 e5 e4 1c 6d 	movabs $0xbf58476d1ce4e5b9,%rax
+   2f622:	47 58 bf 
+   2f625:	49 0f af c0          	imul   %r8,%rax
+   2f629:	49 89 c0             	mov    %rax,%r8
+   2f62c:	49 c1 e8 1b          	shr    $0x1b,%r8
+   2f630:	49 31 c0             	xor    %rax,%r8
+   2f633:	48 b8 eb 11 31 13 bb 	movabs $0x94d049bb133111eb,%rax
+   2f63a:	49 d0 94 
+   2f63d:	49 0f af c0          	imul   %r8,%rax
+   2f641:	49 89 c0             	mov    %rax,%r8
+   2f644:	49 c1 e8 1f          	shr    $0x1f,%r8
+   2f648:	49 31 c0             	xor    %rax,%r8
+   2f64b:	48 8d 46 ff          	lea    -0x1(%rsi),%rax
+   2f64f:	4c 21 c0             	and    %r8,%rax
+   2f652:	48 83 fe 01          	cmp    $0x1,%rsi
+   2f656:	0f 82 67 1a 00 00    	jb     310c3 <deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node+0x2493>
+   2f65c:	45 89 cb             	mov    %r9d,%r11d
+   2f65f:	48 8b 72 10          	mov    0x10(%rdx),%rsi
+   2f663:	48 c1 e0 06          	shl    $0x6,%rax
+   2f667:	48 8d 14 06          	lea    (%rsi,%rax,1),%rdx
+   2f66b:	4c 8b 0c 06          	mov    (%rsi,%rax,1),%r9
+   2f66f:	41 f6 c1 01          	test   $0x1,%r9b
+   2f673:	48 89 4c 24 20       	mov    %rcx,0x20(%rsp)
+   2f678:	4c 89 54 24 28       	mov    %r10,0x28(%rsp)
+   2f67d:	75 37                	jne    2f6b6 <deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node+0xa86>
+   2f67f:	4c 8b 42 08          	mov    0x8(%rdx),%r8
+   2f683:	48 8b 72 10          	mov    0x10(%rdx),%rsi
+   2f687:	48 8b 42 18          	mov    0x18(%rdx),%rax
+   2f68b:	4c 8b 12             	mov    (%rdx),%r10
+   2f68e:	4d 39 ca             	cmp    %r9,%r10
+   2f691:	4c 8b 54 24 28       	mov    0x28(%rsp),%r10
+   2f696:	48 8b 4c 24 20       	mov    0x20(%rsp),%rcx
+   2f69b:	75 19                	jne    2f6b6 <deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node+0xa86>
+   2f69d:	49                   	rex.WB
+   2f69e:	b9                   	.byte 0xb9
+   2f69f:	ff                   	.byte 0xff
