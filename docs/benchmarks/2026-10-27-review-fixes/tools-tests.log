@@ -1,0 +1,9 @@
+test_orders_balance_slots_and_predecessors (test_tools.ToolsTests.test_orders_balance_slots_and_predecessors) ... ok
+test_real_engine_output_parsers (test_tools.ToolsTests.test_real_engine_output_parsers) ... ok
+test_reference_paths_are_explicit_and_toml_quoted (test_tools.ToolsTests.test_reference_paths_are_explicit_and_toml_quoted) ... ok
+test_selective_or_incomplete_deft_output_is_rejected (test_tools.ToolsTests.test_selective_or_incomplete_deft_output_is_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.042s
+
+OK

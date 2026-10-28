@@ -17,7 +17,7 @@ pub fn perft(board: Board, depth: u8) -> u64 {
     }
     let mut leaves = 0;
     while moves != 0 {
-        let bit = moves & moves.wrapping_neg();
+        let bit = moves.isolate_lowest_one();
         moves &= moves - 1;
         leaves += perft(board.board_after_move(bit), depth - 1);
     }

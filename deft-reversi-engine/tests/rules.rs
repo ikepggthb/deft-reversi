@@ -61,7 +61,7 @@ fn reachable_positions_match_coordinate_reference() {
             for _ in 0..random % u64::from(moves.count_ones()) {
                 moves &= moves - 1;
             }
-            let action = moves & moves.wrapping_neg();
+            let action = moves.isolate_lowest_one();
             let flips = reference_flips(board, action.trailing_zeros() as i32);
             let expected_board = Board::from_bits(
                 board.opponent_bits() & !flips,

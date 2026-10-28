@@ -1,5 +1,6 @@
 //! Last-two/three/four null-window kernels ported from the reference leaf.rs.
 //! The wrapper propagates cancellation before any caller can publish a bound.
+use super::parity::QUADRANT_ID;
 use super::*;
 const SCORE_MAX: i32 = 64;
 // All valid quadrant parity values fit in four bits.
@@ -91,18 +92,6 @@ pub(super) const NEIGHBOUR: [u64; 64] = [
     0x0003020300000000, 0x0006040600000000, 0x000e0a0e00000000, 0x001c141c00000000, 0x0038283800000000, 0x0070507000000000, 0x0060206000000000, 0x00c040c000000000,
     0x0002030000000000, 0x0004060000000000, 0x000a0e0000000000, 0x00141c0000000000, 0x0028380000000000, 0x0050700000000000, 0x0020600000000000, 0x0040c00000000000,
     0x0203000000000000, 0x0406000000000000, 0x0a0e000000000000, 0x141c000000000000, 0x2838000000000000, 0x5070000000000000, 0x2060000000000000, 0x40c0000000000000,
-];
-
-#[rustfmt::skip]
-const QUADRANT_ID: [i32; 64] = [
-    1, 1, 1, 1, 2, 2, 2, 2,
-    1, 1, 1, 1, 2, 2, 2, 2,
-    1, 1, 1, 1, 2, 2, 2, 2,
-    1, 1, 1, 1, 2, 2, 2, 2,
-    4, 4, 4, 4, 8, 8, 8, 8,
-    4, 4, 4, 4, 8, 8, 8, 8,
-    4, 4, 4, 4, 8, 8, 8, 8,
-    4, 4, 4, 4, 8, 8, 8, 8,
 ];
 
 #[rustfmt::skip]

@@ -82,7 +82,7 @@ mod tests {
         }
         let mut best = -65;
         while moves != 0 {
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
             best = best.max(-brute(board.board_after_move(bit)));
         }

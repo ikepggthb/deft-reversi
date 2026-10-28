@@ -159,6 +159,8 @@ fn parallel_matches_serial_at_fixed_depth() {
 fn ybwc_exact_repetition_and_thread_counts() {
     for threads in [1, 2, 4, 8, 20] {
         let mut engine = engine(threads);
+        let mut splits = 0;
+        let mut helper_jobs = 0;
         for seed in 1..=5 {
             let board = position(seed, 10);
             let expected = reference(board);
@@ -168,10 +170,17 @@ fn ybwc_exact_repetition_and_thread_counts() {
                     .unwrap();
                 assert_eq!(result.score, Some(expected));
                 assert_eq!(result.stop_reason, StopReason::Completed);
-                if threads > 1 && board.empty_count() == 10 && board.get_moves().count_ones() >= 3 {
-                    assert!(result.stats.splits > 0);
-                }
+                splits += result.stats.splits;
+                helper_jobs += result.stats.helper_jobs;
             }
+        }
+        // TT reuse may finish a search without splitting. An offer can also
+        // miss a worker still releasing its mailbox from the preceding stage.
+        // Require real parallel execution across the repeated workload, while
+        // checking the score and completion of every individual search above.
+        if threads > 1 {
+            assert!(splits > 0, "no split with {threads} threads");
+            assert!(helper_jobs > 0, "no helper executed with {threads} threads");
         }
     }
 }

@@ -131,7 +131,7 @@ pub(super) struct Context {
     pub(super) stats: SearchStats,
     pub(super) ancestors: Vec<Arc<Helper>>,
     pub(super) cuts: Vec<Arc<AtomicBool>>,
-    pub(super) end_cache: Vec<Vec<EndEntry>>,
+    pub(super) end_cache: EndgameCache,
     #[cfg(feature = "endgame-pattern-ordering")]
     pub(super) end_ordering: [Option<(Board, EvalState)>; 3],
 }
@@ -146,16 +146,6 @@ pub(super) struct SearchSpec {
     pub(super) depth: u8,
     pub(super) exact: bool,
     pub(super) probcut: bool,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct EndEntry {
-    pub(super) quality: u8,
-    pub(super) player: u64,
-    pub(super) opponent: u64,
-    pub(super) lower: i8,
-    pub(super) upper: i8,
-    pub(super) best: u8,
 }
 
 #[cfg(test)]

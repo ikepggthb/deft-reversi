@@ -135,7 +135,7 @@ impl Context {
         }
         let mut best = -65;
         while moves != 0 {
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
             let flips = board.flip_mask(bit);
             let child = Position {

@@ -176,7 +176,7 @@ mod tests {
                 })
                 .collect(),
         };
-        let file = BinaryFile {
+        let mut file = BinaryFile {
             format_version: 4,
             metadata: metadata.clone(),
             evaluator: BinaryEvaluator::Pattern(data),
@@ -200,11 +200,14 @@ mod tests {
             assert_eq!(model.pattern.evaluate(&board), 1);
             assert_eq!(model.pattern.evaluate(&board.board_after_move(1 << 19)), 2);
         }
+        file.mpc.eval_search.search_lv_by_depth[4] = 4;
+        assert!(EngineModel::from_bytes(&bincode::serialize(&file).unwrap()).is_err());
+        file.mpc = mpc.clone();
         bytes.push(0);
         assert!(EngineModel::from_bytes(&bytes).is_err());
         drop(bytes);
         let BinaryEvaluator::Pattern(data) = file.evaluator;
-        let file = HumanFile {
+        let mut file = HumanFile {
             format_version: 4,
             metadata,
             evaluator: HumanEvaluator::Pattern(data),
@@ -225,6 +228,8 @@ mod tests {
             assert!((actual.e_std - expected.e_std).abs() < 1e-12);
         }
         assert_eq!(decoded.pattern.evaluate(&Board::new()), 1);
+        file.mpc.final_search.search_lv_by_empties[12] = 12;
+        assert!(EngineModel::from_bytes(&serde_json::to_vec(&file).unwrap()).is_err());
     }
     #[test]
     fn mpc_settings_reject_invalid_depth_tables_and_preserve_signed_regression() {

@@ -141,7 +141,9 @@ impl PatternModel {
         for _ in 0..PHASE_COUNT {
             input.read_exact(&mut bytes)?;
             let mut values = bytes
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|b| i16::from_le_bytes([b[0], b[1]]));
             let weights = values.by_ref().take(TOTAL_PATTERN_WEIGHTS).collect();
             let mobility = std::array::from_fn(|_| values.next().unwrap());
@@ -246,7 +248,7 @@ mod tests {
                 for _ in 0..random % u64::from(moves.count_ones()) {
                     moves &= moves - 1;
                 }
-                let bit = moves & moves.wrapping_neg();
+                let bit = moves.isolate_lowest_one();
                 let flips = board.flip_mask(bit);
                 #[cfg(feature = "endgame-pattern-ordering")]
                 assert_eq!(

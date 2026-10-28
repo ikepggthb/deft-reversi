@@ -1,3 +1,4 @@
+use super::endgame::parity::odd_regions;
 use super::*;
 const SPLIT_DEPTH: u8 = 8;
 const SPLIT_EMPTIES: u8 = 10;
@@ -25,7 +26,7 @@ impl Context {
             stats: SearchStats::default(),
             ancestors,
             cuts,
-            end_cache: Vec::new(),
+            end_cache: EndgameCache::default(),
             #[cfg(feature = "endgame-pattern-ordering")]
             end_ordering: [None; 3],
         }
@@ -44,7 +45,7 @@ impl Context {
                 .runtime
                 .control
                 .issued
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                     if n < limit { Some(n + 1) } else { None }
                 })
                 .is_err()
@@ -64,11 +65,11 @@ impl Context {
             return true;
         }
         let empties = board.empty_count();
-        if empties > super::tail::LOCAL_END_MAX + 1 {
+        if empties > super::endgame::LOCAL_END_MAX + 1 {
             return true;
         }
         let selective = self.runtime.sigma().is_some();
-        if empties == super::tail::LOCAL_END_MAX + 1 {
+        if empties == super::endgame::LOCAL_END_MAX + 1 {
             // A wide thirteen-empty child still orders moves using its state.
             // The experimental narrow entry seeds its pattern cache from it too.
             return !narrow || selective || cfg!(feature = "endgame-pattern-ordering");
@@ -89,14 +90,14 @@ impl Context {
             probcut: allow_probcut,
         } = spec;
         self.enter()?;
-        if exact && beta - alpha == 1 && board.empty_count() <= super::tail::LOCAL_END_MAX {
+        if exact && beta - alpha == 1 && board.empty_count() <= super::endgame::LOCAL_END_MAX {
             #[cfg(feature = "endgame-pattern-ordering")]
-            if board.empty_count() == super::tail::LOCAL_END_MAX {
+            if board.empty_count() == super::endgame::LOCAL_END_MAX {
                 self.end_ordering[2] = Some((board, state));
             }
             return self.tail_score_entered(board, alpha, beta).map(Line::leaf);
         }
-        if exact && board.empty_count() <= super::tail::TAIL_EMPTIES {
+        if exact && board.empty_count() <= super::endgame::TAIL_EMPTIES {
             return self.tail_entered(board, alpha, beta);
         }
         let original_alpha = alpha;
@@ -203,7 +204,7 @@ impl Context {
         let mut count = 0;
         let mut skipped_upper = -65;
         while moves != 0 {
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
             let square = Square::new(bit.trailing_zeros() as u8).unwrap();
             let flips = board.flip_mask(bit);
@@ -289,7 +290,7 @@ impl Context {
                 0
             } else if !exact {
                 self.midgame_ordering(position, child, bit, flips, alpha, depth)?
-            } else if board.empty_count() >= super::tail::LOCAL_END_MAX {
+            } else if board.empty_count() >= super::endgame::LOCAL_END_MAX {
                 self.endgame_ordering(position, child, bit, flips, alpha, beta)?
             } else {
                 let mut value = -(child.get_moves().count_ones() as i32) * ORDERING.mobility;
@@ -539,18 +540,6 @@ pub(super) fn pick_best(candidates: &mut [Candidate], index: usize) {
         .unwrap();
     candidates.swap(index, best);
 }
-pub(super) fn odd_regions(board: Board) -> u64 {
-    let empty = !(board.player_bits() | board.opponent_bits());
-    [
-        0x000000000f0f0f0f,
-        0x00000000f0f0f0f0,
-        0x0f0f0f0f00000000,
-        0xf0f0f0f000000000,
-    ]
-    .into_iter()
-    .filter(|region| (empty & region).count_ones() % 2 == 1)
-    .fold(0, |bits, region| bits | region)
-}
 
 impl Context {
     // At depth one, evaluating children for ordering evaluates every leaf twice.
@@ -564,7 +553,7 @@ impl Context {
         let mut moves = position.board.get_moves();
         let mut best = Line::leaf(-65);
         while moves != 0 {
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
             let flips = position.board.flip_mask(bit);
             let next = Position {
@@ -597,11 +586,6 @@ impl Context {
     }
 }
 
-pub(super) fn endgame_ordering(legal: u64, bit: u64, odd: u64) -> i32 {
-    let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();
-    -(mobility as i32) * 18 + if bit & odd != 0 { 17 } else { 0 }
-}
-
 #[cfg(test)]
 mod tt_tests {
     use super::super::session::test_context;
@@ -625,11 +609,11 @@ mod tt_tests {
                 for _ in 0..random % u64::from(moves.count_ones()) {
                     moves &= moves - 1;
                 }
-                board = board.board_after_move(moves & moves.wrapping_neg());
+                board = board.board_after_move(moves.isolate_lowest_one());
             }
             let moves = board.get_moves();
             assert_ne!(moves, 0);
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             let candidate = Candidate {
                 square: Square::new(bit.trailing_zeros() as u8).unwrap(),
                 flips: board.flip_mask(bit),
@@ -819,7 +803,7 @@ mod tt_tests {
         let mut moves = board.get_moves();
         let mut first = true;
         while moves != 0 {
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
             context.runtime.table.store(
                 board.board_after_move(bit),

@@ -48,7 +48,7 @@ impl RootSearch {
         let mut moves = position.board.get_moves();
         let mut candidates = Vec::new();
         while moves != 0 {
-            let bit = moves & moves.wrapping_neg();
+            let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
             candidates.push(Candidate {
                 square: Square::new(bit.trailing_zeros() as u8).unwrap(),

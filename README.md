@@ -4,22 +4,25 @@
 
 - [エンジンのAPI・設計・実行方法](deft-reversi-engine/README.md)
 - [リライト計画と移行範囲](docs/rewrite-plan.md)
+- [レビュー後の修正と性能確認](docs/benchmarks/2026-10-27-review-fixes/README.md)
 - [終盤探索の比較と差分調査](docs/benchmarks/2026-10-24-regression-investigation/README.md)
 - [旧評価関数の説明](docs/old-evaluation-function.md)
 
 ## ビルドと検証
 
 ```sh
-cargo build --release
-cargo test
-RUSTFLAGS="-Ctarget-cpu=native" cargo test --release -- --include-ignored
-cargo clippy --all-targets -- -D warnings
+cargo build --locked --release
+cargo test --locked
+RUSTFLAGS="-Ctarget-cpu=native" cargo test --locked --release -- --include-ignored
+cargo clippy --locked --all-targets -- -D warnings
 ```
+
+Rust 1.99.1を `rust-toolchain.toml` で固定し、依存関係はルートの `Cargo.lock` で固定しています。rustfmtとClippyも同じツールチェーンの構成要素として指定しています。
 
 モデルは呼び出し元が指定します。元のv3/v4パターンモデル（JSON・bincode）をMPC設定とともに直接読み込めます。NNUEは対象外です。
 
 ```sh
-cargo run --release --example solve -- MODEL.bin POSITIONS.obf exact 1 256
+cargo run --locked --release --example solve -- MODEL.bin POSITIONS.obf exact 1 256
 ```
 
 ## 旧アプリケーション
@@ -28,11 +31,11 @@ cargo run --release --example solve -- MODEL.bin POSITIONS.obf exact 1 256
 
 公開済みの[Web版](https://az.recazbowl.net/deft-reversi-web/index.html)は、ここで保存している旧アプリケーションに対応します。新エンジンへの移行は未実施です。
 
-`tools/engine-compare` は任意の比較ツールで、隣接する `../deft-reversi-feature` の元実装を必要とします。通常のビルドには不要です。通常API同士の比較には `level:60` を指定します。
+現在の比較ツールは [tools/bench](tools/bench/README.md) にあります。旧版とのAPI比較では `--old-engine` で旧クレートの場所を指定し、通常API同士の比較には `level:60` を指定します。Edax・Egaroucidとの比較も、評価データとバイナリの場所を引数で指定できます。
 
 ## 測定記録
 
-同一モデル・単一スレッド・通常APIの直近FFO40–49比較では、元実装12.535239秒、新実装12.880500秒でした。残る性能差と設計差は上記の調査レポートに記録しています。
+直近のFFO40–49・1コア比較は [Edax・Egaroucidとの測定記録](docs/benchmarks/2026-10-27-three-engines/README.md) を参照してください。過去の時間は、異なる実装・モデル・測定条件の結果を含むため、直接つなげて改善率を計算しません。
 
 過去のレポート中の `deft_reversi_engine_v2` は移動前の名称です。測定時のハッシュ、コマンド、再現用ソースは当時の記録として保持しています。現在のディレクトリは `deft-reversi-engine`、クレート名は `deft_reversi_engine` です。
 

@@ -17,13 +17,12 @@ mod api;
 pub use api::*;
 mod session;
 use session::*;
-mod last_four;
+mod endgame;
+use endgame::EndgameCache;
 mod level;
 mod ordering;
 mod pv;
 mod root;
-mod small;
-mod tail;
 mod tree;
 mod ybwc;
 
@@ -38,7 +37,7 @@ pub struct Engine {
     generation: u8,
     calibration: Arc<[Option<ProbCutRule>]>,
     cache_sigma: Option<u64>,
-    end_cache: Vec<Vec<EndEntry>>,
+    end_cache: EndgameCache,
 }
 impl Engine {
     pub fn new(model: PatternModel, options: EngineOptions) -> Result<Self, EngineError> {
@@ -62,7 +61,7 @@ impl Engine {
             generation: 0,
             calibration,
             cache_sigma: None,
-            end_cache: Vec::new(),
+            end_cache: EndgameCache::default(),
         })
     }
     pub fn from_file(

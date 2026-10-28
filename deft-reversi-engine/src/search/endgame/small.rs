@@ -1,5 +1,6 @@
 //! Score-only last-four solver: enumerate empty squares, without move generation.
-use super::tail::last_square_bound;
+use super::last_square_bound;
+use super::parity::QUADRANT_MASKS as REGIONS;
 use super::*;
 
 pub(super) struct SmallPosition {
@@ -8,12 +9,6 @@ pub(super) struct SmallPosition {
     pub(super) odd: u64,
     pub(super) count: u8,
 }
-const REGIONS: [u64; 4] = [
-    0x000000000f0f0f0f,
-    0x00000000f0f0f0f0,
-    0x0f0f0f0f00000000,
-    0xf0f0f0f000000000,
-];
 const NEIGHBORS: [u64; 64] = neighbors();
 const fn neighbors() -> [u64; 64] {
     let mut out = [0; 64];
@@ -50,7 +45,7 @@ impl Context {
         let mut legal = false;
         while moves != 0 {
             let options = if preferred != 0 { preferred } else { moves };
-            let bit = options & options.wrapping_neg();
+            let bit = options.isolate_lowest_one();
             moves &= !bit;
             preferred &= !bit;
             let square = bit.trailing_zeros() as usize;

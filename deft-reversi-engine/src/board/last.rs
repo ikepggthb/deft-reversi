@@ -93,7 +93,7 @@ mod bmi2 {
                         // unrelated square in that row; the union clears it.
                         let available = row & !union;
                         assert!(available != 0);
-                        padded |= available & available.wrapping_neg();
+                        padded |= available.isolate_lowest_one();
                     }
                     r += 1;
                 }

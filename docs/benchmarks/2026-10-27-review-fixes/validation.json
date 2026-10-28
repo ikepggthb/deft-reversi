@@ -1,0 +1,210 @@
+{
+  "run": {
+    "runs": 180,
+    "all_scores_match_published_answers": true,
+    "all_nodes_stable": true,
+    "nodes_by_position": {
+      "1": {
+        "base": [
+          8759574
+        ],
+        "layout": [
+          8759574
+        ],
+        "final": [
+          8767895
+        ]
+      },
+      "2": {
+        "base": [
+          18285319
+        ],
+        "layout": [
+          18285319
+        ],
+        "final": [
+          18305480
+        ]
+      },
+      "3": {
+        "base": [
+          22773861
+        ],
+        "layout": [
+          22773861
+        ],
+        "final": [
+          22781384
+        ]
+      },
+      "4": {
+        "base": [
+          53108194
+        ],
+        "layout": [
+          53108194
+        ],
+        "final": [
+          53115562
+        ]
+      },
+      "5": {
+        "base": [
+          13938925
+        ],
+        "layout": [
+          13938925
+        ],
+        "final": [
+          13923326
+        ]
+      },
+      "6": {
+        "base": [
+          157605477
+        ],
+        "layout": [
+          157605477
+        ],
+        "final": [
+          157505560
+        ]
+      },
+      "7": {
+        "base": [
+          66513266
+        ],
+        "layout": [
+          66513266
+        ],
+        "final": [
+          66507787
+        ]
+      },
+      "8": {
+        "base": [
+          18955188
+        ],
+        "layout": [
+          18955188
+        ],
+        "final": [
+          18950119
+        ]
+      },
+      "9": {
+        "base": [
+          172206586
+        ],
+        "layout": [
+          172206586
+        ],
+        "final": [
+          172163626
+        ]
+      },
+      "10": {
+        "base": [
+          283713918
+        ],
+        "layout": [
+          283713918
+        ],
+        "final": [
+          283657460
+        ]
+      }
+    }
+  },
+  "odd": {
+    "runs": 120,
+    "all_scores_match_published_answers": true,
+    "all_nodes_stable": true,
+    "nodes_by_position": {
+      "1": {
+        "before": [
+          8759574
+        ],
+        "after": [
+          8762000
+        ]
+      },
+      "2": {
+        "before": [
+          18285319
+        ],
+        "after": [
+          18319401
+        ]
+      },
+      "3": {
+        "before": [
+          22773861
+        ],
+        "after": [
+          22810324
+        ]
+      },
+      "4": {
+        "before": [
+          53108194
+        ],
+        "after": [
+          53078091
+        ]
+      },
+      "5": {
+        "before": [
+          13938925
+        ],
+        "after": [
+          13936513
+        ]
+      },
+      "6": {
+        "before": [
+          157605477
+        ],
+        "after": [
+          157483667
+        ]
+      },
+      "7": {
+        "before": [
+          66513266
+        ],
+        "after": [
+          66509286
+        ]
+      },
+      "8": {
+        "before": [
+          18955188
+        ],
+        "after": [
+          18955708
+        ]
+      },
+      "9": {
+        "before": [
+          172206586
+        ],
+        "after": [
+          172133209
+        ]
+      },
+      "10": {
+        "before": [
+          283713918
+        ],
+        "after": [
+          283741202
+        ]
+      }
+    }
+  },
+  "source_matches_tested_adopted_variant": true,
+  "rebuilt_binary_sha256": "d2eeaae3bfe3ef9fde5d905b1dd929394fdf405c791e5c6965a2abebf7a33d72",
+  "final_patch_applies_to_baseline_and_matches_all_source_hashes": true,
+  "adopted_four_engine_smoke_runs": 16
+}

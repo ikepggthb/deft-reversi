@@ -17,3 +17,47 @@ fn model_roundtrip_and_input_validation() {
     assert!(PatternModel::new(Vec::new()).is_err());
     assert!(PatternPhase::new(Vec::new(), [0; 128], 0).is_err());
 }
+
+#[test]
+fn mpc_confirmation_must_be_shallower_and_rejection_is_atomic() {
+    let valid = MpcConfig::default();
+    valid.validate().unwrap();
+    let mut engine = Engine::new(
+        PatternModel::zero(),
+        EngineOptions {
+            threads: 1,
+            tt_mib: 1,
+        },
+    )
+    .unwrap();
+    engine.set_mpc_config(valid.clone()).unwrap();
+    for (exact, depth) in [(false, 4), (false, 60), (true, 12), (true, 60)] {
+        for confirmation in [depth as i32, 60] {
+            let mut invalid = valid.clone();
+            if exact {
+                invalid.final_search.search_lv_by_empties[depth] = confirmation;
+            } else {
+                invalid.eval_search.search_lv_by_depth[depth] = confirmation;
+            }
+            assert!(invalid.validate().is_err());
+            assert!(engine.set_mpc_config(invalid).is_err());
+            assert_eq!(
+                engine.mpc_config().unwrap().eval_search.search_lv_by_depth,
+                valid.eval_search.search_lv_by_depth
+            );
+            assert_eq!(
+                engine
+                    .mpc_config()
+                    .unwrap()
+                    .final_search
+                    .search_lv_by_empties,
+                valid.final_search.search_lv_by_empties
+            );
+        }
+    }
+    // Unused table entries are retained for compatibility with legacy files.
+    let mut unused = valid;
+    unused.eval_search.search_lv_by_depth[3] = 60;
+    unused.final_search.search_lv_by_empties[11] = 60;
+    unused.validate().unwrap();
+}

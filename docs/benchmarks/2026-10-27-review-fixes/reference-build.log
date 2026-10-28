@@ -1,0 +1,23 @@
+/tmp/deft-review-fixes/reference/Cargo.toml
+   Compiling deft_reversi_engine v2.0.0 (/workspace/deft-reversi/deft-reversi-engine)
+warning: function `flip_std` is never used
+   --> /workspace/deft-feature/deft-reversi-engine/src/board/flip.rs:757:8
+    |
+757 | pub fn flip_std(move_bit: u64, p: u64, o: u64) -> u64 {
+    |        ^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable `OP` should have a snake case name
+   --> /workspace/deft-feature/deft-reversi-engine/src/board/flip.rs:709:23
+    |
+709 | pub unsafe fn mm_flip(OP: __m128i, pos: usize) -> __m128i {
+    |                       ^^ help: convert the identifier to snake case: `op`
+    |
+    = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `deft_reversi_engine` (lib) generated 2 warnings
+   Compiling deft-engine-compare v0.1.0 (/tmp/deft-review-fixes/reference)
+    Finished `release` profile [optimized] target(s) in 9.92s
+     Running `/workspace/deft-ref-compare-target/release/deft-engine-compare --help`
+usage: deft-engine-compare OLD_MODEL NEW_MODEL POSITIONS exact|DEPTH|level:60 ROUNDS [THREADS]

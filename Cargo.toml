@@ -1,7 +1,7 @@
 [workspace]
 members = ["deft-reversi-engine"]
 # These applications still use the legacy API and require migration.
-exclude = ["deft-reversi-cli", "deft-reversi-web", "deft-reversi-learn", "tools/engine-compare"]
+exclude = ["deft-reversi-cli", "deft-reversi-web", "deft-reversi-learn"]
 resolver = "2"
 
 [profile.release]

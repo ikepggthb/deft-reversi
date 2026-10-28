@@ -7,6 +7,10 @@ use std::{
 };
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|s| s == "--help") {
+        println!("usage: deft-engine-compare OLD_MODEL NEW_MODEL POSITIONS exact|DEPTH|level:60 ROUNDS [THREADS]");
+        return Ok(());
+    }
     if !(5..=6).contains(&args.len()) {
         return Err(
             "usage: deft-engine-compare OLD_MODEL NEW_MODEL POSITIONS exact|DEPTH|level:60 ROUNDS [THREADS]"

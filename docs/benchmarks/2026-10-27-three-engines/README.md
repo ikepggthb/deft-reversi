@@ -116,3 +116,6 @@ run/results.tsvは全生データ、run/process-output.jsonlは全コマンド�
 今回、探索ソースの変更やエンジンの追加最適化は行っていない。deft-worktree.patchは測定時のHEADに対する既存の作業ツリー差分（新規のend_ordering.rsを含む）を凍結したもので、今回新しく最適化した差分ではない。deft-source-sha256.jsonと合わせ、測定した未コミットのソースを識別できる。比較前HEADからの適用と再構築の一致を確認した。
 
 最終確認では全320コマンドのCPU 0固定、全標準エラーが空であること、TSVと出力ログの実行順一致も検査した。スクリプトの構文検査、JSON読込検査、git diff --checkにも成功した。
+
+
+現在の比較ツールは [tools/bench](../../../tools/bench/README.md) に移した。Edaxの評価ファイルは `--edax-eval` で指定できる。このディレクトリのスクリプトと結果は、上記測定時の記録として保持する。

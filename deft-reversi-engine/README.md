@@ -1,10 +1,8 @@
 # Deft Reversi Engine
 
-ネイティブ向けのリライト実装。参考先は `../deft-reversi-feature`（基準コミット `f4192a0`）。
+ネイティブ向けのリライト実装。旧エンジン（基準コミット `f4192a0`）を参照しています。
 
-**状態: 実装・元モデル直接読込・実データ照合・通常/並列ストレステストを実行済み。**
-native releaseではストレスを含む全50テストが成功。native構成のClippyは警告なし。
-性能の条件・結果・元実装との差は [モデル・MPC・ルート・置換表の復元レポート](../docs/benchmarks/2026-10-24-model-root-tt/README.md) に記録する。
+実装・元モデル直接読込・実データ照合・通常/並列ストレステストを用意しています。検証件数や測定結果は各時点のレポートを参照してください。ビルドにはルートの `rust-toolchain.toml` と `Cargo.lock` を使います。
 
 ## 構成
 
@@ -17,7 +15,12 @@ native releaseではストレスを含む全50テストが成功。native構成�
 - `search/level`: 元のレベルからの深さ・選択率・終盤への移行と序盤補正。
 - `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。
 - `board/stability`: 元実装の辺の全パターン表・満杯のライン・接触による確定石判定。
-- `search/tail` / `search/small` / `search/last_four`: 終盤の値専用探索、空き6–13ごとの局所TT、4空き以下の専用処理。
+- `search/endgame/mod`: 終盤探索の入口と通常窓の処理。
+- `search/endgame/local_tt`: 空き6〜13ごとの局所TT。境界・候補手・選択率を保持し、照会結果は値として再帰へ渡す。
+- `search/endgame/ordered`: 空き7〜13の手順付けと探索。
+- `search/endgame/shallow`: 空き5〜6の専用探索。
+- `search/endgame/last_four` / `small`: 空き4以下の展開済みカーネルと小局面の直接入口。
+- `search/endgame/parity`: 四分割領域とパリティの共通定義。
 - `board/last`: コンパイル時生成の反転数表。BMI2構成では最後の1マスの計算に使用。
 - `search/ybwc`: 最初の候補を先に探索し、残りを共有分割点から配布。
 - `parallel`: 常駐ワーカーのメールボックスと、待機中の祖先への直接ハンドオフ。
@@ -64,7 +67,7 @@ let result = engine.search(request)?;
 
 `Engine::from_file` / `Engine::from_bytes` は元のv3/v4パターンモデル（JSON・bincode）から、重み・メタデータ・MPC設定をまとめて読み込む。変換やsidecarの手動設定は不要。パターンの構成、位相、スケール、評価の丸め方は維持する。NNUEは対象外。
 
-`Engine::mpc_config()` で読込設定を取得し、`set_mpc_config` で元と同じ回帰係数・深さ表を変更できる。MPCは通常窓にも適用し、浅い確認探索にはTTや再帰的なMPCを使わない。係数は元の式で展開し、実行時は直接参照する。回帰式を外挿した結果の負の偏差も、元設定と同じ符号のまま保持する。
+`Engine::mpc_config()` で読込設定を取得し、`set_mpc_config` で元と同じ回帰係数・深さ表を変更できる。確認探索の深さは、実際に使う各表の範囲で本探索より浅い必要があります。不正な設定は読込時と設定時に拒否します。MPCは通常窓にも適用し、浅い確認探索にはTTや再帰的なMPCを使わない。係数は元の式で展開し、実行時は直接参照する。回帰式を外挿した結果の負の偏差も、元設定と同じ符号のまま保持する。
 
 `Engine::new(PatternModel, options)`、旧JSONパターンラッパー、重みだけのDPR2読込では元の既定MPC設定を使う。モデル固有の設定を持つ場合は、元の統合モデルファイルを直接読む。DPR2の `.mpc.tsv` は自動では読まない。
 
@@ -86,7 +89,7 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_BUILD_JOBS=1 cargo test -p deft_reversi_en
 検証ケース: 座標参照実装との照合、perft、差分特徴量、スコア・フェーズ、モデル往復、不正入力、単純完全読みとの一致、合法PV、停止・再利用、MPC分離、TT同時アクセス、祖先ハンドオフ、1/2/4/8/20スレッド反復。
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo run --release -p deft_reversi_engine --example solve -- ../deft-reversi-feature/data/eval/eval-v4.bin POSITIONS.obf exact 4 256
+RUSTFLAGS="-Ctarget-cpu=native" cargo run --locked --release -p deft_reversi_engine --example solve -- MODEL.bin POSITIONS.obf exact 4 256
 ```
 
 OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・時間をTSV出力する。任意の末尾引数で1局面の時間上限（ミリ秒）を指定できる。
@@ -94,11 +97,13 @@ OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・
 
 ## 旧版との比較
 
-`tools/engine-compare` は独立した任意実行の検証ツール。参照先へのpath依存があり、通常ワークスペースには含めない。
+[tools/bench/compare_reference.py](../tools/bench/compare_reference.py) は、旧エンジンへの依存を生成先の独立したCargoプロジェクトへ設定します。通常ワークスペースに旧実装を含めません。
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo run --release --manifest-path tools/engine-compare/Cargo.toml -- OLD_MODEL NEW_MODEL POSITIONS.obf level:60 5
+RUSTFLAGS="-Ctarget-cpu=native" python3 tools/bench/compare_reference.py --old-engine /path/to/old/deft-reversi-engine -- OLD_MODEL NEW_MODEL POSITIONS.obf level:60 5
 ```
+
+現行の比較コマンドと配置は [比較ツールの説明](../tools/bench/README.md) を参照してください。
 
 通常API同士の性能比較には `level:60` を使う。`exact` と固定深さは診断用で、通常APIの比較とは条件が異なる。評価値の一致を確認し、新旧を交互に実行、局面ごとにTTを空にし、探索スコアの一致と5回以上の中央値を報告する。初期化とモデル読み込みは測定外。
 既存の参考先レビューにあるノード集計差があるため、NPSだけで採否を決めない。
@@ -130,7 +135,7 @@ python3 tools/bench_rewrite_parallel.py --binary target/release/examples/solve -
 `--features endgame-pattern-ordering` は、残り11〜13マスのゼロ窓探索にパターン評価を追加する実験用機能。7〜10マスは合法手数とparityによる軽い手順付けを使う。既存モデルの44パターンを使い、特徴量を差分更新し、候補評価では子の片側の特徴量だけを計算する。終盤手順付け専用に学習した係数ではなく、既定では無効。比較と試作の経緯は[測定レポート](../docs/benchmarks/2026-10-27-endgame-implementation/README.md)を参照。
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --example solve --features endgame-pattern-ordering
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release --example solve --features endgame-pattern-ordering
 ```
 
 現deft・Edax・Egaroucidの通常SIMD版／AVX-512版を、FFO40〜49・1コア・主TT約839万項目で比較した。[3エンジンの比較](../docs/benchmarks/2026-10-27-three-engines/README.md)に8周分の時間、局面別の差、評価データ・ハッシュ・計時条件を記録した。
@@ -139,4 +144,4 @@ RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --example solve --features
 
 初回はネイティブエンジンのみ。Web/WASM、対局CLI、学習処理、NNUE、対局履歴の移行は含めていない。
 速度は測定対象とCPUに依存する。特定の集合での改善を、全局面の改善とは扱わない。
-同じモデル・通常API・単一スレッドのFFO40–49では、直近測定の旧版12.535239秒に対して新実装12.880500秒（約2.75%遅い）。残る差と原因の検証は[調査レポート](../docs/benchmarks/2026-10-24-regression-investigation/README.md)を参照。
+過去の旧版比較は [調査レポート](../docs/benchmarks/2026-10-24-regression-investigation/README.md) に、その時点の条件とともに保存しています。

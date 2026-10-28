@@ -42,7 +42,7 @@ impl Context {
                 let bit = if preferred & moves != 0 {
                     preferred
                 } else {
-                    moves & moves.wrapping_neg()
+                    moves.isolate_lowest_one()
                 };
                 moves &= !bit;
                 let flips = board.flip_mask(bit);
