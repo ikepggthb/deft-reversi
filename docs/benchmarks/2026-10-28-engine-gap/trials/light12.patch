@@ -1,0 +1,199 @@
+diff --git a/deft-reversi-engine/src/evaluation/light_ordering.rs b/deft-reversi-engine/src/evaluation/light_ordering.rs
+new file mode 100644
+index 0000000..e500523
+--- /dev/null
++++ b/deft-reversi-engine/src/evaluation/light_ordering.rs
+@@ -0,0 +1,148 @@
++//! Cheap endgame move-ordering value: a few of the main model's pattern
++//! tables, indexed straight from the bitboards without an evaluation state.
++use super::*;
++
++/// Edge + two X-squares, and the 3x3 corner block.
++const PATTERNS: [usize; 2] = [1, 5];
++const FEATURES: usize = PATTERNS.len() * 4;
++
++#[derive(Clone, Copy)]
++struct LightFeature {
++    mask: u64,
++    offset: u32,
++    /// Ternary weight sum of the squares set in a `pext(mask)` value.
++    ternary: [u16; 1 << 10],
++}
++
++static LIGHT: [LightFeature; FEATURES] = build();
++
++const fn build() -> [LightFeature; FEATURES] {
++    let mut out = [LightFeature {
++        mask: 0,
++        offset: 0,
++        ternary: [0; 1 << 10],
++    }; FEATURES];
++    let mut k = 0;
++    while k < PATTERNS.len() {
++        let pattern = PATTERNS[k];
++        let mut offset = 0;
++        let mut p = 0;
++        while p < pattern {
++            offset += PATTERN_TABLE_SIZES[p];
++            p += 1;
++        }
++        let n = FEATURE_COORD[pattern].n_squares as usize;
++        let mut r = 0;
++        while r < 4 {
++            let coords = FEATURE_COORD[pattern].feature_coord[r];
++            let mut mask = 0u64;
++            let mut i = 0;
++            while i < n {
++                mask |= 1 << coords[i];
++                i += 1;
++            }
++            // Digit weight of the j-th lowest square of the mask.
++            let mut weights = [0u16; 10];
++            let mut j = 0;
++            let mut rest = mask;
++            while rest != 0 {
++                let square = rest.trailing_zeros() as u8;
++                rest &= rest - 1;
++                let mut i = 0;
++                while coords[i] != square {
++                    i += 1;
++                }
++                weights[j] = POW3[n - 1 - i] as u16;
++                j += 1;
++            }
++            let feature = &mut out[k * 4 + r];
++            feature.mask = mask;
++            feature.offset = offset as u32;
++            let mut bits = 0;
++            while bits < 1 << n {
++                let mut sum = 0;
++                let mut j = 0;
++                while j < n {
++                    if bits & (1 << j) != 0 {
++                        sum += weights[j];
++                    }
++                    j += 1;
++                }
++                feature.ternary[bits] = sum;
++                bits += 1;
++            }
++            r += 1;
++        }
++        k += 1;
++    }
++    out
++}
++
++#[inline(always)]
++fn pext(bits: u64, mask: u64) -> usize {
++    #[cfg(target_feature = "bmi2")]
++    {
++        // SAFETY: BMI2 is enabled for this build.
++        unsafe { std::arch::x86_64::_pext_u64(bits, mask) as usize }
++    }
++    #[cfg(not(target_feature = "bmi2"))]
++    {
++        let (mut out, mut rest, mut j) = (0, mask, 0);
++        while rest != 0 {
++            let bit = rest & rest.wrapping_neg();
++            out |= usize::from(bits & bit != 0) << j;
++            rest ^= bit;
++            j += 1;
++        }
++        out
++    }
++}
++
++impl PatternModel {
++    /// Partial pattern sum for the side to move, in model units (128 per disc).
++    #[inline]
++    pub(crate) fn light_ordering_value(&self, board: Board) -> i32 {
++        let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
++        let weights = &self.phases[phase].weights;
++        let mut raw = 0;
++        for feature in &LIGHT {
++            let index = 2 * usize::from(feature.ternary[pext(board.player_bits(), feature.mask)])
++                + usize::from(feature.ternary[pext(board.opponent_bits(), feature.mask)]);
++            raw += i32::from(weights[feature.offset as usize + index]);
++        }
++        raw
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn light_indices_match_the_evaluation_state() {
++        let mut board = Board::new();
++        let mut random = 7u64;
++        while !board.is_terminal() {
++            let state = EvalState::from_board(board);
++            for (k, &pattern) in PATTERNS.iter().enumerate() {
++                for r in 0..4 {
++                    let feature = &LIGHT[k * 4 + r];
++                    let index = 2 * usize::from(feature.ternary[pext(board.player_bits(), feature.mask)])
++                        + usize::from(feature.ternary[pext(board.opponent_bits(), feature.mask)]);
++                    assert_eq!(index, usize::from(state.current[pattern * 4 + r]));
++                }
++            }
++            let mut moves = board.get_moves();
++            if moves == 0 {
++                board = board.board_after_pass();
++                continue;
++            }
++            random ^= random << 13;
++            random ^= random >> 7;
++            random ^= random << 17;
++            for _ in 0..random % u64::from(moves.count_ones()) {
++                moves &= moves - 1;
++            }
++            board = board.board_after_move(moves.isolate_lowest_one());
++        }
++    }
++}
+diff --git a/deft-reversi-engine/src/evaluation/mod.rs b/deft-reversi-engine/src/evaluation/mod.rs
+index 47dd266..7fc03fb 100644
+--- a/deft-reversi-engine/src/evaluation/mod.rs
++++ b/deft-reversi-engine/src/evaluation/mod.rs
+@@ -1,9 +1,10 @@
+ #[cfg(feature = "endgame-pattern-ordering")]
+ mod end_ordering;
++mod light_ordering;
+ mod pattern;
+ use crate::Board;
+ use pattern::definition::{
+-    FEATURE_COORD, PATTERN_TABLE_SIZES, SQUARE_TO_FEATURES, TOTAL_PATTERN_WEIGHTS,
++    FEATURE_COORD, POW3, PATTERN_TABLE_SIZES, SQUARE_TO_FEATURES, TOTAL_PATTERN_WEIGHTS,
+ };
+ use std::{
+     io::{self, Read, Write},
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 7dc5cb6..9472b38 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -3,6 +3,9 @@ use super::local_tt::EndProbe;
+ use super::parity::odd_regions;
+ use super::{Board, Context, EvalState, LOCAL_END_MAX, Ordering};
+ 
++/// From here up, children are also ordered by a few pattern tables.
++const LIGHT_ORDERING_EMPTIES: u8 = 12;
++
+ impl Context {
+     pub(super) fn ordered_endgame(
+         &mut self,
+@@ -117,7 +120,13 @@ impl Context {
+                 }
+                 continue;
+             }
+-            let ordering = endgame_ordering(legal, bit, odd);
++            let ordering = if board.empty_count() >= LIGHT_ORDERING_EMPTIES {
++                self.stats.evaluations += 1;
++                let value = self.runtime.model.light_ordering_value(child);
++                -(mobility as i32) * 40 - value * 3 / 32
++            } else {
++                endgame_ordering(legal, bit, odd)
++            };
+             #[cfg(feature = "endgame-pattern-ordering")]
+             let ordering = if board.empty_count() >= 11 {
+                 let state = ordering_state.get_or_insert_with(|| self.end_ordering_state(board));

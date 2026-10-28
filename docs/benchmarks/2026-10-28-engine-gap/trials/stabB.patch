@@ -1,0 +1,46 @@
+diff --git a/deft-reversi-engine/src/board/stability.rs b/deft-reversi-engine/src/board/stability.rs
+index b4e50d4..8ebcc94 100644
+--- a/deft-reversi-engine/src/board/stability.rs
++++ b/deft-reversi-engine/src/board/stability.rs
+@@ -10,7 +10,10 @@ pub(crate) fn null_window_upper(board: Board, alpha: i32) -> Option<i32> {
+         46, 48, 48, 50, 50, 52, 52, 54, 54, 56, 56, 58, 58, 60, 60, 62, 62, 64, 64, 64, 64, 64, 64,
+         64, 64, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+     ];
+-    if alpha < THRESHOLD[usize::from(board.empty_count())] {
++    // Stable discs are a subset of the opponent's discs.
++    if alpha < THRESHOLD[usize::from(board.empty_count())]
++        || 64 - 2 * board.opponent_bits().count_ones() as i32 > alpha
++    {
+         return None;
+     }
+     stability_upper(board, alpha)
+@@ -18,9 +21,26 @@ pub(crate) fn null_window_upper(board: Board, alpha: i32) -> Option<i32> {
+ #[inline(never)]
+ fn stability_upper(board: Board, alpha: i32) -> Option<i32> {
+     let full = full_axes(board.player_bits() | board.opponent_bits());
+-    let upper =
+-        64 - 2 * stable(board.opponent_bits(), board.player_bits(), &full).count_ones() as i32;
+-    (upper <= alpha).then_some(upper)
++    // 64 - 2 * stable <= alpha; stop propagating once enough discs are stable.
++    let needed = (65 - alpha).div_euclid(2) as u32;
++    let bits = board.opponent_bits();
++    let central = bits & 0x007e7e7e7e7e7e00;
++    let mut result = super::edge_stability::get_stable_edge(bits, board.player_bits())
++        | (full[0] & full[1] & full[2] & full[3] & central);
++    loop {
++        if result.count_ones() >= needed {
++            return Some(64 - 2 * result.count_ones() as i32);
++        }
++        let horizontal = (result >> 1) | (result << 1) | full[0];
++        let vertical = (result >> 8) | (result << 8) | full[1];
++        let diagonal7 = (result >> 7) | (result << 7) | full[2];
++        let diagonal9 = (result >> 9) | (result << 9) | full[3];
++        let next = result | (horizontal & vertical & diagonal7 & diagonal9 & central);
++        if next == result {
++            return None;
++        }
++        result = next;
++    }
+ }
+ #[cfg(test)]
+ pub(crate) fn score_bounds(board: Board) -> (i32, i32) {

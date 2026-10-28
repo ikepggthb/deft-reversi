@@ -1,0 +1,22 @@
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 7dc5cb6..e95942d 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -119,7 +119,7 @@ impl Context {
+             }
+             let ordering = endgame_ordering(legal, bit, odd);
+             #[cfg(feature = "endgame-pattern-ordering")]
+-            let ordering = if board.empty_count() >= 11 {
++            let ordering = if board.empty_count() >= 13 {
+                 let state = ordering_state.get_or_insert_with(|| self.end_ordering_state(board));
+                 self.stats.evaluations += 1;
+                 let value = self
+@@ -145,7 +145,7 @@ impl Context {
+             let action = candidates[i];
+             let child = board.after_known_move(1u64 << action.square, action.flips);
+             #[cfg(feature = "endgame-pattern-ordering")]
+-            if child.empty_count() >= 11
++            if child.empty_count() >= 13
+                 && let Some(state) = ordering_state
+             {
+                 self.end_ordering[usize::from(child.empty_count() - 11)] =

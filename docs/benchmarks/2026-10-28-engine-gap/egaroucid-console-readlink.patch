@@ -1,0 +1,12 @@
+diff --git a/src/console/console_common.hpp b/src/console/console_common.hpp
+index a9671cb58..a9e08511f 100644
+--- a/src/console/console_common.hpp
++++ b/src/console/console_common.hpp
+@@ -94,6 +94,7 @@ std::string get_parent_path(wchar_t raw_path[]) {
+             std::cerr << "[ERROR] can't get binary path. You can ignore this error." << std::endl;
+             return "";
+         }
++        raw_path[e] = '\0';
+         std::string res = get_parent_path(raw_path);
+         return res;
+     }

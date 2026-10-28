@@ -1,0 +1,35 @@
+{
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz, KVM, 4 vCPU; benchmark CPU 2, builds CPU 0",
+  "kernel": "6.18.44-fc-v180",
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "cpp": "gcc/g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "commits": {
+    "deft_before": "ab92aea30ae3d194dff4056978feed428f2f9de1",
+    "deft_final": "2672cd7",
+    "edax": "786421f355219ade872ce7285c1cab1eaf67836a",
+    "egaroucid": "2a65c87860be999373088ad833aa00b0844883b6 + egaroucid-console-readlink.patch"
+  },
+  "builds": {
+    "deft": "RUSTFLAGS=-C target-cpu=native cargo build --locked --release --example solve",
+    "edax": "make build CC=gcc ARCH=native (in src/)",
+    "egar_simd": "g++ -std=c++20 -O3 -flto -march=native -pthread src/Egaroucid_for_Console.cpp",
+    "egar_avx512": "g++ -std=c++20 -O3 -flto -march=native -DHAS_AVX512 -pthread src/Egaroucid_for_Console.cpp"
+  },
+  "binary_sha256": {
+    "deft_before": "19b1314e574594a64e0127d3eb9f808a6cd7aac1b53dc06a0d5fd3c5ac24b144",
+    "deft_final": "09d08286b48b3cf3739a195922172be6fc869560b721ddcf503f0974e54550aa",
+    "edax": "8d11ed5bd6c00811d4935d7006262417e792ab96e1f18fa3e9d8c84787e0d970",
+    "egar_simd": "9f39c95999fe0794b74ebca3ef9013f22e83dd47112429dd0ebe351f3942eabb",
+    "egar_avx512": "c76570027446b21d465000a268ade9522a12178ae4e370dc7320274c7cf77583"
+  },
+  "data_sha256": {
+    "deft_model (tools/convert_legacy_eval.py + tools/convert_pattern_v2.py from data/eval/eval.json)": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+    "edax eval.dat (release v4.4 eval.7z)": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+    "egaroucid eval.egev2": "0a8acbcbc23067933627f1bcc83c3f7ae6b7ff3e603d174a3364271fcaeeef2f",
+    "egaroucid eval_move_ordering_end.egev": "bd908885e8bb85e72a9be2b0399f8ca52ed40a138bcaaecca3d13710945b9a93",
+    "egaroucid hash23.eghs (tools/bench/make_egar_hash.cpp)": "0a44b764e10b250229d25a007cda5a16857733b92d8566b65d95243739b7d323"
+  },
+  "deft_options": "exact, 1 thread, main TT 256 MiB (+PV 16 MiB), --legacy-main-mpc",
+  "edax_options": "-solve -n 1 -l 60 -h 23 -book-usage off",
+  "egaroucid_options": "-t 1 -l 60 -nobook -hash 23"
+}

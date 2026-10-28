@@ -1,0 +1,91 @@
+diff --git a/deft-reversi-engine/src/diagnostics.rs b/deft-reversi-engine/src/diagnostics.rs
+index af262c6..a64710f 100644
+--- a/deft-reversi-engine/src/diagnostics.rs
++++ b/deft-reversi-engine/src/diagnostics.rs
+@@ -23,3 +23,13 @@ pub fn perft(board: Board, depth: u8) -> u64 {
+     }
+     leaves
+ }
++
++pub static HIST: [std::sync::atomic::AtomicU64; 65] =
++    [const { std::sync::atomic::AtomicU64::new(0) }; 65];
++#[inline(always)]
++pub(crate) fn hist(empties: u8) {
++    HIST[usize::from(empties)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++}
++pub fn hist_take() -> Vec<u64> {
++    HIST.iter().map(|h| h.swap(0, std::sync::atomic::Ordering::Relaxed)).collect()
++}
+diff --git a/deft-reversi-engine/src/lib.rs b/deft-reversi-engine/src/lib.rs
+index 56a6461..cea9387 100644
+--- a/deft-reversi-engine/src/lib.rs
++++ b/deft-reversi-engine/src/lib.rs
+@@ -9,7 +9,7 @@ mod search;
+ mod transposition;
+ mod types;
+ pub use board::bitboard::{Board, MoveError};
+-pub use diagnostics::perft;
++pub use diagnostics::{hist_take, perft};
+ pub use evaluation::{PATTERN_COUNT, PHASE_COUNT, PatternModel, PatternPhase};
+ pub use search::{
+     Bound, Engine, EngineError, EngineOptions, ProbCutRule, SearchMode, SearchRequest,
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index fbc6801..963cac8 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -383,6 +383,7 @@ impl Engine {
+                 }
+             };
+             let Some(line) = completed else { break };
++            eprintln!("HIST depth {depth} final {final_iteration} quality {quality} nodes {:?}", crate::diagnostics::hist_take());
+             result.selective = sigma.is_some();
+             result.selectivity = if sigma.is_none() {
+                 Some(Selectivity::Full)
+diff --git a/deft-reversi-engine/src/search/endgame/last_four.rs b/deft-reversi-engine/src/search/endgame/last_four.rs
+index 431affb..fe6fc53 100644
+--- a/deft-reversi-engine/src/search/endgame/last_four.rs
++++ b/deft-reversi-engine/src/search/endgame/last_four.rs
+@@ -27,6 +27,7 @@ impl Context {
+         parity: u8,
+     ) -> Result<i32, ()> {
+         debug_assert!(parity <= UNKNOWN_PARITY);
++        crate::diagnostics::hist(4);
+         let mut search = LeafSearch {
+             context: self,
+             failed: false,
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index afbb8a4..9decaf3 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -90,6 +90,7 @@ impl Context {
+         known_probe: Option<EndProbe>,
+     ) -> Result<i32, ()> {
+         let empties = board.empty_count();
++        crate::diagnostics::hist(empties);
+         if empties < TAIL_EMPTIES {
+             return self.tail_score_impl(board, alpha, beta);
+         }
+diff --git a/deft-reversi-engine/src/search/endgame/shallow.rs b/deft-reversi-engine/src/search/endgame/shallow.rs
+index dddb740..d707c84 100644
+--- a/deft-reversi-engine/src/search/endgame/shallow.rs
++++ b/deft-reversi-engine/src/search/endgame/shallow.rs
+@@ -55,6 +55,7 @@ impl Context {
+         parity: u8,
+     ) -> Result<i32, ()> {
+         debug_assert_eq!(board.empty_count(), 5);
++        crate::diagnostics::hist(5);
+         let mut empty = !(board.player_bits() | board.opponent_bits());
+         let mut preferred = empty & PARITY_REGIONS[usize::from(parity)];
+         let child_alpha = -alpha - 1;
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index 5165d86..a081b0c 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -90,6 +90,7 @@ impl Context {
+             probcut: allow_probcut,
+         } = spec;
+         self.enter()?;
++        crate::diagnostics::hist(board.empty_count());
+         if exact && beta - alpha == 1 && board.empty_count() <= super::endgame::LOCAL_END_MAX {
+             #[cfg(feature = "endgame-pattern-ordering")]
+             if board.empty_count() == super::endgame::LOCAL_END_MAX {

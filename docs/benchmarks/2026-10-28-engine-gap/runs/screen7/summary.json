@@ -1,0 +1,94 @@
+{
+  "cpu": 2,
+  "rounds": 6,
+  "tt_mib": "256",
+  "variants": {
+    "stageB": "/work/bins/stageB",
+    "constedge": "/work/bins/constedge"
+  },
+  "round_seconds": {
+    "stageB": [
+      28.893402583000004,
+      29.137500923,
+      29.504930027999997,
+      29.105382102,
+      29.369037142,
+      29.911245279
+    ],
+    "constedge": [
+      28.868599304999996,
+      27.922245248,
+      29.158982143,
+      29.224209956000003,
+      28.895573673,
+      29.508409373
+    ]
+  },
+  "median_seconds": {
+    "stageB": 29.2532690325,
+    "constedge": 29.027277908000002
+  },
+  "paired_ratio_median": {
+    "stageB": 1.0,
+    "constedge": 0.9874036024608066
+  },
+  "faster_rounds_than_base": {
+    "stageB": 0,
+    "constedge": 5
+  },
+  "nodes_per_round": {
+    "stageB": [
+      704542825
+    ],
+    "constedge": [
+      704542825
+    ]
+  },
+  "per_position_median": {
+    "40": {
+      "stageB": 0.29373541950000004,
+      "constedge": 0.228628857
+    },
+    "41": {
+      "stageB": 0.5495898525,
+      "constedge": 0.5464933935
+    },
+    "42": {
+      "stageB": 0.7331386854999999,
+      "constedge": 0.7446282550000001
+    },
+    "43": {
+      "stageB": 2.1752800465,
+      "constedge": 2.122633253
+    },
+    "44": {
+      "stageB": 0.7183540964999999,
+      "constedge": 0.602280385
+    },
+    "45": {
+      "stageB": 5.903020051,
+      "constedge": 6.0684440004999995
+    },
+    "46": {
+      "stageB": 2.150331789,
+      "constedge": 2.025314662
+    },
+    "47": {
+      "stageB": 0.722444652,
+      "constedge": 0.669760993
+    },
+    "48": {
+      "stageB": 5.107670957,
+      "constedge": 4.9867649315
+    },
+    "49": {
+      "stageB": 10.686283599,
+      "constedge": 10.872432322
+    }
+  },
+  "sha256": {
+    "stageB": "12c55e5bd8a4697145e6eff1bce4dff33fe9e4a4aafd798f7841037342cbad41",
+    "constedge": "09d08286b48b3cf3739a195922172be6fc869560b721ddcf503f0974e54550aa"
+  },
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069"
+}
