@@ -1,0 +1,35 @@
+diff --git a/deft-reversi-engine/src/search/endgame/local_tt.rs b/deft-reversi-engine/src/search/endgame/local_tt.rs
+index 3da09c0..47bb0f5 100644
+--- a/deft-reversi-engine/src/search/endgame/local_tt.rs
++++ b/deft-reversi-engine/src/search/endgame/local_tt.rs
+@@ -1,7 +1,11 @@
+ //! Context-owned endgame TT; probes are immutable snapshots, never slot pointers.
+ use super::{LOCAL_END_MAX, TAIL_EMPTIES};
+ use crate::Board;
+-const LOCAL_SLOTS: usize = 1024;
++/// Slots per layer as a power of two. Deep layers are probed most often and
++/// stay small for the cache; the rarer upper layers keep more positions.
++const fn slot_bits(empties: u8) -> u32 {
++    if empties >= 12 { 13 } else { 10 }
++}
+ const LAYERS: usize = (LOCAL_END_MAX - TAIL_EMPTIES + 1) as usize;
+ 
+ #[derive(Default)]
+@@ -16,7 +20,7 @@ impl EndgameCache {
+         let layer = &mut self.layers[usize::from(empties - TAIL_EMPTIES)];
+         if layer.is_empty() {
+             layer.resize(
+-                LOCAL_SLOTS,
++                1 << slot_bits(empties),
+                 EndEntry {
+                     quality: 255,
+                     player: 0,
+@@ -36,7 +40,7 @@ impl EndgameCache {
+         // separated by 32 squares, creating systematic aliases.
+         let hash = board.player_bits().wrapping_mul(0x9dda1c54cfe6b6e9)
+             ^ board.opponent_bits().wrapping_mul(0xa2e6c0300831e05a);
+-        let index = (hash >> 54) as u16;
++        let index = (hash >> (64 - slot_bits(empties))) as u16;
+         let mut probe = EndProbe {
+             index,
+             ..EndProbe::EMPTY

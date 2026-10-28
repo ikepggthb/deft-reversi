@@ -1,0 +1,399 @@
+{
+  "rounds": 8,
+  "positions": 10,
+  "runs": 320,
+  "cpu": 2,
+  "threads": 1,
+  "main_tt_entries": 8388608,
+  "orders": [
+    [
+      "deft",
+      "edax",
+      "egar_avx512",
+      "egar_simd"
+    ],
+    [
+      "edax",
+      "egar_simd",
+      "deft",
+      "egar_avx512"
+    ],
+    [
+      "egar_simd",
+      "egar_avx512",
+      "edax",
+      "deft"
+    ],
+    [
+      "egar_avx512",
+      "deft",
+      "egar_simd",
+      "edax"
+    ]
+  ],
+  "round_seconds": {
+    "deft": [
+      28.432917304,
+      26.160431504,
+      26.557806541999998,
+      26.826321331,
+      29.576696160999997,
+      28.170141733,
+      29.005284295000003,
+      29.378581027000003
+    ],
+    "edax": [
+      28.811,
+      28.134000000000004,
+      27.537000000000003,
+      27.833,
+      29.681000000000004,
+      31.527,
+      29.274,
+      29.581000000000003
+    ],
+    "egar_simd": [
+      32.852000000000004,
+      31.665999999999997,
+      30.375,
+      31.825,
+      33.786,
+      35.279,
+      33.822,
+      33.287
+    ],
+    "egar_avx512": [
+      31.085,
+      32.265,
+      29.366000000000003,
+      31.137999999999998,
+      33.515,
+      36.069,
+      31.427,
+      33.637
+    ]
+  },
+  "seconds_median": {
+    "deft": 28.3015295185,
+    "edax": 29.0425,
+    "egar_simd": 33.069500000000005,
+    "egar_avx512": 31.846
+  },
+  "paired_deft_time_ratios": {
+    "edax": [
+      0.9868771408142724,
+      0.9298511233383094,
+      0.9644408084395539,
+      0.9638314709517479,
+      0.9964858381119233,
+      0.8935243357439655,
+      0.9908206700485073,
+      0.9931571287988912
+    ],
+    "egar_simd": [
+      0.86548512431511,
+      0.8261362819427779,
+      0.8743310795720164,
+      0.842932327761194,
+      0.8754127792872787,
+      0.7984960382380453,
+      0.8575863134941754,
+      0.882584222879803
+    ],
+    "egar_avx512": [
+      0.914682879330867,
+      0.8107990548272122,
+      0.9043726262344206,
+      0.8615300061339842,
+      0.8824913072057287,
+      0.7810070069311597,
+      0.922941556464187,
+      0.8734007499777032
+    ]
+  },
+  "paired_deft_time_ratio_medians": {
+    "edax": 0.9756589746269131,
+    "egar_simd": 0.8615357189046426,
+    "egar_avx512": 0.877946028591716
+  },
+  "deft_faster_rounds": {
+    "edax": 8,
+    "egar_simd": 8,
+    "egar_avx512": 8
+  },
+  "per_position": {
+    "40": {
+      "deft": {
+        "seconds_median": 0.2227983485,
+        "nodes_values": [
+          6389348
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.26,
+        "nodes_values": [
+          10105232
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.244,
+        "nodes_values": [
+          9539933
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.246,
+        "nodes_values": [
+          9539933
+        ]
+      }
+    },
+    "41": {
+      "deft": {
+        "seconds_median": 0.516509485,
+        "nodes_values": [
+          15389987
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.638,
+        "nodes_values": [
+          22907975
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.3925,
+        "nodes_values": [
+          11502875
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.377,
+        "nodes_values": [
+          11502875
+        ]
+      }
+    },
+    "42": {
+      "deft": {
+        "seconds_median": 0.723387497,
+        "nodes_values": [
+          20995338
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.7545,
+        "nodes_values": [
+          25689012
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.4685,
+        "nodes_values": [
+          15740594
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.437,
+        "nodes_values": [
+          15740594
+        ]
+      }
+    },
+    "43": {
+      "deft": {
+        "seconds_median": 2.2109643565,
+        "nodes_values": [
+          43784244
+        ]
+      },
+      "edax": {
+        "seconds_median": 2.204,
+        "nodes_values": [
+          70212796
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 2.3375,
+        "nodes_values": [
+          53375922
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 2.239,
+        "nodes_values": [
+          53375922
+        ]
+      }
+    },
+    "44": {
+      "deft": {
+        "seconds_median": 0.5835288590000001,
+        "nodes_values": [
+          12236794
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.7104999999999999,
+        "nodes_values": [
+          20398802
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.393,
+        "nodes_values": [
+          7225161
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.391,
+        "nodes_values": [
+          7225161
+        ]
+      }
+    },
+    "45": {
+      "deft": {
+        "seconds_median": 6.2385419465,
+        "nodes_values": [
+          136157547
+        ]
+      },
+      "edax": {
+        "seconds_median": 7.792,
+        "nodes_values": [
+          266787296
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 7.12,
+        "nodes_values": [
+          211710261
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 7.1,
+        "nodes_values": [
+          211710261
+        ]
+      }
+    },
+    "46": {
+      "deft": {
+        "seconds_median": 2.0735832425,
+        "nodes_values": [
+          52490941
+        ]
+      },
+      "edax": {
+        "seconds_median": 1.7425,
+        "nodes_values": [
+          59211002
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 1.4195,
+        "nodes_values": [
+          33913920
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 1.3455,
+        "nodes_values": [
+          33913920
+        ]
+      }
+    },
+    "47": {
+      "deft": {
+        "seconds_median": 0.6511940075,
+        "nodes_values": [
+          17374720
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.4805,
+        "nodes_values": [
+          15478711
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.496,
+        "nodes_values": [
+          10837155
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.456,
+        "nodes_values": [
+          10837155
+        ]
+      }
+    },
+    "48": {
+      "deft": {
+        "seconds_median": 4.5882917005,
+        "nodes_values": [
+          90305460
+        ]
+      },
+      "edax": {
+        "seconds_median": 4.4719999999999995,
+        "nodes_values": [
+          143042220
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 5.9735,
+        "nodes_values": [
+          88536843
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 5.785,
+        "nodes_values": [
+          88536843
+        ]
+      }
+    },
+    "49": {
+      "deft": {
+        "seconds_median": 9.8031235885,
+        "nodes_values": [
+          203651027
+        ]
+      },
+      "edax": {
+        "seconds_median": 9.5625,
+        "nodes_values": [
+          313007996
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 13.5125,
+        "nodes_values": [
+          308895538
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 13.401,
+        "nodes_values": [
+          308895538
+        ]
+      }
+    }
+  },
+  "all_scores_match_published_answers": true,
+  "all_full_depth_and_nonselective": true,
+  "all_engine_nodes_stable_across_repetitions": true,
+  "binary_sha256": {
+    "deft": "b058df75e61354483eca52d13373d3294c7bd81b673c173ac1d4ea621750b8f6",
+    "edax": "8d11ed5bd6c00811d4935d7006262417e792ab96e1f18fa3e9d8c84787e0d970",
+    "egar_simd": "9f39c95999fe0794b74ebca3ef9013f22e83dd47112429dd0ebe351f3942eabb",
+    "egar_avx512": "c76570027446b21d465000a268ade9522a12178ae4e370dc7320274c7cf77583"
+  },
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "05d2d5ee2e87d8865d2518f071f40cc9a9749e297c7b862609c115c8deeb4644",
+  "answers_sha256": "f4618ac2cac0c97871a456e050bf6d4008cceab4be685723e490f00fcdd8bf88"
+}

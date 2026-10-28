@@ -1,0 +1,399 @@
+{
+  "rounds": 8,
+  "positions": 10,
+  "runs": 320,
+  "cpu": 2,
+  "threads": 1,
+  "main_tt_entries": 8388608,
+  "orders": [
+    [
+      "deft",
+      "edax",
+      "egar_avx512",
+      "egar_simd"
+    ],
+    [
+      "edax",
+      "egar_simd",
+      "deft",
+      "egar_avx512"
+    ],
+    [
+      "egar_simd",
+      "egar_avx512",
+      "edax",
+      "deft"
+    ],
+    [
+      "egar_avx512",
+      "deft",
+      "egar_simd",
+      "edax"
+    ]
+  ],
+  "round_seconds": {
+    "deft": [
+      29.881543071000003,
+      30.489982121,
+      29.960340619,
+      29.132315633000005,
+      30.670149162,
+      28.953527178,
+      30.203409318,
+      32.977575521
+    ],
+    "edax": [
+      29.307000000000002,
+      30.034,
+      31.041999999999998,
+      30.874000000000002,
+      30.942999999999998,
+      30.878999999999998,
+      29.72,
+      33.112
+    ],
+    "egar_simd": [
+      34.532,
+      37.009,
+      37.554,
+      35.158,
+      35.525,
+      37.443,
+      37.01,
+      38.859
+    ],
+    "egar_avx512": [
+      34.508,
+      34.443,
+      35.208,
+      34.423,
+      33.389,
+      34.769,
+      34.088,
+      38.482
+    ]
+  },
+  "seconds_median": {
+    "deft": 30.0818749685,
+    "edax": 30.8765,
+    "egar_simd": 37.0095,
+    "egar_avx512": 34.4755
+  },
+  "paired_deft_time_ratios": {
+    "edax": [
+      1.0196042949124782,
+      1.0151821975427848,
+      0.9651549712969526,
+      0.9435873431690096,
+      0.9911821465921211,
+      0.9376445862236472,
+      1.0162654548452221,
+      0.9959403092836433
+    ],
+    "egar_simd": [
+      0.8653290591625161,
+      0.8238531741198087,
+      0.797793593731693,
+      0.828611287132374,
+      0.8633398778888107,
+      0.7732694276099672,
+      0.8160877956768441,
+      0.8486470449831441
+    ],
+    "egar_avx512": [
+      0.8659308876492408,
+      0.8852301518741109,
+      0.8509526419847763,
+      0.8463037978386545,
+      0.9185704621881458,
+      0.8327397157812996,
+      0.8860422822694203,
+      0.8569610602619406
+    ]
+  },
+  "paired_deft_time_ratio_medians": {
+    "edax": 0.9935612279378823,
+    "egar_simd": 0.8262322306260914,
+    "egar_avx512": 0.8614459739555906
+  },
+  "deft_faster_rounds": {
+    "edax": 5,
+    "egar_simd": 8,
+    "egar_avx512": 8
+  },
+  "per_position": {
+    "40": {
+      "deft": {
+        "seconds_median": 0.2534147795,
+        "nodes_values": [
+          6389348
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.2785,
+        "nodes_values": [
+          10105232
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.2895,
+        "nodes_values": [
+          9539933
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.3185,
+        "nodes_values": [
+          9539933
+        ]
+      }
+    },
+    "41": {
+      "deft": {
+        "seconds_median": 0.57458959,
+        "nodes_values": [
+          15389987
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.6285000000000001,
+        "nodes_values": [
+          22907975
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.4865,
+        "nodes_values": [
+          11502875
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.4675,
+        "nodes_values": [
+          11502875
+        ]
+      }
+    },
+    "42": {
+      "deft": {
+        "seconds_median": 0.800613585,
+        "nodes_values": [
+          20995338
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.7825,
+        "nodes_values": [
+          25689012
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.482,
+        "nodes_values": [
+          15740594
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.5255000000000001,
+        "nodes_values": [
+          15740594
+        ]
+      }
+    },
+    "43": {
+      "deft": {
+        "seconds_median": 2.399293712,
+        "nodes_values": [
+          43784244
+        ]
+      },
+      "edax": {
+        "seconds_median": 2.4355,
+        "nodes_values": [
+          70212796
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 2.529,
+        "nodes_values": [
+          53375922
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 2.3715,
+        "nodes_values": [
+          53375922
+        ]
+      }
+    },
+    "44": {
+      "deft": {
+        "seconds_median": 0.6134831425,
+        "nodes_values": [
+          12236794
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.7255,
+        "nodes_values": [
+          20398802
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.433,
+        "nodes_values": [
+          7225161
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.401,
+        "nodes_values": [
+          7225161
+        ]
+      }
+    },
+    "45": {
+      "deft": {
+        "seconds_median": 6.564167593500001,
+        "nodes_values": [
+          136157547
+        ]
+      },
+      "edax": {
+        "seconds_median": 8.3235,
+        "nodes_values": [
+          266787296
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 8.0555,
+        "nodes_values": [
+          211710261
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 7.4495000000000005,
+        "nodes_values": [
+          211710261
+        ]
+      }
+    },
+    "46": {
+      "deft": {
+        "seconds_median": 2.357126435,
+        "nodes_values": [
+          52490941
+        ]
+      },
+      "edax": {
+        "seconds_median": 1.8330000000000002,
+        "nodes_values": [
+          59211002
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 1.5419999999999998,
+        "nodes_values": [
+          33913920
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 1.4445000000000001,
+        "nodes_values": [
+          33913920
+        ]
+      }
+    },
+    "47": {
+      "deft": {
+        "seconds_median": 0.7730630144999999,
+        "nodes_values": [
+          17374720
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.469,
+        "nodes_values": [
+          15478711
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.6455,
+        "nodes_values": [
+          10837155
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.5940000000000001,
+        "nodes_values": [
+          10837155
+        ]
+      }
+    },
+    "48": {
+      "deft": {
+        "seconds_median": 4.9012998329999995,
+        "nodes_values": [
+          90305460
+        ]
+      },
+      "edax": {
+        "seconds_median": 4.949,
+        "nodes_values": [
+          143042220
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 6.5735,
+        "nodes_values": [
+          88536843
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 6.4655000000000005,
+        "nodes_values": [
+          88536843
+        ]
+      }
+    },
+    "49": {
+      "deft": {
+        "seconds_median": 10.5038511285,
+        "nodes_values": [
+          203651027
+        ]
+      },
+      "edax": {
+        "seconds_median": 9.973500000000001,
+        "nodes_values": [
+          313007996
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 15.097999999999999,
+        "nodes_values": [
+          308895538
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 14.8935,
+        "nodes_values": [
+          308895538
+        ]
+      }
+    }
+  },
+  "all_scores_match_published_answers": true,
+  "all_full_depth_and_nonselective": true,
+  "all_engine_nodes_stable_across_repetitions": true,
+  "binary_sha256": {
+    "deft": "b058df75e61354483eca52d13373d3294c7bd81b673c173ac1d4ea621750b8f6",
+    "edax": "8d11ed5bd6c00811d4935d7006262417e792ab96e1f18fa3e9d8c84787e0d970",
+    "egar_simd": "9f39c95999fe0794b74ebca3ef9013f22e83dd47112429dd0ebe351f3942eabb",
+    "egar_avx512": "c76570027446b21d465000a268ade9522a12178ae4e370dc7320274c7cf77583"
+  },
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "05d2d5ee2e87d8865d2518f071f40cc9a9749e297c7b862609c115c8deeb4644",
+  "answers_sha256": "f4618ac2cac0c97871a456e050bf6d4008cceab4be685723e490f00fcdd8bf88"
+}

@@ -1,0 +1,12 @@
+diff --git a/deft-reversi-engine/src/search/endgame/last_four.rs b/deft-reversi-engine/src/search/endgame/last_four.rs
+index 431affb..198e253 100644
+--- a/deft-reversi-engine/src/search/endgame/last_four.rs
++++ b/deft-reversi-engine/src/search/endgame/last_four.rs
+@@ -139,6 +139,7 @@ fn final_parity(player: u64, opponent: u64) -> i32 {
+ ///
+ /// 各候補手の後で `solve_score_1_empties` を呼ぶことで完全に解ける。
+ /// パスが必要な場合は再帰で対応(2 連続パスで終局)。
++#[inline(always)]
+ fn solve_score_2_empties(
+     player: u64,
+     opponent: u64,

@@ -1,0 +1,399 @@
+{
+  "rounds": 8,
+  "positions": 10,
+  "runs": 320,
+  "cpu": 2,
+  "threads": 1,
+  "main_tt_entries": 8388608,
+  "orders": [
+    [
+      "deft",
+      "edax",
+      "egar_avx512",
+      "egar_simd"
+    ],
+    [
+      "edax",
+      "egar_simd",
+      "deft",
+      "egar_avx512"
+    ],
+    [
+      "egar_simd",
+      "egar_avx512",
+      "edax",
+      "deft"
+    ],
+    [
+      "egar_avx512",
+      "deft",
+      "egar_simd",
+      "edax"
+    ]
+  ],
+  "round_seconds": {
+    "deft": [
+      30.704186987999996,
+      33.880889651000004,
+      34.269008955000004,
+      31.933260927,
+      32.528098291000006,
+      31.961118117999998,
+      33.879114498,
+      32.780722005
+    ],
+    "edax": [
+      30.927,
+      32.507,
+      32.406,
+      30.416000000000004,
+      31.458,
+      31.209,
+      31.375999999999998,
+      31.092000000000002
+    ],
+    "egar_simd": [
+      35.336999999999996,
+      36.61,
+      39.113,
+      33.877,
+      38.828,
+      36.664,
+      36.849999999999994,
+      35.662000000000006
+    ],
+    "egar_avx512": [
+      34.294,
+      35.351,
+      34.859,
+      35.021,
+      34.796,
+      35.29,
+      33.711,
+      34.504000000000005
+    ]
+  },
+  "seconds_median": {
+    "deft": 32.654410148000004,
+    "edax": 31.292499999999997,
+    "egar_simd": 36.637,
+    "egar_avx512": 34.8275
+  },
+  "paired_deft_time_ratios": {
+    "edax": [
+      0.9927955180909883,
+      1.0422644246162367,
+      1.0574896301610814,
+      1.0498836443648079,
+      1.0340167299574037,
+      1.0240993981864206,
+      1.0797779990438552,
+      1.0543137142994983
+    ],
+    "egar_simd": [
+      0.8688962557093132,
+      0.9254545110898663,
+      0.8761539374376807,
+      0.9426236363019157,
+      0.8377484879725972,
+      0.8717302563277328,
+      0.9193789551696067,
+      0.9192059336268296
+    ],
+    "egar_avx512": [
+      0.8953224175657549,
+      0.9584138963819978,
+      0.9830749291431194,
+      0.9118317845578366,
+      0.9348229190424189,
+      0.9056706749220742,
+      1.004986932989232,
+      0.9500557038314398
+    ]
+  },
+  "paired_deft_time_ratio_medians": {
+    "edax": 1.0460740344905224,
+    "egar_simd": 0.8976799355322551,
+    "egar_avx512": 0.9424393114369294
+  },
+  "deft_faster_rounds": {
+    "edax": 1,
+    "egar_simd": 8,
+    "egar_avx512": 7
+  },
+  "per_position": {
+    "40": {
+      "deft": {
+        "seconds_median": 0.245324131,
+        "nodes_values": [
+          6446237
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.321,
+        "nodes_values": [
+          10105232
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.253,
+        "nodes_values": [
+          9539933
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.289,
+        "nodes_values": [
+          9539933
+        ]
+      }
+    },
+    "41": {
+      "deft": {
+        "seconds_median": 0.729375484,
+        "nodes_values": [
+          15381766
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.6705,
+        "nodes_values": [
+          22907975
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.5015000000000001,
+        "nodes_values": [
+          11502875
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.4315,
+        "nodes_values": [
+          11502875
+        ]
+      }
+    },
+    "42": {
+      "deft": {
+        "seconds_median": 0.82468648,
+        "nodes_values": [
+          21014897
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.826,
+        "nodes_values": [
+          25689012
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.4985,
+        "nodes_values": [
+          15740594
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.522,
+        "nodes_values": [
+          15740594
+        ]
+      }
+    },
+    "43": {
+      "deft": {
+        "seconds_median": 2.4090094825,
+        "nodes_values": [
+          43706570
+        ]
+      },
+      "edax": {
+        "seconds_median": 2.378,
+        "nodes_values": [
+          70212796
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 2.3979999999999997,
+        "nodes_values": [
+          53375922
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 2.4690000000000003,
+        "nodes_values": [
+          53375922
+        ]
+      }
+    },
+    "44": {
+      "deft": {
+        "seconds_median": 0.7035599804999999,
+        "nodes_values": [
+          11968273
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.7565,
+        "nodes_values": [
+          20398802
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.428,
+        "nodes_values": [
+          7225161
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.39,
+        "nodes_values": [
+          7225161
+        ]
+      }
+    },
+    "45": {
+      "deft": {
+        "seconds_median": 6.9517378305,
+        "nodes_values": [
+          135402961
+        ]
+      },
+      "edax": {
+        "seconds_median": 8.547,
+        "nodes_values": [
+          266787296
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 8.145,
+        "nodes_values": [
+          211710261
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 7.623,
+        "nodes_values": [
+          211710261
+        ]
+      }
+    },
+    "46": {
+      "deft": {
+        "seconds_median": 2.3875829714999997,
+        "nodes_values": [
+          51366995
+        ]
+      },
+      "edax": {
+        "seconds_median": 1.728,
+        "nodes_values": [
+          59211002
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 1.5365,
+        "nodes_values": [
+          33913920
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 1.5419999999999998,
+        "nodes_values": [
+          33913920
+        ]
+      }
+    },
+    "47": {
+      "deft": {
+        "seconds_median": 0.772892558,
+        "nodes_values": [
+          17250719
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.5155000000000001,
+        "nodes_values": [
+          15478711
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.58,
+        "nodes_values": [
+          10837155
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.5285,
+        "nodes_values": [
+          10837155
+        ]
+      }
+    },
+    "48": {
+      "deft": {
+        "seconds_median": 5.3981930915,
+        "nodes_values": [
+          90399923
+        ]
+      },
+      "edax": {
+        "seconds_median": 4.785,
+        "nodes_values": [
+          143042220
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 6.654,
+        "nodes_values": [
+          88536843
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 6.6305,
+        "nodes_values": [
+          88536843
+        ]
+      }
+    },
+    "49": {
+      "deft": {
+        "seconds_median": 11.7643591635,
+        "nodes_values": [
+          228979761
+        ]
+      },
+      "edax": {
+        "seconds_median": 10.6155,
+        "nodes_values": [
+          313007996
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 15.286,
+        "nodes_values": [
+          308895538
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 14.576,
+        "nodes_values": [
+          308895538
+        ]
+      }
+    }
+  },
+  "all_scores_match_published_answers": true,
+  "all_full_depth_and_nonselective": true,
+  "all_engine_nodes_stable_across_repetitions": true,
+  "binary_sha256": {
+    "deft": "ab426ddd6e5f0ac1429e76affb6e9e418f160e37022daf5fc92c7642b9bccec6",
+    "edax": "8d11ed5bd6c00811d4935d7006262417e792ab96e1f18fa3e9d8c84787e0d970",
+    "egar_simd": "9f39c95999fe0794b74ebca3ef9013f22e83dd47112429dd0ebe351f3942eabb",
+    "egar_avx512": "c76570027446b21d465000a268ade9522a12178ae4e370dc7320274c7cf77583"
+  },
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "05d2d5ee2e87d8865d2518f071f40cc9a9749e297c7b862609c115c8deeb4644",
+  "answers_sha256": "f4618ac2cac0c97871a456e050bf6d4008cceab4be685723e490f00fcdd8bf88"
+}

@@ -1,0 +1,69 @@
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index afbb8a4..147d59e 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -15,6 +15,10 @@ use parity::{PARITY_REGIONS, SQUARE_PARITY};
+ use parity::{odd_regions, tail_parity};
+ pub(in crate::search) const TAIL_EMPTIES: u8 = 6;
+ pub(in crate::search) const LOCAL_END_MAX: u8 = 13;
++/// Endgame ProbCut starts at this many empties. Below it a local result is
++/// exact even inside a selective stage, so it is cached as exact (quality 0)
++/// and the final exact stage can reuse it.
++const PROBCUT_MIN_EMPTIES: u8 = 12;
+ 
+ impl Context {
+     pub(super) fn tail_entered(
+@@ -95,7 +99,7 @@ impl Context {
+         }
+         debug_assert!(empties <= LOCAL_END_MAX);
+         self.end_cache.prepare(empties);
+-        let quality = self.runtime.quality.load(Ordering::Relaxed);
++        let quality = self.end_quality(empties);
+         // A parent's snapshot remains a valid bound even if a sibling has since
+         // replaced the slot. This cache is owned by this Context, and quality is
+         // fixed until the search stage has joined all workers.
+@@ -128,6 +132,13 @@ impl Context {
+             .store(board, quality, probe, score, beta, best_move);
+         Ok(score)
+     }
++    fn end_quality(&self, empties: u8) -> u8 {
++        if empties < PROBCUT_MIN_EMPTIES {
++            0
++        } else {
++            self.runtime.quality.load(Ordering::Relaxed)
++        }
++    }
+     fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, ()> {
+         let empty = !(board.player_bits() | board.opponent_bits());
+         let count = empty.count_ones() as u8;
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 48be766..5470414 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -1,7 +1,7 @@
+ //! Ordered null-window endgame search for seven to thirteen empties.
+ use super::local_tt::EndProbe;
+ use super::parity::odd_regions;
+-use super::{Board, Context, EvalState, LOCAL_END_MAX, Ordering};
++use super::{Board, Context, EvalState, LOCAL_END_MAX, PROBCUT_MIN_EMPTIES};
+ 
+ impl Context {
+     pub(super) fn ordered_endgame(
+@@ -29,7 +29,7 @@ impl Context {
+             self.stats.stability_cuts += 1;
+             return Ok(score);
+         }
+-        if board.empty_count() >= 12
++        if board.empty_count() >= PROBCUT_MIN_EMPTIES
+             && self.runtime.sigma().is_some()
+             && let Some(score) = self.probcut(
+                 board,
+@@ -73,7 +73,7 @@ impl Context {
+         }; LOCAL_END_MAX as usize];
+         let odd = odd_regions(board);
+         let mut count = 0;
+-        let quality = self.runtime.quality.load(Ordering::Relaxed);
++        let quality = self.end_quality(board.empty_count() - 1);
+         #[cfg(feature = "endgame-pattern-ordering")]
+         let mut ordering_state = None;
+         while moves != 0 {
