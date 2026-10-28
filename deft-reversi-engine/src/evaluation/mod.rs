@@ -165,17 +165,37 @@ impl PatternModel {
     }
 }
 
+/// Feature lanes rounded up so differential updates are whole vector adds.
+const LANES: usize = 48;
+
+/// `SQUARE_DELTA[sq][f]` is the base-3 weight of `sq` in feature `f`, or 0.
+static SQUARE_DELTA: [[u16; LANES]; 64] = {
+    let mut table = [[0u16; LANES]; 64];
+    let mut sq = 0;
+    while sq < 64 {
+        let features = &SQUARE_TO_FEATURES[sq];
+        let mut i = 0;
+        while i < features.len as usize {
+            let feature = features.features[i];
+            table[sq][feature.feature_idx as usize] = feature.base3_weight;
+            i += 1;
+        }
+        sq += 1;
+    }
+    table
+};
+
 /// Both viewpoints avoid a base-3 digit swap on every move.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EvalState {
-    current: [u16; 44],
-    swapped: [u16; 44],
+    current: [u16; LANES],
+    swapped: [u16; LANES],
 }
 impl EvalState {
     pub(crate) fn from_board(board: Board) -> Self {
         let mut state = Self {
-            current: [0; 44],
-            swapped: [0; 44],
+            current: [0; LANES],
+            swapped: [0; LANES],
         };
         for (p, pattern) in FEATURE_COORD.iter().enumerate() {
             for r in 0..4 {
@@ -202,23 +222,29 @@ impl EvalState {
             swapped: self.current,
         }
     }
-    fn delta(&mut self, square: usize, current: i32, swapped: i32) {
-        let features = &SQUARE_TO_FEATURES[square];
-        for feature in &features.features[..features.len as usize] {
-            let i = feature.feature_idx as usize;
-            let weight = i32::from(feature.base3_weight);
-            self.current[i] = (i32::from(self.current[i]) + current * weight) as u16;
-            self.swapped[i] = (i32::from(self.swapped[i]) + swapped * weight) as u16;
-        }
-    }
-    pub(crate) fn played(mut self, bit: u64, mut flips: u64) -> Self {
-        self.delta(bit.trailing_zeros() as usize, 2, 1);
+    /// The mover's digit goes 0 -> 2 on the placed square and 1 -> 2 on flips
+    /// (opponent's view: 0 -> 1 and 2 -> 1); then the viewpoints swap.
+    #[inline]
+    pub(crate) fn played(self, bit: u64, mut flips: u64) -> Self {
+        let mut flipped = [0u16; LANES];
         while flips != 0 {
-            let sq = flips.trailing_zeros() as usize;
+            let delta = &SQUARE_DELTA[flips.trailing_zeros() as usize];
             flips &= flips - 1;
-            self.delta(sq, 1, -1);
+            for (sum, d) in flipped.iter_mut().zip(delta) {
+                *sum = sum.wrapping_add(*d);
+            }
         }
-        self.passed()
+        let placed = &SQUARE_DELTA[bit.trailing_zeros() as usize];
+        let mut next = self;
+        for i in 0..LANES {
+            next.current[i] = self.swapped[i]
+                .wrapping_add(placed[i])
+                .wrapping_sub(flipped[i]);
+            next.swapped[i] = self.current[i]
+                .wrapping_add(placed[i].wrapping_mul(2))
+                .wrapping_add(flipped[i]);
+        }
+        next
     }
 }
 

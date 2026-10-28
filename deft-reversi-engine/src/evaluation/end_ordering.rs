@@ -30,18 +30,19 @@ impl PatternModel {
 impl EvalState {
     // An ordering evaluation only needs the child's current viewpoint.
     // Preserve the full two-viewpoint update for children actually searched.
-    pub(super) fn ordering_child_indices(&self, bit: u64, mut flips: u64) -> [u16; 44] {
+    pub(super) fn ordering_child_indices(&self, bit: u64, mut flips: u64) -> [u16; LANES] {
         let mut indices = self.swapped;
-        let features = &SQUARE_TO_FEATURES[bit.trailing_zeros() as usize];
-        for feature in &features.features[..features.len as usize] {
-            indices[feature.feature_idx as usize] += feature.base3_weight;
+        for (index, d) in indices
+            .iter_mut()
+            .zip(&SQUARE_DELTA[bit.trailing_zeros() as usize])
+        {
+            *index = index.wrapping_add(*d);
         }
         while flips != 0 {
-            let square = flips.trailing_zeros() as usize;
+            let delta = &SQUARE_DELTA[flips.trailing_zeros() as usize];
             flips &= flips - 1;
-            let features = &SQUARE_TO_FEATURES[square];
-            for feature in &features.features[..features.len as usize] {
-                indices[feature.feature_idx as usize] -= feature.base3_weight;
+            for (index, d) in indices.iter_mut().zip(delta) {
+                *index = index.wrapping_sub(*d);
             }
         }
         indices
