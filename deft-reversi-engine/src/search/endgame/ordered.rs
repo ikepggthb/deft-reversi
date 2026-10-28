@@ -117,7 +117,7 @@ impl Context {
                 }
                 continue;
             }
-            let ordering = endgame_ordering(legal, bit, odd);
+            let ordering = endgame_ordering(child, legal, bit, odd);
             #[cfg(feature = "endgame-pattern-ordering")]
             let ordering = if board.empty_count() >= 11 {
                 let state = ordering_state.get_or_insert_with(|| self.end_ordering_state(board));
@@ -185,9 +185,31 @@ impl Context {
     }
 }
 
-fn endgame_ordering(legal: u64, bit: u64, odd: u64) -> i32 {
-    let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();
-    -(mobility as i32) * 18 + if bit & odd != 0 { 17 } else { 0 }
+/// Reference fast endgame ordering: the opponent's corner-weighted mobility
+/// dominates, then the mover's stable corner discs; square value and quadrant
+/// parity only break ties. (The reference's potential-mobility term was not
+/// worth its cost here.)
+pub(in crate::search) fn endgame_ordering(child: Board, legal: u64, bit: u64, odd: u64) -> i32 {
+    const SQUARE_VALUE: [i32; 64] = [
+        18, 4, 16, 12, 12, 16, 4, 18, 4, 2, 6, 8, 8, 6, 2, 4, 16, 6, 14, 10, 10, 14, 6, 16, 12, 8,
+        10, 0, 0, 10, 8, 12, 12, 8, 10, 0, 0, 10, 8, 12, 16, 6, 14, 10, 10, 14, 6, 16, 4, 2, 6, 8,
+        8, 6, 2, 4, 18, 4, 16, 12, 12, 16, 4, 18,
+    ];
+    const CORNERS: u64 = 0x8100000000000081;
+    let mobility = (legal.count_ones() + (legal & CORNERS).count_ones()) as i32;
+    // The mover's discs on corners and on edge squares next to its own corners.
+    let mover = child.opponent_bits();
+    let corner = mover
+        & (((mover & 0x0100000000000001) << 1)
+            | ((mover & 0x8000000000000080) >> 1)
+            | ((mover & 0x0000000000000081) << 8)
+            | ((mover & 0x8100000000000000) >> 8)
+            | CORNERS);
+    let parity = if child.empty_count() < 11 { 8 } else { 4 };
+    (36 - mobility) * (1 << 15)
+        + corner.count_ones() as i32 * (1 << 11)
+        + SQUARE_VALUE[bit.trailing_zeros() as usize]
+        + if bit & odd != 0 { parity } else { 0 }
 }
 
 #[derive(Clone, Copy)]
