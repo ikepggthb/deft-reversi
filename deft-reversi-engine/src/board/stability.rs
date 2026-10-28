@@ -10,7 +10,10 @@ pub(crate) fn null_window_upper(board: Board, alpha: i32) -> Option<i32> {
         46, 48, 48, 50, 50, 52, 52, 54, 54, 56, 56, 58, 58, 60, 60, 62, 62, 64, 64, 64, 64, 64, 64,
         64, 64, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
     ];
-    if alpha < THRESHOLD[usize::from(board.empty_count())] {
+    // Stable discs are a subset of the opponent's discs.
+    if alpha < THRESHOLD[usize::from(board.empty_count())]
+        || 64 - 2 * board.opponent_bits().count_ones() as i32 > alpha
+    {
         return None;
     }
     stability_upper(board, alpha)
@@ -18,22 +21,25 @@ pub(crate) fn null_window_upper(board: Board, alpha: i32) -> Option<i32> {
 #[inline(never)]
 fn stability_upper(board: Board, alpha: i32) -> Option<i32> {
     let full = full_axes(board.player_bits() | board.opponent_bits());
-    let upper =
-        64 - 2 * stable(board.opponent_bits(), board.player_bits(), &full).count_ones() as i32;
-    (upper <= alpha).then_some(upper)
+    // 64 - 2 * stable <= alpha needs this many stable discs.
+    let needed = (65 - alpha).div_euclid(2) as u32;
+    let count = stable(board.opponent_bits(), board.player_bits(), &full, needed).count_ones();
+    (count >= needed).then_some(64 - 2 * count as i32)
 }
 #[cfg(test)]
 pub(crate) fn score_bounds(board: Board) -> (i32, i32) {
     let full = full_axes(board.player_bits() | board.opponent_bits());
-    let player = stable(board.player_bits(), board.opponent_bits(), &full).count_ones() as i32;
-    let opponent = stable(board.opponent_bits(), board.player_bits(), &full).count_ones() as i32;
+    let player = stable(board.player_bits(), board.opponent_bits(), &full, 65).count_ones() as i32;
+    let opponent =
+        stable(board.opponent_bits(), board.player_bits(), &full, 65).count_ones() as i32;
     (2 * player - 64, 64 - 2 * opponent)
 }
-fn stable(bits: u64, opponent: u64, full: &[u64; 4]) -> u64 {
+/// Stable discs of `bits`; propagation stops early once `enough` are found.
+fn stable(bits: u64, opponent: u64, full: &[u64; 4], enough: u32) -> u64 {
     let mut result = super::edge_stability::get_stable_edge(bits, opponent);
     let central = bits & 0x007e7e7e7e7e7e00;
     result |= full[0] & full[1] & full[2] & full[3] & central;
-    loop {
+    while result.count_ones() < enough {
         let horizontal = (result >> 1) | (result << 1) | full[0];
         let vertical = (result >> 8) | (result << 8) | full[1];
         let diagonal7 = (result >> 7) | (result << 7) | full[2];
@@ -44,6 +50,7 @@ fn stable(bits: u64, opponent: u64, full: &[u64; 4]) -> u64 {
         }
         result = next;
     }
+    result
 }
 // Full-line propagation follows the reference engine's board/stability module.
 fn full_axes(disc: u64) -> [u64; 4] {
@@ -93,6 +100,34 @@ mod tests {
             best = best.max(-brute(board.board_after_move(bit)));
         }
         best
+    }
+    #[test]
+    fn null_window_upper_is_a_sound_fail_low_bound() {
+        let mut random = 0x0fedcba987654321u64;
+        let mut cuts = 0;
+        for _ in 0..512 {
+            let mut empty = 0u64;
+            while empty.count_ones() < 5 {
+                random ^= random << 13;
+                random ^= random >> 7;
+                random ^= random << 17;
+                empty |= 1u64 << (random % 64);
+            }
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            let player = random & random.rotate_left(17) & !empty;
+            let board = Board::from_bits(player, !player & !empty).unwrap();
+            let expected = brute(board);
+            let (_, full_upper) = score_bounds(board);
+            for alpha in -64..64 {
+                if let Some(upper) = null_window_upper(board, alpha) {
+                    cuts += 1;
+                    assert!(expected <= upper && upper <= alpha && full_upper <= upper);
+                }
+            }
+        }
+        assert!(cuts > 0);
     }
     #[test]
     fn stability_bounds_contain_exhaustive_result() {
