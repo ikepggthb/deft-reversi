@@ -252,6 +252,13 @@ impl Engine {
             sigma: AtomicU64::new(target_sigma.map_or(0, f64::to_bits)),
             quality: AtomicU8::new(if target_sigma.is_some() { 7 } else { 0 }),
             rules: self.calibration.clone(),
+            // Exact requests use selective stages only to seed the tables;
+            // results below this bound are exact and reused by the final stage.
+            endgame_probcut_min: if request.mode == SearchMode::Exact {
+                endgame::EXACT_PREPARATION_PROBCUT_MIN
+            } else {
+                endgame::PROBCUT_MIN_EMPTIES
+            },
         });
         let board = request.board;
         let moves = board.get_moves();

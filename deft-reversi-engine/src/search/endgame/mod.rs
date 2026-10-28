@@ -15,6 +15,11 @@ use parity::{PARITY_REGIONS, SQUARE_PARITY};
 use parity::{odd_regions, tail_parity};
 pub(in crate::search) const TAIL_EMPTIES: u8 = 6;
 pub(in crate::search) const LOCAL_END_MAX: u8 = 13;
+/// Selective endgame searches try ProbCut from this many empties.
+pub(in crate::search) const PROBCUT_MIN_EMPTIES: u8 = 12;
+/// The selective stages before an exact solve stop ProbCut one empty earlier,
+/// so more of their local results are exact and survive into the final stage.
+pub(in crate::search) const EXACT_PREPARATION_PROBCUT_MIN: u8 = 13;
 
 impl Context {
     pub(super) fn tail_entered(
@@ -95,7 +100,7 @@ impl Context {
         }
         debug_assert!(empties <= LOCAL_END_MAX);
         self.end_cache.prepare(empties);
-        let quality = self.runtime.quality.load(Ordering::Relaxed);
+        let quality = self.end_quality(empties);
         // A parent's snapshot remains a valid bound even if a sibling has since
         // replaced the slot. This cache is owned by this Context, and quality is
         // fixed until the search stage has joined all workers.
@@ -127,6 +132,15 @@ impl Context {
         self.end_cache
             .store(board, quality, probe, score, beta, best_move);
         Ok(score)
+    }
+    /// Below the ProbCut range a local result is exact even inside a
+    /// selective stage, so it is cached as exact (quality 0).
+    fn end_quality(&self, empties: u8) -> u8 {
+        if empties < self.runtime.endgame_probcut_min {
+            0
+        } else {
+            self.runtime.quality.load(Ordering::Relaxed)
+        }
     }
     fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, ()> {
         let empty = !(board.player_bits() | board.opponent_bits());
@@ -312,6 +326,41 @@ mod tests {
                 .unwrap(),
             expected
         );
+    }
+    #[test]
+    fn selective_stage_caches_results_below_probcut_as_exact() {
+        let board = seven_empty_board();
+        let expected = brute(board);
+        let mut context = context();
+        context.runtime.quality.store(3, Ordering::Relaxed);
+        let score = context
+            .tail_score_entered(board, expected - 1, expected)
+            .unwrap();
+        assert!(score >= expected);
+        // Seven empties never use ProbCut: the bound is exact for any stage.
+        assert!(context.end_cache.probe(board, 0).matched);
+        assert!(!context.end_cache.probe(board, 3).matched);
+        // A position inside the ProbCut range keeps the stage's tag.
+        let mut deep = Board::new();
+        let mut random = 5u64;
+        while deep.empty_count() > PROBCUT_MIN_EMPTIES {
+            assert!(!deep.is_terminal());
+            let mut moves = deep.get_moves();
+            if moves == 0 {
+                deep = deep.board_after_pass();
+                continue;
+            }
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            for _ in 0..random % u64::from(moves.count_ones()) {
+                moves &= moves - 1;
+            }
+            deep = deep.board_after_move(moves.isolate_lowest_one());
+        }
+        context.tail_score_entered(deep, 0, 1).unwrap();
+        assert!(context.end_cache.probe(deep, 3).matched);
+        assert!(!context.end_cache.probe(deep, 0).matched);
     }
     #[test]
     fn child_tt_cut_saves_the_cutting_move() {

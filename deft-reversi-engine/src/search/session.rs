@@ -50,6 +50,8 @@ pub(super) struct Runtime {
     pub(super) sigma: AtomicU64,
     pub(super) quality: AtomicU8,
     pub(super) rules: Arc<[Option<ProbCutRule>]>,
+    /// Fewest empties at which the local endgame tries ProbCut.
+    pub(super) endgame_probcut_min: u8,
 }
 impl Runtime {
     pub(super) fn sigma(&self) -> Option<f64> {
@@ -172,6 +174,7 @@ pub(super) fn test_context() -> Context {
         sigma: AtomicU64::new(0),
         quality: AtomicU8::new(0),
         rules: Arc::from([]),
+        endgame_probcut_min: super::endgame::PROBCUT_MIN_EMPTIES,
     });
     Context::new(runtime, Vec::new(), Vec::new())
 }

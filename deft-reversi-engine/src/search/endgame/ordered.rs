@@ -1,7 +1,7 @@
 //! Ordered null-window endgame search for seven to thirteen empties.
 use super::local_tt::EndProbe;
 use super::parity::odd_regions;
-use super::{Board, Context, EvalState, LOCAL_END_MAX, Ordering};
+use super::{Board, Context, EvalState, LOCAL_END_MAX};
 
 impl Context {
     pub(super) fn ordered_endgame(
@@ -29,7 +29,7 @@ impl Context {
             self.stats.stability_cuts += 1;
             return Ok(score);
         }
-        if board.empty_count() >= 12
+        if board.empty_count() >= self.runtime.endgame_probcut_min
             && self.runtime.sigma().is_some()
             && let Some(score) = self.probcut(
                 board,
@@ -73,7 +73,7 @@ impl Context {
         }; LOCAL_END_MAX as usize];
         let odd = odd_regions(board);
         let mut count = 0;
-        let quality = self.runtime.quality.load(Ordering::Relaxed);
+        let quality = self.end_quality(board.empty_count() - 1);
         #[cfg(feature = "endgame-pattern-ordering")]
         let mut ordering_state = None;
         while moves != 0 {

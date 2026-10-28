@@ -317,13 +317,15 @@ fn selective_preparation_cannot_supply_the_exact_final_score() {
 
 #[test]
 fn stopping_after_selective_preparation_does_not_report_exact() {
-    let board = position(3, 13);
+    // Exact preparation stops endgame ProbCut below thirteen empties; a rule at
+    // thirteen makes it search the same tree as the selective request.
+    let board = position(3, 14);
     let mut engine = engine(1);
     engine
         .set_probcut_rules(vec![ProbCutRule {
             exact: true,
-            depth: 12,
-            empties: 12,
+            depth: 13,
+            empties: 13,
             shallow_depth: 0,
             slope: 1.0,
             intercept: 0.0,
