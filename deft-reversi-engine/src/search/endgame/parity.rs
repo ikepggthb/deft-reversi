@@ -7,6 +7,7 @@ pub(in crate::search) const QUADRANT_MASKS: [u64; 4] = [
     0x0f0f0f0f00000000,
     0xf0f0f0f000000000,
 ];
+#[cfg(test)]
 pub(super) const PARITY_REGIONS: [u64; 16] = {
     let mut masks = [0; 16];
     let mut parity = 0;
@@ -41,6 +42,7 @@ pub(super) fn tail_parity(board: Board) -> u8 {
         })
 }
 
+#[inline]
 pub(in crate::search) fn odd_regions(board: Board) -> u64 {
     let empty = !(board.player_bits() | board.opponent_bits());
     QUADRANT_MASKS

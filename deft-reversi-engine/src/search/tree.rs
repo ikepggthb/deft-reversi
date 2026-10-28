@@ -211,8 +211,10 @@ impl Context {
             let child = board.after_known_move(bit, flips);
             // Reference ETC uses the original alpha to skip moves. Preserve
             // their largest upper bound so a fail-low remains a sound bound.
+            // Null-window children with thirteen or fewer empties live only in
+            // the local endgame cache, so the main table cannot cut them.
             if (if exact {
-                board.empty_count() > 12
+                board.empty_count() > 12 + 2 * u8::from(beta - alpha == 1)
             } else {
                 depth >= 4
             }) && let Some(entry) = self.runtime.table.get(child)

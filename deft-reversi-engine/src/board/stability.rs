@@ -2,6 +2,8 @@
 use crate::Board;
 
 /// Reference NWS policy: expensive stability detection only near a fail-low.
+/// The threshold test is inlined; most callers fail it.
+#[inline(always)]
 pub(crate) fn null_window_upper(board: Board, alpha: i32) -> Option<i32> {
     const THRESHOLD: [i32; 64] = [
         99, 99, 99, 99, 6, 8, 10, 12, 14, 16, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44,
@@ -11,6 +13,10 @@ pub(crate) fn null_window_upper(board: Board, alpha: i32) -> Option<i32> {
     if alpha < THRESHOLD[usize::from(board.empty_count())] {
         return None;
     }
+    stability_upper(board, alpha)
+}
+#[inline(never)]
+fn stability_upper(board: Board, alpha: i32) -> Option<i32> {
     let full = full_axes(board.player_bits() | board.opponent_bits());
     let upper =
         64 - 2 * stable(board.opponent_bits(), board.player_bits(), &full).count_ones() as i32;

@@ -1,5 +1,5 @@
 //! Dedicated five- and six-empty null-window kernels.
-use super::parity::{PARITY_REGIONS, SQUARE_PARITY};
+use super::parity::SQUARE_PARITY;
 use super::{Board, Context};
 
 impl Context {
@@ -29,7 +29,11 @@ impl Context {
                 )
                 .map(|score| -score);
         }
-        let mut preferred = moves & PARITY_REGIONS[usize::from(parity)];
+        if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
+            self.stats.stability_cuts += 1;
+            return Ok(score);
+        }
+        let mut preferred = moves & isolated_empties(board);
         let mut best = -65;
         while moves != 0 {
             let options = if preferred != 0 { preferred } else { moves };
@@ -55,8 +59,12 @@ impl Context {
         parity: u8,
     ) -> Result<i32, ()> {
         debug_assert_eq!(board.empty_count(), 5);
+        if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
+            self.stats.stability_cuts += 1;
+            return Ok(score);
+        }
         let mut empty = !(board.player_bits() | board.opponent_bits());
-        let mut preferred = empty & PARITY_REGIONS[usize::from(parity)];
+        let mut preferred = isolated_empties(board);
         let child_alpha = -alpha - 1;
         let mut best = -65;
         while empty != 0 {
@@ -94,4 +102,16 @@ impl Context {
         self.five_empty_score(board.board_after_pass(), child_alpha, parity)
             .map(|score| -score)
     }
+}
+
+/// Empty squares without an empty king-move neighbour. Searching these first
+/// cut more five/six-empty nodes than odd-quadrant-first ordering; the parity
+/// is still carried for the four-empty kernel.
+#[inline(always)]
+fn isolated_empties(board: Board) -> u64 {
+    let empty = !(board.player_bits() | board.opponent_bits());
+    let horizontal = ((empty >> 1) & 0x7f7f7f7f7f7f7f7f) | ((empty << 1) & 0xfefefefefefefefe);
+    let row = horizontal | empty;
+    let around = horizontal | (row >> 8) | (row << 8);
+    empty & !around
 }
