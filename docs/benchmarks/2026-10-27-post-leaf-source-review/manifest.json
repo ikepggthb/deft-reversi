@@ -1,0 +1,42 @@
+{
+  "deft_head": "8ab1682e7a8d26815ce57cff6202702b20ceadf8",
+  "deft_worktree": "Includes retained TT, tail-kernel, and last-empty optimizations; uncommitted source hashes below.",
+  "native_binary_sha256": "d75409b3fd8300f0688e0e9f336808c48f6c0db87c660431ac93a3c1a064dc55",
+  "native_build": "Rust 1.99.1 release, target-cpu=native, default features, AMD EPYC 9V74",
+  "edax_commit": "786421f355219ade872ce7285c1cab1eaf67836a",
+  "egaroucid_commit": "2a65c87860be999373088ad833aa00b0844883b6",
+  "source_sha256": {
+    "deft-reversi-engine/src/search/tail.rs": "8a9af040657e1f2931236ffebf72d360a2a8e6a89709c59763a816d2d3fe8f27",
+    "deft-reversi-engine/src/search/tree.rs": "c6fa8156f0da1b4c1b63963ece41a7811581427d08de6b3aaabf67ce70e0300f",
+    "deft-reversi-engine/src/search/session.rs": "2dd84bb1270ed44a50d0bc5927466450623509fab120ea5386524e096d6d78a7",
+    "deft-reversi-engine/src/search/ordering.rs": "39b1b8e7054fc7b86bcee691bb46836b35d931991224c0937ae15e0be27d0686",
+    "deft-reversi-engine/src/board/last.rs": "ed792ba00a215f6103835b2cc08d5721103acd7117f5144d6ef8c5e50db004e1",
+    "deft-reversi-engine/src/board/stability.rs": "b64e35318e37a12800add566a3f73838e7932d39ba495eebfff8b03245b2adde",
+    "deft-reversi-engine/src/board/edge_stability.rs": "02e8f7e0c5e6d47d3c376801fc05c79110bfdca9bc589296c12145a424ddfc57",
+    "deft-reversi-engine/src/search/last_four.rs": "0eb59e7800ee56f07e0e2bd47dbd68271800cb3dbb23841e28739496f3ff6914",
+    "deft-reversi-engine/src/transposition.rs": "6f52bb64cd6e01fb38944882e3f167d4dc0ad671c4dd35c5e06ce46d11dc374e",
+    "deft-reversi-engine/src/evaluation/mod.rs": "8af811c39951ba801feb9d269f83713a9c22b2d51943b8137ef91e03a8f36dc9"
+  },
+  "assembly": {
+    "ordering_search": {
+      "start": "0x5de00",
+      "stop_exclusive": "0x5e3ad",
+      "file": "ordering_search.asm.txt"
+    },
+    "evaluate_state": {
+      "start": "0x55810",
+      "stop_exclusive": "0x56203",
+      "file": "evaluate_state.asm.txt"
+    },
+    "node_ordering_excerpt": {
+      "start": "0x59030",
+      "stop_exclusive": "0x59480",
+      "file": "node_ordering_excerpt.asm.txt"
+    },
+    "node_line_initialization_excerpt": {
+      "start": "0x57bdf",
+      "stop_exclusive": "0x57c60",
+      "file": "node_line_initialization_excerpt.asm.txt"
+    }
+  }
+}

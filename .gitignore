@@ -1,5 +1,6 @@
 Cargo.lock
 target
+__pycache__/
 
 todo_list.md
 

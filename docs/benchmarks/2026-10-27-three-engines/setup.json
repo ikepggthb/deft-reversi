@@ -1,0 +1,58 @@
+{
+  "snapshots": {
+    "deft": {
+      "original": "/workspace/deft-tail-target/release/examples/solve",
+      "binary": "/tmp/deft-three-engines-20261027/deft/engine",
+      "sha256": "37c7921866885a22a7e8b407e253d3d85a4f54ea7977a9ca2ca8417fbbcc0ae8"
+    },
+    "edax": {
+      "original": "/workspace/edax-reversi/bin/lEdax-native",
+      "binary": "/tmp/deft-three-engines-20261027/edax/engine",
+      "sha256": "a9b8c64891781832aadf89df938f2a377b9abfc62f9b2b740607bc03274d0ad9"
+    },
+    "egar_simd": {
+      "original": "/workspace/Egaroucid/bin/Egaroucid_for_Console.out",
+      "binary": "/tmp/deft-three-engines-20261027/egar_simd/engine",
+      "sha256": "80fdd6999eb2a66b269b83ad8f6caf4bdb8a416e7f6bba225323a75c55b4c5ab"
+    },
+    "egar_avx512": {
+      "original": "/workspace/Egaroucid/bin/Egaroucid_for_Console_AVX512.out",
+      "binary": "/tmp/deft-three-engines-20261027/egar_avx512/engine",
+      "sha256": "4d9c55bc3f5f7d2c5dd1116d4c1f3dcf1c329c62b49bab7c2b9896c515e206a0"
+    }
+  },
+  "hash23": {
+    "path": "/tmp/deft-three-engines-20261027/hash23.eghs",
+    "sha256": "0a44b764e10b250229d25a007cda5a16857733b92d8566b65d95243739b7d323",
+    "bytes": 2097152,
+    "seed_hex": "0x20261027",
+    "generator": "make_egar_hash.cpp",
+    "method": "Egaroucid hash_init_rand(23) with fixed mt19937 seed; binary tables unchanged across runs"
+  },
+  "positions": {
+    "empties": [
+      20,
+      22,
+      22,
+      23,
+      23,
+      24,
+      24,
+      25,
+      25,
+      26
+    ],
+    "expected_scores": [
+      38,
+      0,
+      6,
+      -12,
+      -14,
+      6,
+      -8,
+      4,
+      28,
+      16
+    ]
+  }
+}

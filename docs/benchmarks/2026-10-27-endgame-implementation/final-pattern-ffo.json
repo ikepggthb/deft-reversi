@@ -1,0 +1,42 @@
+{
+  "cpu": 0,
+  "rounds": 5,
+  "mode": "exact",
+  "repeat_in_process": 1,
+  "tt_mib": 256,
+  "legacy_main_mpc": true,
+  "seconds_median": {
+    "before": 3.604738214,
+    "after": 3.852222642
+  },
+  "round_seconds": {
+    "before": [
+      3.9737808130000003,
+      3.808382075,
+      3.377514074,
+      3.604738214,
+      3.477976169
+    ],
+    "after": [
+      4.318951653,
+      4.012906172,
+      3.7082072889999997,
+      3.852222642,
+      3.736207781
+    ]
+  },
+  "speedup": 0.9357554194034042,
+  "all_scores_match": true,
+  "before_sha256": "e5fa52375574872a9091746f27e1f8fdb71b588897f731739d2c677cb06f28c1",
+  "after_sha256": "0c9e618f22550984951e83d188a5aa5baa4711e5aa7c57b4cf4808cfe042836b",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "d474590c49afc7e73243f489dfe3d726743950a28d0d792eb79ae1449f65ff21",
+  "paired_time_ratios": [
+    1.0868620732353411,
+    1.053703670737921,
+    1.0979102404178465,
+    1.068655312343855,
+    1.0742476657263145
+  ],
+  "paired_time_ratio_median": 1.0742476657263145
+}

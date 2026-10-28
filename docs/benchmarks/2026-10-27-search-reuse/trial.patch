@@ -1,0 +1,459 @@
+--- a/deft-reversi-engine/src/evaluation/mod.rs
++++ b/deft-reversi-engine/src/evaluation/mod.rs
+@@ -69,6 +69,14 @@
+         self.evaluate_state(board, &EvalState::from_board(*board))
+     }
+     pub(crate) fn evaluate_state(&self, board: &Board, state: &EvalState) -> i32 {
++        self.evaluate_state_with_moves(board, state, board.get_moves())
++    }
++    pub(crate) fn evaluate_state_with_moves(
++        &self,
++        board: &Board,
++        state: &EvalState,
++        moves: u64,
++    ) -> i32 {
+         let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
+         let weights = &self.phases[phase];
+         let mut raw = i32::from(weights.bias);
+@@ -79,8 +87,8 @@
+             }
+             offset += size;
+         }
+-        let mobility = 64 + board.get_moves().count_ones() as i32
+-            - board.get_opponent_moves().count_ones() as i32;
++        let mobility =
++            64 + moves.count_ones() as i32 - board.get_opponent_moves().count_ones() as i32;
+         raw += i32::from(weights.mobility[mobility as usize]);
+         ((raw + raw.signum() * 64) / 128).clamp(-64, 64)
+     }
+--- a/deft-reversi-engine/src/search/ordering.rs
++++ b/deft-reversi-engine/src/search/ordering.rs
+@@ -4,14 +4,12 @@
+     /// Port of the reference final-search ordering depths, windows and weights.
+     pub(super) fn endgame_ordering(
+         &mut self,
+-        parent: Position,
+-        child: Board,
+-        bit: u64,
+-        flips: u64,
++        parent: Board,
++        child: Position,
+         alpha: i32,
+         beta: i32,
+-    ) -> Result<i32, ()> {
+-        let empties = parent.board.empty_count();
++    ) -> Result<(i32, u64), ()> {
++        let empties = parent.empty_count();
+         let narrow = beta - alpha == 1;
+         let depth = if narrow {
+             if empties < 24 { empties >> 4 } else { 1 }
+@@ -33,11 +31,15 @@
+                 35,
+             )
+         };
+-        let state = parent.state.played(bit, flips);
++        let Position {
++            board: child,
++            state,
++        } = child;
++        let legal = child.get_moves();
+         let value = if depth == 0 {
+-            self.evaluate(child, &state)
++            self.evaluate_known(child, &state, legal)
+         } else {
+-            self.ordering_search(
++            self.ordering_search_known(
+                 Position {
+                     board: child,
+                     state,
+@@ -45,9 +47,10 @@
+                 low,
+                 high,
+                 depth - 1,
++                Some(legal),
+             )?
+         };
+-        let moves = child.get_moves();
++        let moves = legal;
+         let mobility =
+             -2 * moves.count_ones() as i32 - (moves & 0x8100000000000081).count_ones() as i32;
+         let presence = if depth > 2 && self.runtime.table.get(child).is_some() {
+@@ -55,30 +58,34 @@
+         } else {
+             0
+         };
+-        Ok(-value * value_weight + mobility * mobility_weight + presence)
++        Ok((
++            -value * value_weight + mobility * mobility_weight + presence,
++            legal,
++        ))
+     }
+ 
+     /// Reference midgame ordering, also used by endgame preparation iterations.
+     pub(super) fn midgame_ordering(
+         &mut self,
+-        parent: Position,
+-        child: Board,
+-        bit: u64,
+-        flips: u64,
++        child: Position,
+         alpha: i32,
+         depth: u8,
+-    ) -> Result<i32, ()> {
++    ) -> Result<(i32, u64), ()> {
+         let ordering_depth = match depth {
+             0..=4 => 0,
+             5..=7 => 1,
+             8..=11 => 2,
+             _ => 3,
+         };
+-        let state = parent.state.played(bit, flips);
++        let Position {
++            board: child,
++            state,
++        } = child;
++        let legal = child.get_moves();
+         let value = if ordering_depth == 0 {
+-            self.evaluate(child, &state)
++            self.evaluate_known(child, &state, legal)
+         } else {
+-            self.ordering_search(
++            self.ordering_search_known(
+                 Position {
+                     board: child,
+                     state,
+@@ -86,28 +93,44 @@
+                 (-alpha - 6).max(-64),
+                 (-alpha + 16).min(64),
+                 ordering_depth - 1,
++                Some(legal),
+             )?
+         };
+-        let legal = child.get_moves();
+-        Ok(-value
+-            - 2 * legal.count_ones() as i32
+-            - (legal & 0x8100000000000081).count_ones() as i32)
++        Ok((
++            -value
++                - 2 * legal.count_ones() as i32
++                - (legal & 0x8100000000000081).count_ones() as i32,
++            legal,
++        ))
+     }
+ 
+     /// Small score-only search, without TT writes or probabilistic pruning.
+     pub(super) fn ordering_search(
+         &mut self,
+         position: Position,
++        alpha: i32,
++        beta: i32,
++        depth: u8,
++    ) -> Result<i32, ()> {
++        self.ordering_search_known(position, alpha, beta, depth, None)
++    }
++    fn ordering_search_known(
++        &mut self,
++        position: Position,
+         mut alpha: i32,
+         beta: i32,
+         depth: u8,
++        known_moves: Option<u64>,
+     ) -> Result<i32, ()> {
+         self.enter()?;
+         let Position { board, state } = position;
+         if depth == 0 {
+-            return Ok(self.evaluate(board, &state));
++            return Ok(match known_moves {
++                Some(legal) => self.evaluate_known(board, &state, legal),
++                None => self.evaluate(board, &state),
++            });
+         }
+-        let mut moves = board.get_moves();
++        let mut moves = known_moves.unwrap_or_else(|| board.get_moves());
+         if moves == 0 {
+             if board.get_opponent_moves() == 0 {
+                 return Ok(board.final_score());
+--- a/deft-reversi-engine/src/search/root.rs
++++ b/deft-reversi-engine/src/search/root.rs
+@@ -51,6 +51,7 @@
+             let bit = moves & moves.wrapping_neg();
+             moves &= moves - 1;
+             candidates.push(Candidate {
++                legal: u64::MAX,
+                 square: Square::new(bit.trailing_zeros() as u8).unwrap(),
+                 flips: position.board.flip_mask(bit),
+                 ordering: 0,
+--- a/deft-reversi-engine/src/search/session.rs
++++ b/deft-reversi-engine/src/search/session.rs
+@@ -106,11 +106,16 @@
+ }
+ #[derive(Clone, Copy)]
+ pub(super) struct Candidate {
++    // All 64 squares cannot be legal, so MAX is an unambiguous unknown marker.
++    pub(super) legal: u64,
+     pub(super) square: Square,
+     pub(super) flips: u64,
+     pub(super) ordering: i32,
+ }
+ impl Candidate {
++    pub(super) fn known_moves(self) -> Option<u64> {
++        (self.legal != u64::MAX).then_some(self.legal)
++    }
+     pub(super) fn child(self, parent: Position, update_eval: bool) -> Position {
+         let bit = self.square.bit();
+         Position {
+--- a/deft-reversi-engine/src/search/tail.rs
++++ b/deft-reversi-engine/src/search/tail.rs
+@@ -74,7 +74,7 @@
+     ) -> Result<i32, ()> {
+         self.endgame_score_entered(board, alpha, beta, None)
+     }
+-    fn endgame_score_entered(
++    pub(super) fn endgame_score_entered(
+         &mut self,
+         board: Board,
+         alpha: i32,
+@@ -200,6 +200,7 @@
+         let odd = odd_regions(board);
+         let mut count = 0;
+         let mut best = -65;
++        let tt_move = *best_move;
+         while moves != 0 {
+             let bit = moves & moves.wrapping_neg();
+             moves &= moves - 1;
+@@ -238,7 +239,7 @@
+                 continue;
+             }
+             let ordering = super::tree::endgame_ordering(legal, bit, odd)
+-                + if bit.trailing_zeros() as u8 == *best_move {
++                + if bit.trailing_zeros() as u8 == tt_move {
+                     1 << 20
+                 } else {
+                     0
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -57,12 +57,28 @@
+         self.stats.evaluations += 1;
+         self.runtime.model.evaluate_state(&board, state)
+     }
++    pub(super) fn evaluate_known(&mut self, board: Board, state: &EvalState, moves: u64) -> i32 {
++        self.stats.evaluations += 1;
++        self.runtime
++            .model
++            .evaluate_state_with_moves(&board, state, moves)
++    }
+     pub(super) fn node(
+         &mut self,
+         position: Position,
++        alpha: i32,
++        beta: i32,
++        spec: SearchSpec,
++    ) -> Result<Line, ()> {
++        self.node_known(position, alpha, beta, spec, None)
++    }
++    fn node_known(
++        &mut self,
++        position: Position,
+         mut alpha: i32,
+         mut beta: i32,
+         spec: SearchSpec,
++        known_moves: Option<u64>,
+     ) -> Result<Line, ()> {
+         let Position { board, state } = position;
+         let SearchSpec {
+@@ -72,14 +88,16 @@
+         } = spec;
+         self.enter()?;
+         if exact && beta - alpha == 1 && board.empty_count() <= super::tail::LOCAL_END_MAX {
+-            return self.tail_score_entered(board, alpha, beta).map(Line::leaf);
++            return self
++                .endgame_score_entered(board, alpha, beta, known_moves)
++                .map(Line::leaf);
+         }
+         if exact && board.empty_count() <= super::tail::TAIL_EMPTIES {
+             return self.tail_entered(board, alpha, beta);
+         }
+         let original_alpha = alpha;
+         let original_beta = beta;
+-        let mut moves = board.get_moves();
++        let mut moves = known_moves.unwrap_or_else(|| board.get_moves());
+         if moves == 0 {
+             if board.get_opponent_moves() == 0 {
+                 self.stats.leaves += 1;
+@@ -102,7 +120,7 @@
+         }
+         if depth == 0 {
+             self.stats.leaves += 1;
+-            return Ok(Line::leaf(self.evaluate(board, &state)));
++            return Ok(Line::leaf(self.evaluate_known(board, &state, moves)));
+         }
+         if !exact && depth == 1 {
+             return self.one_ply(Position { board, state }, alpha, beta, allow_probcut);
+@@ -173,11 +191,17 @@
+         // A move list has at most 64 entries and never allocates per node.
+         let position = Position { board, state };
+         let placeholder = Candidate {
++            legal: u64::MAX,
+             square: Square::new(0).unwrap(),
+             flips: 0,
+             ordering: 0,
+         };
+         let mut candidates = [placeholder; 64];
++        // Keep only the winning ordering candidate's features, rather than
++        // enlarging every candidate by an entire EvalState. >= matches pick_best's ties.
++        let mut first_state = None;
++        let mut first_ordering = i32::MIN;
++        let only_move = moves.is_power_of_two();
+         let mut count = 0;
+         let mut skipped_upper = -65;
+         let odd_regions = if exact { odd_regions(board) } else { 0 };
+@@ -211,19 +235,31 @@
+                 alpha = alpha.max(lower);
+                 known_lower = known_lower.max(lower);
+             }
+-            let mut ordering = if !exact {
+-                self.midgame_ordering(position, child, bit, flips, alpha, depth)?
+-            } else if board.empty_count() >= super::tail::LOCAL_END_MAX {
+-                self.endgame_ordering(position, child, bit, flips, alpha, beta)?
++            let needs_eval =
++                !only_move && (!exact || board.empty_count() >= super::tail::LOCAL_END_MAX);
++            let child_state = needs_eval.then(|| position.state.played(bit, flips));
++            let (mut ordering, legal) = if only_move {
++                (0, u64::MAX)
++            } else if let Some(state) = child_state {
++                let child_position = Position {
++                    board: child,
++                    state,
++                };
++                if !exact {
++                    self.midgame_ordering(child_position, alpha, depth)?
++                } else {
++                    self.endgame_ordering(board, child_position, alpha, beta)?
++                }
+             } else {
+-                let mut value = -(child.get_moves().count_ones() as i32) * ORDERING.mobility;
++                let legal = child.get_moves();
++                let mut value = -(legal.count_ones() as i32) * ORDERING.mobility;
+                 if bit & odd_regions != 0 {
+                     value += ORDERING.parity;
+                 }
+                 if bit & 0x8100000000000081 != 0 {
+                     value += ORDERING.corner;
+                 }
+-                value
++                (value, legal)
+             };
+             let tt_priority = if exact { ORDERING.tt } else { 1 << 8 };
+             if square.index() == tt_move {
+@@ -231,7 +267,12 @@
+             } else if cached.is_some_and(|entry| entry.second == square.index()) {
+                 ordering += tt_priority / 2;
+             }
++            if ordering >= first_ordering {
++                first_ordering = ordering;
++                first_state = child_state;
++            }
+             candidates[count] = Candidate {
++                legal,
+                 square,
+                 flips,
+                 ordering,
+@@ -244,13 +285,22 @@
+         }
+         pick_best(&mut candidates[..count], 0);
+         let first = candidates[0];
+-        let first_position = first.child(
+-            position,
+-            !exact
+-                || board.empty_count() > super::tail::LOCAL_END_MAX
+-                || self.runtime.sigma().is_some(),
+-        );
+-        let child = self.node(
++        let first_position = if let Some(state) = first_state {
++            Position {
++                board: position
++                    .board
++                    .after_known_move(first.square.bit(), first.flips),
++                state,
++            }
++        } else {
++            first.child(
++                position,
++                !exact
++                    || board.empty_count() > super::tail::LOCAL_END_MAX
++                    || self.runtime.sigma().is_some(),
++            )
++        };
++        let child = self.node_known(
+             Position {
+                 board: first_position.board,
+                 state: first_position.state,
+@@ -262,6 +312,7 @@
+                 exact,
+                 probcut: allow_probcut,
+             },
++            first.known_moves(),
+         )?;
+         let mut best = Line::prepend(first.action(), &child);
+         alpha = alpha.max(best.score);
+@@ -367,7 +418,7 @@
+                 || position.board.empty_count() > super::tail::LOCAL_END_MAX
+                 || self.runtime.sigma().is_some(),
+         );
+-        let child = self.node(
++        let child = self.node_known(
+             Position {
+                 board: next.board,
+                 state: next.state,
+@@ -379,10 +430,11 @@
+                 exact,
+                 probcut: allow_probcut,
+             },
++            candidate.known_moves(),
+         )?;
+         let mut line = Line::prepend(candidate.action(), &child);
+         if line.score > alpha && line.score < beta {
+-            let child = self.node(
++            let child = self.node_known(
+                 Position {
+                     board: next.board,
+                     state: next.state,
+@@ -394,6 +446,7 @@
+                     exact,
+                     probcut: allow_probcut,
+                 },
++                candidate.known_moves(),
+             )?;
+             line = Line::prepend(candidate.action(), &child);
+         }
+@@ -527,6 +580,30 @@
+ mod tt_tests {
+     use super::super::session::test_context;
+     use super::*;
++    #[test]
++    fn forced_move_skips_ordering_evaluation() {
++        let board = Board::from_bits(1, 2).unwrap();
++        assert!(board.get_moves().is_power_of_two());
++        let mut context = test_context();
++        let line = context
++            .node(
++                Position {
++                    board,
++                    state: EvalState::from_board(board),
++                },
++                -64,
++                64,
++                SearchSpec {
++                    depth: 3,
++                    exact: false,
++                    probcut: false,
++                },
++            )
++            .unwrap();
++        assert_eq!(line.score, 64);
++        assert_eq!(context.stats.evaluations, 0);
++        assert_eq!(context.stats.nodes, 2);
++    }
+     fn entry(depth: u8, lower: i8, upper: i8) -> Entry {
+         Entry {
+             lower,

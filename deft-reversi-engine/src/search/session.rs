@@ -132,6 +132,8 @@ pub(super) struct Context {
     pub(super) ancestors: Vec<Arc<Helper>>,
     pub(super) cuts: Vec<Arc<AtomicBool>>,
     pub(super) end_cache: Vec<Vec<EndEntry>>,
+    #[cfg(feature = "endgame-pattern-ordering")]
+    pub(super) end_ordering: [Option<(Board, EvalState)>; 3],
 }
 impl Drop for Context {
     fn drop(&mut self) {
@@ -153,6 +155,7 @@ pub(super) struct EndEntry {
     pub(super) opponent: u64,
     pub(super) lower: i8,
     pub(super) upper: i8,
+    pub(super) best: u8,
 }
 
 #[cfg(test)]

@@ -1,0 +1,26 @@
+{
+  "empties": 6,
+  "board_a": {
+    "player": "5545555555555540",
+    "opponent": "aabaaaaaaaaaaa80"
+  },
+  "board_b": {
+    "player": "5555555555455540",
+    "opponent": "aaaaaaaaaabaaa80"
+  },
+  "changed_squares_zero_based": [
+    20,
+    52
+  ],
+  "same_player_disc_count": 28,
+  "equal_full_pre_multiply_keys": "ffefffd5ffefffea",
+  "deft_indices": [
+    320,
+    320
+  ],
+  "egar_indices": [
+    218,
+    958
+  ],
+  "scope": "Constructed valid disjoint bitboards, not a proof of reachability or collision frequency in actual search. Egar comparison uses its enabled multiplication path, not disabled CRC32C."
+}

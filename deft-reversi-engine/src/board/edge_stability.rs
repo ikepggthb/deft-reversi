@@ -126,10 +126,11 @@ fn pack_h1h8(x: u64) -> usize {
 }
 
 pub(super) fn get_stable_edge(player: u64, opponent: u64) -> u64 {
-    EDGE_STABILITY[((player & 0xff) * 256 + (opponent & 0xff)) as usize] as u64
-        | ((EDGE_STABILITY[(((player >> 56) & 0xff) * 256 + ((opponent >> 56) & 0xff)) as usize]
-            as u64)
+    // Resolve LazyLock once, then use the immutable table for all four edges.
+    let table = &*EDGE_STABILITY;
+    table[((player & 0xff) * 256 + (opponent & 0xff)) as usize] as u64
+        | ((table[(((player >> 56) & 0xff) * 256 + ((opponent >> 56) & 0xff)) as usize] as u64)
             << 56)
-        | unpack_a2a7(EDGE_STABILITY[pack_a1a8(player) * 256 + pack_a1a8(opponent)])
-        | unpack_h2h7(EDGE_STABILITY[pack_h1h8(player) * 256 + pack_h1h8(opponent)])
+        | unpack_a2a7(table[pack_a1a8(player) * 256 + pack_a1a8(opponent)])
+        | unpack_h2h7(table[pack_h1h8(player) * 256 + pack_h1h8(opponent)])
 }

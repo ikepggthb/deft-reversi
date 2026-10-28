@@ -1,0 +1,95 @@
+{
+  "selected": "core",
+  "rounds": 6,
+  "round_seconds": {
+    "base": [
+      22.5035,
+      23.891678,
+      25.469476,
+      24.584746,
+      24.376628,
+      25.567449761
+    ],
+    "core": [
+      21.961889,
+      22.413778,
+      24.21764,
+      23.865497,
+      23.916854,
+      24.631323011
+    ],
+    "legal": [
+      22.095559,
+      23.952183,
+      24.676008,
+      23.343808,
+      23.858056,
+      24.306261597
+    ]
+  },
+  "paired_time_ratios_vs_base": {
+    "core": [
+      0.9759321438887284,
+      0.9381416407838747,
+      0.9508495581141913,
+      0.9707440947325631,
+      0.9811387366620191,
+      0.9633859943502091
+    ],
+    "legal": [
+      0.9818721087830783,
+      1.0025324717669475,
+      0.9688463162728593,
+      0.9495240666712603,
+      0.9787266721221656,
+      0.9506721172510608
+    ]
+  },
+  "paired_time_ratio_median_vs_base": {
+    "core": 0.9670650445413861,
+    "legal": 0.9737864941975125
+  },
+  "paired_time_ratios_legal_vs_core": [
+    1.0060864527636946,
+    1.0686365770197241,
+    1.0189270300491708,
+    0.9781404510452892,
+    0.9975415662946305,
+    0.9868029251268869
+  ],
+  "paired_time_ratio_median_legal_vs_core": 1.0018140095291626,
+  "rounds_faster_vs_base": {
+    "core": 6,
+    "legal": 5
+  },
+  "legal_faster_than_core_rounds": 3,
+  "seconds_median": {
+    "base": 24.480687,
+    "core": 23.891175500000003,
+    "legal": 23.9051195
+  },
+  "cpu": 0,
+  "threads": 1,
+  "mode": "exact",
+  "tt_mib": 256,
+  "legacy_main_mpc": true,
+  "binary_sha256": {
+    "base": "ff17c4b535fed25e8955c73c207ad85ebef4d8e1e2cdd131d6b702f6cbf4e207",
+    "core": "d75409b3fd8300f0688e0e9f336808c48f6c0db87c660431ac93a3c1a064dc55",
+    "legal": "9bf7a21ccc4850f3827ac16f4182769db3e1197cb5103153e6baf33fb5e9fa7d"
+  },
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "f855c6181c11b539faed53125be1aff85b8c16b77817a036313533a43e2f1d16",
+  "score_validation": "All three scores and Completed checked by script before printing each completed round; recovered sixth-round rows additionally match published FFO scores.",
+  "round_six_nodes_total": {
+    "base": 815860308,
+    "core": 815860308,
+    "legal": 815860298
+  },
+  "baseline_and_core_round_six_nodes_match_per_position": true,
+  "raw_rows_available": 30,
+  "raw_rows_lost": 150,
+  "timing_provenance": "Rounds 1-5 from six-decimal console totals; original sixth round interrupted before write; round 6 repeated with offset 5. See first-five-console-totals.json and recovered-round-six.*. Individual rows of rounds 1-5 unavailable.",
+  "execution_orders": "All six permutations used once per position across accepted rounds 1-6. Original interrupted sixth round excluded.",
+  "final_rebuild_matches_measured_core": true
+}

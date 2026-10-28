@@ -1,0 +1,337 @@
+
+/workspace/deft-tail-target/release/examples/solve:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+000000000005d810 <deft_reversi_engine::board::stability::null_window_upper>:
+   5d810:	push   %rbp
+   5d811:	push   %r15
+   5d813:	push   %r14
+   5d815:	push   %r13
+   5d817:	push   %r12
+   5d819:	push   %rbx
+   5d81a:	sub    $0x68,%rsp
+   5d81e:	mov    %rsi,%rax
+   5d821:	or     %rdi,%rax
+   5d824:	je     5ddc4 <deft_reversi_engine::board::stability::null_window_upper+0x5b4>
+   5d82a:	mov    %rax,%rcx
+   5d82d:	not    %rcx
+   5d830:	lea    -0x4feb7(%rip),%r8        # d980 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x197c>
+   5d837:	popcnt %rcx,%rcx
+   5d83c:	cmp    (%r8,%rcx,4),%edx
+   5d840:	jge    5d849 <deft_reversi_engine::board::stability::null_window_upper+0x39>
+   5d842:	xor    %eax,%eax
+   5d844:	jmp    5dba2 <deft_reversi_engine::board::stability::null_window_upper+0x392>
+   5d849:	mov    %rax,%r8
+   5d84c:	shr    $0x7,%r8
+   5d850:	movabs $0xff01010101010101,%r9
+   5d85a:	movabs $0x8080808080808080,%r10
+   5d864:	movabs $0xffff030303030303,%r11
+   5d86e:	mov    %rax,%rcx
+   5d871:	shr    $1,%rcx
+   5d874:	movabs $0xffffc0c0c0c0c0c0,%r13
+   5d87e:	movabs $0x101010101010101,%r15
+   5d888:	rorx   $0x8,%rax,%r14
+   5d88e:	movabs $0xc0c0c0c0c0c0ffff,%r12
+   5d898:	or     %r8,%r9
+   5d89b:	mov    %rax,%r8
+   5d89e:	shl    $0x7,%r8
+   5d8a2:	and    %rax,%rcx
+   5d8a5:	and    %rax,%r14
+   5d8a8:	and    %rax,%r9
+   5d8ab:	or     %r10,%r8
+   5d8ae:	mov    %rcx,%rbp
+   5d8b1:	shr    $0x2,%rbp
+   5d8b5:	mov    %r9,%r10
+   5d8b8:	shr    $0xe,%r10
+   5d8bc:	and    %rcx,%rbp
+   5d8bf:	or     $0x7f,%r8
+   5d8c3:	or     %r10,%r11
+   5d8c6:	mov    %rbp,%rcx
+   5d8c9:	shr    $0x4,%rcx
+   5d8cd:	and    %rax,%r8
+   5d8d0:	and    %r9,%r11
+   5d8d3:	mov    %rcx,0x30(%rsp)
+   5d8d8:	mov    %r8,%r10
+   5d8db:	shl    $0xe,%r10
+   5d8df:	mov    %r11,%r9
+   5d8e2:	mov    %r11,0x60(%rsp)
+   5d8e7:	shr    $0x1c,%r9
+   5d8eb:	movabs $0xffffffff0f0f0f0f,%r11
+   5d8f5:	or     %r10,%r12
+   5d8f8:	or     %r9,%r11
+   5d8fb:	mov    %rax,%r9
+   5d8fe:	shr    $0x9,%r9
+   5d902:	and    %r8,%r12
+   5d905:	mov    %r15,%r8
+   5d908:	and    %r8,%rbp
+   5d90b:	mov    %r11,0x40(%rsp)
+   5d910:	movabs $0xff80808080808080,%r11
+   5d91a:	mov    %r12,%r10
+   5d91d:	shl    $0x1c,%r10
+   5d921:	or     %r9,%r11
+   5d924:	mov    %rax,%r9
+   5d927:	shl    $0x9,%r9
+   5d92b:	and    %rax,%r11
+   5d92e:	or     %r15,%r9
+   5d931:	mov    %r11,%rbx
+   5d934:	shr    $0x12,%rbx
+   5d938:	or     $0xfe,%r9
+   5d93f:	or     %rbx,%r13
+   5d942:	and    %rax,%r9
+   5d945:	movabs $0xf0f0f0f0ffffffff,%rbx
+   5d94f:	and    %r11,%r13
+   5d952:	mov    %r9,%rcx
+   5d955:	shl    $0x12,%rcx
+   5d959:	movabs $0x30303030303ffff,%r11
+   5d963:	mov    %r13,0x38(%rsp)
+   5d968:	or     %rcx,%r11
+   5d96b:	shr    $0x24,%r13
+   5d96f:	rorx   $0x10,%r14,%rcx
+   5d975:	mov    0x57a6d(%rip),%eax        # b53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5d97b:	and    %r9,%r11
+   5d97e:	mov    %r11,%r15
+   5d981:	shl    $0x24,%r15
+   5d985:	test   %eax,%eax
+   5d987:	jne    5dbb6 <deft_reversi_engine::board::stability::null_window_upper+0x3a6>
+   5d98d:	mov    %esi,%eax
+   5d98f:	shl    $0x8,%eax
+   5d992:	and    %r14,%rcx
+   5d995:	lea    0x47a4c(%rip),%r14        # a53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY>
+   5d99c:	or     %r15,%r13
+   5d99f:	or     %rbx,%r10
+   5d9a2:	mov    0x40(%rsp),%rbx
+   5d9a7:	and    0x30(%rsp),%rbp
+   5d9ac:	movzwl %ax,%eax
+   5d9af:	mov    %rcx,%r15
+   5d9b2:	movzbl %dil,%ecx
+   5d9b6:	mov    %r13,%r9
+   5d9b9:	add    %r14,%rax
+   5d9bc:	movzbl (%rcx,%rax,1),%eax
+   5d9c0:	and    %r12,%rbx
+   5d9c3:	mov    %rax,0x40(%rsp)
+   5d9c8:	mov    0x57a1a(%rip),%eax        # b53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5d9ce:	test   %eax,%eax
+   5d9d0:	jne    5dc3f <deft_reversi_engine::board::stability::null_window_upper+0x42f>
+   5d9d6:	movabs $0xf0f0f0ff0f0f0f0,%rax
+   5d9e0:	mov    %rdi,%rcx
+   5d9e3:	shr    $0x38,%rcx
+   5d9e7:	and    0x38(%rsp),%r11
+   5d9ec:	mov    %rbp,%r12
+   5d9ef:	and    %rbx,%r10
+   5d9f2:	rorx   $0x20,%r15,%rbx
+   5d9f8:	shl    $0x8,%r12
+   5d9fc:	or     %rax,%r9
+   5d9ff:	mov    %rsi,%rax
+   5da02:	shr    $0x30,%rax
+   5da06:	and    $0xff00,%eax
+   5da0b:	add    %r14,%rax
+   5da0e:	movzbl (%rcx,%rax,1),%r13d
+   5da13:	mov    0x579cf(%rip),%eax        # b53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5da19:	test   %eax,%eax
+   5da1b:	jne    5dcc2 <deft_reversi_engine::board::stability::null_window_upper+0x4b2>
+   5da21:	mov    %rsi,%rax
+   5da24:	and    %r8,%rax
+   5da27:	movabs $0x102040810204080,%rcx
+   5da31:	and    %rdi,%r8
+   5da34:	and    0x60(%rsp),%r10
+   5da39:	and    %r15,%rbx
+   5da3c:	sub    %rbp,%r12
+   5da3f:	and    %r9,%r11
+   5da42:	imul   %rcx,%rax
+   5da46:	imul   %rcx,%r8
+   5da4a:	shr    $0x30,%rax
+   5da4e:	shr    $0x38,%r8
+   5da52:	and    $0xff00,%eax
+   5da57:	add    %r14,%rax
+   5da5a:	movzbl (%r8,%rax,1),%r14d
+   5da5f:	mov    0x57983(%rip),%eax        # b53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5da65:	test   %eax,%eax
+   5da67:	jne    5dd4d <deft_reversi_engine::board::stability::null_window_upper+0x53d>
+   5da6d:	movabs $0x8080808080808080,%rcx
+   5da77:	mov    %rsi,%r8
+   5da7a:	movabs $0x2040810204081,%rax
+   5da84:	mov    %r13,%rbp
+   5da87:	lea    0x4795a(%rip),%r13        # a53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY>
+   5da8e:	vmovq  %rbx,%xmm0
+   5da93:	vmovq  %r11,%xmm1
+   5da98:	vmovq  %r10,%xmm2
+   5da9d:	and    $0x7e,%r14d
+   5daa1:	movabs $0x40810204080,%r9
+   5daab:	shl    $0x38,%rbp
+   5daaf:	and    %rcx,%r8
+   5dab2:	and    %rcx,%rdi
+   5dab5:	vpunpcklqdq %xmm1,%xmm2,%xmm1
+   5dab9:	vmovq  %r12,%xmm2
+   5dabe:	imul   %r14,%r9
+   5dac2:	movabs $0x1010101010100,%rcx
+   5dacc:	imul   %rax,%r8
+   5dad0:	imul   %rax,%rdi
+   5dad4:	add    $0xffffffffffffff7f,%rax
+   5dada:	vpunpcklqdq %xmm0,%xmm2,%xmm0
+   5dade:	vinserti128 $0x1,%xmm1,%ymm0,%ymm0
+   5dae4:	vmovdqa -0x57aec(%rip),%ymm1        # 6000 <__abi_tag+0x5d04>
+   5daec:	and    %r9,%rcx
+   5daef:	shr    $0x30,%r8
+   5daf3:	shr    $0x38,%rdi
+   5daf7:	and    $0xff00,%r8d
+   5dafe:	add    %r8,%r13
+   5db01:	movzbl (%rdi,%r13,1),%edi
+   5db06:	and    $0x7e,%edi
+   5db09:	imul   %rdi,%rax
+   5db0d:	movabs $0x80808080808000,%rdi
+   5db17:	and    %rax,%rdi
+   5db1a:	movabs $0x7e7e7e7e7e7e00,%rax
+   5db24:	and    %rsi,%rax
+   5db27:	and    %rax,%rbx
+   5db2a:	and    %r12,%rbx
+   5db2d:	and    %r10,%rbx
+   5db30:	and    %r11,%rbx
+   5db33:	add    0x40(%rsp),%rbx
+   5db38:	or     %rbp,%rbx
+   5db3b:	add    %rcx,%rbx
+   5db3e:	add    %rdi,%rbx
+   5db41:	data16 data16 data16 data16 data16 cs nopw 0x0(%rax,%rax,1)
+   5db50:	vpbroadcastq %rbx,%ymm2
+   5db56:	mov    %rbx,%rcx
+   5db59:	vpsrlvq %ymm1,%ymm2,%ymm3
+   5db5e:	vpsllvq %ymm1,%ymm2,%ymm2
+   5db63:	vpternlogq $0xfe,%ymm3,%ymm0,%ymm2
+   5db6a:	vextracti128 $0x1,%ymm2,%xmm3
+   5db70:	vpand  %xmm3,%xmm2,%xmm2
+   5db74:	vpshufd $0xee,%xmm2,%xmm3
+   5db79:	vpand  %xmm3,%xmm2,%xmm2
+   5db7d:	vmovq  %xmm2,%rbx
+   5db82:	and    %rax,%rbx
+   5db85:	or     %rcx,%rbx
+   5db88:	cmp    %rcx,%rbx
+   5db8b:	jne    5db50 <deft_reversi_engine::board::stability::null_window_upper+0x340>
+   5db8d:	popcnt %rcx,%rax
+   5db92:	mov    $0x40,%ecx
+   5db97:	add    %eax,%eax
+   5db99:	sub    %eax,%ecx
+   5db9b:	xor    %eax,%eax
+   5db9d:	cmp    %edx,%ecx
+   5db9f:	setle  %al
+   5dba2:	mov    %ecx,%edx
+   5dba4:	add    $0x68,%rsp
+   5dba8:	pop    %rbx
+   5dba9:	pop    %r12
+   5dbab:	pop    %r13
+   5dbad:	pop    %r14
+   5dbaf:	pop    %r15
+   5dbb1:	pop    %rbp
+   5dbb2:	vzeroupper
+   5dbb5:	ret
+   5dbb6:	lea    0x4782b(%rip),%rax        # a53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY>
+   5dbbd:	lea    0x18(%rsp),%r8
+   5dbc2:	mov    %rcx,0x48(%rsp)
+   5dbc7:	mov    %rsi,0x28(%rsp)
+   5dbcc:	lea    0x43e35(%rip),%rcx        # a1a08 <__frame_dummy_init_array_entry+0x728>
+   5dbd3:	lea    0x20(%rsp),%r9
+   5dbd8:	mov    $0x1,%esi
+   5dbdd:	mov    %edx,0xc(%rsp)
+   5dbe1:	mov    %rdi,0x10(%rsp)
+   5dbe6:	mov    %r10,0x58(%rsp)
+   5dbeb:	mov    %r11,0x50(%rsp)
+   5dbf0:	mov    %rax,0x18(%rsp)
+   5dbf5:	mov    %r8,0x20(%rsp)
+   5dbfa:	lea    0x577e7(%rip),%rax        # b53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5dc01:	lea    0x45478(%rip),%r8        # a3080 <__frame_dummy_init_array_entry+0x1da0>
+   5dc08:	mov    %r9,%rdx
+   5dc0b:	mov    %rax,%rdi
+   5dc0e:	call   9e510 <<std::sys::sync::once::futex::Once>::call>
+   5dc13:	mov    0x48(%rsp),%rcx
+   5dc18:	mov    0x50(%rsp),%r11
+   5dc1d:	mov    0x58(%rsp),%r10
+   5dc22:	mov    0x10(%rsp),%rdi
+   5dc27:	mov    0x28(%rsp),%rsi
+   5dc2c:	mov    0xc(%rsp),%edx
+   5dc30:	movabs $0x101010101010101,%r8
+   5dc3a:	jmp    5d98d <deft_reversi_engine::board::stability::null_window_upper+0x17d>
+   5dc3f:	lea    0x18(%rsp),%rax
+   5dc44:	mov    %r14,0x18(%rsp)
+   5dc49:	mov    %r9,0x30(%rsp)
+   5dc4e:	mov    %rsi,%r14
+   5dc51:	lea    0x43db0(%rip),%rcx        # a1a08 <__frame_dummy_init_array_entry+0x728>
+   5dc58:	lea    0x45421(%rip),%r8        # a3080 <__frame_dummy_init_array_entry+0x1da0>
+   5dc5f:	lea    0x20(%rsp),%r9
+   5dc64:	mov    $0x1,%esi
+   5dc69:	mov    %edx,0xc(%rsp)
+   5dc6d:	mov    %rbx,%r13
+   5dc70:	mov    %rdi,0x10(%rsp)
+   5dc75:	mov    %r10,%r12
+   5dc78:	mov    %r11,%rbx
+   5dc7b:	mov    %rax,0x20(%rsp)
+   5dc80:	lea    0x57761(%rip),%rax        # b53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5dc87:	mov    %r9,%rdx
+   5dc8a:	mov    %rax,%rdi
+   5dc8d:	call   9e510 <<std::sys::sync::once::futex::Once>::call>
+   5dc92:	mov    0x30(%rsp),%r9
+   5dc97:	mov    0x10(%rsp),%rdi
+   5dc9c:	mov    0xc(%rsp),%edx
+   5dca0:	mov    %r14,%rsi
+   5dca3:	movabs $0x101010101010101,%r8
+   5dcad:	lea    0x47734(%rip),%r14        # a53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY>
+   5dcb4:	mov    %rbx,%r11
+   5dcb7:	mov    %r12,%r10
+   5dcba:	mov    %r13,%rbx
+   5dcbd:	jmp    5d9d6 <deft_reversi_engine::board::stability::null_window_upper+0x1c6>
+   5dcc2:	lea    0x18(%rsp),%rax
+   5dcc7:	mov    %r9,0x30(%rsp)
+   5dccc:	mov    %rsi,0x28(%rsp)
+   5dcd1:	lea    0x43d30(%rip),%rcx        # a1a08 <__frame_dummy_init_array_entry+0x728>
+   5dcd8:	lea    0x453a1(%rip),%r8        # a3080 <__frame_dummy_init_array_entry+0x1da0>
+   5dcdf:	lea    0x20(%rsp),%r9
+   5dce4:	mov    $0x1,%esi
+   5dce9:	mov    %r14,0x18(%rsp)
+   5dcee:	mov    %r12,0x38(%rsp)
+   5dcf3:	mov    %edx,0xc(%rsp)
+   5dcf7:	mov    %rdi,0x10(%rsp)
+   5dcfc:	mov    %r10,%r12
+   5dcff:	mov    %r11,%r14
+   5dd02:	mov    %rax,0x20(%rsp)
+   5dd07:	lea    0x576da(%rip),%rax        # b53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5dd0e:	mov    %r9,%rdx
+   5dd11:	mov    %rax,%rdi
+   5dd14:	call   9e510 <<std::sys::sync::once::futex::Once>::call>
+   5dd19:	mov    %r12,%r10
+   5dd1c:	mov    0x30(%rsp),%r9
+   5dd21:	mov    0x10(%rsp),%rdi
+   5dd26:	mov    0x28(%rsp),%rsi
+   5dd2b:	mov    0xc(%rsp),%edx
+   5dd2f:	mov    0x38(%rsp),%r12
+   5dd34:	mov    %r14,%r11
+   5dd37:	movabs $0x101010101010101,%r8
+   5dd41:	lea    0x476a0(%rip),%r14        # a53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY>
+   5dd48:	jmp    5da21 <deft_reversi_engine::board::stability::null_window_upper+0x211>
+   5dd4d:	lea    0x47694(%rip),%rax        # a53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY>
+   5dd54:	lea    0x18(%rsp),%rcx
+   5dd59:	mov    %rsi,0x28(%rsp)
+   5dd5e:	lea    0x4531b(%rip),%r8        # a3080 <__frame_dummy_init_array_entry+0x1da0>
+   5dd65:	lea    0x20(%rsp),%r9
+   5dd6a:	mov    $0x1,%esi
+   5dd6f:	mov    %edx,0xc(%rsp)
+   5dd73:	mov    %rdi,0x10(%rsp)
+   5dd78:	mov    %r10,%rbp
+   5dd7b:	mov    %r12,0x38(%rsp)
+   5dd80:	mov    %r11,%r15
+   5dd83:	mov    %rax,0x18(%rsp)
+   5dd88:	mov    %rcx,0x20(%rsp)
+   5dd8d:	lea    0x57654(%rip),%rax        # b53e8 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5dd94:	lea    0x43c6d(%rip),%rcx        # a1a08 <__frame_dummy_init_array_entry+0x728>
+   5dd9b:	mov    %r9,%rdx
+   5dd9e:	mov    %rax,%rdi
+   5dda1:	call   9e510 <<std::sys::sync::once::futex::Once>::call>
+   5dda6:	mov    0x38(%rsp),%r12
+   5ddab:	mov    0x10(%rsp),%rdi
+   5ddb0:	mov    0x28(%rsp),%rsi
+   5ddb5:	mov    0xc(%rsp),%edx
+   5ddb9:	mov    %r15,%r11
+   5ddbc:	mov    %rbp,%r10
+   5ddbf:	jmp    5da6d <deft_reversi_engine::board::stability::null_window_upper+0x25d>
+   5ddc4:	lea    0x4451d(%rip),%rdx        # a22e8 <__frame_dummy_init_array_entry+0x1008>
+   5ddcb:	mov    $0x40,%edi
+   5ddd0:	mov    $0x40,%esi
+   5ddd5:	call   2db51 <core::panicking::panic_bounds_check>

@@ -26,6 +26,8 @@ impl Context {
             ancestors,
             cuts,
             end_cache: Vec::new(),
+            #[cfg(feature = "endgame-pattern-ordering")]
+            end_ordering: [None; 3],
         }
     }
     pub(super) fn aborted(&self) -> bool {
@@ -57,6 +59,22 @@ impl Context {
         self.stats.evaluations += 1;
         self.runtime.model.evaluate_state(&board, state)
     }
+    fn child_needs_eval(&self, board: Board, exact: bool, narrow: bool) -> bool {
+        if !exact {
+            return true;
+        }
+        let empties = board.empty_count();
+        if empties > super::tail::LOCAL_END_MAX + 1 {
+            return true;
+        }
+        let selective = self.runtime.sigma().is_some();
+        if empties == super::tail::LOCAL_END_MAX + 1 {
+            // A wide thirteen-empty child still orders moves using its state.
+            // The experimental narrow entry seeds its pattern cache from it too.
+            return !narrow || selective || cfg!(feature = "endgame-pattern-ordering");
+        }
+        selective
+    }
     pub(super) fn node(
         &mut self,
         position: Position,
@@ -72,6 +90,10 @@ impl Context {
         } = spec;
         self.enter()?;
         if exact && beta - alpha == 1 && board.empty_count() <= super::tail::LOCAL_END_MAX {
+            #[cfg(feature = "endgame-pattern-ordering")]
+            if board.empty_count() == super::tail::LOCAL_END_MAX {
+                self.end_ordering[2] = Some((board, state));
+            }
             return self.tail_score_entered(board, alpha, beta).map(Line::leaf);
         }
         if exact && board.empty_count() <= super::tail::TAIL_EMPTIES {
@@ -180,7 +202,6 @@ impl Context {
         let mut candidates = [placeholder; 64];
         let mut count = 0;
         let mut skipped_upper = -65;
-        let odd_regions = if exact { odd_regions(board) } else { 0 };
         while moves != 0 {
             let bit = moves & moves.wrapping_neg();
             moves &= moves - 1;
@@ -211,7 +232,62 @@ impl Context {
                 alpha = alpha.max(lower);
                 known_lower = known_lower.max(lower);
             }
-            let mut ordering = if !exact {
+            candidates[count] = Candidate {
+                square,
+                flips,
+                ordering: 0,
+            };
+            count += 1;
+        }
+        if count == 0 {
+            self.stats.tt_cuts += 1;
+            return Ok(Line::leaf(skipped_upper));
+        }
+        // Complete cheap child-TT cutoffs before spending search effort on
+        // the TT move. Remaining moves are still unevaluated here.
+        let preferred = if let Some(index) =
+            (0..count).find(|&i| candidates[i].square.index() == tt_move)
+        {
+            let candidate = candidates[index];
+            candidates.copy_within(index + 1..count, index);
+            count -= 1;
+            let child = self.node(
+                candidate.child(
+                    Position { board, state },
+                    self.child_needs_eval(board, exact, beta - alpha == 1),
+                ),
+                -beta,
+                -alpha,
+                SearchSpec {
+                    depth: depth - 1,
+                    ..spec
+                },
+            )?;
+            let mut line = Line::prepend(candidate.action(), &child);
+            alpha = alpha.max(line.score);
+            if alpha >= beta {
+                self.stats.beta_cuts += 1;
+                if self.aborted() {
+                    return Err(());
+                }
+                line.score = line.score.max(known_lower);
+                self.store_node_line(board, &line, (original_alpha, original_beta), spec, quality);
+                return Ok(line);
+            }
+            Some(line)
+        } else {
+            None
+        };
+        let only_move = count <= 1;
+        let odd_regions = if exact { odd_regions(board) } else { 0 };
+        for candidate in &mut candidates[..count] {
+            let square = candidate.square;
+            let bit = square.bit();
+            let flips = candidate.flips;
+            let child = board.after_known_move(bit, flips);
+            let mut ordering = if only_move {
+                0
+            } else if !exact {
                 self.midgame_ordering(position, child, bit, flips, alpha, depth)?
             } else if board.empty_count() >= super::tail::LOCAL_END_MAX {
                 self.endgame_ordering(position, child, bit, flips, alpha, beta)?
@@ -226,46 +302,38 @@ impl Context {
                 value
             };
             let tt_priority = if exact { ORDERING.tt } else { 1 << 8 };
-            if square.index() == tt_move {
-                ordering += tt_priority;
-            } else if cached.is_some_and(|entry| entry.second == square.index()) {
+            if cached.is_some_and(|entry| entry.second == square.index()) {
                 ordering += tt_priority / 2;
             }
-            candidates[count] = Candidate {
-                square,
-                flips,
-                ordering,
-            };
-            count += 1;
+            candidate.ordering = ordering;
         }
-        if count == 0 {
-            self.stats.tt_cuts += 1;
-            return Ok(Line::leaf(skipped_upper));
-        }
-        pick_best(&mut candidates[..count], 0);
-        let first = candidates[0];
-        let first_position = first.child(
-            position,
-            !exact
-                || board.empty_count() > super::tail::LOCAL_END_MAX
-                || self.runtime.sigma().is_some(),
-        );
-        let child = self.node(
-            Position {
-                board: first_position.board,
-                state: first_position.state,
-            },
-            -beta,
-            -alpha,
-            SearchSpec {
-                depth: depth - 1,
-                exact,
-                probcut: allow_probcut,
-            },
-        )?;
-        let mut best = Line::prepend(first.action(), &child);
+        let start = usize::from(preferred.is_none());
+        let mut best = if let Some(line) = preferred {
+            line
+        } else {
+            pick_best(&mut candidates[..count], 0);
+            let first = candidates[0];
+            let first_position = first.child(
+                position,
+                self.child_needs_eval(board, exact, beta - alpha == 1),
+            );
+            let child = self.node(
+                Position {
+                    board: first_position.board,
+                    state: first_position.state,
+                },
+                -beta,
+                -alpha,
+                SearchSpec {
+                    depth: depth - 1,
+                    exact,
+                    probcut: allow_probcut,
+                },
+            )?;
+            Line::prepend(first.action(), &child)
+        };
         alpha = alpha.max(best.score);
-        if alpha < beta && count > 1 {
+        if alpha < beta && count > start {
             let can_split = self.runtime.parallel
                 && allow_probcut
                 && if exact {
@@ -276,7 +344,7 @@ impl Context {
             if can_split && count >= 3 && self.runtime.pool.can_offer(&self.ancestors) {
                 best = self.split(
                     position,
-                    candidates[1..count].to_vec(),
+                    candidates[start..count].to_vec(),
                     (alpha, beta),
                     SearchSpec {
                         depth: depth - 1,
@@ -287,7 +355,7 @@ impl Context {
                     None,
                 )?;
             } else {
-                for index in 1..count {
+                for index in start..count {
                     pick_best(&mut candidates[..count], index);
                     if let Some(line) = self.sibling(
                         position,
@@ -321,32 +389,42 @@ impl Context {
             best = Line::leaf(skipped_upper);
         }
         best.score = best.score.max(known_lower);
-        let (lower, upper) = if best.score <= original_alpha {
-            (-64, best.score as i8)
-        } else if best.score >= original_beta {
-            (best.score as i8, 64)
+        self.store_node_line(board, &best, (original_alpha, original_beta), spec, quality);
+        Ok(best)
+    }
+    fn store_node_line(
+        &mut self,
+        board: Board,
+        line: &Line,
+        (alpha, beta): (i32, i32),
+        spec: SearchSpec,
+        quality: u8,
+    ) {
+        let (lower, upper) = if line.score <= alpha {
+            (-64, line.score as i8)
+        } else if line.score >= beta {
+            (line.score as i8, 64)
         } else {
-            (best.score as i8, best.score as i8)
+            (line.score as i8, line.score as i8)
         };
-        let best_move = match best.actions[0] {
+        let best_move = match line.actions[0] {
             Some(Action::Place(s)) => s.index(),
             _ => 64,
         };
         let entry = Entry {
             lower,
             upper,
-            depth,
+            depth: spec.depth,
             quality,
             best: best_move,
             second: 64,
             generation: self.runtime.generation,
-            exact_mode: exact,
+            exact_mode: spec.exact,
         };
         self.runtime.table.store(board, entry);
-        if exact && original_beta - original_alpha > 1 {
+        if spec.exact && beta - alpha > 1 {
             self.runtime.pv_table.store(board, entry);
         }
-        Ok(best)
     }
     pub(super) fn sibling(
         &mut self,
@@ -361,12 +439,8 @@ impl Context {
             exact,
             probcut: allow_probcut,
         } = spec;
-        let next = candidate.child(
-            position,
-            !exact
-                || position.board.empty_count() > super::tail::LOCAL_END_MAX
-                || self.runtime.sigma().is_some(),
-        );
+        let update_eval = self.child_needs_eval(position.board, exact, true);
+        let next = candidate.child(position, update_eval);
         let child = self.node(
             Position {
                 board: next.board,
@@ -382,6 +456,11 @@ impl Context {
         )?;
         let mut line = Line::prepend(candidate.action(), &child);
         if line.score > alpha && line.score < beta {
+            let next = if !update_eval && self.child_needs_eval(position.board, exact, false) {
+                candidate.child(position, true)
+            } else {
+                next
+            };
             let child = self.node(
                 Position {
                     board: next.board,
@@ -527,6 +606,99 @@ pub(super) fn endgame_ordering(legal: u64, bit: u64, odd: u64) -> i32 {
 mod tt_tests {
     use super::super::session::test_context;
     use super::*;
+    #[test]
+    fn thirteen_empty_research_matches_eager_evaluation_state() {
+        let model = Arc::new(PatternModel::nonzero_for_tests());
+        for seed in [17u64, 101] {
+            let mut board = Board::new();
+            let mut random = seed;
+            while board.empty_count() > 14 {
+                let mut moves = board.get_moves();
+                if moves == 0 {
+                    assert!(!board.is_terminal());
+                    board = board.board_after_pass();
+                    continue;
+                }
+                random ^= random << 13;
+                random ^= random >> 7;
+                random ^= random << 17;
+                for _ in 0..random % u64::from(moves.count_ones()) {
+                    moves &= moves - 1;
+                }
+                board = board.board_after_move(moves & moves.wrapping_neg());
+            }
+            let moves = board.get_moves();
+            assert_ne!(moves, 0);
+            let bit = moves & moves.wrapping_neg();
+            let candidate = Candidate {
+                square: Square::new(bit.trailing_zeros() as u8).unwrap(),
+                flips: board.flip_mask(bit),
+                ordering: 0,
+            };
+            let position = Position {
+                board,
+                state: EvalState::from_board(board),
+            };
+            let next = candidate.child(position, true);
+            let spec = SearchSpec {
+                depth: 13,
+                exact: true,
+                probcut: false,
+            };
+            let make_context = || {
+                let mut context = test_context();
+                Arc::get_mut(&mut context.runtime).unwrap().model = model.clone();
+                context
+            };
+            // Find an interior score so sibling must perform its wide re-search.
+            let expected = -make_context().node(next, -64, 64, spec).unwrap().score;
+            assert!((-64..64).contains(&expected));
+            let alpha = expected - 1;
+            let beta = 64;
+            let mut eager = make_context();
+            let narrow = eager.node(next, -alpha - 1, -alpha, spec).unwrap();
+            assert!(-narrow.score > alpha && -narrow.score < beta);
+            let reference = eager.node(next, -beta, -alpha, spec).unwrap();
+
+            let mut lazy = make_context();
+            let actual = lazy
+                .sibling(position, candidate, alpha, beta, spec)
+                .unwrap()
+                .unwrap();
+            assert_eq!(actual.score, -reference.score);
+            assert_eq!(
+                actual.moves(),
+                Line::prepend(candidate.action(), &reference).moves()
+            );
+            assert!(lazy.stats.evaluations > 0);
+            assert_eq!(lazy.stats.nodes, eager.stats.nodes);
+            assert_eq!(lazy.stats.evaluations, eager.stats.evaluations);
+        }
+    }
+    #[test]
+    fn forced_move_skips_ordering_evaluation() {
+        let board = Board::from_bits(1, 2).unwrap();
+        assert!(board.get_moves().is_power_of_two());
+        let mut context = test_context();
+        let line = context
+            .node(
+                Position {
+                    board,
+                    state: EvalState::from_board(board),
+                },
+                -64,
+                64,
+                SearchSpec {
+                    depth: 3,
+                    exact: false,
+                    probcut: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(line.score, 64);
+        assert_eq!(context.stats.evaluations, 0);
+        assert_eq!(context.stats.nodes, 2);
+    }
     fn entry(depth: u8, lower: i8, upper: i8) -> Entry {
         Entry {
             lower,
@@ -538,6 +710,55 @@ mod tt_tests {
             generation: 1,
             exact_mode: false,
         }
+    }
+    #[test]
+    fn tt_move_cuts_before_other_moves_are_evaluated() {
+        let board = Board::new();
+        let bit = 1u64 << (63 - board.get_moves().leading_zeros());
+        let mut context = test_context();
+        let mut hint = entry(1, -64, 64);
+        hint.best = bit.trailing_zeros() as u8;
+        context.runtime.table.store(board, hint);
+        context
+            .runtime
+            .table
+            .store(board.board_after_move(bit), entry(2, -7, -7));
+        let line = context
+            .node(
+                Position {
+                    board,
+                    state: EvalState::from_board(board),
+                },
+                -1,
+                0,
+                SearchSpec {
+                    depth: 3,
+                    exact: false,
+                    probcut: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(line.score, 7);
+        assert_eq!(context.stats.nodes, 2);
+        assert_eq!(context.stats.evaluations, 0);
+        let saved = context.runtime.table.get(board).unwrap();
+        assert_eq!(saved.best, hint.best);
+        assert_eq!(saved.lower, 7);
+        assert_eq!(saved.depth, 3);
+    }
+    #[test]
+    fn child_tt_cut_precedes_tt_move_search() {
+        let board = Board::new();
+        let bit = 1u64 << (63 - board.get_moves().leading_zeros());
+        let mut context = test_context();
+        context.runtime.table.store(board, entry(1, -64, 64));
+        context
+            .runtime
+            .table
+            .store(board.board_after_move(bit), entry(3, -7, -7));
+        assert_eq!(search(&mut context, -1, 0), 7);
+        assert_eq!(context.stats.nodes, 1);
+        assert_eq!(context.stats.evaluations, 0);
     }
     fn search(context: &mut Context, alpha: i32, beta: i32) -> i32 {
         let board = Board::new();

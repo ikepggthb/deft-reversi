@@ -1,0 +1,23 @@
+{
+  "base": {
+    "sha256": "ff17c4b535fed25e8955c73c207ad85ebef4d8e1e2cdd131d6b702f6cbf4e207"
+  },
+  "range": {
+    "sha256": "b8f9dc8cecfdeefe5538c86686d3ee7e75151c8f449691bf9a7e2afb9c64c435"
+  },
+  "aligned": {
+    "sha256": "688a6fde810a09cad79626c31f9dea3ccea7455cb736b614b7dabb94ea715092"
+  },
+  "once": {
+    "sha256": "098793ce67977db0804e14aaa320ba5b494953f3572b4d7b6467adf917b8c39a"
+  },
+  "inline": {
+    "sha256": "99f26a9701b006a0ea54ab1dda29df936893e4cbf26d2e5ea541ccf76fab22e9"
+  },
+  "always": {
+    "sha256": "d75409b3fd8300f0688e0e9f336808c48f6c0db87c660431ac93a3c1a064dc55"
+  },
+  "legal-cut": {
+    "sha256": "9bf7a21ccc4850f3827ac16f4182769db3e1197cb5103153e6baf33fb5e9fa7d"
+  }
+}

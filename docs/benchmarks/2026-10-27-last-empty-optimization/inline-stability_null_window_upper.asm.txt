@@ -1,0 +1,251 @@
+
+/tmp/deft-leaf-trials/inline/solve:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+000000000005d3f0 <deft_reversi_engine::board::stability::null_window_upper>:
+   5d3f0:	55                   	push   %rbp
+   5d3f1:	41 57                	push   %r15
+   5d3f3:	41 56                	push   %r14
+   5d3f5:	41 55                	push   %r13
+   5d3f7:	41 54                	push   %r12
+   5d3f9:	53                   	push   %rbx
+   5d3fa:	48 83 ec 28          	sub    $0x28,%rsp
+   5d3fe:	48 89 f0             	mov    %rsi,%rax
+   5d401:	48 09 f8             	or     %rdi,%rax
+   5d404:	89 54 24 04          	mov    %edx,0x4(%rsp)
+   5d408:	0f 84 90 03 00 00    	je     5d79e <deft_reversi_engine::board::stability::null_window_upper+0x3ae>
+   5d40e:	48 89 c1             	mov    %rax,%rcx
+   5d411:	48 f7 d1             	not    %rcx
+   5d414:	4c 8d 05 65 05 fb ff 	lea    -0x4fa9b(%rip),%r8        # d980 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x197c>
+   5d41b:	8b 54 24 04          	mov    0x4(%rsp),%edx
+   5d41f:	f3 48 0f b8 c9       	popcnt %rcx,%rcx
+   5d424:	41 3b 14 88          	cmp    (%r8,%rcx,4),%edx
+   5d428:	7d 07                	jge    5d431 <deft_reversi_engine::board::stability::null_window_upper+0x41>
+   5d42a:	31 c0                	xor    %eax,%eax
+   5d42c:	e9 03 03 00 00       	jmp    5d734 <deft_reversi_engine::board::stability::null_window_upper+0x344>
+   5d431:	48 89 c1             	mov    %rax,%rcx
+   5d434:	48 c1 e9 07          	shr    $0x7,%rcx
+   5d438:	49 ba 01 01 01 01 01 	movabs $0xff01010101010101,%r10
+   5d43f:	01 01 ff 
+   5d442:	49 89 c1             	mov    %rax,%r9
+   5d445:	49 bb 80 80 80 80 80 	movabs $0x8080808080808080,%r11
+   5d44c:	80 80 80 
+   5d44f:	49 c1 e1 07          	shl    $0x7,%r9
+   5d453:	49 89 c5             	mov    %rax,%r13
+   5d456:	48 ba 01 01 01 01 01 	movabs $0x101010101010101,%rdx
+   5d45d:	01 01 01 
+   5d460:	49 c1 e5 09          	shl    $0x9,%r13
+   5d464:	48 bd 80 80 80 80 80 	movabs $0xff80808080808080,%rbp
+   5d46b:	80 80 ff 
+   5d46e:	49 bc c0 c0 c0 c0 c0 	movabs $0xffffc0c0c0c0c0c0,%r12
+   5d475:	c0 ff ff 
+   5d478:	49 89 c0             	mov    %rax,%r8
+   5d47b:	49 d1 e8             	shr    $1,%r8
+   5d47e:	49 09 ca             	or     %rcx,%r10
+   5d481:	4d 09 d9             	or     %r11,%r9
+   5d484:	48 b9 03 03 03 03 03 	movabs $0xffff030303030303,%rcx
+   5d48b:	03 ff ff 
+   5d48e:	49 09 d5             	or     %rdx,%r13
+   5d491:	49 21 c0             	and    %rax,%r8
+   5d494:	49 21 c2             	and    %rax,%r10
+   5d497:	49 81 cd fe 00 00 00 	or     $0xfe,%r13
+   5d49e:	49 83 c9 7f          	or     $0x7f,%r9
+   5d4a2:	4d 89 d3             	mov    %r10,%r11
+   5d4a5:	49 c1 eb 0e          	shr    $0xe,%r11
+   5d4a9:	49 21 c5             	and    %rax,%r13
+   5d4ac:	49 21 c1             	and    %rax,%r9
+   5d4af:	4c 09 d9             	or     %r11,%rcx
+   5d4b2:	4c 89 eb             	mov    %r13,%rbx
+   5d4b5:	48 c1 e3 12          	shl    $0x12,%rbx
+   5d4b9:	4d 89 cb             	mov    %r9,%r11
+   5d4bc:	49 c1 e3 0e          	shl    $0xe,%r11
+   5d4c0:	4c 21 d1             	and    %r10,%rcx
+   5d4c3:	49 ba 0f 0f 0f 0f ff 	movabs $0xffffffff0f0f0f0f,%r10
+   5d4ca:	ff ff ff 
+   5d4cd:	49 89 cf             	mov    %rcx,%r15
+   5d4d0:	49 c1 ef 1c          	shr    $0x1c,%r15
+   5d4d4:	4d 09 fa             	or     %r15,%r10
+   5d4d7:	49 89 c7             	mov    %rax,%r15
+   5d4da:	49 c1 ef 09          	shr    $0x9,%r15
+   5d4de:	4c 09 fd             	or     %r15,%rbp
+   5d4e1:	48 21 c5             	and    %rax,%rbp
+   5d4e4:	49 89 ef             	mov    %rbp,%r15
+   5d4e7:	49 c1 ef 12          	shr    $0x12,%r15
+   5d4eb:	4d 09 fc             	or     %r15,%r12
+   5d4ee:	49 bf ff ff 03 03 03 	movabs $0x30303030303ffff,%r15
+   5d4f5:	03 03 03 
+   5d4f8:	49 09 df             	or     %rbx,%r15
+   5d4fb:	49 21 ec             	and    %rbp,%r12
+   5d4fe:	4c 89 c5             	mov    %r8,%rbp
+   5d501:	48 c1 ed 02          	shr    $0x2,%rbp
+   5d505:	c4 e3 fb f0 d8 08    	rorx   $0x8,%rax,%rbx
+   5d50b:	4d 21 ef             	and    %r13,%r15
+   5d50e:	4d 89 e6             	mov    %r12,%r14
+   5d511:	4c 21 c5             	and    %r8,%rbp
+   5d514:	48 21 c3             	and    %rax,%rbx
+   5d517:	49 c1 ee 24          	shr    $0x24,%r14
+   5d51b:	4d 89 fd             	mov    %r15,%r13
+   5d51e:	4d 21 e7             	and    %r12,%r15
+   5d521:	49 bc ff ff c0 c0 c0 	movabs $0xc0c0c0c0c0c0ffff,%r12
+   5d528:	c0 c0 c0 
+   5d52b:	49 89 e8             	mov    %rbp,%r8
+   5d52e:	c4 e3 fb f0 c3 10    	rorx   $0x10,%rbx,%rax
+   5d534:	49 c1 e5 24          	shl    $0x24,%r13
+   5d538:	49 c1 e8 04          	shr    $0x4,%r8
+   5d53c:	48 21 d5             	and    %rdx,%rbp
+   5d53f:	4d 09 dc             	or     %r11,%r12
+   5d542:	49 bb ff ff ff ff f0 	movabs $0xf0f0f0f0ffffffff,%r11
+   5d549:	f0 f0 f0 
+   5d54c:	48 21 d8             	and    %rbx,%rax
+   5d54f:	4d 09 f5             	or     %r14,%r13
+   5d552:	4c 21 c5             	and    %r8,%rbp
+   5d555:	48 89 d3             	mov    %rdx,%rbx
+   5d558:	4d 21 cc             	and    %r9,%r12
+   5d55b:	49 89 ee             	mov    %rbp,%r14
+   5d55e:	49 c1 e6 08          	shl    $0x8,%r14
+   5d562:	4d 89 e1             	mov    %r12,%r9
+   5d565:	49 c1 e1 1c          	shl    $0x1c,%r9
+   5d569:	4d 21 d4             	and    %r10,%r12
+   5d56c:	49 29 ee             	sub    %rbp,%r14
+   5d56f:	4d 09 cb             	or     %r9,%r11
+   5d572:	49 b9 f0 f0 f0 f0 0f 	movabs $0xf0f0f0ff0f0f0f0,%r9
+   5d579:	0f 0f 0f 
+   5d57c:	4d 21 dc             	and    %r11,%r12
+   5d57f:	4d 09 e9             	or     %r13,%r9
+   5d582:	c4 63 fb f0 e8 20    	rorx   $0x20,%rax,%r13
+   5d588:	49 21 cc             	and    %rcx,%r12
+   5d58b:	8b 0d af 75 05 00    	mov    0x575af(%rip),%ecx        # b4b40 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5d591:	49 21 c5             	and    %rax,%r13
+   5d594:	4d 21 cf             	and    %r9,%r15
+   5d597:	85 c9                	test   %ecx,%ecx
+   5d599:	0f 85 a9 01 00 00    	jne    5d748 <deft_reversi_engine::board::stability::null_window_upper+0x358>
+   5d59f:	48 bd 80 80 80 80 80 	movabs $0x8080808080808080,%rbp
+   5d5a6:	80 80 80 
+   5d5a9:	48 89 f1             	mov    %rsi,%rcx
+   5d5ac:	48 b8 81 40 20 10 08 	movabs $0x2040810204081,%rax
+   5d5b3:	04 02 00 
+   5d5b6:	49 89 f0             	mov    %rsi,%r8
+   5d5b9:	49 c1 e8 30          	shr    $0x30,%r8
+   5d5bd:	4c 8d 15 7c 75 04 00 	lea    0x4757c(%rip),%r10        # a4b40 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY>
+   5d5c4:	49 89 f9             	mov    %rdi,%r9
+   5d5c7:	49 c1 e9 38          	shr    $0x38,%r9
+   5d5cb:	44 0f b6 df          	movzbl %dil,%r11d
+   5d5cf:	48 89 da             	mov    %rbx,%rdx
+   5d5d2:	c4 c1 f9 6e cf       	vmovq  %r15,%xmm1
+   5d5d7:	c4 c1 f9 6e d4       	vmovq  %r12,%xmm2
+   5d5dc:	c4 c1 f9 6e c5       	vmovq  %r13,%xmm0
+   5d5e1:	48 21 e9             	and    %rbp,%rcx
+   5d5e4:	48 21 fd             	and    %rdi,%rbp
+   5d5e7:	41 81 e0 00 ff 00 00 	and    $0xff00,%r8d
+   5d5ee:	48 21 d7             	and    %rdx,%rdi
+   5d5f1:	c5 e9 6c c9          	vpunpcklqdq %xmm1,%xmm2,%xmm1
+   5d5f5:	c4 c1 f9 6e d6       	vmovq  %r14,%xmm2
+   5d5fa:	48 0f af c8          	imul   %rax,%rcx
+   5d5fe:	48 0f af e8          	imul   %rax,%rbp
+   5d602:	4d 01 d0             	add    %r10,%r8
+   5d605:	48 05 7f ff ff ff    	add    $0xffffffffffffff7f,%rax
+   5d60b:	c5 e9 6c c0          	vpunpcklqdq %xmm0,%xmm2,%xmm0
+   5d60f:	47 0f b6 04 01       	movzbl (%r9,%r8,1),%r8d
+   5d614:	41 89 f1             	mov    %esi,%r9d
+   5d617:	41 c1 e1 08          	shl    $0x8,%r9d
+   5d61b:	c4 e3 7d 38 c1 01    	vinserti128 $0x1,%xmm1,%ymm0,%ymm0
+   5d621:	c5 fd 6f 0d d7 89 fa 	vmovdqa -0x57629(%rip),%ymm1        # 6000 <__abi_tag+0x5d04>
+   5d628:	ff 
+   5d629:	45 0f b7 c9          	movzwl %r9w,%r9d
+   5d62d:	48 c1 e9 30          	shr    $0x30,%rcx
+   5d631:	4d 01 d1             	add    %r10,%r9
+   5d634:	48 c1 ed 38          	shr    $0x38,%rbp
+   5d638:	81 e1 00 ff 00 00    	and    $0xff00,%ecx
+   5d63e:	47 0f b6 0c 0b       	movzbl (%r11,%r9,1),%r9d
+   5d643:	49 89 f3             	mov    %rsi,%r11
+   5d646:	49 21 db             	and    %rbx,%r11
+   5d649:	48 bb 80 40 20 10 08 	movabs $0x102040810204080,%rbx
+   5d650:	04 02 01 
+   5d653:	4c 01 d1             	add    %r10,%rcx
+   5d656:	4c 0f af db          	imul   %rbx,%r11
+   5d65a:	48 0f af fb          	imul   %rbx,%rdi
+   5d65e:	0f b6 4c 0d 00       	movzbl 0x0(%rbp,%rcx,1),%ecx
+   5d663:	49 c1 e0 38          	shl    $0x38,%r8
+   5d667:	49 c1 eb 30          	shr    $0x30,%r11
+   5d66b:	48 c1 ef 38          	shr    $0x38,%rdi
+   5d66f:	41 81 e3 00 ff 00 00 	and    $0xff00,%r11d
+   5d676:	4d 01 d3             	add    %r10,%r11
+   5d679:	83 e1 7e             	and    $0x7e,%ecx
+   5d67c:	42 0f b6 3c 1f       	movzbl (%rdi,%r11,1),%edi
+   5d681:	49 bb 80 40 20 10 08 	movabs $0x40810204080,%r11
+   5d688:	04 00 00 
+   5d68b:	48 0f af c1          	imul   %rcx,%rax
+   5d68f:	48 b9 00 80 80 80 80 	movabs $0x80808080808000,%rcx
+   5d696:	80 80 00 
+   5d699:	48 21 c1             	and    %rax,%rcx
+   5d69c:	48 b8 00 7e 7e 7e 7e 	movabs $0x7e7e7e7e7e7e00,%rax
+   5d6a3:	7e 7e 00 
+   5d6a6:	48 21 f0             	and    %rsi,%rax
+   5d6a9:	83 e7 7e             	and    $0x7e,%edi
+   5d6ac:	49 21 c5             	and    %rax,%r13
+   5d6af:	4c 0f af df          	imul   %rdi,%r11
+   5d6b3:	48 bf 00 01 01 01 01 	movabs $0x1010101010100,%rdi
+   5d6ba:	01 01 00 
+   5d6bd:	4d 21 f5             	and    %r14,%r13
+   5d6c0:	4d 21 e5             	and    %r12,%r13
+   5d6c3:	4d 21 fd             	and    %r15,%r13
+   5d6c6:	4c 21 df             	and    %r11,%rdi
+   5d6c9:	4d 09 cd             	or     %r9,%r13
+   5d6cc:	4d 09 c5             	or     %r8,%r13
+   5d6cf:	49 01 fd             	add    %rdi,%r13
+   5d6d2:	49 01 cd             	add    %rcx,%r13
+   5d6d5:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+   5d6dc:	00 00 00 00 
+   5d6e0:	62 d2 fd 28 7c d5    	vpbroadcastq %r13,%ymm2
+   5d6e6:	4c 89 e9             	mov    %r13,%rcx
+   5d6e9:	c4 e2 ed 45 d9       	vpsrlvq %ymm1,%ymm2,%ymm3
+   5d6ee:	c4 e2 ed 47 d1       	vpsllvq %ymm1,%ymm2,%ymm2
+   5d6f3:	62 f3 fd 28 25 d3 fe 	vpternlogq $0xfe,%ymm3,%ymm0,%ymm2
+   5d6fa:	c4 e3 7d 39 d3 01    	vextracti128 $0x1,%ymm2,%xmm3
+   5d700:	c5 e9 db d3          	vpand  %xmm3,%xmm2,%xmm2
+   5d704:	c5 f9 70 da ee       	vpshufd $0xee,%xmm2,%xmm3
+   5d709:	c5 e9 db d3          	vpand  %xmm3,%xmm2,%xmm2
+   5d70d:	c4 c1 f9 7e d5       	vmovq  %xmm2,%r13
+   5d712:	49 21 c5             	and    %rax,%r13
+   5d715:	49 09 cd             	or     %rcx,%r13
+   5d718:	49 39 cd             	cmp    %rcx,%r13
+   5d71b:	75 c3                	jne    5d6e0 <deft_reversi_engine::board::stability::null_window_upper+0x2f0>
+   5d71d:	f3 48 0f b8 c1       	popcnt %rcx,%rax
+   5d722:	b9 40 00 00 00       	mov    $0x40,%ecx
+   5d727:	01 c0                	add    %eax,%eax
+   5d729:	29 c1                	sub    %eax,%ecx
+   5d72b:	31 c0                	xor    %eax,%eax
+   5d72d:	3b 4c 24 04          	cmp    0x4(%rsp),%ecx
+   5d731:	0f 9e c0             	setle  %al
+   5d734:	89 ca                	mov    %ecx,%edx
+   5d736:	48 83 c4 28          	add    $0x28,%rsp
+   5d73a:	5b                   	pop    %rbx
+   5d73b:	41 5c                	pop    %r12
+   5d73d:	41 5d                	pop    %r13
+   5d73f:	41 5e                	pop    %r14
+   5d741:	41 5f                	pop    %r15
+   5d743:	5d                   	pop    %rbp
+   5d744:	c5 f8 77             	vzeroupper
+   5d747:	c3                   	ret
+   5d748:	48 8d 05 f1 73 04 00 	lea    0x473f1(%rip),%rax        # a4b40 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY>
+   5d74f:	48 8d 4c 24 18       	lea    0x18(%rsp),%rcx
+   5d754:	48 89 74 24 08       	mov    %rsi,0x8(%rsp)
+   5d759:	4c 8d 05 78 50 04 00 	lea    0x45078(%rip),%r8        # a27d8 <__frame_dummy_init_array_entry+0x1d88>
+   5d760:	48 8d 54 24 20       	lea    0x20(%rsp),%rdx
+   5d765:	be 01 00 00 00       	mov    $0x1,%esi
+   5d76a:	48 89 7c 24 10       	mov    %rdi,0x10(%rsp)
+   5d76f:	48 89 44 24 18       	mov    %rax,0x18(%rsp)
+   5d774:	48 89 4c 24 20       	mov    %rcx,0x20(%rsp)
+   5d779:	48 8d 05 c0 73 05 00 	lea    0x573c0(%rip),%rax        # b4b40 <deft_reversi_engine::board::edge_stability::EDGE_STABILITY+0x10000>
+   5d780:	48 8d 0d f1 39 04 00 	lea    0x439f1(%rip),%rcx        # a1178 <__frame_dummy_init_array_entry+0x728>
+   5d787:	48 89 c7             	mov    %rax,%rdi
+   5d78a:	e8 f1 04 04 00       	call   9dc80 <<std::sys::sync::once::futex::Once>::call>
+   5d78f:	48 8b 7c 24 10       	mov    0x10(%rsp),%rdi
+   5d794:	48 8b 74 24 08       	mov    0x8(%rsp),%rsi
+   5d799:	e9 01 fe ff ff       	jmp    5d59f <deft_reversi_engine::board::stability::null_window_upper+0x1af>
+   5d79e:	48 8d 15 b3 42 04 00 	lea    0x442b3(%rip),%rdx        # a1a58 <__frame_dummy_init_array_entry+0x1008>
+   5d7a5:	bf 40 00 00 00       	mov    $0x40,%edi
+   5d7aa:	be 40 00 00 00       	mov    $0x40,%esi
+   5d7af:	e8 7d ff fc ff       	call   2d731 <core::panicking::panic_bounds_check>

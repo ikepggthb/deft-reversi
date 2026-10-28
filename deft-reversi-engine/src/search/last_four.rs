@@ -2,6 +2,8 @@
 //! The wrapper propagates cancellation before any caller can publish a bound.
 use super::*;
 const SCORE_MAX: i32 = 64;
+// All valid quadrant parity values fit in four bits.
+const UNKNOWN_PARITY: u8 = 16;
 struct LeafSearch<'a> {
     context: &'a mut Context,
     failed: bool,
@@ -15,6 +17,15 @@ impl LeafSearch<'_> {
 }
 impl Context {
     pub(super) fn last_four_score(&mut self, board: Board, alpha: i32) -> Result<i32, ()> {
+        self.last_four_score_with_parity(board, alpha, UNKNOWN_PARITY)
+    }
+    pub(super) fn last_four_score_with_parity(
+        &mut self,
+        board: Board,
+        alpha: i32,
+        parity: u8,
+    ) -> Result<i32, ()> {
+        debug_assert!(parity <= UNKNOWN_PARITY);
         let mut search = LeafSearch {
             context: self,
             failed: false,
@@ -23,11 +34,13 @@ impl Context {
             board.player_bits(),
             board.opponent_bits(),
             alpha,
+            parity,
             &mut search,
         );
         if search.failed { Err(()) } else { Ok(score) }
     }
 }
+#[inline(always)]
 fn solve_score_1_empties(player: u64, alpha: i32, pos: usize) -> i32 {
     debug_assert!(pos < 64);
 
@@ -69,7 +82,7 @@ fn solve_score_1_empties(player: u64, alpha: i32, pos: usize) -> i32 {
 ///
 /// 参考: <https://eukaryote.hateblo.jp/entry/2020/04/26/031246>
 #[rustfmt::skip]
-const NEIGHBOUR: [u64; 64] = [
+pub(super) const NEIGHBOUR: [u64; 64] = [
     0x0000000000000302, 0x0000000000000604, 0x0000000000000e0a, 0x0000000000001c14, 0x0000000000003828, 0x0000000000007050, 0x0000000000006020, 0x000000000000c040,
     0x0000000000030200, 0x0000000000060400, 0x00000000000e0a00, 0x00000000001c1400, 0x0000000000382800, 0x0000000000705000, 0x0000000000602000, 0x0000000000c04000,
     0x0000000003020300, 0x0000000006040600, 0x000000000e0a0e00, 0x000000001c141c00, 0x0000000038283800, 0x0000000070507000, 0x0000000060206000, 0x00000000c040c000,
@@ -354,6 +367,7 @@ fn solve_score_4_empties(
     player: u64,
     opponent: u64,
     alpha: i32,
+    known_parity: u8,
     search: &mut LeafSearch<'_>,
 ) -> i32 {
     // The caller has already entered this four-empty node.
@@ -371,7 +385,11 @@ fn solve_score_4_empties(
     let mut x3 = empties.trailing_zeros() as usize;
     empties &= empties - 1;
     let mut x4 = empties.trailing_zeros() as usize;
-    let parity = final_parity(player, opponent);
+    let parity = if known_parity < UNKNOWN_PARITY {
+        i32::from(known_parity)
+    } else {
+        final_parity(player, opponent)
+    };
     let beta = alpha + 1;
 
     if parity & QUADRANT_ID[x1] == 0 {
@@ -480,5 +498,62 @@ fn solve_score_4_empties(
     } else {
         search.context.stats.leaves += 1;
         solve_score_bits(player, 4)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn last_one_bounds_match_full_board_rules() {
+        let mut random = 0x0123456789abcdefu64;
+        for square in 0..64 {
+            let empty = 1u64 << square;
+            for _ in 0..128 {
+                random ^= random << 13;
+                random ^= random >> 7;
+                random ^= random << 17;
+                let player = random & !empty;
+                let board = Board::from_bits(player, !player & !empty).unwrap();
+                let expected = if board.get_moves() != 0 {
+                    -board.board_after_move(empty).final_score()
+                } else if board.get_opponent_moves() != 0 {
+                    board
+                        .board_after_pass()
+                        .board_after_move(empty)
+                        .final_score()
+                } else {
+                    board.final_score()
+                };
+                let base = 2 * player.count_ones() as i32 - 62;
+                for alpha in [
+                    -65,
+                    -31,
+                    -1,
+                    0,
+                    31,
+                    63,
+                    64,
+                    base - 1,
+                    base,
+                    expected - 1,
+                    expected,
+                ] {
+                    let actual = solve_score_1_empties(player, alpha, square);
+                    if expected <= alpha {
+                        assert!(
+                            expected <= actual && actual <= alpha,
+                            "upper: board={board:?} alpha={alpha} actual={actual} expected={expected}"
+                        );
+                    } else {
+                        assert!(
+                            alpha < actual && actual <= expected,
+                            "lower: board={board:?} alpha={alpha} actual={actual} expected={expected}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

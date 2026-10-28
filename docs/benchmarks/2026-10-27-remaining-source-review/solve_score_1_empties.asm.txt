@@ -1,0 +1,156 @@
+
+/workspace/deft-tail-target/release/examples/solve:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000000652b0 <deft_reversi_engine::search::last_four::solve_score_1_empties>:
+   652b0:	push   %rbp
+   652b1:	push   %r15
+   652b3:	push   %r14
+   652b5:	push   %r13
+   652b7:	push   %r12
+   652b9:	push   %rbx
+   652ba:	push   %rax
+   652bb:	cmp    $0x40,%rdx
+   652bf:	jae    65473 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1c3>
+   652c5:	lea    (%rdx,%rdx,2),%r8
+   652c9:	lea    -0x55dd0(%rip),%r9        # f500 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x34fc>
+   652d0:	shl    $0x4,%r8
+   652d4:	mov    (%r8,%r9,1),%rcx
+   652d8:	pext   %rcx,%rdi,%rax
+   652dd:	cmp    $0xff,%rax
+   652e3:	ja     654a4 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1f4>
+   652e9:	add    %r8,%r9
+   652ec:	mov    0x10(%r9),%r14
+   652f0:	pext   %r14,%rdi,%r12
+   652f5:	cmp    $0xff,%r12
+   652fc:	ja     6548a <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1da>
+   65302:	mov    0x20(%r9),%rbx
+   65306:	pext   %rbx,%rdi,%r15
+   6530b:	cmp    $0xff,%r15
+   65312:	ja     654a1 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1f1>
+   65318:	mov    0x8(%r9),%r11
+   6531c:	mov    %edx,%r8d
+   6531f:	and    $0x7,%r8d
+   65323:	and    $0x38,%edx
+   65326:	mov    0x18(%r9),%r10
+   6532a:	lea    -0x56631(%rip),%r13        # ed00 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x2cfc>
+   65331:	mov    0x28(%r9),%r9
+   65335:	shrx   %rdx,%rdi,%rbp
+   6533a:	shl    $0x8,%r8d
+   6533e:	add    %r13,%r8
+   65341:	movzbl %bpl,%ebp
+   65345:	movzbl (%r8,%rbp,1),%ebp
+   6534a:	shl    $0x8,%r11
+   6534e:	shl    $0x8,%r10
+   65352:	shl    $0x8,%r9
+   65356:	add    %r13,%r11
+   65359:	add    %r13,%r10
+   6535c:	add    %r13,%r9
+   6535f:	movzbl (%r11,%rax,1),%eax
+   65364:	movzbl (%r15,%r9,1),%r15d
+   65369:	add    %ebp,%eax
+   6536b:	movzbl (%r10,%r12,1),%ebp
+   65370:	popcnt %rdi,%r12
+   65375:	add    %eax,%ebp
+   65377:	lea    (%r12,%r12,1),%eax
+   6537b:	add    %ebp,%r15d
+   6537e:	je     6538a <deft_reversi_engine::search::last_four::solve_score_1_empties+0xda>
+   65380:	lea    -0x3e(%rax,%r15,1),%eax
+   65385:	jmp    65464 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1b4>
+   6538a:	lea    -0x40(%rax),%ebp
+   6538d:	cmp    $0x20,%r12d
+   65391:	jae    653f9 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x149>
+   65393:	cmp    %esi,%ebp
+   65395:	jle    65462 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1b2>
+   6539b:	not    %rdi
+   6539e:	pext   %rcx,%rdi,%rax
+   653a3:	cmp    $0xff,%rax
+   653a9:	ja     654a4 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1f4>
+   653af:	pext   %r14,%rdi,%rcx
+   653b4:	cmp    $0xff,%rcx
+   653bb:	ja     654b8 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x208>
+   653c1:	pext   %rbx,%rdi,%rsi
+   653c6:	cmp    $0xff,%rsi
+   653cd:	ja     654e6 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x236>
+   653d3:	shrx   %rdx,%rdi,%rdx
+   653d8:	movzbl (%r11,%rax,1),%eax
+   653dd:	movzbl (%r10,%rcx,1),%ecx
+   653e2:	movzbl %dl,%edx
+   653e5:	movzbl (%r8,%rdx,1),%edx
+   653ea:	add    %edx,%eax
+   653ec:	movzbl (%r9,%rsi,1),%edx
+   653f1:	add    %eax,%ecx
+   653f3:	add    %ecx,%edx
+   653f5:	sub    %edx,%ebp
+   653f7:	jmp    65462 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1b2>
+   653f9:	add    $0xffffffc2,%eax
+   653fc:	cmp    %esi,%eax
+   653fe:	jle    65464 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x1b4>
+   65400:	not    %rdi
+   65403:	pext   %rcx,%rdi,%rcx
+   65408:	cmp    $0xff,%rcx
+   6540f:	ja     65500 <deft_reversi_engine::search::last_four::solve_score_1_empties+0x250>
+   65415:	pext   %r14,%rdi,%rsi
+   6541a:	cmp    $0xff,%rsi
+   65421:	ja     654cf <deft_reversi_engine::search::last_four::solve_score_1_empties+0x21f>
+   65427:	pext   %rbx,%rdi,%rbx
+   6542c:	cmp    $0xff,%rbx
+   65433:	ja     654fd <deft_reversi_engine::search::last_four::solve_score_1_empties+0x24d>
+   65439:	shrx   %rdx,%rdi,%rdx
+   6543e:	movzbl (%r11,%rcx,1),%ecx
+   65443:	movzbl (%r10,%rsi,1),%edi
+   65448:	movzbl (%r9,%rbx,1),%esi
+   6544d:	movzbl %dl,%edx
+   65450:	movzbl (%r8,%rdx,1),%edx
+   65455:	add    %edx,%ecx
+   65457:	add    %ecx,%edi
+   65459:	add    %edi,%esi
+   6545b:	sub    %esi,%ebp
+   6545d:	test   %esi,%esi
+   6545f:	cmove  %eax,%ebp
+   65462:	mov    %ebp,%eax
+   65464:	add    $0x8,%rsp
+   65468:	pop    %rbx
+   65469:	pop    %r12
+   6546b:	pop    %r13
+   6546d:	pop    %r14
+   6546f:	pop    %r15
+   65471:	pop    %rbp
+   65472:	ret
+   65473:	lea    0x3d04e(%rip),%rax        # a24c8 <__frame_dummy_init_array_entry+0x11e8>
+   6547a:	mov    $0x40,%esi
+   6547f:	mov    %rdx,%rdi
+   65482:	mov    %rax,%rdx
+   65485:	call   2db51 <core::panicking::panic_bounds_check>
+   6548a:	mov    %r12,%rax
+   6548d:	lea    0x3d04c(%rip),%rdx        # a24e0 <__frame_dummy_init_array_entry+0x1200>
+   65494:	mov    $0x100,%esi
+   65499:	mov    %rax,%rdi
+   6549c:	call   2db51 <core::panicking::panic_bounds_check>
+   654a1:	mov    %r15,%rax
+   654a4:	lea    0x3d035(%rip),%rdx        # a24e0 <__frame_dummy_init_array_entry+0x1200>
+   654ab:	mov    $0x100,%esi
+   654b0:	mov    %rax,%rdi
+   654b3:	call   2db51 <core::panicking::panic_bounds_check>
+   654b8:	mov    %rcx,%rax
+   654bb:	lea    0x3d01e(%rip),%rdx        # a24e0 <__frame_dummy_init_array_entry+0x1200>
+   654c2:	mov    $0x100,%esi
+   654c7:	mov    %rax,%rdi
+   654ca:	call   2db51 <core::panicking::panic_bounds_check>
+   654cf:	mov    %rsi,%rcx
+   654d2:	lea    0x3d007(%rip),%rdx        # a24e0 <__frame_dummy_init_array_entry+0x1200>
+   654d9:	mov    $0x100,%esi
+   654de:	mov    %rcx,%rdi
+   654e1:	call   2db51 <core::panicking::panic_bounds_check>
+   654e6:	mov    %rsi,%rax
+   654e9:	lea    0x3cff0(%rip),%rdx        # a24e0 <__frame_dummy_init_array_entry+0x1200>
+   654f0:	mov    $0x100,%esi
+   654f5:	mov    %rax,%rdi
+   654f8:	call   2db51 <core::panicking::panic_bounds_check>
+   654fd:	mov    %rbx,%rcx
+   65500:	lea    0x3cfd9(%rip),%rdx        # a24e0 <__frame_dummy_init_array_entry+0x1200>
+   65507:	mov    $0x100,%esi
+   6550c:	mov    %rcx,%rdi
+   6550f:	call   2db51 <core::panicking::panic_bounds_check>

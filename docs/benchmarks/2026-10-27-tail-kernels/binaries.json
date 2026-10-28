@@ -1,0 +1,20 @@
+{
+  "base": {
+    "binary_sha256": "e5fa52375574872a9091746f27e1f8fdb71b588897f731739d2c677cb06f28c1"
+  },
+  "reuse": {
+    "binary_sha256": "d01d172df75309db642969e9ef34681a5524aa1c4b53a16c11ec6b9ea796e7a5"
+  },
+  "direct": {
+    "binary_sha256": "fa6ddf9cde496b5ffaaa9c4b1f8b926c2b241e216b27214824589b300960745b"
+  },
+  "parity": {
+    "binary_sha256": "bf2847f806f0810bb3e151cb00b40d16ae062cc37fdc109a390719ce1350eca0"
+  },
+  "lazy": {
+    "binary_sha256": "54244ef6557eafa0923a2e9855b3976505b1e294a103748243042e767c3c5e2a"
+  },
+  "lean": {
+    "binary_sha256": "ff17c4b535fed25e8955c73c207ad85ebef4d8e1e2cdd131d6b702f6cbf4e207"
+  }
+}

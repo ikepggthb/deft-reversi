@@ -1,3 +1,5 @@
+#[cfg(feature = "endgame-pattern-ordering")]
+mod end_ordering;
 mod pattern;
 use crate::Board;
 use pattern::definition::{
@@ -68,7 +70,29 @@ impl PatternModel {
     pub fn evaluate(&self, board: &Board) -> i32 {
         self.evaluate_state(board, &EvalState::from_board(*board))
     }
+    #[cfg(test)]
+    pub(crate) fn nonzero_for_tests() -> Self {
+        let mut model = Self::zero();
+        for (phase, values) in Arc::get_mut(&mut model.phases)
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            for (i, weight) in values.weights.iter_mut().enumerate() {
+                *weight = ((i * 37 + phase * 19) % 257) as i16 - 128;
+            }
+            for (i, weight) in values.mobility.iter_mut().enumerate() {
+                *weight = (i as i16 - 64) * 3;
+            }
+            values.bias = phase as i16 - 30;
+        }
+        model
+    }
     pub(crate) fn evaluate_state(&self, board: &Board, state: &EvalState) -> i32 {
+        self.evaluate_state_and_moves(board, state).0
+    }
+    /// Return the legal moves already computed for the model's mobility term.
+    pub(crate) fn evaluate_state_and_moves(&self, board: &Board, state: &EvalState) -> (i32, u64) {
         let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
         let weights = &self.phases[phase];
         let mut raw = i32::from(weights.bias);
@@ -79,10 +103,11 @@ impl PatternModel {
             }
             offset += size;
         }
-        let mobility = 64 + board.get_moves().count_ones() as i32
-            - board.get_opponent_moves().count_ones() as i32;
+        let moves = board.get_moves();
+        let mobility =
+            64 + moves.count_ones() as i32 - board.get_opponent_moves().count_ones() as i32;
         raw += i32::from(weights.mobility[mobility as usize]);
-        ((raw + raw.signum() * 64) / 128).clamp(-64, 64)
+        (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
     }
     /// DPR2 version 1: LE i16, 60 phases, 11 fixed-schema tables, mobility, bias.
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
@@ -223,6 +248,11 @@ mod tests {
                 }
                 let bit = moves & moves.wrapping_neg();
                 let flips = board.flip_mask(bit);
+                #[cfg(feature = "endgame-pattern-ordering")]
+                assert_eq!(
+                    state.ordering_child_indices(bit, flips),
+                    EvalState::from_board(board.after_known_move(bit, flips)).current,
+                );
                 state = state.played(bit, flips);
                 board = board.after_known_move(bit, flips);
             }

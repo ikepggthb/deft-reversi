@@ -1,0 +1,82 @@
+{
+  "rounds": 1,
+  "round_offset": 5,
+  "all_six_orders_per_position": false,
+  "cpu": 0,
+  "mode": "exact",
+  "threads": 1,
+  "tt_mib": 256,
+  "legacy_main_mpc": true,
+  "execution_orders": [
+    [
+      "base",
+      "core",
+      "legal"
+    ],
+    [
+      "base",
+      "legal",
+      "core"
+    ],
+    [
+      "core",
+      "base",
+      "legal"
+    ],
+    [
+      "core",
+      "legal",
+      "base"
+    ],
+    [
+      "legal",
+      "base",
+      "core"
+    ],
+    [
+      "legal",
+      "core",
+      "base"
+    ]
+  ],
+  "round_seconds": {
+    "base": [
+      25.567449761
+    ],
+    "core": [
+      24.631323011
+    ],
+    "legal": [
+      24.306261597
+    ]
+  },
+  "seconds_median": {
+    "base": 25.567449761,
+    "core": 24.631323011,
+    "legal": 24.306261597
+  },
+  "paired_time_ratios_vs_base": {
+    "core": [
+      0.9633859943502091
+    ],
+    "legal": [
+      0.9506721172510608
+    ]
+  },
+  "paired_time_ratio_median_vs_base": {
+    "core": 0.9633859943502091,
+    "legal": 0.9506721172510608
+  },
+  "paired_time_ratios_legal_vs_core": [
+    0.9868029251268869
+  ],
+  "paired_time_ratio_median_legal_vs_core": 0.9868029251268869,
+  "all_scores_match": true,
+  "binary_sha256": {
+    "base": "ff17c4b535fed25e8955c73c207ad85ebef4d8e1e2cdd131d6b702f6cbf4e207",
+    "core": "d75409b3fd8300f0688e0e9f336808c48f6c0db87c660431ac93a3c1a064dc55",
+    "legal": "9bf7a21ccc4850f3827ac16f4182769db3e1197cb5103153e6baf33fb5e9fa7d"
+  },
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "f855c6181c11b539faed53125be1aff85b8c16b77817a036313533a43e2f1d16"
+}

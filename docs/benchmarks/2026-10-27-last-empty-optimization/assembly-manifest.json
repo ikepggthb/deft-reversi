@@ -1,0 +1,134 @@
+{
+  "base": {
+    "sha256": "ff17c4b535fed25e8955c73c207ad85ebef4d8e1e2cdd131d6b702f6cbf4e207",
+    "symbols": {
+      "solve_score_1_empties": {
+        "address": "0x00000000000652b0",
+        "size_bytes": 612,
+        "assembly": "base-solve_score_1_empties.asm.txt"
+      },
+      "solve_score_2_empties": {
+        "address": "0x0000000000064750",
+        "size_bytes": 2897,
+        "assembly": "base-solve_score_2_empties.asm.txt"
+      },
+      "stability::null_window_upper": {
+        "address": "0x000000000005d810",
+        "size_bytes": 1482,
+        "assembly": "base-stability_null_window_upper.asm.txt"
+      }
+    }
+  },
+  "range": {
+    "sha256": "b8f9dc8cecfdeefe5538c86686d3ee7e75151c8f449691bf9a7e2afb9c64c435",
+    "symbols": {
+      "solve_score_1_empties": {
+        "address": "0x0000000000065130",
+        "size_bytes": 398,
+        "assembly": "range-solve_score_1_empties.asm.txt"
+      },
+      "solve_score_2_empties": {
+        "address": "0x00000000000645d0",
+        "size_bytes": 2897,
+        "assembly": "range-solve_score_2_empties.asm.txt"
+      },
+      "stability::null_window_upper": {
+        "address": "0x000000000005d800",
+        "size_bytes": 1482,
+        "assembly": "range-stability_null_window_upper.asm.txt"
+      }
+    }
+  },
+  "aligned": {
+    "sha256": "688a6fde810a09cad79626c31f9dea3ccea7455cb736b614b7dabb94ea715092",
+    "symbols": {
+      "solve_score_1_empties": {
+        "address": "0x0000000000064d20",
+        "size_bytes": 376,
+        "assembly": "aligned-solve_score_1_empties.asm.txt"
+      },
+      "solve_score_2_empties": {
+        "address": "0x00000000000641c0",
+        "size_bytes": 2897,
+        "assembly": "aligned-solve_score_2_empties.asm.txt"
+      },
+      "stability::null_window_upper": {
+        "address": "0x000000000005d400",
+        "size_bytes": 1482,
+        "assembly": "aligned-stability_null_window_upper.asm.txt"
+      }
+    }
+  },
+  "once": {
+    "sha256": "098793ce67977db0804e14aaa320ba5b494953f3572b4d7b6467adf917b8c39a",
+    "symbols": {
+      "solve_score_1_empties": {
+        "address": "0x0000000000064b10",
+        "size_bytes": 376,
+        "assembly": "once-solve_score_1_empties.asm.txt"
+      },
+      "solve_score_2_empties": {
+        "address": "0x0000000000063fb0",
+        "size_bytes": 2897,
+        "assembly": "once-solve_score_2_empties.asm.txt"
+      },
+      "stability::null_window_upper": {
+        "address": "0x000000000005d3f0",
+        "size_bytes": 964,
+        "assembly": "once-stability_null_window_upper.asm.txt"
+      }
+    }
+  },
+  "inline": {
+    "sha256": "99f26a9701b006a0ea54ab1dda29df936893e4cbf26d2e5ea541ccf76fab22e9",
+    "symbols": {
+      "solve_score_1_empties": {
+        "address": "0x0000000000064b10",
+        "size_bytes": 376,
+        "assembly": "inline-solve_score_1_empties.asm.txt"
+      },
+      "solve_score_2_empties": {
+        "address": "0x0000000000063fb0",
+        "size_bytes": 2897,
+        "assembly": "inline-solve_score_2_empties.asm.txt"
+      },
+      "stability::null_window_upper": {
+        "address": "0x000000000005d3f0",
+        "size_bytes": 964,
+        "assembly": "inline-stability_null_window_upper.asm.txt"
+      }
+    }
+  },
+  "always": {
+    "sha256": "d75409b3fd8300f0688e0e9f336808c48f6c0db87c660431ac93a3c1a064dc55",
+    "symbols": {
+      "solve_score_1_empties": null,
+      "solve_score_2_empties": {
+        "address": "0x0000000000063f70",
+        "size_bytes": 4038,
+        "assembly": "always-solve_score_2_empties.asm.txt"
+      },
+      "stability::null_window_upper": {
+        "address": "0x000000000005d3b0",
+        "size_bytes": 964,
+        "assembly": "always-stability_null_window_upper.asm.txt"
+      }
+    }
+  },
+  "legal-cut": {
+    "sha256": "9bf7a21ccc4850f3827ac16f4182769db3e1197cb5103153e6baf33fb5e9fa7d",
+    "symbols": {
+      "solve_score_1_empties": null,
+      "solve_score_2_empties": {
+        "address": "0x0000000000063f70",
+        "size_bytes": 5127,
+        "assembly": "legal-cut-solve_score_2_empties.asm.txt"
+      },
+      "stability::null_window_upper": {
+        "address": "0x000000000005d3b0",
+        "size_bytes": 964,
+        "assembly": "legal-cut-stability_null_window_upper.asm.txt"
+      }
+    }
+  }
+}

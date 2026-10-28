@@ -1,0 +1,42 @@
+--- a/deft-reversi-engine/src/search/tail.rs
++++ b/deft-reversi-engine/src/search/tail.rs
+@@ -127,7 +127,12 @@
+         let score = if empties > TAIL_EMPTIES {
+             self.ordered_endgame(board, alpha, beta, known_moves, &mut best_move)?
+         } else {
+-            self.tail_score_impl(board, alpha, beta)?
++            self.tail_moves_score(
++                board,
++                alpha,
++                beta,
++                known_moves.unwrap_or_else(|| board.get_moves()),
++            )?
+         };
+         let (lower, upper) = if score >= beta {
+             (score as i8, probe.upper)
+@@ -349,7 +354,7 @@
+         }
+         probe
+     }
+-    fn tail_score_impl(&mut self, board: Board, mut alpha: i32, beta: i32) -> Result<i32, ()> {
++    fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, ()> {
+         let empty = !(board.player_bits() | board.opponent_bits());
+         let count = empty.count_ones() as u8;
+         if count == 4 {
+@@ -368,7 +373,15 @@
+                 false,
+             );
+         }
+-        let mut moves = board.get_moves();
++        self.tail_moves_score(board, alpha, beta, board.get_moves())
++    }
++    fn tail_moves_score(
++        &mut self,
++        board: Board,
++        mut alpha: i32,
++        beta: i32,
++        mut moves: u64,
++    ) -> Result<i32, ()> {
+         if moves == 0 {
+             if board.get_opponent_moves() == 0 {
+                 self.stats.leaves += 1;

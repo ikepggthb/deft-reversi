@@ -1,0 +1,36 @@
+{
+  "completed_rounds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "round_seconds": {
+    "base": [
+      22.5035,
+      23.891678,
+      25.469476,
+      24.584746,
+      24.376628
+    ],
+    "core": [
+      21.961889,
+      22.413778,
+      24.21764,
+      23.865497,
+      23.916854
+    ],
+    "legal": [
+      22.095559,
+      23.952183,
+      24.676008,
+      23.343808,
+      23.858056
+    ]
+  },
+  "precision_seconds": 1e-06,
+  "provenance": "Completed-round lines returned by the original exec session; detailed rows were held in memory and lost when stdout disconnected during round six. Each line was printed only after all 30 solves completed and the script verified Completed and matching scores.",
+  "lost_raw_rows": 150,
+  "excluded": "Original incomplete sixth round. Round six is repeated separately with immediate row checkpoints."
+}

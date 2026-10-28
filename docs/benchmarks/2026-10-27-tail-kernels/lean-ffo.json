@@ -1,0 +1,42 @@
+{
+  "cpu": 0,
+  "rounds": 5,
+  "mode": "exact",
+  "repeat_in_process": 1,
+  "tt_mib": 256,
+  "legacy_main_mpc": true,
+  "seconds_median": {
+    "before": 3.5584184739999998,
+    "after": 3.357358376
+  },
+  "round_seconds": {
+    "before": [
+      3.5584184739999998,
+      3.334836976,
+      3.3172685379999995,
+      3.59321039,
+      3.820888042
+    ],
+    "after": [
+      3.6281068789999997,
+      3.2474676010000003,
+      3.312182737,
+      3.357358376,
+      3.744989102
+    ]
+  },
+  "paired_time_ratios": [
+    1.019584094875065,
+    0.9738010056777061,
+    0.9984668708783324,
+    0.9343617577594726,
+    0.9801357854075536
+  ],
+  "paired_time_ratio_median": 0.9801357854075536,
+  "speedup": 1.0598863974240205,
+  "all_scores_match": true,
+  "before_sha256": "54244ef6557eafa0923a2e9855b3976505b1e294a103748243042e767c3c5e2a",
+  "after_sha256": "ff17c4b535fed25e8955c73c207ad85ebef4d8e1e2cdd131d6b702f6cbf4e207",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "d474590c49afc7e73243f489dfe3d726743950a28d0d792eb79ae1449f65ff21"
+}

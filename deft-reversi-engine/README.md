@@ -72,6 +72,8 @@ let result = engine.search(request)?;
 
 DPR2は重みだけの互換形式として引き続き使用できる。変換ツール `tools/convert_pattern_v2.py` も残すが、通常の利用・性能比較では元のモデルファイルを使う。
 
+旧 `main` の `data/eval/eval.json` は `tools/convert_legacy_eval.py` で変換できる。変換済みの旧モデルには `engine.set_legacy_main_mpc()?` を明示して `main` のMPC係数表を使える。表はモデルに埋め込まれていないため、別のモデルには自動適用しない。切替時にはTTを無効化し、`mpc_config()` は `None` を返す。例のsolveでは `--legacy-main-mpc` を指定する。
+
 ## 検証
 
 まず1ビルドジョブ・1テストスレッドで通常検証する。
@@ -114,6 +116,24 @@ python3 tools/bench_rewrite_parallel.py --binary target/release/examples/solve -
 1/2/4/8/20スレッドを5周、往復順で測る。スレッド数ごとのCPU割当を固定し、全局面のスコア一致を確認する。
 プロセス・TTは各実行で新しくし、モデル読み込みや初期化は探索時間に含めない。TTは1回の実行内の局面間では再利用する。
 生データとバイナリ・モデル・局面のハッシュ、CPU割当、中央値を保存する。
+
+## 終盤探索の最適化と実験
+
+既定の汎用探索では、子TTのETCを確認してからTT候補を他候補の評価前に探索する。局所TTの照会結果は子へ渡し、同じ照会を繰り返さない。選択率タグと中断時の保存条件は維持する。
+
+末端のゼロ窓探索では、6マス側で既知の合法手を再利用し、5マス側は空きマスから合法手を順に確認して専用4マス探索へ直接つなぐ。6→5→4マスの四分割parityは差分更新する。手順付け規則とノード上限・中断処理は維持している。[末端カーネルの比較](../docs/benchmarks/2026-10-27-tail-kernels/README.md)に段階的な試作と測定条件を記録した。
+
+最終1マスでは、BMI2の抽出結果を8ビットに限定し、縦・斜線の表引き行を共通化して、不要な範囲検査と位置情報の読出しを削減した。最終1マスを2マス側へインライン展開し、安定石表のLazyLock参照は判定あたり1回にまとめる。[最終1マスの比較](../docs/benchmarks/2026-10-27-last-empty-optimization/README.md)に機械語の確認、正しさの検証、採用・保留した試作と測定上の制約を記録した。
+
+評価と手順付けでは、通常評価がmobility項のために計算した合法手を共有する。既定の完全読みでは、ゼロ窓の14→13マスで不要な評価状態の更新を省き、広い窓で再探索する場合に状態を作る。[合法手共有と評価状態更新の比較](../docs/benchmarks/2026-10-27-ordering-reuse/README.md)に2方式の試作、正しさの検証、局面別の性能差を記録した。
+
+`--features endgame-pattern-ordering` は、残り11〜13マスのゼロ窓探索にパターン評価を追加する実験用機能。7〜10マスは合法手数とparityによる軽い手順付けを使う。既存モデルの44パターンを使い、特徴量を差分更新し、候補評価では子の片側の特徴量だけを計算する。終盤手順付け専用に学習した係数ではなく、既定では無効。比較と試作の経緯は[測定レポート](../docs/benchmarks/2026-10-27-endgame-implementation/README.md)を参照。
+
+```sh
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --example solve --features endgame-pattern-ordering
+```
+
+現deft・Edax・Egaroucidの通常SIMD版／AVX-512版を、FFO40〜49・1コア・主TT約839万項目で比較した。[3エンジンの比較](../docs/benchmarks/2026-10-27-three-engines/README.md)に8周分の時間、局面別の差、評価データ・ハッシュ・計時条件を記録した。
 
 ## 対象外と制約
 

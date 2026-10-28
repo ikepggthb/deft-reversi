@@ -106,6 +106,16 @@ impl Engine {
         self.mpc = Some(config);
         Ok(())
     }
+    /// Use the MPC table from the legacy main-branch evaluator. This is an
+    /// explicit opt-in for models converted from main's `data/eval/eval.json`.
+    pub fn set_legacy_main_mpc(&mut self) -> Result<(), EngineError> {
+        let calibration = indexed_rules(crate::mpc::legacy_main_rules());
+        self.clear_tt()?;
+        self.calibration = calibration;
+        self.mpc = None;
+        self.cache_sigma = None;
+        Ok(())
+    }
     pub fn clear_tt(&mut self) -> Result<(), EngineError> {
         let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
         let pv_table =

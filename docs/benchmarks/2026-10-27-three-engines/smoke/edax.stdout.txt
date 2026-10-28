@@ -1,0 +1,8 @@
+Edax version 4.7 Oct 27 2026 02:40:48 for Linux
+copyright 1998 - 2026 Richard Delorme, Toshihiko Okuhara
+
+ # | depth|score|       time   |  nodes (N)  |   N/s    | principal variation
+---+------+-----+--------------+-------------+----------+---------------------
+  1|   20   +38        0:00.201      10105232   50274786 a2 B1 c1 PA b6 C7 a7
+---+------+-----+--------------+-------------+----------+---------------------
+/tmp/deft-three-engines-202610: 10105232 nodes in  0:00.201 (cpu =  0:00.210) (50274786 nodes/s).

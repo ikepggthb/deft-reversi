@@ -1,0 +1,3 @@
+|          Level|          Depth|           Move|          Score|           Time|          Nodes|            NPS|
+|             60|        20@100%|             a2|            +38|  000:00:00.275|        9539933|       34690665|
+total 9539933 nodes in 0.275s NPS 34690665

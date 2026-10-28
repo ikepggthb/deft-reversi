@@ -7,7 +7,15 @@ use std::{
     time::Duration,
 };
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut args = std::env::args().skip(1);
+    let mut legacy_mpc = false;
+    let mut args = std::env::args().skip(1).filter(|arg| {
+        if arg == "--legacy-main-mpc" {
+            legacy_mpc = true;
+            false
+        } else {
+            true
+        }
+    });
     let model = args
         .next()
         .ok_or("usage: solve MODEL POSITIONS [exact|DEPTH] [THREADS] [TT_MiB] [MILLISECONDS]")?;
@@ -29,6 +37,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("unexpected argument".into());
     }
     let mut engine = Engine::from_file(model, options)?;
+    if legacy_mpc {
+        engine.set_legacy_main_mpc()?;
+    }
     println!(
         "position\tscore\taction\tmode\tdepth\tnodes\tleaves\tsplits\tjobs\thandoffs\tjoin_seconds\tseconds\tstop"
     );

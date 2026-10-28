@@ -34,10 +34,15 @@ impl Context {
             )
         };
         let state = parent.state.played(bit, flips);
-        let value = if depth == 0 {
-            self.evaluate(child, &state)
+        let (value, moves) = if depth <= 1 {
+            if depth == 1 {
+                // Preserve the depth-zero ordering_search visit and hard budget.
+                self.enter()?;
+            }
+            self.stats.evaluations += 1;
+            self.runtime.model.evaluate_state_and_moves(&child, &state)
         } else {
-            self.ordering_search(
+            let value = self.ordering_search(
                 Position {
                     board: child,
                     state,
@@ -45,9 +50,9 @@ impl Context {
                 low,
                 high,
                 depth - 1,
-            )?
+            )?;
+            (value, child.get_moves())
         };
-        let moves = child.get_moves();
         let mobility =
             -2 * moves.count_ones() as i32 - (moves & 0x8100000000000081).count_ones() as i32;
         let presence = if depth > 2 && self.runtime.table.get(child).is_some() {
@@ -75,10 +80,14 @@ impl Context {
             _ => 3,
         };
         let state = parent.state.played(bit, flips);
-        let value = if ordering_depth == 0 {
-            self.evaluate(child, &state)
+        let (value, legal) = if ordering_depth <= 1 {
+            if ordering_depth == 1 {
+                self.enter()?;
+            }
+            self.stats.evaluations += 1;
+            self.runtime.model.evaluate_state_and_moves(&child, &state)
         } else {
-            self.ordering_search(
+            let value = self.ordering_search(
                 Position {
                     board: child,
                     state,
@@ -86,9 +95,9 @@ impl Context {
                 (-alpha - 6).max(-64),
                 (-alpha + 16).min(64),
                 ordering_depth - 1,
-            )?
+            )?;
+            (value, child.get_moves())
         };
-        let legal = child.get_moves();
         Ok(-value
             - 2 * legal.count_ones() as i32
             - (legal & 0x8100000000000081).count_ones() as i32)
@@ -141,5 +150,41 @@ impl Context {
             alpha = alpha.max(score);
         }
         Ok(best)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::session::test_context;
+    use super::*;
+
+    #[test]
+    fn static_ordering_preserves_visits_and_hard_budget() {
+        let board = Board::new();
+        let bit = board.get_moves() & board.get_moves().wrapping_neg();
+        let flips = board.flip_mask(bit);
+        let child = board.after_known_move(bit, flips);
+        let parent = Position {
+            board,
+            state: EvalState::from_board(board),
+        };
+        for (depth, visits) in [(4, 0), (7, 1)] {
+            let mut context = test_context();
+            context
+                .midgame_ordering(parent, child, bit, flips, 0, depth)
+                .unwrap();
+            assert_eq!(context.stats.nodes, visits);
+            assert_eq!(context.stats.evaluations, 1);
+
+            let mut limited = test_context();
+            Arc::get_mut(&mut limited.runtime)
+                .unwrap()
+                .control
+                .node_limit = Some(0);
+            let result = limited.midgame_ordering(parent, child, bit, flips, 0, depth);
+            assert_eq!(result.is_err(), visits != 0);
+            assert_eq!(limited.stats.nodes, 0);
+            assert_eq!(limited.stats.evaluations, u64::from(visits == 0));
+        }
     }
 }
