@@ -30,6 +30,8 @@ jobs:
           mkdir -p /tmp/deft-pages
           cp -a deft-reversi-web/app/. /tmp/deft-pages/
           rm -rf /tmp/deft-pages/test /tmp/deft-pages/assets/deft_eval_2024-01-27.json.gz
+          rm -f /tmp/deft-pages/pkg/.gitignore
+          test -s /tmp/deft-pages/pkg/deft_reversi_wasm_engine_bg.wasm
           touch /tmp/deft-pages/.nojekyll
       - uses: peaceiris/actions-gh-pages@v4
         with:
