@@ -1,0 +1,7 @@
+round=1 ef4bf4c=5.1302 sd4=5.0991
+round=2 ef4bf4c=5.1540 sd4=5.1142
+round=3 ef4bf4c=5.1417 sd4=5.1106
+round=4 ef4bf4c=5.1405 sd4=5.1066
+       ef4bf4c: median 5.1411s ratio 1.0000 faster 0/4 nodes [608627562, 608663128, 608670686, 609029711]
+           sd4: median 5.1086s ratio 0.9937 faster 4/4 nodes [607056457, 607231300, 607732403, 607906577]
+exit=0

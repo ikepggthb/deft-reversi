@@ -1,0 +1,304 @@
+diff --git a/deft-reversi-engine/src/parallel.rs b/deft-reversi-engine/src/parallel.rs
+index 70cd75f..b833b86 100644
+--- a/deft-reversi-engine/src/parallel.rs
++++ b/deft-reversi-engine/src/parallel.rs
+@@ -181,7 +181,8 @@ impl Helper {
+         let _state = lock(&self.state);
+         self.ready.notify_all();
+     }
+-    pub(crate) fn wait(&self, complete: impl Fn() -> bool) {
++    /// Runs offered jobs, then jobs from `steal`, until `complete` holds.
++    pub(crate) fn wait(&self, complete: impl Fn() -> bool, mut steal: impl FnMut() -> Option<Job>) {
+         loop {
+             let mut state = lock(&self.state);
+             if let Some(job) = state.job.take() {
+@@ -197,6 +198,16 @@ impl Helper {
+                 state.closed = true;
+                 return;
+             }
++            drop(state);
++            if let Some(job) = steal() {
++                job();
++                continue;
++            }
++            let state = lock(&self.state);
++            if state.job.is_some() || complete() {
++                continue;
++            }
++            let mut state = state;
+             state.waiting = true;
+             self.available.store(true, Ordering::Release);
+             let (mut state, _) = self
+@@ -218,7 +229,8 @@ mod tests {
+         let done = Arc::new(AtomicBool::new(false));
+         let waiter = helper.clone();
+         let finished = done.clone();
+-        let thread = thread::spawn(move || waiter.wait(|| finished.load(Ordering::Acquire)));
++        let thread =
++            thread::spawn(move || waiter.wait(|| finished.load(Ordering::Acquire), || None));
+         let deadline = std::time::Instant::now() + Duration::from_secs(2);
+         let mut job: Job = Box::new(move || {
+             done.store(true, Ordering::Release);
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index 5dee1c6..4932af3 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -264,6 +264,7 @@ impl Engine {
+             // Exact requests use selective stages only to seed the tables;
+             // results below this bound are exact and reused by the final stage.
+             cache_epoch: self.cache_epoch,
++            open_splits: Mutex::new(Vec::new()),
+             endgame_probcut_min: if request.mode == SearchMode::Exact {
+                 endgame::EXACT_PREPARATION_PROBCUT_MIN
+             } else {
+diff --git a/deft-reversi-engine/src/search/session.rs b/deft-reversi-engine/src/search/session.rs
+index fc6dcee..fa2b9d2 100644
+--- a/deft-reversi-engine/src/search/session.rs
++++ b/deft-reversi-engine/src/search/session.rs
+@@ -57,6 +57,8 @@ pub(super) struct Runtime {
+     pub(super) endgame_probcut_min: u8,
+     /// Threads reuse the local endgame cache they keep only under this epoch.
+     pub(super) cache_epoch: u64,
++    /// Split points with moves left, for threads that become idle.
++    pub(super) open_splits: Mutex<Vec<Arc<super::ybwc::Split>>>,
+ }
+ impl Runtime {
+     pub(super) fn sigma(&self) -> Option<f64> {
+@@ -190,6 +192,7 @@ pub(super) fn test_context() -> Context {
+         rules: Arc::from([]),
+         endgame_probcut_min: super::endgame::PROBCUT_MIN_EMPTIES,
+         cache_epoch: 0,
++        open_splits: Mutex::new(Vec::new()),
+     });
+     Context::new(runtime, Vec::new(), Vec::new())
+ }
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index f9bd802..3211b5d 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -1,5 +1,16 @@
+ use super::tree::pick_best;
+ use super::*;
++use std::cell::Cell;
++
++const PULL_WORKERS: bool = true;
++const PULL_MASTERS: bool = false;
++
++thread_local! {
++    /// How many joins this thread is inside. Jobs a joining master runs may
++    /// only lead to its own descendants, so only threads outside any join
++    /// look for open split points on their own.
++    static JOINS: Cell<u32> = const { Cell::new(0) };
++}
+ 
+ impl Context {
+     pub(super) fn split(
+@@ -39,6 +50,7 @@ impl Context {
+             cut,
+             helper,
+             active: AtomicUsize::new(0),
++            open: AtomicBool::new(true),
+             ancestors,
+             cuts,
+         });
+@@ -55,17 +67,30 @@ impl Context {
+         if spawned != 0 {
+             self.stats.splits += 1;
+         }
++        // Threads that become idle later find the point here.
++        parallel::lock(&self.runtime.open_splits).push(point.clone());
+         // The master searches too, then only accepts descendant work while joining.
+         let old_ancestors = std::mem::replace(&mut self.ancestors, point.ancestors.clone());
+         let old_cuts = std::mem::replace(&mut self.cuts, point.cuts.clone());
+         self.split_loop(&point);
++        point.close(&self.runtime);
+         let join_start = Instant::now();
+         // Jobs this thread runs while joining share its cache.
+         let epoch = self.runtime.cache_epoch;
+         std::mem::take(&mut self.end_cache).put_thread(epoch);
+-        point
+-            .helper
+-            .wait(|| point.active.load(Ordering::Acquire) == 0);
++        JOINS.set(JOINS.get() + 1);
++        point.helper.wait(
++            || point.active.load(Ordering::Acquire) == 0,
++            || {
++                let claimed = if PULL_MASTERS {
++                    self.runtime.claim_open(Some(&point.helper))
++                } else {
++                    None
++                };
++                claimed.map(|open| helper_job(self.runtime.clone(), open))
++            },
++        );
++        JOINS.set(JOINS.get() - 1);
+         self.end_cache = EndgameCache::take_thread(epoch);
+         self.stats.join_time += join_start.elapsed();
+         self.ancestors = old_ancestors;
+@@ -81,31 +106,11 @@ impl Context {
+     fn offer_helpers(&mut self, point: &Arc<Split>, wanted: usize) -> usize {
+         let mut spawned = 0;
+         for _ in 0..wanted {
+-            let runtime = self.runtime.clone();
+-            let task_point = point.clone();
+             // The offering thread is the master before its join or a helper
+             // still counted here, so `active` cannot reach zero in between.
+             point.active.fetch_add(1, Ordering::AcqRel);
+             self.runtime.pending.fetch_add(1, Ordering::AcqRel);
+-            let job: parallel::Job = Box::new(move || {
+-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+-                    let mut context = Context::new(
+-                        runtime.clone(),
+-                        task_point.ancestors.clone(),
+-                        task_point.cuts.clone(),
+-                    );
+-                    context.end_cache = EndgameCache::take_thread(runtime.cache_epoch);
+-                    context.stats.helper_jobs += 1;
+-                    context.split_loop(&task_point);
+-                    std::mem::take(&mut context.end_cache).put_thread(runtime.cache_epoch);
+-                }));
+-                if result.is_err() {
+-                    runtime.control.reason.store(4, Ordering::Release);
+-                }
+-                task_point.active.fetch_sub(1, Ordering::AcqRel);
+-                task_point.helper.wake();
+-                runtime.finish_pending();
+-            });
++            let job = helper_job(self.runtime.clone(), point.clone());
+             match self.runtime.pool.offer(job, &self.ancestors) {
+                 Ok(dispatch) => {
+                     spawned += 1;
+@@ -137,12 +142,15 @@ impl Context {
+                     pick_best(&mut state.candidates, index);
+                     let candidate = state.candidates[index];
+                     state.next += 1;
+-                    Some((candidate, state.alpha))
++                    Some((candidate, state.alpha, state.next == state.candidates.len()))
+                 }
+             };
+-            let Some((candidate, alpha)) = next else {
++            let Some((candidate, alpha, last)) = next else {
+                 break;
+             };
++            if last {
++                point.close(&self.runtime);
++            }
+             let Ok(Some(line)) = self.sibling(
+                 point.position,
+                 candidate,
+@@ -167,6 +175,8 @@ impl Context {
+             state.alpha = state.alpha.max(state.best.score);
+             if state.alpha >= point.beta {
+                 point.cut.store(true, Ordering::Release);
++                drop(state);
++                point.close(&self.runtime);
+                 self.stats.beta_cuts += 1;
+                 point.helper.wake();
+                 break;
+@@ -181,6 +191,61 @@ impl Context {
+         }
+     }
+ }
++impl Runtime {
++    /// Joins the open split point with the most depth left (one below
++    /// `within`, if given), counted as one of its helper jobs.
++    fn claim_open(&self, within: Option<&Arc<Helper>>) -> Option<Arc<Split>> {
++        let open = parallel::lock(&self.open_splits);
++        let point = open
++            .iter()
++            .filter(|point| {
++                point.open.load(Ordering::Acquire)
++                    && within
++                        .is_none_or(|helper| point.ancestors.iter().any(|a| Arc::ptr_eq(a, helper)))
++            })
++            .max_by_key(|point| point.depth)?
++            .clone();
++        // Counted under the lock: a point leaves the list before its master
++        // joins, so the master waits for this job too.
++        point.active.fetch_add(1, Ordering::AcqRel);
++        self.pending.fetch_add(1, Ordering::AcqRel);
++        Some(point)
++    }
++}
++/// A job that searches remaining moves of `point`, whose `active` and the
++/// runtime's `pending` already count it. A thread outside any join then
++/// keeps taking open split points before it goes idle.
++fn helper_job(runtime: Arc<Runtime>, point: Arc<Split>) -> parallel::Job {
++    Box::new(move || {
++        let mut point = point;
++        loop {
++            help(&runtime, &point);
++            if JOINS.get() != 0 || !PULL_WORKERS {
++                break;
++            }
++            let Some(next) = runtime.claim_open(None) else {
++                break;
++            };
++            point = next;
++        }
++    })
++}
++fn help(runtime: &Arc<Runtime>, point: &Arc<Split>) {
++    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++        let mut context =
++            Context::new(runtime.clone(), point.ancestors.clone(), point.cuts.clone());
++        context.end_cache = EndgameCache::take_thread(runtime.cache_epoch);
++        context.stats.helper_jobs += 1;
++        context.split_loop(point);
++        std::mem::take(&mut context.end_cache).put_thread(runtime.cache_epoch);
++    }));
++    if result.is_err() {
++        runtime.control.reason.store(4, Ordering::Release);
++    }
++    point.active.fetch_sub(1, Ordering::AcqRel);
++    point.helper.wake();
++    runtime.finish_pending();
++}
+ struct SplitState {
+     candidates: Vec<Candidate>,
+     next: usize,
+@@ -189,7 +254,7 @@ struct SplitState {
+ }
+ // Cloned for every helper job; keep the reference counts off the shared state.
+ #[repr(align(128))]
+-struct Split {
++pub(super) struct Split {
+     position: Position,
+     root_bounds: Option<Arc<Mutex<[root::RootBound; 64]>>>,
+     state: Mutex<SplitState>,
+@@ -200,10 +265,23 @@ struct Split {
+     cut: Arc<Padded<AtomicBool>>,
+     helper: Arc<Helper>,
+     active: AtomicUsize,
++    /// Whether moves remain to be taken; cleared before the point leaves
++    /// `Runtime::open_splits`.
++    open: AtomicBool,
+     /// What the helper jobs of this point inherit: `helper` and `cut` last.
+     ancestors: Vec<Arc<Helper>>,
+     cuts: Vec<Arc<Padded<AtomicBool>>>,
+ }
++impl Split {
++    fn close(self: &Arc<Self>, runtime: &Runtime) {
++        if self.open.swap(false, Ordering::AcqRel) {
++            let mut open = parallel::lock(&runtime.open_splits);
++            if let Some(index) = open.iter().position(|point| Arc::ptr_eq(point, self)) {
++                open.swap_remove(index);
++            }
++        }
++    }
++}
+ 
+ struct JoinOnUnwind {
+     point: Arc<Split>,
+@@ -214,9 +292,10 @@ impl Drop for JoinOnUnwind {
+         if std::thread::panicking() {
+             self.runtime.control.reason.store(4, Ordering::Release);
+             self.point.cut.store(true, Ordering::Release);
++            self.point.close(&self.runtime);
+             self.point
+                 .helper
+-                .wait(|| self.point.active.load(Ordering::Acquire) == 0);
++                .wait(|| self.point.active.load(Ordering::Acquire) == 0, || None);
+         }
+     }
+ }

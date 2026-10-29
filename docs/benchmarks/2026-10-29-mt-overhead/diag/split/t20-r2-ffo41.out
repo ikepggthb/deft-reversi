@@ -1,0 +1,2 @@
+position	score	action	mode	depth	nodes	leaves	splits	jobs	handoffs	join_seconds	seconds	stop
+1	0	H4	Exact	22	24015862	6877156	2336	4915	513	0.085116950	0.040728659	Completed

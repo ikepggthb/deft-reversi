@@ -1,0 +1,194 @@
+diff --git a/deft-reversi-engine/src/parallel.rs b/deft-reversi-engine/src/parallel.rs
+index af1d395..70cd75f 100644
+--- a/deft-reversi-engine/src/parallel.rs
++++ b/deft-reversi-engine/src/parallel.rs
+@@ -176,6 +176,9 @@ impl Helper {
+         }
+     }
+     pub(crate) fn wake(&self) {
++        // Under the lock: `wait` checks completion and starts waiting while
++        // holding it, so the notification cannot fall between the two.
++        let _state = lock(&self.state);
+         self.ready.notify_all();
+     }
+     pub(crate) fn wait(&self, complete: impl Fn() -> bool) {
+diff --git a/deft-reversi-engine/src/search/session.rs b/deft-reversi-engine/src/search/session.rs
+index 0294179..fc6dcee 100644
+--- a/deft-reversi-engine/src/search/session.rs
++++ b/deft-reversi-engine/src/search/session.rs
+@@ -70,6 +70,15 @@ impl Runtime {
+         self.quality.store(quality, Ordering::Relaxed);
+     }
+ 
++    /// Ends one helper job counted in `pending`. The last one notifies under
++    /// the lock `drain` holds between its check and its wait, so the wakeup
++    /// cannot fall between the two.
++    pub(super) fn finish_pending(&self) {
++        if self.pending.fetch_sub(1, Ordering::AcqRel) == 1 {
++            let _guard = parallel::lock(&self.pending_lock);
++            self.pending_ready.notify_all();
++        }
++    }
+     pub(super) fn drain(&self) {
+         let mut guard = parallel::lock(&self.pending_lock);
+         while self.pending.load(Ordering::Acquire) != 0 {
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index d00e365..f9bd802 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -17,6 +17,12 @@ impl Context {
+             exact,
+             probcut: allow_probcut,
+         } = spec;
++        let cut = Arc::new(Padded(AtomicBool::new(false)));
++        let helper = Arc::new(Helper::new());
++        let mut ancestors = self.ancestors.clone();
++        ancestors.push(helper.clone());
++        let mut cuts = self.cuts.clone();
++        cuts.push(cut.clone());
+         let point = Arc::new(Split {
+             position,
+             root_bounds,
+@@ -30,9 +36,11 @@ impl Context {
+             depth,
+             exact,
+             allow_probcut,
+-            cut: Arc::new(Padded(AtomicBool::new(false))),
+-            helper: Arc::new(Helper::new()),
++            cut,
++            helper,
+             active: AtomicUsize::new(0),
++            ancestors,
++            cuts,
+         });
+         // Unwind must join descendants too: a queued handoff can otherwise retain
+         // its own ancestor slot with nobody left to execute it.
+@@ -40,24 +48,52 @@ impl Context {
+             point: point.clone(),
+             runtime: self.runtime.clone(),
+         };
+-        let mut ancestors = self.ancestors.clone();
+-        ancestors.push(point.helper.clone());
+-        let mut cuts = self.cuts.clone();
+-        cuts.push(point.cut.clone());
+-        let mut spawned = 0;
+         // Offer every remaining move but the master's own; only idle threads
+         // accept, so a split takes as many helpers as are free and useful.
+         let wanted = parallel::lock(&point.state).candidates.len() - 1;
++        let spawned = self.offer_helpers(&point, wanted);
++        if spawned != 0 {
++            self.stats.splits += 1;
++        }
++        // The master searches too, then only accepts descendant work while joining.
++        let old_ancestors = std::mem::replace(&mut self.ancestors, point.ancestors.clone());
++        let old_cuts = std::mem::replace(&mut self.cuts, point.cuts.clone());
++        self.split_loop(&point);
++        let join_start = Instant::now();
++        // Jobs this thread runs while joining share its cache.
++        let epoch = self.runtime.cache_epoch;
++        std::mem::take(&mut self.end_cache).put_thread(epoch);
++        point
++            .helper
++            .wait(|| point.active.load(Ordering::Acquire) == 0);
++        self.end_cache = EndgameCache::take_thread(epoch);
++        self.stats.join_time += join_start.elapsed();
++        self.ancestors = old_ancestors;
++        self.cuts = old_cuts;
++        if self.aborted() {
++            return Err(());
++        }
++        let result = parallel::lock(&point.state).best.clone();
++        Ok(result)
++    }
++    /// Offers up to `wanted` helper jobs for `point` to idle threads and
++    /// returns how many were taken.
++    fn offer_helpers(&mut self, point: &Arc<Split>, wanted: usize) -> usize {
++        let mut spawned = 0;
+         for _ in 0..wanted {
+             let runtime = self.runtime.clone();
+             let task_point = point.clone();
+-            let task_ancestors = ancestors.clone();
+-            let task_cuts = cuts.clone();
++            // The offering thread is the master before its join or a helper
++            // still counted here, so `active` cannot reach zero in between.
+             point.active.fetch_add(1, Ordering::AcqRel);
+             self.runtime.pending.fetch_add(1, Ordering::AcqRel);
+             let job: parallel::Job = Box::new(move || {
+                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+-                    let mut context = Context::new(runtime.clone(), task_ancestors, task_cuts);
++                    let mut context = Context::new(
++                        runtime.clone(),
++                        task_point.ancestors.clone(),
++                        task_point.cuts.clone(),
++                    );
+                     context.end_cache = EndgameCache::take_thread(runtime.cache_epoch);
+                     context.stats.helper_jobs += 1;
+                     context.split_loop(&task_point);
+@@ -68,8 +104,7 @@ impl Context {
+                 }
+                 task_point.active.fetch_sub(1, Ordering::AcqRel);
+                 task_point.helper.wake();
+-                runtime.pending.fetch_sub(1, Ordering::AcqRel);
+-                runtime.pending_ready.notify_all();
++                runtime.finish_pending();
+             });
+             match self.runtime.pool.offer(job, &self.ancestors) {
+                 Ok(dispatch) => {
+@@ -86,31 +121,9 @@ impl Context {
+                 }
+             }
+         }
+-        if spawned != 0 {
+-            self.stats.splits += 1;
+-        }
+-        // The master searches too, then only accepts descendant work while joining.
+-        let old_ancestors = std::mem::replace(&mut self.ancestors, ancestors);
+-        let old_cuts = std::mem::replace(&mut self.cuts, cuts);
+-        self.split_loop(&point);
+-        let join_start = Instant::now();
+-        // Jobs this thread runs while joining share its cache.
+-        let epoch = self.runtime.cache_epoch;
+-        std::mem::take(&mut self.end_cache).put_thread(epoch);
+-        point
+-            .helper
+-            .wait(|| point.active.load(Ordering::Acquire) == 0);
+-        self.end_cache = EndgameCache::take_thread(epoch);
+-        self.stats.join_time += join_start.elapsed();
+-        self.ancestors = old_ancestors;
+-        self.cuts = old_cuts;
+-        if self.aborted() {
+-            return Err(());
+-        }
+-        let result = parallel::lock(&point.state).best.clone();
+-        Ok(result)
++        spawned
+     }
+-    fn split_loop(&mut self, point: &Split) {
++    fn split_loop(&mut self, point: &Arc<Split>) {
+         loop {
+             if self.aborted() {
+                 break;
+@@ -158,6 +171,13 @@ impl Context {
+                 point.helper.wake();
+                 break;
+             }
++            // Threads that became idle after the split can still take the
++            // remaining moves, like the reference's per-move node_split.
++            let remaining = state.candidates.len() - state.next;
++            drop(state);
++            if remaining >= 2 && self.runtime.pool.can_offer(&self.ancestors) {
++                self.offer_helpers(point, remaining - 1);
++            }
+         }
+     }
+ }
+@@ -180,6 +200,9 @@ struct Split {
+     cut: Arc<Padded<AtomicBool>>,
+     helper: Arc<Helper>,
+     active: AtomicUsize,
++    /// What the helper jobs of this point inherit: `helper` and `cut` last.
++    ancestors: Vec<Arc<Helper>>,
++    cuts: Vec<Arc<Padded<AtomicBool>>>,
+ }
+ 
+ struct JoinOnUnwind {
