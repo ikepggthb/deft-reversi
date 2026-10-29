@@ -1,0 +1,25 @@
+name: WASM
+on:
+  push:
+    branches: [develop/v2, feature/web-v2]
+  pull_request:
+    branches: [develop/v2]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: browser-actions/setup-chrome@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - run: cargo test --workspace --locked
+      - run: wasm-pack build deft-reversi-wasm --target web --release --locked
+      - run: wasm-pack test deft-reversi-wasm --node --locked
+      - run: wasm-pack test deft-reversi-wasm --headless --chrome --locked

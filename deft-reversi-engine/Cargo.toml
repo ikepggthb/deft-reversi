@@ -18,3 +18,6 @@ bincode = "1.3"
 [dev-dependencies]
 # The tests build their own models and calibrations.
 deft_reversi_engine = { path = ".", features = ["tuning"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1"

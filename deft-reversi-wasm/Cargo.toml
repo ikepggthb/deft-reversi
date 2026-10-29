@@ -1,0 +1,19 @@
+[package]
+name = "deft-reversi-wasm"
+version = "2.0.0"
+edition = "2024"
+readme = "README.md"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+deft_reversi_engine = { path = "../deft-reversi-engine" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+[dev-dependencies]
+deft_reversi_engine = { path = "../deft-reversi-engine", features = ["tuning"] }
+wasm-bindgen-test = "0.3"
+serde_json = "1"

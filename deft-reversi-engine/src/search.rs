@@ -11,8 +11,13 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 mod api;
 pub use api::*;

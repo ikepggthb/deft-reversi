@@ -1,5 +1,5 @@
 [workspace]
-members = ["deft-reversi-engine", "deft-reversi-book"]
+members = ["deft-reversi-engine", "deft-reversi-book", "deft-reversi-wasm"]
 # These applications still use the legacy API and require migration.
 exclude = ["deft-reversi-cli", "deft-reversi-web", "deft-reversi-learn"]
 resolver = "2"
