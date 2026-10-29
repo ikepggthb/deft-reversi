@@ -605,3 +605,30 @@ fn next_selectivity(current: u8, target: u8, empties: u8) -> u8 {
         next.min(target)
     }
 }
+
+impl Engine {
+    /// Writes the evaluation weights in the DPR2 format. With
+    /// `write_analysis_settings`, this identifies analyses that are comparable,
+    /// for example to tag the values stored in an opening book.
+    pub fn write_evaluation_model(&self, out: impl std::io::Write) -> std::io::Result<()> {
+        self.model.write_to(out)
+    }
+
+    /// Serialize the effective analysis settings in a stable order.
+    /// Includes the compiled evaluation variant and expanded calibration rules.
+    pub fn write_analysis_settings(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
+        out.write_all(&[u8::from(cfg!(feature = "endgame-pattern-ordering"))])?;
+        for rule in self.calibration.iter().flatten() {
+            out.write_all(&[
+                u8::from(rule.exact),
+                rule.depth,
+                rule.empties,
+                rule.shallow_depth,
+            ])?;
+            for value in [rule.slope, rule.intercept, rule.deviation] {
+                out.write_all(&value.to_bits().to_le_bytes())?;
+            }
+        }
+        Ok(())
+    }
+}

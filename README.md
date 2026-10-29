@@ -3,6 +3,7 @@
 オセロの探索エンジン。現在の開発対象はネイティブ向けのRustライブラリです。
 
 - [エンジンのAPI・設計・実行方法](deft-reversi-engine/README.md)
+- [対局用bookの参照・生成・更新](deft-reversi-book/README.md)
 - [リライト計画と移行範囲](docs/rewrite-plan.md)
 - [レビュー後の修正と性能確認](docs/benchmarks/2026-10-27-review-fixes/README.md)
 - [終盤探索の比較と差分調査](docs/benchmarks/2026-10-24-regression-investigation/README.md)

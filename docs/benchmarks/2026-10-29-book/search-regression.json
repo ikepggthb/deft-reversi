@@ -1,0 +1,13 @@
+{
+  "baseline_commit": "527c906",
+  "baseline": "docs/benchmarks/2026-10-28-pull-comparison/results.tsv round=1 version=after",
+  "cases": 10,
+  "fresh_engine_per_case": true,
+  "threads": 1,
+  "tt_mib": 256,
+  "calibration": "default embedded, no legacy-main-mpc override",
+  "all_scores_actions_depths_nodes_leaves_stop_match": true,
+  "total_nodes": 627055807,
+  "solve_sha256": "4d2df396ffc22956a83c3ae7ad4409cd4d5743dc6cf477e2c1f7430b85bc0c90",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069"
+}

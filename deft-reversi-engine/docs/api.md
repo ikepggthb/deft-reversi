@@ -33,7 +33,7 @@ let square = Square::from_xy(5, 4); // x が列 a〜h、y が行 1〜8（0 始�
 
 `Moves` は合法手の集合で、`for square in moves` で列挙できる。`len`・`is_empty`・`contains(square)`・`bits()` を持つ。
 
-`Board` も同じ操作（`new`・`from_bits`・`legal_moves`・`flips`・`play`・`is_terminal`・`empty_count`・`final_score`・`player_bits`・`opponent_bits`）を持つ。色を扱わない呼び出し側や、盤面を自前で管理する呼び出し側のためのもの。
+`Board` も同じ操作（`new`・`from_bits`・`legal_moves`・`flips`・`play`・`must_pass`・`is_terminal`・`empty_count`・`final_score`・`player_bits`・`opponent_bits`）を持つ。色を扱わない呼び出し側や、盤面を自前で管理する呼び出し側のためのもの。定石などの対称形を扱う呼び出し側のために、`symmetries()`（回転・反転の8通り）と `canonical()`（その最小形）も持つ。
 
 ## エンジン
 
@@ -44,7 +44,11 @@ let mut engine = Engine::new(model, EngineOptions::default().threads(8).tt_mib(5
 engine.clear_tt()?;                 // 新しい対局の始まりなど
 engine.set_model(other_model)?;     // 置換表も無効にする
 engine.metadata();                  // モデルのメタデータ（あれば）
+engine.write_evaluation_model(out)?;   // 評価の重み（DPR2）
+engine.write_analysis_settings(out)?;  // 実際に使う MPC 校正
 ```
+
+最後の2つは、同じ条件で求めた値どうしかを見分けるためのもの。定石の値に付ける識別情報（`deft_reversi_book::analysis_identity`）はこれから作る。
 
 `EngineOptions` の既定値は 1 スレッド・256 MiB。スレッド数は呼び出し側のスレッドを含む。
 
@@ -56,6 +60,7 @@ let request = SearchRequest::new(Goal::Level(18))
     .node_limit(1_000_000_000)
     .all_moves();                   // 全合法手の値も求める（時間は数倍かかる）
 let stop = request.stop_handle();   // 別スレッドから止める
+let batch = SearchRequest::new(Goal::Depth(12)).with_stop(stop.clone());  // 1つのハンドルで複数の探索を止める
 ```
 
 | `Goal` | 意味 |
@@ -115,4 +120,4 @@ worker.with(|engine| engine.clear_tt())?;           // 探索中なら終わる�
 
 - 持ち時間の配分。エンジンは1回の探索の `time_limit` と停止だけを持つ。
 - 対局の履歴・undo・棋譜。`Position::play` を重ねて作る。
-- 定石。
+- 定石。別クレート `deft-reversi-book` が、定石の参照・生成・着手の選択を提供する。定石に使える手が無いときは、呼び出し側がこのエンジンで探索する。

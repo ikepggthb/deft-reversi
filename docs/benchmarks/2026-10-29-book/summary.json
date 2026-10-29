@@ -1,0 +1,10 @@
+{
+  "directory": "/workspace/deft-book-smoke-unybnd0t",
+  "positions": 4,
+  "candidates": 9,
+  "independently_checked_candidate_scores": 9,
+  "all_scores_match_coordinate_exhaustive": true,
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "book_sha256": "f9e093d553d60530e744cc1840edba4f54d42f5232b6261b1ec6df2aa914746a",
+  "book_bytes": 348
+}

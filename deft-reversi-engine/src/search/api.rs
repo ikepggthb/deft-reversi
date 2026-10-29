@@ -157,6 +157,12 @@ impl SearchRequest {
         self.all_moves = true;
         self
     }
+    /// Stops on `stop` instead of a handle of its own, so that one handle
+    /// can stop several searches, such as all those of a batch job.
+    pub fn with_stop(mut self, stop: StopHandle) -> Self {
+        self.stop = stop;
+        self
+    }
     pub fn stop_handle(&self) -> StopHandle {
         self.stop.clone()
     }

@@ -1,0 +1,150 @@
+   Compiling deft_reversi_engine v2.0.0 (/workspace/deft-reversi/deft-reversi-engine)
+    Finished `release` profile [optimized] target(s) in 1m 31s
+     Running unittests src/lib.rs (/workspace/deft-book-target/release/deps/deft_reversi_engine-705f485194f24b0c)
+
+running 50 tests
+test board::bitboard::tests::canonical_is_idempotent ... ok
+test board::bitboard::tests::canonical_matches_independent_reference_implementation ... ok
+test board::bitboard::tests::canonical_uses_player_then_opponent_for_ordering ... ok
+test board::bitboard::tests::default_returns_the_same_position_as_new ... ok
+test board::bitboard::tests::each_initial_move_flips_the_expected_stone ... ok
+test board::bitboard::tests::empty_and_full_positions_have_no_moves ... ok
+test board::bitboard::tests::every_symmetry_has_the_same_canonical_board ... ok
+test board::bitboard::tests::initial_position_has_four_expected_moves ... ok
+test board::bitboard::tests::move_generation_does_not_wrap_across_board_edges ... ok
+test board::bitboard::tests::new_returns_the_initial_position ... ok
+test board::bitboard::tests::pass_flips_no_stones ... ok
+test board::bitboard::tests::test_transpose ... ok
+test board::bitboard::tests::test_horizontal_mirror ... ok
+test board::bitboard::tests::test_vertical_mirror ... ok
+test board::last::tests::matches_full_flip_for_each_last_square ... ok
+test board::stability::tests::null_window_upper_is_a_sound_fail_low_bound ... ok
+test board::stability::tests::stability_bounds_contain_exhaustive_result ... ok
+test book::format::tests::unknown_optional_sections_round_trip_and_required_sections_are_rejected ... ok
+test book::format::tests::valid_checksum_does_not_bypass_semantic_validation ... ok
+test evaluation::pattern::definition::tests::builds_all_patterns_with_the_expected_number_of_squares ... ok
+test evaluation::pattern::definition::tests::generated_coordinates_match_the_previous_hand_written_table ... ok
+test evaluation::pattern::definition::tests::unused_coordinate_slots_contain_the_sentinel ... ok
+test evaluation::score_tests::phase_mobility_and_signed_rounding ... ok
+test evaluation::tests::differential_matches_refresh_through_games ... ok
+test evaluation::tests::schema_tables_fit_u16 ... ok
+test model::tests::mpc_settings_reject_invalid_depth_tables_and_preserve_signed_regression ... ok
+test board::edge_stability::tests::compile_time_table_matches_reference_recursion ... ok
+test mpc::legacy_tests::main_final_table_boundaries_and_reused_coefficients ... ok
+test parallel::tests::waiting_ancestor_executes_descendant_job ... ok
+test search::endgame::last_four::tests::last_one_bounds_match_full_board_rules ... ok
+test search::endgame::local_tt::tests::separated_color_swaps_do_not_systematically_alias ... ok
+test search::endgame::tests::carried_parity_matches_board_regions_through_moves_and_passes ... ok
+test search::endgame::tests::child_tt_cut_saves_the_cutting_move ... ok
+test search::endgame::tests::five_empty_kernel_matches_exhaustive_for_both_turns_and_boundary_windows ... ok
+test search::endgame::tests::probe_snapshot_survives_replacement_and_rejects_other_quality ... ok
+test search::endgame::tests::score_tail_preserves_upper_and_lower_bounds ... ok
+test search::endgame::tests::selective_stage_caches_results_below_probcut_as_exact ... ok
+test search::level::tests::reference_level_boundaries_and_opening_correction ... ok
+test search::ordering::tests::static_ordering_preserves_visits_and_hard_budget ... ok
+test search::root::tests::root_bounds_combine_research_and_reset_between_iterations ... ok
+test search::tree::tt_tests::child_tt_cut_precedes_tt_move_search ... ok
+test search::tree::tt_tests::forced_move_skips_ordering_evaluation ... ok
+test search::tree::tt_tests::thirteen_empty_research_matches_eager_evaluation_state ... ok
+test search::tree::tt_tests::tt_move_cuts_before_other_moves_are_evaluated ... ok
+test search::tree::tt_tests::wide_etc_retains_the_largest_skipped_upper_bound ... ok
+test search::tree::tt_tests::wide_window_narrowing_combines_complementary_bounds ... ok
+test search::tree::tt_tests::wide_window_tt_cuts_require_matching_depth_mode_and_selectivity ... ok
+test transposition::concurrent_tests::concurrent_snapshots_match_their_board ... ok
+test transposition::tests::layout_and_bound_merge ... ok
+test model::tests::reference_binary_v3_v4_and_json_load_weights_metadata_and_mpc_together ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.06s
+
+     Running unittests src/bin/book.rs (/workspace/deft-book-target/release/deps/book-c7593804bff3c680)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/book.rs (/workspace/deft-book-target/release/deps/book-1807c9070fdccfa0)
+
+running 24 tests
+test checkpoint_preserves_the_current_popped_job ... ok
+test corruption_truncation_memory_limits_and_failed_save_are_safe ... ok
+test an_inactive_registered_branch_is_skipped_and_can_reactivate ... ok
+test editor_and_model_management_do_not_change_search_results_or_node_counts ... ok
+test external_stop_and_explicit_budget_validation ... ok
+test forced_pass_and_terminal_round_trip ... ok
+test generation_tracks_side_widths_and_persists_contexts_without_duplicate_nodes ... ok
+test managed_memory_limit_keeps_a_resumable_workspace ... ok
+test manual_evidence_is_separate_and_not_overwritten_by_generation ... ok
+test model_change_requires_explicit_retarget_and_preserves_solved_evidence ... ok
+test node_budget_stops_without_publishing_partial_stage_and_resume_finishes ... ok
+test position_budget_keeps_unexpanded_frontier_for_resume ... ok
+test random_selection_is_seeded_and_stays_within_loss ... ok
+test removing_a_link_invalidates_derived_parent_and_repair_is_idempotent ... ok
+test snapshot_is_shareable_and_lookup_has_bounded_storage ... ok
+test sparse_book_defaults_to_registered_candidates_and_strict_falls_back ... ok
+test small_solved_book_matches_exhaustive_and_survives_model_change ... ok
+test stage_upgrade_and_explicit_reanalysis_keep_completed_quality ... ok
+test thousands_of_small_positions_round_trip_without_large_book_generation ... ok
+test transforms_restore_board_and_moves_and_share_one_key ... ok
+test stopping_and_terminal_requests_never_return_a_book_move ... ok
+test unknown_frontier_bounds_and_model_mismatch_are_not_played ... ok
+test work_and_play_files_round_trip_deterministically ... ok
+test weight_fingerprint_and_player_engine_replacement_are_checked ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
+
+     Running tests/book_alloc.rs (/workspace/deft-book-target/release/deps/book_alloc-fe2faf7ee87512ab)
+
+running 1 test
+test book_hit_performs_no_heap_allocations ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/book_cli.rs (/workspace/deft-book-target/release/deps/book_cli-43ac0fc53e141b9a)
+
+running 1 test
+test cli_generation_resume_export_extend_and_retarget ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
+
+     Running tests/model.rs (/workspace/deft-book-target/release/deps/model-395ea00e95e2a4be)
+
+running 2 tests
+test mpc_confirmation_must_be_shallower_and_rejection_is_atomic ... ok
+test model_roundtrip_and_input_validation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/rules.rs (/workspace/deft-book-target/release/deps/rules-c0d3491da5f07d20)
+
+running 3 tests
+test initial_position_perft ... ok
+test rejected_actions_preserve_position ... ok
+test reachable_positions_match_coordinate_reference ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/search.rs (/workspace/deft-book-target/release/deps/search-6f3ba8c672d7e20a)
+
+running 13 tests
+test configuration_is_validated ... ok
+test budget_is_shared_across_workers_and_iterations ... ok
+test exact_matches_exhaustive_and_pv_is_legal ... ok
+test external_stop_joins_workers_and_engine_can_be_reused ... ok
+test exact_endgame_cache_is_consistent_when_warm_cleared_or_model_changes ... ok
+test level_midgame_iterations_keep_the_requested_selectivity ... ok
+test interrupted_search_never_claims_an_exact_solution ... ok
+test parallel_matches_serial_at_fixed_depth ... ok
+test pass_and_terminal_are_distinct ... ok
+test selective_cache_does_not_leak_into_full_search ... ok
+test stopping_after_selective_preparation_does_not_report_exact ... ok
+test ybwc_exact_repetition_and_thread_counts ... ok
+test selective_preparation_cannot_supply_the_exact_final_score ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 58.37s
+
+   Doc-tests deft_reversi_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -148,3 +148,7 @@ RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release --example solve -
 初回はネイティブエンジンのみ。Web/WASM、対局CLI、学習処理、NNUE、対局履歴の移行は含めていない。
 速度は測定対象とCPUに依存する。特定の集合での改善を、全局面の改善とは扱わない。
 過去の旧版比較は [調査レポート](../docs/benchmarks/2026-10-24-regression-investigation/README.md) に、その時点の条件とともに保存しています。
+
+## 対局用book
+
+bookの参照・生成・更新・対局選択は、別クレート [deft-reversi-book](../deft-reversi-book/README.md) が提供する。エンジン本体はbookに依存しない。

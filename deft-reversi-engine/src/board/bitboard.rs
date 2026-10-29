@@ -190,6 +190,14 @@ impl Board {
     /// The least of the eight symmetric images, for symmetry-aware lookups.
     #[inline]
     pub fn canonical(self) -> Self {
+        self.symmetries()
+            .into_iter()
+            .min_by_key(|board| (board.player, board.opponent))
+            .unwrap()
+    }
+
+    /// Eight geometric symmetries in the same order used by `canonical`.
+    pub fn symmetries(self) -> [Self; 8] {
         let transposed = self.transpose();
 
         [
@@ -202,9 +210,6 @@ impl Board {
             self.rotate_180(),
             transposed.rotate_180(),
         ]
-        .into_iter()
-        .min_by_key(|board| (board.player, board.opponent))
-        .unwrap()
     }
 }
 
