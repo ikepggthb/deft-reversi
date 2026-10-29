@@ -5,7 +5,7 @@ pub(super) struct Control {
     pub(super) stop: StopHandle,
     pub(super) deadline: Option<Instant>,
     pub(super) node_limit: Option<u64>,
-    pub(super) issued: AtomicU64,
+    pub(super) issued: Padded<AtomicU64>,
 }
 impl Control {
     pub(super) fn set(&self, reason: u8) {
@@ -35,6 +35,9 @@ impl Control {
         }
     }
 }
+/// Read on every node by every thread; the fields written during a search
+/// are padded so that they do not share its cache lines.
+#[repr(align(128))]
 pub(super) struct Runtime {
     pub(super) model: Arc<PatternModel>,
     pub(super) table: Arc<Table>,
@@ -42,10 +45,10 @@ pub(super) struct Runtime {
     pub(super) pool: Arc<Pool>,
     pub(super) control: Control,
     pub(super) generation: u8,
-    pub(super) stats: Mutex<SearchStats>,
-    pub(super) pending: AtomicUsize,
+    pub(super) stats: Padded<Mutex<SearchStats>>,
+    pub(super) pending: Padded<AtomicUsize>,
     pub(super) pending_lock: Mutex<()>,
-    pub(super) pending_ready: std::sync::Condvar,
+    pub(super) pending_ready: Padded<std::sync::Condvar>,
     pub(super) parallel: bool,
     pub(super) sigma: AtomicU64,
     pub(super) quality: AtomicU8,
@@ -132,7 +135,7 @@ pub(super) struct Context {
     pub(super) runtime: Arc<Runtime>,
     pub(super) stats: SearchStats,
     pub(super) ancestors: Vec<Arc<Helper>>,
-    pub(super) cuts: Vec<Arc<AtomicBool>>,
+    pub(super) cuts: Vec<Arc<Padded<AtomicBool>>>,
     pub(super) end_cache: EndgameCache,
     #[cfg(feature = "endgame-pattern-ordering")]
     pub(super) end_ordering: [Option<(Board, EvalState)>; 3],
@@ -163,13 +166,13 @@ pub(super) fn test_context() -> Context {
             stop: StopHandle::new(),
             deadline: None,
             node_limit: None,
-            issued: AtomicU64::new(0),
+            issued: Padded(AtomicU64::new(0)),
         },
         generation: 1,
-        stats: Mutex::new(SearchStats::default()),
-        pending: AtomicUsize::new(0),
+        stats: Padded(Mutex::new(SearchStats::default())),
+        pending: Padded(AtomicUsize::new(0)),
         pending_lock: Mutex::new(()),
-        pending_ready: std::sync::Condvar::new(),
+        pending_ready: Padded(std::sync::Condvar::new()),
         parallel: false,
         sigma: AtomicU64::new(0),
         quality: AtomicU8::new(0),

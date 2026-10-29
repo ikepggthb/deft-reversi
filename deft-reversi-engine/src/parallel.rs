@@ -13,6 +13,17 @@ pub(crate) enum Dispatch {
     Worker,
 }
 pub(crate) type Job = Box<dyn FnOnce() + Send + 'static>;
+/// Keeps a value on cache lines of its own (two lines, for the adjacent-line
+/// prefetcher), so that writes to it do not evict data other threads read
+/// on every node, and `Arc` reference counts stay off its line.
+#[repr(align(128))]
+pub(crate) struct Padded<T>(pub T);
+impl<T> std::ops::Deref for Padded<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|p| p.into_inner())
 }
@@ -129,6 +140,9 @@ struct HelpState {
     job: Option<Job>,
     closed: bool,
 }
+// Its flag is polled by every thread looking for idle helpers; the alignment
+// keeps the reference counts of its many `Arc` clones off that line.
+#[repr(align(128))]
 pub(crate) struct Helper {
     available: AtomicBool,
     state: Mutex<HelpState>,

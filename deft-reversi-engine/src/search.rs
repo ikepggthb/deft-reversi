@@ -1,7 +1,7 @@
 use crate::{
     Action, Board, EngineModel, ModelMetadata, MpcConfig, PatternModel, Square,
     evaluation::EvalState,
-    parallel::{self, Helper, Pool, Workers},
+    parallel::{self, Helper, Padded, Pool, Workers},
     transposition::{Entry, Table},
 };
 use std::{
@@ -241,13 +241,13 @@ impl Engine {
                 stop: request.stop,
                 deadline,
                 node_limit: request.node_limit,
-                issued: AtomicU64::new(0),
+                issued: Padded(AtomicU64::new(0)),
             },
             generation: self.generation,
-            stats: Mutex::new(SearchStats::default()),
-            pending: AtomicUsize::new(0),
+            stats: Padded(Mutex::new(SearchStats::default())),
+            pending: Padded(AtomicUsize::new(0)),
             pending_lock: Mutex::new(()),
-            pending_ready: std::sync::Condvar::new(),
+            pending_ready: Padded(std::sync::Condvar::new()),
             parallel: self.options.threads > 1,
             sigma: AtomicU64::new(target_sigma.map_or(0, f64::to_bits)),
             quality: AtomicU8::new(if target_sigma.is_some() { 7 } else { 0 }),

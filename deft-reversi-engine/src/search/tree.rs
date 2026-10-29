@@ -19,7 +19,7 @@ impl Context {
     pub(super) fn new(
         runtime: Arc<Runtime>,
         ancestors: Vec<Arc<Helper>>,
-        cuts: Vec<Arc<AtomicBool>>,
+        cuts: Vec<Arc<Padded<AtomicBool>>>,
     ) -> Self {
         Self {
             runtime,

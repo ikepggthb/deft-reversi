@@ -31,7 +31,7 @@ impl Context {
             depth,
             exact,
             allow_probcut,
-            cut: Arc::new(AtomicBool::new(false)),
+            cut: Arc::new(Padded(AtomicBool::new(false))),
             helper: Arc::new(Helper::new()),
             active: AtomicUsize::new(0),
         });
@@ -159,6 +159,8 @@ struct SplitState {
     alpha: i32,
     best: Line,
 }
+// Cloned for every helper job; keep the reference counts off the shared state.
+#[repr(align(128))]
 struct Split {
     position: Position,
     root_bounds: Option<Arc<Mutex<[root::RootBound; 64]>>>,
@@ -167,7 +169,7 @@ struct Split {
     depth: u8,
     exact: bool,
     allow_probcut: bool,
-    cut: Arc<AtomicBool>,
+    cut: Arc<Padded<AtomicBool>>,
     helper: Arc<Helper>,
     active: AtomicUsize,
 }
