@@ -1,0 +1,40 @@
+   Compiling deft_reversi_engine v2.0.0 (/workspace/deft-reversi/deft-reversi-engine)
+    Finished `release` profile [optimized] target(s) in 29.54s
+     Running tests/book.rs (/workspace/deft-book-target/release/deps/book-995802b2c2bcd857)
+
+running 25 tests
+test checkpoint_preserves_the_current_popped_job ... ok
+test corruption_truncation_memory_limits_and_failed_save_are_safe ... ok
+test an_inactive_registered_branch_is_skipped_and_can_reactivate ... ok
+test editor_and_model_management_do_not_change_search_results_or_node_counts ... ok
+test external_stop_and_explicit_budget_validation ... ok
+test forced_pass_and_terminal_round_trip ... ok
+test generation_tracks_side_widths_and_persists_contexts_without_duplicate_nodes ... ok
+test generation_combines_incomparable_depth_and_selectivity_without_losing_progress ... ok
+test manual_evidence_is_separate_and_not_overwritten_by_generation ... ok
+test managed_memory_limit_keeps_a_resumable_workspace ... ok
+test node_budget_stops_without_publishing_partial_stage_and_resume_finishes ... ok
+test model_change_requires_explicit_retarget_and_preserves_solved_evidence ... ok
+test position_budget_keeps_unexpanded_frontier_for_resume ... ok
+test random_selection_is_seeded_and_stays_within_loss ... ok
+test removing_a_link_invalidates_derived_parent_and_repair_is_idempotent ... ok
+test snapshot_is_shareable_and_lookup_has_bounded_storage ... ok
+test sparse_book_defaults_to_registered_candidates_and_strict_falls_back ... ok
+test small_solved_book_matches_exhaustive_and_survives_model_change ... ok
+test stage_upgrade_and_explicit_reanalysis_keep_completed_quality ... ok
+test thousands_of_small_positions_round_trip_without_large_book_generation ... ok
+test transforms_restore_board_and_moves_and_share_one_key ... ok
+test stopping_and_terminal_requests_never_return_a_book_move ... ok
+test unknown_frontier_bounds_and_model_mismatch_are_not_played ... ok
+test work_and_play_files_round_trip_deterministically ... ok
+test weight_fingerprint_and_player_engine_replacement_are_checked ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.41s
+
+     Running tests/book_cli.rs (/workspace/deft-book-target/release/deps/book_cli-56ca160cb091817e)
+
+running 1 test
+test cli_generation_resume_export_extend_and_retarget ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+
