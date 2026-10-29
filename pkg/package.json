@@ -1,0 +1,15 @@
+{
+  "name": "deft-reversi-wasm-engine",
+  "type": "module",
+  "version": "2.0.0",
+  "files": [
+    "deft_reversi_wasm_engine_bg.wasm",
+    "deft_reversi_wasm_engine.js",
+    "deft_reversi_wasm_engine.d.ts"
+  ],
+  "main": "deft_reversi_wasm_engine.js",
+  "types": "deft_reversi_wasm_engine.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
