@@ -1,5 +1,6 @@
 use super::endgame::parity::odd_regions;
 use super::*;
+use crate::board::CORNERS;
 // Midgame nodes split down to four plies of remaining depth: the shallow
 // iterations before an endgame solve otherwise leave most threads idle.
 pub(super) const SPLIT_DEPTH: u8 = 4;
@@ -36,11 +37,11 @@ impl Context {
     pub(super) fn aborted(&self) -> bool {
         self.runtime.control.check() || self.cuts.iter().any(|cut| cut.load(Ordering::Acquire))
     }
-    pub(super) fn enter(&mut self) -> Result<(), ()> {
+    pub(super) fn enter(&mut self) -> Result<(), Aborted> {
         // Poll cancellation/deadline every 256 nodes; the optional hard node
         // budget below is still reserved for every individual visited node.
         if self.stats.nodes & 255 == 0 && self.aborted() {
-            return Err(());
+            return Err(Aborted);
         }
         if let Some(limit) = self.runtime.control.node_limit
             && self
@@ -53,7 +54,7 @@ impl Context {
                 .is_err()
         {
             self.runtime.control.set(StopReason::NodeLimit);
-            return Err(());
+            return Err(Aborted);
         }
         self.stats.nodes += 1;
         Ok(())
@@ -84,7 +85,7 @@ impl Context {
         mut alpha: i32,
         mut beta: i32,
         spec: SearchSpec,
-    ) -> Result<Line, ()> {
+    ) -> Result<Line, Aborted> {
         let Position { board, state } = position;
         let SearchSpec {
             depth,
@@ -208,7 +209,7 @@ impl Context {
         while moves != 0 {
             let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
-            let square = Square::new(bit.trailing_zeros() as u8).unwrap();
+            let square = Square::lowest(bit);
             let flips = board.flip_mask(bit);
             let child = board.after_known_move(bit, flips);
             // Reference ETC uses the original alpha to skip moves. Preserve
@@ -273,7 +274,7 @@ impl Context {
             if alpha >= beta {
                 self.stats.beta_cuts += 1;
                 if self.aborted() {
-                    return Err(());
+                    return Err(Aborted);
                 }
                 line.score = line.score.max(known_lower);
                 self.store_node_line(board, &line, (original_alpha, original_beta), spec, quality);
@@ -301,7 +302,7 @@ impl Context {
                 if bit & odd_regions != 0 {
                     value += ORDERING.parity;
                 }
-                if bit & 0x8100000000000081 != 0 {
+                if bit & CORNERS != 0 {
                     value += ORDERING.corner;
                 }
                 value
@@ -391,7 +392,7 @@ impl Context {
             self.stats.beta_cuts += 1;
         }
         if self.aborted() {
-            return Err(());
+            return Err(Aborted);
         }
         if skipped_upper > best.score {
             best = Line::leaf(skipped_upper);
@@ -441,7 +442,7 @@ impl Context {
         alpha: i32,
         beta: i32,
         spec: SearchSpec,
-    ) -> Result<Option<Line>, ()> {
+    ) -> Result<Option<Line>, Aborted> {
         let SearchSpec {
             depth,
             exact,
@@ -494,7 +495,7 @@ impl Context {
         alpha: i32,
         beta: i32,
         exact: bool,
-    ) -> Result<Option<i32>, ()> {
+    ) -> Result<Option<i32>, Aborted> {
         let Some(sigma) = self.runtime.sigma() else {
             return Ok(None);
         };
@@ -556,7 +557,7 @@ impl Context {
         mut alpha: i32,
         beta: i32,
         probcut: bool,
-    ) -> Result<Line, ()> {
+    ) -> Result<Line, Aborted> {
         let mut moves = position.board.get_moves();
         let mut best = Line::leaf(-65);
         while moves != 0 {
@@ -578,10 +579,7 @@ impl Context {
                 },
             )?;
             if -child.score > best.score {
-                best = Line::prepend(
-                    Action::Place(Square::new(bit.trailing_zeros() as u8).unwrap()),
-                    &child,
-                );
+                best = Line::prepend(Action::Place(Square::lowest(bit)), &child);
             }
             alpha = alpha.max(best.score);
             if alpha >= beta {
@@ -601,28 +599,13 @@ mod tt_tests {
     fn thirteen_empty_research_matches_eager_evaluation_state() {
         let model = Arc::new(PatternModel::nonzero_for_tests());
         for seed in [17u64, 101] {
-            let mut board = Board::new();
-            let mut random = seed;
-            while board.empty_count() > 14 {
-                let mut moves = board.get_moves();
-                if moves == 0 {
-                    assert!(!board.is_terminal());
-                    board = board.board_after_pass();
-                    continue;
-                }
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
-                for _ in 0..random % u64::from(moves.count_ones()) {
-                    moves &= moves - 1;
-                }
-                board = board.board_after_move(moves.isolate_lowest_one());
-            }
+            let board = crate::test_util::random_board(seed, 14);
+            assert_eq!(board.empty_count(), 14);
             let moves = board.get_moves();
             assert_ne!(moves, 0);
             let bit = moves.isolate_lowest_one();
             let candidate = Candidate {
-                square: Square::new(bit.trailing_zeros() as u8).unwrap(),
+                square: Square::lowest(bit),
                 flips: board.flip_mask(bit),
                 ordering: 0,
             };

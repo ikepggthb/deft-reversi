@@ -1,7 +1,8 @@
 //! Ordered null-window endgame search for seven to thirteen empties.
 use super::local_tt::EndProbe;
 use super::parity::odd_regions;
-use super::{Board, Context, EvalState, LOCAL_END_MAX};
+use super::{Aborted, Board, Context, EvalState, LOCAL_END_MAX};
+use crate::board::CORNERS;
 
 impl Context {
     pub(super) fn ordered_endgame(
@@ -11,7 +12,7 @@ impl Context {
         beta: i32,
         known_moves: Option<u64>,
         best_move: &mut u8,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         let mut moves = known_moves.unwrap_or_else(|| board.get_moves());
         if moves == 0 {
             let passed = board.board_after_pass();
@@ -103,7 +104,7 @@ impl Context {
                 }
             }
             let legal = child.get_moves();
-            let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();
+            let mobility = legal.count_ones() + (legal & CORNERS).count_ones();
             if mobility <= 1 {
                 self.enter()?;
                 let score =
@@ -195,7 +196,6 @@ pub(in crate::search) fn endgame_ordering(child: Board, legal: u64, bit: u64, od
         10, 0, 0, 10, 8, 12, 12, 8, 10, 0, 0, 10, 8, 12, 16, 6, 14, 10, 10, 14, 6, 16, 4, 2, 6, 8,
         8, 6, 2, 4, 18, 4, 16, 12, 12, 16, 4, 18,
     ];
-    const CORNERS: u64 = 0x8100000000000081;
     let mobility = (legal.count_ones() + (legal & CORNERS).count_ones()) as i32;
     // The mover's discs on corners and on edge squares next to its own corners.
     let mover = child.opponent_bits();

@@ -259,7 +259,7 @@ mod tests {
             let mut state = EvalState::from_board(board);
             loop {
                 assert_eq!(state, EvalState::from_board(board));
-                let mut moves = board.get_moves();
+                let moves = board.get_moves();
                 if moves == 0 {
                     if board.is_terminal() {
                         break;
@@ -268,13 +268,7 @@ mod tests {
                     state = state.passed();
                     continue;
                 }
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
-                for _ in 0..random % u64::from(moves.count_ones()) {
-                    moves &= moves - 1;
-                }
-                let bit = moves.isolate_lowest_one();
+                let bit = crate::test_util::random_move(moves, &mut random);
                 let flips = board.flip_mask(bit);
                 #[cfg(feature = "endgame-pattern-ordering")]
                 assert_eq!(

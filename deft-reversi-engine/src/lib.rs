@@ -6,6 +6,8 @@ mod model;
 mod mpc;
 mod parallel;
 mod search;
+#[cfg(test)]
+mod test_util;
 mod transposition;
 mod types;
 pub use board::bitboard::{Board, MoveError};

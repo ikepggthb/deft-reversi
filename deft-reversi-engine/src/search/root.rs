@@ -51,7 +51,7 @@ impl RootSearch {
             let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
             candidates.push(Candidate {
-                square: Square::new(bit.trailing_zeros() as u8).unwrap(),
+                square: Square::lowest(bit),
                 flips: position.board.flip_mask(bit),
                 ordering: 0,
             });
@@ -67,7 +67,7 @@ impl RootSearch {
         context: &mut Context,
         spec: SearchSpec,
         prediction: i32,
-    ) -> Result<Line, ()> {
+    ) -> Result<Line, Aborted> {
         self.bounds.fill(RootBound::UNBOUNDED);
         let previous = self.candidates.first().copied();
         let outcome = self.aspiration(context, spec, prediction);
@@ -87,7 +87,7 @@ impl RootSearch {
         context: &mut Context,
         spec: SearchSpec,
         prediction: i32,
-    ) -> Result<Line, ()> {
+    ) -> Result<Line, Aborted> {
         if spec.depth <= 10 {
             return self.window(context, spec, -64, 64);
         }
@@ -138,7 +138,7 @@ impl RootSearch {
         spec: SearchSpec,
         alpha: i32,
         beta: i32,
-    ) -> Result<Line, ()> {
+    ) -> Result<Line, Aborted> {
         let candidate = self.candidates[index];
         let bound = &mut self.bounds[candidate.square.index() as usize];
         let reuse = spec.exact && context.runtime.sigma().is_none();
@@ -171,9 +171,9 @@ impl RootSearch {
         spec: SearchSpec,
         mut alpha: i32,
         beta: i32,
-    ) -> Result<Line, ()> {
+    ) -> Result<Line, Aborted> {
         if context.aborted() {
-            return Err(());
+            return Err(Aborted);
         }
         if self.candidates.is_empty() || spec.depth == 0 {
             return context.node(self.position, alpha, beta, spec);
@@ -219,7 +219,7 @@ impl RootSearch {
         let mut best_index = 0;
         for index in 1..self.candidates.len() {
             if context.aborted() {
-                return Err(());
+                return Err(Aborted);
             }
             let candidate = self.candidates[index];
             let bound = self.bounds[candidate.square.index() as usize];

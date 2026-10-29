@@ -414,9 +414,7 @@ fn initial_result(request: &SearchRequest, target_sigma: Option<f64>) -> SearchR
     let board = request.board;
     let moves = board.get_moves();
     let action = if moves != 0 {
-        Some(Action::Place(
-            Square::new(moves.trailing_zeros() as u8).unwrap(),
-        ))
+        Some(Action::Place(Square::lowest(moves)))
     } else if board.get_opponent_moves() != 0 {
         Some(Action::Pass)
     } else {

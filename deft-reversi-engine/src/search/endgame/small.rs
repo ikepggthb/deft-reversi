@@ -28,7 +28,7 @@ impl Context {
         mut alpha: i32,
         beta: i32,
         passed: bool,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         let SmallPosition {
             board,
             empty,

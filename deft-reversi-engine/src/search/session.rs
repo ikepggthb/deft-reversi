@@ -96,6 +96,10 @@ impl Runtime {
         }
     }
 }
+/// A search stopped by a stop request, a limit, a failed worker or a cut
+/// at an ancestor split. Its partial result must not be used.
+#[derive(Debug)]
+pub(super) struct Aborted;
 #[derive(Clone)]
 pub(super) struct Line {
     pub(super) score: i32,

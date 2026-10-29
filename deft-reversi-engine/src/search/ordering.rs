@@ -1,4 +1,5 @@
 use super::*;
+use crate::board::CORNERS;
 
 impl Context {
     /// Port of the reference final-search ordering depths, windows and weights.
@@ -10,7 +11,7 @@ impl Context {
         flips: u64,
         alpha: i32,
         beta: i32,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         let empties = parent.board.empty_count();
         let narrow = beta - alpha == 1;
         let depth = if narrow {
@@ -53,8 +54,7 @@ impl Context {
             )?;
             (value, child.get_moves())
         };
-        let mobility =
-            -2 * moves.count_ones() as i32 - (moves & 0x8100000000000081).count_ones() as i32;
+        let mobility = -2 * moves.count_ones() as i32 - (moves & CORNERS).count_ones() as i32;
         let presence = if depth > 2 && self.runtime.table.get(child).is_some() {
             1 << 15
         } else {
@@ -72,7 +72,7 @@ impl Context {
         flips: u64,
         alpha: i32,
         depth: u8,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         let ordering_depth = match depth {
             0..=4 => 0,
             5..=7 => 1,
@@ -98,9 +98,7 @@ impl Context {
             )?;
             (value, child.get_moves())
         };
-        Ok(-value
-            - 2 * legal.count_ones() as i32
-            - (legal & 0x8100000000000081).count_ones() as i32)
+        Ok(-value - 2 * legal.count_ones() as i32 - (legal & CORNERS).count_ones() as i32)
     }
 
     /// Small score-only search, without TT writes or probabilistic pruning.
@@ -110,7 +108,7 @@ impl Context {
         mut alpha: i32,
         beta: i32,
         depth: u8,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         self.enter()?;
         let Position { board, state } = position;
         if depth == 0 {

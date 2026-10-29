@@ -6,6 +6,11 @@ impl Square {
     pub const fn new(index: u8) -> Option<Self> {
         if index < 64 { Some(Self(index)) } else { None }
     }
+    /// The square of the lowest set bit of a non-empty mask.
+    pub(crate) const fn lowest(mask: u64) -> Self {
+        debug_assert!(mask != 0);
+        Self(mask.trailing_zeros() as u8)
+    }
     pub const fn index(self) -> u8 {
         self.0
     }

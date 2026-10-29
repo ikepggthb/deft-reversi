@@ -129,9 +129,7 @@ mod tests {
         let mut random = 0x89abcdef01234567u64;
         for square in 0..64 {
             for _ in 0..128 {
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
+                crate::test_util::xorshift(&mut random);
                 let empty = 1u64 << square;
                 let player = random & !empty;
                 let board = Board::from_bits(player, !player & !empty).unwrap();

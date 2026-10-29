@@ -1,6 +1,6 @@
 //! Dedicated five- and six-empty null-window kernels.
 use super::parity::SQUARE_PARITY;
-use super::{Board, Context};
+use super::{Aborted, Board, Context};
 
 impl Context {
     pub(super) fn six_moves_score(
@@ -9,7 +9,7 @@ impl Context {
         alpha: i32,
         mut moves: u64,
         parity: u8,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         debug_assert_eq!(board.empty_count(), 6);
         let child_alpha = -alpha - 1;
         if moves == 0 {
@@ -57,7 +57,7 @@ impl Context {
         board: Board,
         alpha: i32,
         parity: u8,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         debug_assert_eq!(board.empty_count(), 5);
         if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
             self.stats.stability_cuts += 1;

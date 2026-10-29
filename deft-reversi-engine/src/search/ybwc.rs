@@ -10,7 +10,7 @@ impl Context {
         spec: SearchSpec,
         best: Line,
         root_bounds: Option<Arc<Mutex<[root::RootBound; 64]>>>,
-    ) -> Result<Line, ()> {
+    ) -> Result<Line, Aborted> {
         let (alpha, beta) = window;
         let SearchSpec {
             depth,
@@ -71,7 +71,7 @@ impl Context {
         self.ancestors = old_ancestors;
         self.cuts = old_cuts;
         if self.aborted() {
-            return Err(());
+            return Err(Aborted);
         }
         let result = parallel::lock(&point.state).best.clone();
         Ok(result)

@@ -108,14 +108,10 @@ mod tests {
         for _ in 0..512 {
             let mut empty = 0u64;
             while empty.count_ones() < 5 {
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
+                crate::test_util::xorshift(&mut random);
                 empty |= 1u64 << (random % 64);
             }
-            random ^= random << 13;
-            random ^= random >> 7;
-            random ^= random << 17;
+            crate::test_util::xorshift(&mut random);
             let player = random & random.rotate_left(17) & !empty;
             let board = Board::from_bits(player, !player & !empty).unwrap();
             let expected = brute(board);
@@ -135,14 +131,10 @@ mod tests {
         for _ in 0..128 {
             let mut empty = 0u64;
             while empty.count_ones() < 4 {
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
+                crate::test_util::xorshift(&mut random);
                 empty |= 1u64 << (random % 64);
             }
-            random ^= random << 13;
-            random ^= random >> 7;
-            random ^= random << 17;
+            crate::test_util::xorshift(&mut random);
             let player = random & !empty;
             let board = Board::from_bits(player, !player & !empty).unwrap();
             let (lower, upper) = score_bounds(board);

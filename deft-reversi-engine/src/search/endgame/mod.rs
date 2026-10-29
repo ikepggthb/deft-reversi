@@ -1,5 +1,5 @@
 //! Exact endgame dispatch; move ordering, shallow kernels and TT storage are separate.
-use super::{Action, Board, Context, EvalState, Line, Ordering, Square};
+use super::{Aborted, Action, Board, Context, EvalState, Line, Ordering, Square};
 mod last_four;
 mod local_tt;
 mod ordered;
@@ -27,7 +27,7 @@ impl Context {
         board: Board,
         mut alpha: i32,
         beta: i32,
-    ) -> Result<Line, ()> {
+    ) -> Result<Line, Aborted> {
         if beta - alpha == 1 {
             return self.tail_score_entered(board, alpha, beta).map(Line::leaf);
         }
@@ -48,9 +48,7 @@ impl Context {
             let mut line = Line::leaf(
                 2 * (board.player_bits().count_ones() + flips.count_ones() + 1) as i32 - 64,
             );
-            line.actions[0] = Some(Action::Place(
-                Square::new(bit.trailing_zeros() as u8).unwrap(),
-            ));
+            line.actions[0] = Some(Action::Place(Square::lowest(bit)));
             line.len = 1;
             return Ok(line);
         }
@@ -65,10 +63,7 @@ impl Context {
             self.enter()?;
             let child = self.tail_entered(child_board, -beta, -alpha)?;
             if -child.score > best.score {
-                best = Line::prepend(
-                    Action::Place(Square::new(bit.trailing_zeros() as u8).unwrap()),
-                    &child,
-                );
+                best = Line::prepend(Action::Place(Square::lowest(bit)), &child);
             }
             alpha = alpha.max(best.score);
             if alpha >= beta {
@@ -83,7 +78,7 @@ impl Context {
         board: Board,
         alpha: i32,
         beta: i32,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         self.endgame_score_entered(board, alpha, beta, None, None)
     }
     fn endgame_score_entered(
@@ -93,7 +88,7 @@ impl Context {
         beta: i32,
         known_moves: Option<u64>,
         known_probe: Option<EndProbe>,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         let empties = board.empty_count();
         if empties < TAIL_EMPTIES {
             return self.tail_score_impl(board, alpha, beta);
@@ -142,7 +137,7 @@ impl Context {
             self.runtime.quality.load(Ordering::Relaxed)
         }
     }
-    fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, ()> {
+    fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, Aborted> {
         let empty = !(board.player_bits() | board.opponent_bits());
         let count = empty.count_ones() as u8;
         if count == 4 {
@@ -194,6 +189,7 @@ pub(super) fn last_square_bound(board: Board, empty: u64, alpha: i32) -> i32 {
 mod tests {
     use super::super::session::test_context as context;
     use super::*;
+    use crate::test_util::{random_board, random_move};
     fn brute(board: Board) -> i32 {
         let mut moves = board.get_moves();
         if moves == 0 {
@@ -212,23 +208,8 @@ mod tests {
         best
     }
     fn seven_empty_board() -> Board {
-        let mut board = Board::new();
-        let mut random = 1u64;
-        while board.empty_count() > 7 {
-            let mut moves = board.get_moves();
-            if moves == 0 {
-                assert!(!board.is_terminal());
-                board = board.board_after_pass();
-                continue;
-            }
-            random ^= random << 13;
-            random ^= random >> 7;
-            random ^= random << 17;
-            for _ in 0..random % u64::from(moves.count_ones()) {
-                moves &= moves - 1;
-            }
-            board = board.board_after_move(moves.isolate_lowest_one());
-        }
+        let board = random_board(1, 7);
+        assert_eq!(board.empty_count(), 7);
         board
     }
     #[test]
@@ -239,19 +220,13 @@ mod tests {
             while !board.is_terminal() {
                 let parity = tail_parity(board);
                 assert_eq!(PARITY_REGIONS[usize::from(parity)], odd_regions(board));
-                let mut moves = board.get_moves();
+                let moves = board.get_moves();
                 if moves == 0 {
                     board = board.board_after_pass();
                     assert_eq!(tail_parity(board), parity);
                     continue;
                 }
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
-                for _ in 0..random % u64::from(moves.count_ones()) {
-                    moves &= moves - 1;
-                }
-                let bit = moves.isolate_lowest_one();
+                let bit = random_move(moves, &mut random);
                 board = board.board_after_move(bit);
                 assert_eq!(
                     tail_parity(board),
@@ -268,22 +243,7 @@ mod tests {
             Board::from_bits(0, !empty).unwrap(),
         ];
         for seed in 1..=64u64 {
-            let mut random = seed;
-            let mut board = Board::new();
-            while board.empty_count() > 5 && !board.is_terminal() {
-                let mut moves = board.get_moves();
-                if moves == 0 {
-                    board = board.board_after_pass();
-                    continue;
-                }
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
-                for _ in 0..random % u64::from(moves.count_ones()) {
-                    moves &= moves - 1;
-                }
-                board = board.board_after_move(moves.isolate_lowest_one());
-            }
+            let board = random_board(seed, 5);
             if board.empty_count() == 5 {
                 boards.push(board);
                 boards.push(board.board_after_pass());
@@ -341,23 +301,8 @@ mod tests {
         assert!(context.end_cache.probe(board, 0).matched);
         assert!(!context.end_cache.probe(board, 3).matched);
         // A position inside the ProbCut range keeps the stage's tag.
-        let mut deep = Board::new();
-        let mut random = 5u64;
-        while deep.empty_count() > PROBCUT_MIN_EMPTIES {
-            assert!(!deep.is_terminal());
-            let mut moves = deep.get_moves();
-            if moves == 0 {
-                deep = deep.board_after_pass();
-                continue;
-            }
-            random ^= random << 13;
-            random ^= random >> 7;
-            random ^= random << 17;
-            for _ in 0..random % u64::from(moves.count_ones()) {
-                moves &= moves - 1;
-            }
-            deep = deep.board_after_move(moves.isolate_lowest_one());
-        }
+        let deep = random_board(5, PROBCUT_MIN_EMPTIES);
+        assert_eq!(deep.empty_count(), PROBCUT_MIN_EMPTIES);
         context.tail_score_entered(deep, 0, 1).unwrap();
         assert!(context.end_cache.probe(deep, 3).matched);
         assert!(!context.end_cache.probe(deep, 0).matched);
@@ -410,22 +355,7 @@ mod tests {
             Board::from_bits(u64::MAX, 0).unwrap(),
         ];
         for seed in 1..=8u64 {
-            let mut random = seed;
-            let mut board = Board::new();
-            while board.empty_count() > 8 && !board.is_terminal() {
-                let mut moves = board.get_moves();
-                if moves == 0 {
-                    board = board.board_after_pass();
-                    continue;
-                }
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
-                for _ in 0..random % u64::from(moves.count_ones()) {
-                    moves &= moves - 1;
-                }
-                board = board.board_after_move(moves.isolate_lowest_one());
-            }
+            let board = random_board(seed, 8);
             boards.push(board);
             boards.push(board.board_after_pass());
         }

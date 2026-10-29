@@ -17,7 +17,7 @@ impl LeafSearch<'_> {
     }
 }
 impl Context {
-    pub(super) fn last_four_score(&mut self, board: Board, alpha: i32) -> Result<i32, ()> {
+    pub(super) fn last_four_score(&mut self, board: Board, alpha: i32) -> Result<i32, Aborted> {
         self.last_four_score_with_parity(board, alpha, UNKNOWN_PARITY)
     }
     pub(super) fn last_four_score_with_parity(
@@ -25,7 +25,7 @@ impl Context {
         board: Board,
         alpha: i32,
         parity: u8,
-    ) -> Result<i32, ()> {
+    ) -> Result<i32, Aborted> {
         debug_assert!(parity <= UNKNOWN_PARITY);
         let mut search = LeafSearch {
             context: self,
@@ -38,7 +38,11 @@ impl Context {
             parity,
             &mut search,
         );
-        if search.failed { Err(()) } else { Ok(score) }
+        if search.failed {
+            Err(Aborted)
+        } else {
+            Ok(score)
+        }
     }
 }
 #[inline(always)]
@@ -500,9 +504,7 @@ mod tests {
         for square in 0..64 {
             let empty = 1u64 << square;
             for _ in 0..128 {
-                random ^= random << 13;
-                random ^= random >> 7;
-                random ^= random << 17;
+                crate::test_util::xorshift(&mut random);
                 let player = random & !empty;
                 let board = Board::from_bits(player, !player & !empty).unwrap();
                 let expected = if board.get_moves() != 0 {

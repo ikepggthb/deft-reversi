@@ -8,11 +8,11 @@ impl Context {
         mut depth: u8,
         exact: bool,
         mut first: Option<Action>,
-    ) -> Result<Vec<Action>, ()> {
+    ) -> Result<Vec<Action>, Aborted> {
         let mut pv = Vec::new();
         while depth > 0 && !board.is_terminal() && pv.len() < 128 {
             if self.aborted() {
-                return Err(());
+                return Err(Aborted);
             }
             let mut moves = board.get_moves();
             if moves == 0 {
@@ -70,9 +70,7 @@ impl Context {
             let Some((bit, child)) = chosen else {
                 break;
             };
-            pv.push(Action::Place(
-                Square::new(bit.trailing_zeros() as u8).unwrap(),
-            ));
+            pv.push(Action::Place(Square::lowest(bit)));
             board = child;
             score = -score;
             depth -= 1;
