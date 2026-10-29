@@ -698,6 +698,38 @@
             .graph-area { margin-top: 0; position: sticky; top: 10px; }
             .board-shell { width: min(100%, min(640px, 62vh)); }
         }
+
+        .content { padding: 4px 8px 8px; }
+        .main-grid { margin-top: 2px; gap: 4px; }
+        .status-line, .graph-area, .board-area { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+        .status-line { padding: 4px 8px; }
+        .stone-dot { width: 24px; height: 24px; }
+        .status-count { font-size: 26px; }
+        .status-divider { height: 30px; }
+        .position-meta { text-align: center; color: var(--muted); font-size: 11px; line-height: 1.4; }
+        .board-area { padding: 0; gap: 4px; }
+        .board-shell {
+            grid-template-columns: 16px repeat(8, minmax(0, 1fr));
+            grid-template-rows: 16px repeat(8, minmax(0, 1fr));
+            width: min(100%, 560px); aspect-ratio: 1; padding: 0;
+            gap: 1px; border: 0; border-radius: 0; box-shadow: none; background: transparent;
+        }
+        .board-shell > * { aspect-ratio: auto; min-width: 0; min-height: 0; }
+        .coord { font-size: 10px; }
+        .cell { border-radius: 0; }
+        .inline-controls { gap: 4px; margin: 0; }
+        .inline-controls__nav { gap: 0; }
+        .inline-controls .chip--nav, .inline-controls .chip--nav:disabled {
+            min-height: 38px; border: 0; border-radius: 0; box-shadow: none; background: transparent;
+        }
+        .graph-area { padding: 0 4px; }
+        .graph-head:has(.graph-head__title:empty) { display: none; }
+        .graph-head { margin-bottom: 2px; }
+        .graph { height: 80px; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+        .graph-area > .mini { margin-top: 2px !important; font-size: 10px; }
+        .settings-toggles { display: grid; gap: 8px; }
+        .settings-toggles [aria-pressed="true"] { background: #e7f8f1; border-color: #82d5bb; }
+        @media (min-width: 1024px) and (min-aspect-ratio: 13/10) { .board-shell { width: min(100%, 640px); } }
     </style>
 </head>
 <body>
