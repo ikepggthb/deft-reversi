@@ -1,6 +1,5 @@
 use super::tree::pick_best;
 use super::*;
-const MAX_HELPERS: usize = 3;
 
 impl Context {
     pub(super) fn split(
@@ -46,7 +45,10 @@ impl Context {
         let mut cuts = self.cuts.clone();
         cuts.push(point.cut.clone());
         let mut spawned = 0;
-        for _ in 0..MAX_HELPERS {
+        // Offer every remaining move but the master's own; only idle threads
+        // accept, so a split takes as many helpers as are free and useful.
+        let wanted = parallel::lock(&point.state).candidates.len() - 1;
+        for _ in 0..wanted {
             let runtime = self.runtime.clone();
             let task_point = point.clone();
             let task_ancestors = ancestors.clone();
