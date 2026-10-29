@@ -1,0 +1,151 @@
+diff --git a/deft-reversi-engine/src/parallel.rs b/deft-reversi-engine/src/parallel.rs
+index 9e51469..6891a0f 100644
+--- a/deft-reversi-engine/src/parallel.rs
++++ b/deft-reversi-engine/src/parallel.rs
+@@ -13,6 +13,18 @@ pub(crate) enum Dispatch {
+     Worker,
+ }
+ pub(crate) type Job = Box<dyn FnOnce() + Send + 'static>;
++/// Keeps a value on cache lines of its own (two lines, for the adjacent-line
++/// prefetcher), so that writes to it do not evict data other threads read
++/// on every node, and `Arc` reference counts stay off its line.
++#[repr(align(128))]
++#[derive(Default)]
++pub(crate) struct Padded<T>(pub T);
++impl<T> std::ops::Deref for Padded<T> {
++    type Target = T;
++    fn deref(&self) -> &T {
++        &self.0
++    }
++}
+ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+     mutex.lock().unwrap_or_else(|p| p.into_inner())
+ }
+@@ -129,6 +141,7 @@ struct HelpState {
+     job: Option<Job>,
+     closed: bool,
+ }
++#[repr(align(128))]
+ pub(crate) struct Helper {
+     available: AtomicBool,
+     state: Mutex<HelpState>,
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index 5464af2..e8d091b 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -1,7 +1,7 @@
+ use crate::{
+     Action, Board, EngineModel, ModelMetadata, MpcConfig, PatternModel, Square,
+     evaluation::EvalState,
+-    parallel::{self, Helper, Pool, Workers},
++    parallel::{self, Helper, Padded, Pool, Workers},
+     transposition::{Entry, Table},
+ };
+ use std::{
+@@ -241,13 +241,13 @@ impl Engine {
+                 stop: request.stop,
+                 deadline,
+                 node_limit: request.node_limit,
+-                issued: AtomicU64::new(0),
++                issued: Padded(AtomicU64::new(0)),
+             },
+             generation: self.generation,
+-            stats: Mutex::new(SearchStats::default()),
+-            pending: AtomicUsize::new(0),
++            stats: Padded(Mutex::new(SearchStats::default())),
++            pending: Padded(AtomicUsize::new(0)),
+             pending_lock: Mutex::new(()),
+-            pending_ready: std::sync::Condvar::new(),
++            pending_ready: Padded(std::sync::Condvar::new()),
+             parallel: self.options.threads > 1,
+             sigma: AtomicU64::new(target_sigma.map_or(0, f64::to_bits)),
+             quality: AtomicU8::new(if target_sigma.is_some() { 7 } else { 0 }),
+diff --git a/deft-reversi-engine/src/search/session.rs b/deft-reversi-engine/src/search/session.rs
+index 21bde59..e4e59ce 100644
+--- a/deft-reversi-engine/src/search/session.rs
++++ b/deft-reversi-engine/src/search/session.rs
+@@ -5,7 +5,7 @@ pub(super) struct Control {
+     pub(super) stop: StopHandle,
+     pub(super) deadline: Option<Instant>,
+     pub(super) node_limit: Option<u64>,
+-    pub(super) issued: AtomicU64,
++    pub(super) issued: Padded<AtomicU64>,
+ }
+ impl Control {
+     pub(super) fn set(&self, reason: u8) {
+@@ -35,6 +35,9 @@ impl Control {
+         }
+     }
+ }
++/// Read on every node by every thread; the fields written during a search
++/// are padded so that they do not share its cache lines.
++#[repr(align(128))]
+ pub(super) struct Runtime {
+     pub(super) model: Arc<PatternModel>,
+     pub(super) table: Arc<Table>,
+@@ -42,10 +45,10 @@ pub(super) struct Runtime {
+     pub(super) pool: Arc<Pool>,
+     pub(super) control: Control,
+     pub(super) generation: u8,
+-    pub(super) stats: Mutex<SearchStats>,
+-    pub(super) pending: AtomicUsize,
++    pub(super) stats: Padded<Mutex<SearchStats>>,
++    pub(super) pending: Padded<AtomicUsize>,
+     pub(super) pending_lock: Mutex<()>,
+-    pub(super) pending_ready: std::sync::Condvar,
++    pub(super) pending_ready: Padded<std::sync::Condvar>,
+     pub(super) parallel: bool,
+     pub(super) sigma: AtomicU64,
+     pub(super) quality: AtomicU8,
+@@ -132,7 +135,7 @@ pub(super) struct Context {
+     pub(super) runtime: Arc<Runtime>,
+     pub(super) stats: SearchStats,
+     pub(super) ancestors: Vec<Arc<Helper>>,
+-    pub(super) cuts: Vec<Arc<AtomicBool>>,
++    pub(super) cuts: Vec<Arc<Padded<AtomicBool>>>,
+     pub(super) end_cache: EndgameCache,
+     #[cfg(feature = "endgame-pattern-ordering")]
+     pub(super) end_ordering: [Option<(Board, EvalState)>; 3],
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index e0d860d..92e43fa 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -19,7 +19,7 @@ impl Context {
+     pub(super) fn new(
+         runtime: Arc<Runtime>,
+         ancestors: Vec<Arc<Helper>>,
+-        cuts: Vec<Arc<AtomicBool>>,
++        cuts: Vec<Arc<Padded<AtomicBool>>>,
+     ) -> Self {
+         Self {
+             runtime,
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index 0a7397e..8154d80 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -31,7 +31,7 @@ impl Context {
+             depth,
+             exact,
+             allow_probcut,
+-            cut: Arc::new(AtomicBool::new(false)),
++            cut: Arc::new(Padded(AtomicBool::new(false))),
+             helper: Arc::new(Helper::new()),
+             active: AtomicUsize::new(0),
+         });
+@@ -159,6 +159,7 @@ struct SplitState {
+     alpha: i32,
+     best: Line,
+ }
++#[repr(align(128))]
+ struct Split {
+     position: Position,
+     root_bounds: Option<Arc<Mutex<[root::RootBound; 64]>>>,
+@@ -167,7 +168,7 @@ struct Split {
+     depth: u8,
+     exact: bool,
+     allow_probcut: bool,
+-    cut: Arc<AtomicBool>,
++    cut: Arc<Padded<AtomicBool>>,
+     helper: Arc<Helper>,
+     active: AtomicUsize,
+ }

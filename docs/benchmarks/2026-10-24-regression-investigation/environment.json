@@ -1,0 +1,28 @@
+{
+  "production_source_unchanged": true,
+  "production_binary_sha256": "126d0b101daaad1905c9c033cdb8c72cbe8820d00351c9e6b870748b3b76a0ab",
+  "previous_binary_sha256": "4eeeff778c7f818771fb9997ef36c421e75619b2593734c17596164f0230d799",
+  "model_sha256": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+  "cpu_affinity": [
+    1
+  ],
+  "threads": 1,
+  "repeat_count": 5,
+  "profile": "native release, opt-level=3, fat LTO, codegen-units=1, panic=unwind",
+  "primary_case": 49,
+  "archive_sha256": "0e5e0b979b7440a1539e748199587e4ed81ff48949e10e01ef417d39fb75b4ea",
+  "patch_sha256": "304fdca316ad3e663025eca02d8bdd761007388cd6ac246cf64272d3f890e0c3",
+  "note": "Isolated diagnostic copies only. Counterfactual variants are not installed in the engine. Stage tracing is separate from the five-run timing series.",
+  "replay_check": {
+    "case": 40,
+    "score": 38,
+    "nodes": 8728417,
+    "result": "snapshot/patch/build/run verified"
+  },
+  "diagnostic_artifact_hashes": {
+    "reproduce.py": "03ea4efa6716e3073c240e050301294d07b3bf4e47af4bb7e33a253e0f8b90ba",
+    "diagnostic.patch": "304fdca316ad3e663025eca02d8bdd761007388cd6ac246cf64272d3f890e0c3",
+    "diagnostic.Cargo.lock": "6347d0ff1100aed7224615ad4fe7712c4726f7e54dcaba7fefe964e089337fdd",
+    "baseline-source.tar.gz": "0e5e0b979b7440a1539e748199587e4ed81ff48949e10e01ef417d39fb75b4ea"
+  }
+}

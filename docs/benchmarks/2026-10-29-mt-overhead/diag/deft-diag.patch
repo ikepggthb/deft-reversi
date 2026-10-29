@@ -1,0 +1,158 @@
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index 5464af2..b45317c 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -389,6 +389,14 @@ impl Engine {
+                     None
+                 }
+             };
++            {
++                let mut s = parallel::lock(&runtime.stats).clone();
++                s.merge(&context.stats);
++                eprintln!(
++                    "DIAG depth={} final={} quality={} nodes={} helper_nodes={} wasted={} splits={} split_cut={} split_empties={:?} general={:?} local={:?} local_cut={:?}",
++                    depth, final_iteration, quality, s.nodes, s.diag_helper_nodes, s.diag_wasted, s.splits, s.diag_split_cut, s.diag_split_empties, s.diag_general, s.diag_local, s.diag_local_cut
++                );
++            }
+             let Some(line) = completed else { break };
+             result.selective = sigma.is_some();
+             result.selectivity = if sigma.is_none() {
+diff --git a/deft-reversi-engine/src/search/api.rs b/deft-reversi-engine/src/search/api.rs
+index ad99228..a444aff 100644
+--- a/deft-reversi-engine/src/search/api.rs
++++ b/deft-reversi-engine/src/search/api.rs
+@@ -138,8 +138,29 @@ pub struct SearchStats {
+     pub probcut_tries: u64,
+     pub probcut_cuts: u64,
+     pub stability_cuts: u64,
++    pub diag_general: Vec<u64>,
++    pub diag_local: Vec<u64>,
++    pub diag_local_cut: Vec<u64>,
++    pub diag_split_empties: Vec<u64>,
++    pub diag_split_cut: u64,
++    pub diag_wasted: u64,
++    pub diag_helper_nodes: u64,
++}
++fn diag_add(a: &mut Vec<u64>, b: &[u64]) {
++    if a.len() < b.len() {
++        a.resize(b.len(), 0);
++    }
++    for (x, y) in a.iter_mut().zip(b) {
++        *x += y;
++    }
+ }
+ impl SearchStats {
++    pub fn diag_bump(v: &mut Vec<u64>, i: usize) {
++        if v.len() <= i {
++            v.resize(i + 1, 0);
++        }
++        v[i] += 1;
++    }
+     pub(super) fn merge(&mut self, other: &Self) {
+         self.nodes += other.nodes;
+         self.leaves += other.leaves;
+@@ -155,6 +176,13 @@ impl SearchStats {
+         self.probcut_tries += other.probcut_tries;
+         self.probcut_cuts += other.probcut_cuts;
+         self.stability_cuts += other.stability_cuts;
++        diag_add(&mut self.diag_general, &other.diag_general);
++        diag_add(&mut self.diag_local, &other.diag_local);
++        diag_add(&mut self.diag_local_cut, &other.diag_local_cut);
++        diag_add(&mut self.diag_split_empties, &other.diag_split_empties);
++        self.diag_split_cut += other.diag_split_cut;
++        self.diag_wasted += other.diag_wasted;
++        self.diag_helper_nodes += other.diag_helper_nodes;
+     }
+ }
+ #[derive(Clone, Debug)]
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index 99d53f3..ae57efc 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -105,6 +105,10 @@ impl Context {
+         // replaced the slot. This cache is owned by this Context, and quality is
+         // fixed until the search stage has joined all workers.
+         let probe = known_probe.unwrap_or_else(|| self.end_cache.probe(board, quality));
++        crate::SearchStats::diag_bump(&mut self.stats.diag_local, empties as usize);
++        if probe.matched && (i32::from(probe.lower) >= beta || i32::from(probe.upper) <= alpha) {
++            crate::SearchStats::diag_bump(&mut self.stats.diag_local_cut, empties as usize);
++        }
+         if probe.matched {
+             if known_probe.is_none() {
+                 self.stats.tt_hits += 1;
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index e0d860d..fdb61cf 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -90,11 +90,15 @@ impl Context {
+             probcut: allow_probcut,
+         } = spec;
+         self.enter()?;
++        SearchStats::diag_bump(&mut self.stats.diag_general, board.empty_count() as usize);
+         if exact && beta - alpha == 1 && board.empty_count() <= super::endgame::LOCAL_END_MAX {
+             #[cfg(feature = "endgame-pattern-ordering")]
+             if board.empty_count() == super::endgame::LOCAL_END_MAX {
+                 self.end_ordering[2] = Some((board, state));
+             }
++            if std::env::var_os("DEFT_DIAG_COLD").is_some() {
++                self.end_cache.clear();
++            }
+             return self.tail_score_entered(board, alpha, beta).map(Line::leaf);
+         }
+         if exact && board.empty_count() <= super::endgame::TAIL_EMPTIES {
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index 0a7397e..d774b74 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -58,6 +58,7 @@ impl Context {
+                     let mut context = Context::new(runtime.clone(), task_ancestors, task_cuts);
+                     context.stats.helper_jobs += 1;
+                     context.split_loop(&task_point);
++                    context.stats.diag_helper_nodes += context.stats.nodes;
+                 }));
+                 if result.is_err() {
+                     runtime.control.reason.store(4, Ordering::Release);
+@@ -84,6 +85,7 @@ impl Context {
+         }
+         if spawned != 0 {
+             self.stats.splits += 1;
++            SearchStats::diag_bump(&mut self.stats.diag_split_empties, position.board.empty_count() as usize);
+         }
+         // The master searches too, then only accepts descendant work while joining.
+         let old_ancestors = std::mem::replace(&mut self.ancestors, ancestors);
+@@ -96,6 +98,9 @@ impl Context {
+         self.stats.join_time += join_start.elapsed();
+         self.ancestors = old_ancestors;
+         self.cuts = old_cuts;
++        if point.cut.load(Ordering::Acquire) {
++            self.stats.diag_split_cut += 1;
++        }
+         if self.aborted() {
+             return Err(());
+         }
+@@ -122,7 +127,8 @@ impl Context {
+             let Some((candidate, alpha)) = next else {
+                 break;
+             };
+-            let Ok(Some(line)) = self.sibling(
++            let before = self.stats.nodes;
++            let searched = self.sibling(
+                 point.position,
+                 candidate,
+                 alpha,
+@@ -132,9 +138,14 @@ impl Context {
+                     exact: point.exact,
+                     probcut: point.allow_probcut,
+                 },
+-            ) else {
++            );
++            let Ok(Some(line)) = searched else {
++                self.stats.diag_wasted += self.stats.nodes - before;
+                 break;
+             };
++            if point.cut.load(Ordering::Acquire) {
++                self.stats.diag_wasted += self.stats.nodes - before;
++            }
+             if let Some(bounds) = &point.root_bounds {
+                 parallel::lock(bounds)[candidate.square.index() as usize]
+                     .update(line.score, alpha, point.beta);

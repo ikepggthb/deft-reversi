@@ -1,0 +1,34 @@
+round=1 threads=1 deft=9.901 edax455=10.394 egar781_clang=10.028
+round=1 threads=2 deft=5.135 edax455=5.349 egar781_clang=6.230
+round=1 threads=4 deft=2.831 edax455=3.002 egar781_clang=3.540
+round=1 threads=8 deft=1.626 edax455=1.838 egar781_clang=1.509
+round=1 threads=20 deft=1.223 edax455=1.364 egar781_clang=1.094
+round=2 threads=20 deft=1.225 edax455=1.348 egar781_clang=1.122
+round=2 threads=8 deft=1.606 edax455=1.784 egar781_clang=1.503
+round=2 threads=4 deft=2.822 edax455=3.050 egar781_clang=3.392
+round=2 threads=2 deft=5.077 edax455=5.356 egar781_clang=6.150
+round=2 threads=1 deft=9.875 edax455=10.354 egar781_clang=9.928
+round=3 threads=1 deft=9.876 edax455=10.352 egar781_clang=9.929
+round=3 threads=2 deft=5.083 edax455=5.306 egar781_clang=6.158
+round=3 threads=4 deft=2.826 edax455=3.078 egar781_clang=3.410
+round=3 threads=8 deft=1.656 edax455=1.749 egar781_clang=1.564
+round=3 threads=20 deft=1.220 edax455=1.315 egar781_clang=1.105
+round=4 threads=20 deft=1.231 edax455=1.350 egar781_clang=1.351
+round=4 threads=8 deft=1.628 edax455=1.801 egar781_clang=1.963
+round=4 threads=4 deft=2.832 edax455=3.034 egar781_clang=3.359
+round=4 threads=2 deft=5.080 edax455=5.310 egar781_clang=6.153
+round=4 threads=1 deft=9.874 edax455=10.353 egar781_clang=9.906
+round=5 threads=1 deft=9.874 edax455=10.350 egar781_clang=9.907
+round=5 threads=2 deft=5.071 edax455=5.308 egar781_clang=6.135
+round=5 threads=4 deft=2.801 edax455=3.038 egar781_clang=3.404
+round=5 threads=8 deft=1.662 edax455=1.763 egar781_clang=1.545
+round=5 threads=20 deft=1.199 edax455=1.379 egar781_clang=1.330
+round=6 threads=20 deft=1.220 edax455=1.328 egar781_clang=1.360
+round=6 threads=8 deft=1.640 edax455=1.791 egar781_clang=1.608
+round=6 threads=4 deft=2.819 edax455=3.022 egar781_clang=3.486
+round=6 threads=2 deft=5.069 edax455=5.304 egar781_clang=6.131
+round=6 threads=1 deft=9.882 edax455=10.369 egar781_clang=9.930
+deft t1=9.875s(x1.00) t2=5.078s(x1.94) t4=2.824s(x3.50) t8=1.634s(x6.04) t20=1.222s(x8.08)
+edax455 t1=10.354s(x1.00) t2=5.309s(x1.95) t4=3.036s(x3.41) t8=1.788s(x5.79) t20=1.349s(x7.67)
+egar781_clang t1=9.928s(x1.00) t2=6.152s(x1.61) t4=3.407s(x2.91) t8=1.554s(x6.39) t20=1.226s(x8.10)
+exit=0

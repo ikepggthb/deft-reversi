@@ -1,0 +1,59 @@
+ITER depth=5 final=false quality=3 start=0.031 end=0.280
+ITER depth=7 final=false quality=3 start=0.294 end=1.101
+ITER depth=9 final=false quality=3 start=1.111 end=2.259
+ITER depth=11 final=false quality=3 start=2.277 end=2.761
+ITER depth=13 final=false quality=3 start=2.769 end=3.196
+ITER depth=15 final=false quality=3 start=3.201 end=3.338
+ITER depth=17 final=false quality=3 start=3.344 end=7.650
+ITER depth=25 final=true quality=3 start=7.659 end=22.817
+ITER depth=25 final=true quality=0 start=22.826 end=49.359
+BUSY 0 0.90
+BUSY 1 2.40
+BUSY 2 0.75
+BUSY 3 1.00
+BUSY 4 2.50
+BUSY 5 10.80
+BUSY 6 6.10
+BUSY 7 6.00
+BUSY 8 3.50
+BUSY 9 5.00
+BUSY 10 3.40
+BUSY 11 12.00
+BUSY 12 10.78
+BUSY 13 11.00
+BUSY 14 14.50
+BUSY 15 8.50
+BUSY 16 3.20
+BUSY 17 5.10
+BUSY 18 9.10
+BUSY 19 5.50
+BUSY 20 4.00
+BUSY 21 1.70
+BUSY 22 2.00
+BUSY 23 5.00
+BUSY 24 9.11
+BUSY 25 10.60
+BUSY 26 16.89
+BUSY 27 16.80
+BUSY 28 12.70
+BUSY 29 9.67
+BUSY 30 16.60
+BUSY 31 16.00
+BUSY 32 15.12
+BUSY 33 17.33
+BUSY 34 16.80
+BUSY 35 17.78
+BUSY 36 17.67
+BUSY 37 14.50
+BUSY 38 19.00
+BUSY 39 18.50
+BUSY 40 17.83
+BUSY 41 8.20
+BUSY 42 15.50
+BUSY 43 15.78
+BUSY 44 15.89
+BUSY 45 15.33
+BUSY 46 12.33
+BUSY 47 12.70
+BUSY 48 13.10
+BUSY 49 6.00

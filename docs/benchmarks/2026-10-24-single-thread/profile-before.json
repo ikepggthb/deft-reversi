@@ -1,0 +1,181 @@
+{
+  "binary_sha256": "b10673274943f6bd0a300f6cc16dcfc1adf450fad23b567db6018b06faa45b70",
+  "total_samples": 4968,
+  "outside_executable": 360,
+  "mapped_samples": 4608,
+  "method": "ITIMER_PROF 1ms, executable self-time",
+  "functions": [
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node",
+      "samples": 2068,
+      "fraction_mapped": 0.4487847222222222
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "samples": 1117,
+      "fraction_mapped": 0.2424045138888889
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tail::<impl deft_reversi_engine_v2::search::session::Context>::tail_score_impl",
+      "samples": 442,
+      "fraction_mapped": 0.0959201388888889
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::session::Line::prepend",
+      "samples": 216,
+      "fraction_mapped": 0.046875
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::sibling",
+      "samples": 189,
+      "fraction_mapped": 0.041015625
+    },
+    {
+      "name": "deft_reversi_engine_v2::board::stability::stable",
+      "samples": 182,
+      "fraction_mapped": 0.039496527777777776
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tail::<impl deft_reversi_engine_v2::search::session::Context>::tail_entered",
+      "samples": 106,
+      "fraction_mapped": 0.023003472222222224
+    },
+    {
+      "name": "deft_reversi_engine_v2::transposition::Table::store",
+      "samples": 89,
+      "fraction_mapped": 0.019314236111111112
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tail::<impl deft_reversi_engine_v2::search::session::Context>::tail_score_entered",
+      "samples": 82,
+      "fraction_mapped": 0.017795138888888888
+    },
+    {
+      "name": "deft_reversi_engine_v2::evaluation::EvalState::played",
+      "samples": 37,
+      "fraction_mapped": 0.008029513888888888
+    },
+    {
+      "name": "deft_reversi_engine_v2::evaluation::PatternModel::evaluate_state",
+      "samples": 36,
+      "fraction_mapped": 0.0078125
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::odd_regions",
+      "samples": 27,
+      "fraction_mapped": 0.005859375
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::aborted",
+      "samples": 10,
+      "fraction_mapped": 0.002170138888888889
+    },
+    {
+      "name": "deft_reversi_engine_v2::evaluation::PatternModel::read_from",
+      "samples": 7,
+      "fraction_mapped": 0.0015190972222222222
+    }
+  ],
+  "instructions": [
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node",
+      "offset": "0x2f66f",
+      "samples": 1129
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36d40",
+      "samples": 63
+    },
+    {
+      "name": "deft_reversi_engine_v2::transposition::Table::store",
+      "offset": "0x3528b",
+      "samples": 62
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36de0",
+      "samples": 46
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36d6d",
+      "samples": 42
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36db5",
+      "samples": 38
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36df7",
+      "samples": 36
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36dee",
+      "samples": 36
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36de9",
+      "samples": 35
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::session::Line::prepend",
+      "offset": "0x33318",
+      "samples": 35
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tail::<impl deft_reversi_engine_v2::search::session::Context>::tail_entered",
+      "offset": "0x315f9",
+      "samples": 34
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node",
+      "offset": "0x30831",
+      "samples": 33
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node",
+      "offset": "0x30774",
+      "samples": 33
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36ce9",
+      "samples": 33
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::sibling",
+      "offset": "0x34a7f",
+      "samples": 33
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node",
+      "offset": "0x2ec72",
+      "samples": 31
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::sibling",
+      "offset": "0x34af8",
+      "samples": 31
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36da0",
+      "samples": 30
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::small::<impl deft_reversi_engine_v2::search::session::Context>::small_score",
+      "offset": "0x36d89",
+      "samples": 28
+    },
+    {
+      "name": "deft_reversi_engine_v2::search::tree::<impl deft_reversi_engine_v2::search::session::Context>::node",
+      "offset": "0x304df",
+      "samples": 28
+    }
+  ]
+}

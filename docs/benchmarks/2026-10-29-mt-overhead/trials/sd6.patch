@@ -1,0 +1,25 @@
+diff --git a/deft-reversi-engine/src/search/root.rs b/deft-reversi-engine/src/search/root.rs
+index d35be86..a3a60f3 100644
+--- a/deft-reversi-engine/src/search/root.rs
++++ b/deft-reversi-engine/src/search/root.rs
+@@ -191,7 +191,7 @@ impl RootSearch {
+             && if spec.exact {
+                 self.position.board.empty_count() >= 10
+             } else {
+-                spec.depth >= 8
++                spec.depth >= 6
+             };
+         if split && context.runtime.pool.can_offer(&context.ancestors) {
+             let bounds = reuse.then(|| Arc::new(Mutex::new(self.bounds)));
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index 92e43fa..3037289 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -1,6 +1,6 @@
+ use super::endgame::parity::odd_regions;
+ use super::*;
+-const SPLIT_DEPTH: u8 = 8;
++const SPLIT_DEPTH: u8 = 6;
+ const SPLIT_EMPTIES: u8 = 10;
+ struct OrderingWeights {
+     mobility: i32,

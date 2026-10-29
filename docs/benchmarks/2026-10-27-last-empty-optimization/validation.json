@@ -1,0 +1,38 @@
+{
+  "core": {
+    "stage": "always plus cfg(test) regression test",
+    "default_native": {
+      "passed": 59,
+      "include_ignored": true,
+      "test_threads": 1
+    }
+  },
+  "legal": {
+    "stage": "legal-cut",
+    "default_native": {
+      "passed": 59,
+      "include_ignored": true,
+      "test_threads": 1
+    },
+    "endgame_pattern_ordering_native": {
+      "passed": 59,
+      "include_ignored": true,
+      "test_threads": 1
+    },
+    "portable_lib": {
+      "passed": 42,
+      "rustflags": ""
+    }
+  },
+  "native_rustflags": "-C target-cpu=native",
+  "commands": [
+    "cargo test --offline --release -- --include-ignored --test-threads=1",
+    "cargo test --offline --release --features endgame-pattern-ordering -- --include-ignored --test-threads=1",
+    "RUSTFLAGS= cargo test --offline --release --lib"
+  ],
+  "test_addition": "64 squares x 128 one-empty boards, normal Board move/pass/final_score reference, 11 alpha thresholds including score and base boundaries",
+  "warning": "pre-existing deprecated AtomicU64::fetch_update in search/tree.rs",
+  "cargo_fmt_check": true,
+  "final_patch_applies_and_reconstructs_source": true,
+  "final_default_rebuild_sha256_matches_measured_core": true
+}

@@ -1,0 +1,5 @@
+# Keep whitespace from recorded benchmark output and unified patch syntax.
+docs/benchmarks/**/*.tsv whitespace=cr-at-eol
+docs/benchmarks/**/*.patch -whitespace
+docs/benchmarks/**/*.asm.txt -whitespace
+docs/benchmarks/**/*.log whitespace=-blank-at-eof

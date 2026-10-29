@@ -1,0 +1,29 @@
+{
+  "runs": 320,
+  "all_scores_correct": true,
+  "all_moves_optimal": true,
+  "all_reported_full_depth_nonselective": true,
+  "all_positions_eight_repetitions_per_engine": true,
+  "each_engine_each_slot_twice_per_position": true,
+  "nodes_stable_within_engine_position": true,
+  "egar_simd_and_avx512_nodes_identical_per_position": true,
+  "binaries_and_data_hashes_unchanged": true,
+  "deft_source_unchanged": true,
+  "deft_source_patch_reconstructs_worktree": true,
+  "deft_faster_positions_by_medians": {
+    "edax": 1,
+    "egar_simd": 2,
+    "egar_avx512": 2
+  },
+  "process_wall_total_medians_reference_only": {
+    "deft": 23.6095517210033,
+    "edax": 21.27266432399938,
+    "egar_simd": 31.897375529999408,
+    "egar_avx512": 31.063676924502033
+  },
+  "all_320_commands_pinned_cpu0": true,
+  "all_320_processes_stderr_empty": true,
+  "all_320_process_outputs_recorded": true,
+  "script_syntax_and_json_valid": true,
+  "git_diff_check": true
+}

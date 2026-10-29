@@ -1,0 +1,152 @@
+[
+  {
+    "variant": "no_pv",
+    "feature": "diag-no-pv",
+    "sha256": "463a5aee087dec9708d943cbb4cc6b843ce2d1aae76a6300b7f681c59d3b70aa"
+  },
+  {
+    "variant": "no_stabilize",
+    "feature": "diag-no-stabilize",
+    "sha256": "94ab8c78563464733c32365e2ddd6cd8acb26ef36b5c47efb60f1a1c7ed88f81"
+  },
+  {
+    "variant": "narrow_mpc",
+    "feature": "diag-narrow-mpc",
+    "sha256": "829e8a0774757418f0e15657cfc4636a4d18ce7523e7ec69864f2ee48e9bd795"
+  },
+  {
+    "variant": "window4",
+    "feature": "diag-window4",
+    "sha256": "4a4e00f93e1f15b3592af60e5573eb9dcc68a8f6f38e33a5f7f5668e27852939"
+  },
+  {
+    "variant": "window8",
+    "feature": "diag-window8",
+    "sha256": "6e7bba9e733a36e247885dc55cb92f2bd78445248e2bbf70797e48993eb555c6"
+  },
+  {
+    "variant": "control2",
+    "features": null,
+    "sha256": "ddce1f512ba59085fdf1db8b5ea91ea64169a052a430e9d23db8da1e75d8ce00"
+  },
+  {
+    "variant": "old_root",
+    "features": "diag-old-root",
+    "sha256": "b4ad026ac98a9399575b1c139e673d415a773e14b3f9540ac492e6ccb9fe99b7"
+  },
+  {
+    "variant": "old_root_narrow_mpc",
+    "features": "diag-old-root,diag-narrow-mpc",
+    "sha256": "d8805c958c15b4fbe32a9a49c8855991920b05a3ab4a5a655506e6f54c3cc4c2"
+  },
+  {
+    "variant": "no_pv_table",
+    "features": "diag-no-pv-table",
+    "sha256": "290a77a0932c4eeddc59f7a81a92a8c8b20905877929cee44f00d21065d0d4c2"
+  },
+  {
+    "variant": "narrow_tt",
+    "features": "diag-narrow-tt",
+    "sha256": "1ec39b21576d640204db32305d1e8a4b328942914350883ec9d1d4ed0a478935"
+  },
+  {
+    "variant": "old_tt",
+    "features": "diag-no-pv-table,diag-narrow-tt",
+    "sha256": "ede7f4367ffefc7cb7d4760ef872aaf55e911334975a86ea1c39382060dce492"
+  },
+  {
+    "variant": "control3",
+    "features": null,
+    "sha256": "bf3218598a06ab06e1133f401236b5908640651a3f988055606683c9bbb6f4db"
+  },
+  {
+    "variant": "mpc_tree3",
+    "features": "diag-mpc-tree",
+    "sha256": "48849deb0bc1fc2d858d4df3e2d0edb138ad2f6ba2e95798acb383529f146a05"
+  },
+  {
+    "variant": "mpc_tree_no_write",
+    "features": "diag-mpc-tree-no-write",
+    "sha256": "c1c98f558e6d99653f8aff5dcb09f0b80a2c92947105de71720af58bca02259a"
+  },
+  {
+    "variant": "root_and_tree",
+    "features": "diag-old-root,diag-mpc-tree",
+    "sha256": "07c3138121f86122a5b92379eb57bd4ce7a81767c981b3465bd8b4ef7181319b"
+  },
+  {
+    "variant": "root_tree_narrow_mpc",
+    "features": "diag-old-root,diag-mpc-tree,diag-narrow-mpc",
+    "sha256": "1e65a477cd787f9f96eb733b42a5615017a9492abe6a2e5299b2ab9ec4909d38"
+  },
+  {
+    "variant": "all_previous",
+    "features": "diag-old-root,diag-mpc-tree,diag-narrow-mpc,diag-no-pv-table,diag-narrow-tt",
+    "sha256": "3f7e578221112be534f81dc777fef40cf3dc1ce5bfa26f92710e18d850910144"
+  },
+  {
+    "variant": "old_root3",
+    "features": "diag-old-root",
+    "sha256": "2a7101eef165d2ab295152ab6163570c9b29ddb31257a7a412071ad624b3cefb"
+  },
+  {
+    "variant": "pvs_stability",
+    "features": "diag-pvs-stability",
+    "sha256": "2c43662fb48e5d6b1b9fdb52c25151686da29420f8034f7e4080b456b2b386cd"
+  },
+  {
+    "variant": "tail_first",
+    "features": "diag-tail-first",
+    "sha256": "60177ebef02db18a22820047987e5d8334a7cdc3ca60a11754a4f00441e9cd93"
+  },
+  {
+    "variant": "six_order",
+    "features": "diag-six-order",
+    "sha256": "b7f3eb9de09feb8d31f4d4de1baadb4f4fd1fe6017ef8f2c8a1843d9d16cd8f5"
+  },
+  {
+    "variant": "tail_match",
+    "features": "diag-tail-match",
+    "sha256": "2b020b17c5534417feab01c8e3f811db2b8893cd9b294f26dc147ac5855c3dad"
+  },
+  {
+    "variant": "pv_root4",
+    "features": "diag-pv-root4",
+    "sha256": "5579f8feef73d50201edb856b1dd4267f004c3e05aa9e34b27094fa07dbd02b9"
+  },
+  {
+    "variant": "final_control",
+    "features": null,
+    "sha256": "983cee18bb69bef8173af062e70610862eaae53f048eb588b905a8910d207e99"
+  },
+  {
+    "variant": "final_old_root",
+    "features": "diag-old-root",
+    "sha256": "2a7101eef165d2ab295152ab6163570c9b29ddb31257a7a412071ad624b3cefb"
+  },
+  {
+    "variant": "final_mpc_tree",
+    "features": "diag-mpc-tree",
+    "sha256": "0d57e0b0709c7ed4731614c6dd17d60d4d0fd07de2f9e5cc61b1d35ff1d75157"
+  },
+  {
+    "variant": "final_no_probe_write",
+    "features": "diag-mpc-tree-no-write",
+    "sha256": "c3bf0472091afcf1eb4e405d8d4bc75112c11683161d6eda48fe6a612e11fb49"
+  },
+  {
+    "variant": "final_root_tree",
+    "features": "diag-old-root,diag-mpc-tree",
+    "sha256": "4c9e10a73eb9cd35f0e8e27164523c0b8653659c2082a161fd3e750ebb5e9e24"
+  },
+  {
+    "variant": "final_previous",
+    "features": "diag-old-root,diag-mpc-tree,diag-narrow-mpc,diag-no-pv-table,diag-narrow-tt",
+    "sha256": "db7b07c9d890a4e3beb6316e2319e187ee241bd75802a3a98ef8fa1574aa79f5"
+  },
+  {
+    "variant": "final_pvs_stability",
+    "features": "diag-pvs-stability",
+    "sha256": "2c43662fb48e5d6b1b9fdb52c25151686da29420f8034f7e4080b456b2b386cd"
+  }
+]

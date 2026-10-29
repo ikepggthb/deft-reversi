@@ -1,0 +1,151 @@
+diff --git a/deft-reversi-engine/src/search/endgame/local_tt.rs b/deft-reversi-engine/src/search/endgame/local_tt.rs
+index f1b0083..26d7382 100644
+--- a/deft-reversi-engine/src/search/endgame/local_tt.rs
++++ b/deft-reversi-engine/src/search/endgame/local_tt.rs
+@@ -1,7 +1,7 @@
+ //! Context-owned endgame TT; probes are immutable snapshots, never slot pointers.
+ use super::{LOCAL_END_MAX, TAIL_EMPTIES};
+ use crate::Board;
+-const LOCAL_SLOTS: usize = 2048;
++const LOCAL_SLOTS: usize = 1024;
+ const LAYERS: usize = (LOCAL_END_MAX - TAIL_EMPTIES + 1) as usize;
+ 
+ #[derive(Default)]
+@@ -28,15 +28,26 @@ impl EndgameCache {
+             );
+         }
+     }
++    /// Starts loading the slot that `probe` will read for `board`.
++    #[inline(always)]
++    pub(super) fn prefetch(&self, board: Board) {
++        #[cfg(target_arch = "x86_64")]
++        if let Some(entry) = self.layers[usize::from(board.empty_count() - TAIL_EMPTIES)]
++            .get(usize::from(slot(board)))
++        {
++            // SAFETY: prefetching a valid reference has no architectural effect.
++            unsafe {
++                std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(
++                    (entry as *const EndEntry).cast(),
++                )
++            };
++        }
++    }
+     #[inline]
+     pub(super) fn probe(&self, board: Board, quality: u8) -> EndProbe {
+         let empties = board.empty_count();
+         debug_assert!((TAIL_EMPTIES..=LOCAL_END_MAX).contains(&empties));
+-        // Mix colors independently: xor-before-multiply cancels color swaps
+-        // separated by 32 squares, creating systematic aliases.
+-        let hash = board.player_bits().wrapping_mul(0x9dda1c54cfe6b6e9)
+-            ^ board.opponent_bits().wrapping_mul(0xa2e6c0300831e05a);
+-        let index = (hash >> 53) as u16;
++        let index = slot(board);
+         let mut probe = EndProbe {
+             index,
+             ..EndProbe::EMPTY
+@@ -80,6 +91,15 @@ impl EndgameCache {
+     }
+ }
+ 
++#[inline(always)]
++fn slot(board: Board) -> u16 {
++    // Mix colors independently: xor-before-multiply cancels color swaps
++    // separated by 32 squares, creating systematic aliases.
++    let hash = board.player_bits().wrapping_mul(0x9dda1c54cfe6b6e9)
++        ^ board.opponent_bits().wrapping_mul(0xa2e6c0300831e05a);
++    (hash >> 54) as u16
++}
++
+ #[derive(Clone, Copy)]
+ struct EndEntry {
+     quality: u8,
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 7dc5cb6..9875308 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -86,6 +86,9 @@ impl Context {
+                 return Ok(64);
+             }
+             let child = board.after_known_move(bit, flips);
++            // Overlap the slot load with move generation.
++            self.end_cache.prefetch(child);
++            let legal = child.get_moves();
+             let probe = self.end_cache.probe(child, quality);
+             if probe.matched {
+                 self.stats.tt_hits += 1;
+@@ -102,7 +105,6 @@ impl Context {
+                     continue;
+                 }
+             }
+-            let legal = child.get_moves();
+             let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();
+             if mobility <= 1 {
+                 self.enter()?;
+diff --git a/deft-reversi-engine/src/search/endgame/shallow.rs b/deft-reversi-engine/src/search/endgame/shallow.rs
+index dddb740..dbc0215 100644
+--- a/deft-reversi-engine/src/search/endgame/shallow.rs
++++ b/deft-reversi-engine/src/search/endgame/shallow.rs
+@@ -1,5 +1,5 @@
+ //! Dedicated five- and six-empty null-window kernels.
+-use super::parity::{PARITY_REGIONS, SQUARE_PARITY};
++use super::parity::SQUARE_PARITY;
+ use super::{Board, Context};
+ 
+ impl Context {
+@@ -29,7 +29,11 @@ impl Context {
+                 )
+                 .map(|score| -score);
+         }
+-        let mut preferred = moves & PARITY_REGIONS[usize::from(parity)];
++        if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
++            self.stats.stability_cuts += 1;
++            return Ok(score);
++        }
++        let mut preferred = moves & isolated_empties(board);
+         let mut best = -65;
+         while moves != 0 {
+             let options = if preferred != 0 { preferred } else { moves };
+@@ -55,8 +59,12 @@ impl Context {
+         parity: u8,
+     ) -> Result<i32, ()> {
+         debug_assert_eq!(board.empty_count(), 5);
++        if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
++            self.stats.stability_cuts += 1;
++            return Ok(score);
++        }
+         let mut empty = !(board.player_bits() | board.opponent_bits());
+-        let mut preferred = empty & PARITY_REGIONS[usize::from(parity)];
++        let mut preferred = isolated_empties(board);
+         let child_alpha = -alpha - 1;
+         let mut best = -65;
+         while empty != 0 {
+@@ -95,3 +103,13 @@ impl Context {
+             .map(|score| -score)
+     }
+ }
++
++/// Empty squares without an empty king-move neighbour.
++#[inline(always)]
++fn isolated_empties(board: Board) -> u64 {
++    let empty = !(board.player_bits() | board.opponent_bits());
++    let horizontal = ((empty >> 1) & 0x7f7f7f7f7f7f7f7f) | ((empty << 1) & 0xfefefefefefefefe);
++    let row = horizontal | empty;
++    let around = horizontal | (row >> 8) | (row << 8);
++    empty & !around
++}
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index 5165d86..2a97c9b 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -211,8 +211,10 @@ impl Context {
+             let child = board.after_known_move(bit, flips);
+             // Reference ETC uses the original alpha to skip moves. Preserve
+             // their largest upper bound so a fail-low remains a sound bound.
++            // Null-window children with thirteen or fewer empties live only in
++            // the local endgame cache, so the main table cannot cut them.
+             if (if exact {
+-                board.empty_count() > 12
++                board.empty_count() > super::endgame::LOCAL_END_MAX + u8::from(beta - alpha == 1)
+             } else {
+                 depth >= 4
+             }) && let Some(entry) = self.runtime.table.get(child)

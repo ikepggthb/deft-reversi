@@ -1,0 +1,38 @@
+{
+  "final_control": {
+    "median_seconds": 4.781963299,
+    "nodes": [
+      280670334
+    ]
+  },
+  "final_old_root": {
+    "median_seconds": 4.001287105,
+    "nodes": [
+      243767977
+    ]
+  },
+  "final_mpc_tree": {
+    "median_seconds": 4.205336399,
+    "nodes": [
+      223502785
+    ]
+  },
+  "final_no_probe_write": {
+    "median_seconds": 4.927799035,
+    "nodes": [
+      279196213
+    ]
+  },
+  "final_root_tree": {
+    "median_seconds": 3.361564347,
+    "nodes": [
+      179633269
+    ]
+  },
+  "final_previous": {
+    "median_seconds": 3.372143191,
+    "nodes": [
+      192348817
+    ]
+  }
+}

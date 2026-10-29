@@ -1,0 +1,97 @@
+{
+  "cases": [
+    {
+      "ffo": 40,
+      "old_seconds": 0.099529614,
+      "new_seconds": 0.112965747,
+      "old_over_new": 0.8810601146204079,
+      "score": 38
+    },
+    {
+      "ffo": 41,
+      "old_seconds": 0.22813125,
+      "new_seconds": 0.234619897,
+      "old_over_new": 0.9723440037142289,
+      "score": 0
+    },
+    {
+      "ffo": 42,
+      "old_seconds": 0.299345489,
+      "new_seconds": 0.341833901,
+      "old_over_new": 0.8757045106535528,
+      "score": 6
+    },
+    {
+      "ffo": 43,
+      "old_seconds": 0.916902085,
+      "new_seconds": 0.901645058,
+      "old_over_new": 1.0169213227141094,
+      "score": -12
+    },
+    {
+      "ffo": 44,
+      "old_seconds": 0.257636679,
+      "new_seconds": 0.216325029,
+      "old_over_new": 1.190970273717148,
+      "score": -14
+    },
+    {
+      "ffo": 45,
+      "old_seconds": 2.73998367,
+      "new_seconds": 2.77653469,
+      "old_over_new": 0.9868357416416792,
+      "score": 6
+    },
+    {
+      "ffo": 46,
+      "old_seconds": 0.82428967,
+      "new_seconds": 1.080206074,
+      "old_over_new": 0.7630855721331559,
+      "score": -8
+    },
+    {
+      "ffo": 47,
+      "old_seconds": 0.284048568,
+      "new_seconds": 0.301161076,
+      "old_over_new": 0.9431782213449124,
+      "score": 4
+    },
+    {
+      "ffo": 48,
+      "old_seconds": 2.233081241,
+      "new_seconds": 2.364573406,
+      "old_over_new": 0.9443907452116544,
+      "score": 28
+    },
+    {
+      "ffo": 49,
+      "old_seconds": 4.680279335,
+      "new_seconds": 3.316434574,
+      "old_over_new": 1.4112382531807486,
+      "score": 16
+    }
+  ],
+  "round_totals": {
+    "old": [
+      12.613884258,
+      12.565960089,
+      12.559825329999999,
+      12.567935646,
+      12.575096656
+    ],
+    "new": [
+      11.682523527,
+      11.666063411,
+      11.653219215,
+      11.648431063,
+      11.640015445
+    ]
+  },
+  "median_totals": {
+    "old": 12.567935646,
+    "new": 11.653219215
+  },
+  "old_over_new": 1.078494741592313,
+  "time_reduction_percent": 7.278175642879958,
+  "all_scores_match": true
+}

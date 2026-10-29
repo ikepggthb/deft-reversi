@@ -1,0 +1,399 @@
+{
+  "rounds": 8,
+  "positions": 10,
+  "runs": 320,
+  "cpu": 2,
+  "threads": 1,
+  "main_tt_entries": 8388608,
+  "orders": [
+    [
+      "deft",
+      "edax",
+      "egar_avx512",
+      "egar_simd"
+    ],
+    [
+      "edax",
+      "egar_simd",
+      "deft",
+      "egar_avx512"
+    ],
+    [
+      "egar_simd",
+      "egar_avx512",
+      "edax",
+      "deft"
+    ],
+    [
+      "egar_avx512",
+      "deft",
+      "egar_simd",
+      "edax"
+    ]
+  ],
+  "round_seconds": {
+    "deft": [
+      29.099408966,
+      28.342018052999997,
+      28.978109442,
+      30.062209266000004,
+      28.94139951,
+      28.841838302999996,
+      29.755582536999995,
+      29.047004265
+    ],
+    "edax": [
+      27.958,
+      27.168,
+      26.635,
+      27.541999999999998,
+      27.054000000000002,
+      27.304,
+      27.11,
+      27.505999999999997
+    ],
+    "egar_simd": [
+      30.846000000000004,
+      30.259,
+      30.267,
+      30.188000000000002,
+      31.489,
+      31.910999999999998,
+      32.17700000000001,
+      32.566
+    ],
+    "egar_avx512": [
+      30.070999999999998,
+      29.388,
+      29.008000000000003,
+      29.759999999999998,
+      30.616,
+      30.573999999999998,
+      32.269,
+      31.388
+    ]
+  },
+  "seconds_median": {
+    "deft": 29.0125568535,
+    "edax": 27.235999999999997,
+    "egar_simd": 31.167500000000004,
+    "egar_avx512": 30.322499999999998
+  },
+  "paired_deft_time_ratios": {
+    "edax": [
+      1.040825844695615,
+      1.0432132675574204,
+      1.087971069720293,
+      1.0915042214073054,
+      1.0697641572410734,
+      1.0563228209419864,
+      1.0975869618959793,
+      1.0560242952446741
+    ],
+    "egar_simd": [
+      0.9433770656162872,
+      0.9366475446313492,
+      0.9574159791852513,
+      0.9958330881807341,
+      0.9190955416177078,
+      0.9038211996803609,
+      0.9247469477266367,
+      0.8919426477000553
+    ],
+    "egar_avx512": [
+      0.967690098965781,
+      0.9644078553491219,
+      0.9989695753585217,
+      1.01015488125,
+      0.9453030934805331,
+      0.9433452705893896,
+      0.9221104631999751,
+      0.9254174928316554
+    ]
+  },
+  "paired_deft_time_ratio_medians": {
+    "edax": 1.06304348909153,
+    "egar_simd": 0.930697246178993,
+    "egar_avx512": 0.9548554744148274
+  },
+  "deft_faster_rounds": {
+    "edax": 0,
+    "egar_simd": 8,
+    "egar_avx512": 7
+  },
+  "per_position": {
+    "40": {
+      "deft": {
+        "seconds_median": 0.23151554600000002,
+        "nodes_values": [
+          7733603
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.2485,
+        "nodes_values": [
+          10105232
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.2285,
+        "nodes_values": [
+          9539933
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.2135,
+        "nodes_values": [
+          9539933
+        ]
+      }
+    },
+    "41": {
+      "deft": {
+        "seconds_median": 0.5488042325,
+        "nodes_values": [
+          17452655
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.587,
+        "nodes_values": [
+          22907975
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.429,
+        "nodes_values": [
+          11502875
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.386,
+        "nodes_values": [
+          11502875
+        ]
+      }
+    },
+    "42": {
+      "deft": {
+        "seconds_median": 0.6826334045,
+        "nodes_values": [
+          22020463
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.657,
+        "nodes_values": [
+          25689012
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.504,
+        "nodes_values": [
+          15740594
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.43,
+        "nodes_values": [
+          15740594
+        ]
+      }
+    },
+    "43": {
+      "deft": {
+        "seconds_median": 2.2075944895,
+        "nodes_values": [
+          49269920
+        ]
+      },
+      "edax": {
+        "seconds_median": 2.1630000000000003,
+        "nodes_values": [
+          70212796
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 2.1414999999999997,
+        "nodes_values": [
+          53375922
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 2.081,
+        "nodes_values": [
+          53375922
+        ]
+      }
+    },
+    "44": {
+      "deft": {
+        "seconds_median": 0.645741685,
+        "nodes_values": [
+          13168342
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.6819999999999999,
+        "nodes_values": [
+          20398802
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.403,
+        "nodes_values": [
+          7225161
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.3845,
+        "nodes_values": [
+          7225161
+        ]
+      }
+    },
+    "45": {
+      "deft": {
+        "seconds_median": 6.1449743355,
+        "nodes_values": [
+          151025998
+        ]
+      },
+      "edax": {
+        "seconds_median": 7.3934999999999995,
+        "nodes_values": [
+          266787296
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 6.631500000000001,
+        "nodes_values": [
+          211710261
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 6.4015,
+        "nodes_values": [
+          211710261
+        ]
+      }
+    },
+    "46": {
+      "deft": {
+        "seconds_median": 2.115357252,
+        "nodes_values": [
+          57689420
+        ]
+      },
+      "edax": {
+        "seconds_median": 1.4905,
+        "nodes_values": [
+          59211002
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 1.3975,
+        "nodes_values": [
+          33913920
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 1.266,
+        "nodes_values": [
+          33913920
+        ]
+      }
+    },
+    "47": {
+      "deft": {
+        "seconds_median": 0.6963811505,
+        "nodes_values": [
+          18514352
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.443,
+        "nodes_values": [
+          15478711
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.5045,
+        "nodes_values": [
+          10837155
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.4545,
+        "nodes_values": [
+          10837155
+        ]
+      }
+    },
+    "48": {
+      "deft": {
+        "seconds_median": 5.089644799,
+        "nodes_values": [
+          111052318
+        ]
+      },
+      "edax": {
+        "seconds_median": 4.452,
+        "nodes_values": [
+          143042220
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 5.776,
+        "nodes_values": [
+          88536843
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 5.7490000000000006,
+        "nodes_values": [
+          88536843
+        ]
+      }
+    },
+    "49": {
+      "deft": {
+        "seconds_median": 10.912797387000001,
+        "nodes_values": [
+          256615754
+        ]
+      },
+      "edax": {
+        "seconds_median": 9.1045,
+        "nodes_values": [
+          313007996
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 13.074000000000002,
+        "nodes_values": [
+          308895538
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 12.6675,
+        "nodes_values": [
+          308895538
+        ]
+      }
+    }
+  },
+  "all_scores_match_published_answers": true,
+  "all_full_depth_and_nonselective": true,
+  "all_engine_nodes_stable_across_repetitions": true,
+  "binary_sha256": {
+    "deft": "09d08286b48b3cf3739a195922172be6fc869560b721ddcf503f0974e54550aa",
+    "edax": "8d11ed5bd6c00811d4935d7006262417e792ab96e1f18fa3e9d8c84787e0d970",
+    "egar_simd": "9f39c95999fe0794b74ebca3ef9013f22e83dd47112429dd0ebe351f3942eabb",
+    "egar_avx512": "c76570027446b21d465000a268ade9522a12178ae4e370dc7320274c7cf77583"
+  },
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "05d2d5ee2e87d8865d2518f071f40cc9a9749e297c7b862609c115c8deeb4644",
+  "answers_sha256": "f4618ac2cac0c97871a456e050bf6d4008cceab4be685723e490f00fcdd8bf88"
+}

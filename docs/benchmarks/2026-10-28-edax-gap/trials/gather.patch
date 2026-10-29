@@ -1,0 +1,280 @@
+diff --git a/deft-reversi-engine/src/evaluation/end_ordering.rs b/deft-reversi-engine/src/evaluation/end_ordering.rs
+index 4d1feb6..3f37b31 100644
+--- a/deft-reversi-engine/src/evaluation/end_ordering.rs
++++ b/deft-reversi-engine/src/evaluation/end_ordering.rs
+@@ -30,18 +30,19 @@ impl PatternModel {
+ impl EvalState {
+     // An ordering evaluation only needs the child's current viewpoint.
+     // Preserve the full two-viewpoint update for children actually searched.
+-    pub(super) fn ordering_child_indices(&self, bit: u64, mut flips: u64) -> [u16; 44] {
++    pub(super) fn ordering_child_indices(&self, bit: u64, mut flips: u64) -> [u16; LANES] {
+         let mut indices = self.swapped;
+-        let features = &SQUARE_TO_FEATURES[bit.trailing_zeros() as usize];
+-        for feature in &features.features[..features.len as usize] {
+-            indices[feature.feature_idx as usize] += feature.base3_weight;
++        for (index, d) in indices
++            .iter_mut()
++            .zip(&SQUARE_DELTA[bit.trailing_zeros() as usize])
++        {
++            *index = index.wrapping_add(*d);
+         }
+         while flips != 0 {
+-            let square = flips.trailing_zeros() as usize;
++            let delta = &SQUARE_DELTA[flips.trailing_zeros() as usize];
+             flips &= flips - 1;
+-            let features = &SQUARE_TO_FEATURES[square];
+-            for feature in &features.features[..features.len as usize] {
+-                indices[feature.feature_idx as usize] -= feature.base3_weight;
++            for (index, d) in indices.iter_mut().zip(delta) {
++                *index = index.wrapping_sub(*d);
+             }
+         }
+         indices
+diff --git a/deft-reversi-engine/src/evaluation/mod.rs b/deft-reversi-engine/src/evaluation/mod.rs
+index 47dd266..9cd94f7 100644
+--- a/deft-reversi-engine/src/evaluation/mod.rs
++++ b/deft-reversi-engine/src/evaluation/mod.rs
+@@ -20,6 +20,7 @@ pub struct PatternModel {
+ }
+ #[derive(Clone)]
+ pub struct PatternPhase {
++    /// All tables plus one zero: a 32-bit gather of the last entry stays in bounds.
+     weights: Box<[i16]>,
+     mobility: [i16; 128],
+     bias: i16,
+@@ -39,7 +40,7 @@ impl PatternPhase {
+             return Err("invalid pattern table dimensions");
+         }
+         Ok(Self {
+-            weights: patterns.into_iter().flatten().collect(),
++            weights: patterns.into_iter().flatten().chain([0]).collect(),
+             mobility,
+             bias,
+         })
+@@ -59,7 +60,7 @@ impl PatternModel {
+         Self::new(
+             (0..PHASE_COUNT)
+                 .map(|_| PatternPhase {
+-                    weights: vec![0; TOTAL_PATTERN_WEIGHTS].into_boxed_slice(),
++                    weights: vec![0; TOTAL_PATTERN_WEIGHTS + 1].into_boxed_slice(),
+                     mobility: [0; 128],
+                     bias: 0,
+                 })
+@@ -95,14 +96,7 @@ impl PatternModel {
+     pub(crate) fn evaluate_state_and_moves(&self, board: &Board, state: &EvalState) -> (i32, u64) {
+         let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
+         let weights = &self.phases[phase];
+-        let mut raw = i32::from(weights.bias);
+-        let mut offset = 0;
+-        for (p, size) in PATTERN_TABLE_SIZES.iter().enumerate() {
+-            for r in 0..4 {
+-                raw += i32::from(weights.weights[offset + state.current[p * 4 + r] as usize]);
+-            }
+-            offset += size;
+-        }
++        let mut raw = i32::from(weights.bias) + pattern_sum(&weights.weights, &state.current);
+         let moves = board.get_moves();
+         let mobility =
+             64 + moves.count_ones() as i32 - board.get_opponent_moves().count_ones() as i32;
+@@ -115,8 +109,7 @@ impl PatternModel {
+         let mut bytes = Vec::with_capacity((TOTAL_PATTERN_WEIGHTS + 129) * 2);
+         for phase in self.phases.iter() {
+             bytes.clear();
+-            for &value in phase
+-                .weights
++            for &value in phase.weights[..TOTAL_PATTERN_WEIGHTS]
+                 .iter()
+                 .chain(phase.mobility.iter())
+                 .chain(std::iter::once(&phase.bias))
+@@ -145,7 +138,11 @@ impl PatternModel {
+                 .0
+                 .iter()
+                 .map(|b| i16::from_le_bytes([b[0], b[1]]));
+-            let weights = values.by_ref().take(TOTAL_PATTERN_WEIGHTS).collect();
++            let weights = values
++                .by_ref()
++                .take(TOTAL_PATTERN_WEIGHTS)
++                .chain([0])
++                .collect();
+             let mobility = std::array::from_fn(|_| values.next().unwrap());
+             let bias = values.next().unwrap();
+             phases.push(PatternPhase {
+@@ -165,17 +162,112 @@ impl PatternModel {
+     }
+ }
+ 
++/// Feature lanes rounded up so differential updates are whole vector adds.
++const LANES: usize = 48;
++
++/// `SQUARE_DELTA[sq][f]` is the base-3 weight of `sq` in feature `f`, or 0.
++static SQUARE_DELTA: [[u16; LANES]; 64] = {
++    let mut table = [[0u16; LANES]; 64];
++    let mut sq = 0;
++    while sq < 64 {
++        let features = &SQUARE_TO_FEATURES[sq];
++        let mut i = 0;
++        while i < features.len as usize {
++            let feature = features.features[i];
++            table[sq][feature.feature_idx as usize] = feature.base3_weight;
++            i += 1;
++        }
++        sq += 1;
++    }
++    table
++};
++
++/// First weight of each lane's table; padding lanes read entry 0.
++const LANE_OFFSET: [u32; LANES] = {
++    let mut out = [0u32; LANES];
++    let mut offset = 0;
++    let mut p = 0;
++    while p < PATTERN_COUNT {
++        let mut r = 0;
++        while r < 4 {
++            out[p * 4 + r] = offset as u32;
++            r += 1;
++        }
++        offset += PATTERN_TABLE_SIZES[p];
++        p += 1;
++    }
++    out
++};
++/// Largest valid index of each lane's table (0 for padding lanes).
++const LANE_LIMIT: [u32; LANES] = {
++    let mut out = [0u32; LANES];
++    let mut i = 0;
++    while i < PATTERN_COUNT * 4 {
++        out[i] = PATTERN_TABLE_SIZES[i / 4] as u32 - 1;
++        i += 1;
++    }
++    out
++};
++
++/// Sum of the 44 pattern weights selected by `indices`.
++#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
++#[inline]
++fn pattern_sum(weights: &[i16], indices: &[u16; LANES]) -> i32 {
++    use std::arch::x86_64::*;
++    assert!(weights.len() > TOTAL_PATTERN_WEIGHTS);
++    // SAFETY: AVX2 is enabled. Each lane index is clamped to its table, so the
++    // 32-bit read at an i16 offset ends at most at the padding element.
++    unsafe {
++        let mut sum = _mm256_setzero_si256();
++        for chunk in 0..LANES / 8 {
++            let index =
++                _mm256_cvtepu16_epi32(_mm_loadu_si128(indices.as_ptr().add(chunk * 8).cast()));
++            let index = _mm256_min_epu32(
++                index,
++                _mm256_loadu_si256(LANE_LIMIT.as_ptr().add(chunk * 8).cast()),
++            );
++            let index = _mm256_add_epi32(
++                index,
++                _mm256_loadu_si256(LANE_OFFSET.as_ptr().add(chunk * 8).cast()),
++            );
++            let raw = _mm256_i32gather_epi32::<2>(weights.as_ptr().cast(), index);
++            let mut value = _mm256_srai_epi32::<16>(_mm256_slli_epi32::<16>(raw));
++            if chunk == LANES / 8 - 1 {
++                // Lanes 44..48 are padding.
++                value = _mm256_blend_epi32::<0b1111_0000>(value, _mm256_setzero_si256());
++            }
++            sum = _mm256_add_epi32(sum, value);
++        }
++        let half = _mm_add_epi32(
++            _mm256_castsi256_si128(sum),
++            _mm256_extracti128_si256::<1>(sum),
++        );
++        let half = _mm_add_epi32(half, _mm_unpackhi_epi64(half, half));
++        _mm_cvtsi128_si32(_mm_add_epi32(half, _mm_shuffle_epi32::<1>(half)))
++    }
++}
++#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
++#[inline]
++fn pattern_sum(weights: &[i16], indices: &[u16; LANES]) -> i32 {
++    (0..PATTERN_COUNT * 4)
++        .map(|i| {
++            let index = u32::from(indices[i]).min(LANE_LIMIT[i]) + LANE_OFFSET[i];
++            i32::from(weights[index as usize])
++        })
++        .sum()
++}
++
+ /// Both viewpoints avoid a base-3 digit swap on every move.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub(crate) struct EvalState {
+-    current: [u16; 44],
+-    swapped: [u16; 44],
++    current: [u16; LANES],
++    swapped: [u16; LANES],
+ }
+ impl EvalState {
+     pub(crate) fn from_board(board: Board) -> Self {
+         let mut state = Self {
+-            current: [0; 44],
+-            swapped: [0; 44],
++            current: [0; LANES],
++            swapped: [0; LANES],
+         };
+         for (p, pattern) in FEATURE_COORD.iter().enumerate() {
+             for r in 0..4 {
+@@ -202,23 +294,29 @@ impl EvalState {
+             swapped: self.current,
+         }
+     }
+-    fn delta(&mut self, square: usize, current: i32, swapped: i32) {
+-        let features = &SQUARE_TO_FEATURES[square];
+-        for feature in &features.features[..features.len as usize] {
+-            let i = feature.feature_idx as usize;
+-            let weight = i32::from(feature.base3_weight);
+-            self.current[i] = (i32::from(self.current[i]) + current * weight) as u16;
+-            self.swapped[i] = (i32::from(self.swapped[i]) + swapped * weight) as u16;
+-        }
+-    }
+-    pub(crate) fn played(mut self, bit: u64, mut flips: u64) -> Self {
+-        self.delta(bit.trailing_zeros() as usize, 2, 1);
++    /// The mover's digit goes 0 -> 2 on the placed square and 1 -> 2 on flips
++    /// (opponent's view: 0 -> 1 and 2 -> 1); then the viewpoints swap.
++    #[inline]
++    pub(crate) fn played(self, bit: u64, mut flips: u64) -> Self {
++        let mut flipped = [0u16; LANES];
+         while flips != 0 {
+-            let sq = flips.trailing_zeros() as usize;
++            let delta = &SQUARE_DELTA[flips.trailing_zeros() as usize];
+             flips &= flips - 1;
+-            self.delta(sq, 1, -1);
++            for (sum, d) in flipped.iter_mut().zip(delta) {
++                *sum = sum.wrapping_add(*d);
++            }
++        }
++        let placed = &SQUARE_DELTA[bit.trailing_zeros() as usize];
++        let mut next = self;
++        for i in 0..LANES {
++            next.current[i] = self.swapped[i]
++                .wrapping_add(placed[i])
++                .wrapping_sub(flipped[i]);
++            next.swapped[i] = self.current[i]
++                .wrapping_add(placed[i].wrapping_mul(2))
++                .wrapping_add(flipped[i]);
+         }
+-        self.passed()
++        next
+     }
+ }
+ 
+@@ -279,7 +377,7 @@ mod score_tests {
+                 let mut mobility = [0; 128];
+                 mobility[64] = 64;
+                 PatternPhase {
+-                    weights: vec![0; TOTAL_PATTERN_WEIGHTS].into_boxed_slice(),
++                    weights: vec![0; TOTAL_PATTERN_WEIGHTS + 1].into_boxed_slice(),
+                     mobility,
+                     bias: phase as i16 * 128,
+                 }
+@@ -301,7 +399,7 @@ mod score_tests {
+         let negative = PatternModel::new(
+             (0..60)
+                 .map(|_| PatternPhase {
+-                    weights: vec![0; TOTAL_PATTERN_WEIGHTS].into_boxed_slice(),
++                    weights: vec![0; TOTAL_PATTERN_WEIGHTS + 1].into_boxed_slice(),
+                     mobility: [0; 128],
+                     bias: -64,
+                 })

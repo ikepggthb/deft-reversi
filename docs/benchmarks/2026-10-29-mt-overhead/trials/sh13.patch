@@ -1,0 +1,79 @@
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index 99d53f3..1ae0a4b 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -20,6 +20,10 @@ pub(in crate::search) const PROBCUT_MIN_EMPTIES: u8 = 12;
+ /// The selective stages before an exact solve stop ProbCut one empty earlier,
+ /// so more of their local results are exact and survive into the final stage.
+ pub(in crate::search) const EXACT_PREPARATION_PROBCUT_MIN: u8 = 13;
++/// From this many empties the local endgame keeps its bounds in the shared
++/// main table instead of the thread-local cache, so that transpositions
++/// searched by different threads are still found.
++const SHARED_END_MIN: u8 = 13;
+ 
+ impl Context {
+     pub(super) fn tail_entered(
+@@ -99,6 +103,9 @@ impl Context {
+             return self.tail_score_impl(board, alpha, beta);
+         }
+         debug_assert!(empties <= LOCAL_END_MAX);
++        if empties >= SHARED_END_MIN {
++            return self.shared_endgame_score(board, alpha, beta, known_moves);
++        }
+         self.end_cache.prepare(empties);
+         let quality = self.end_quality(empties);
+         // A parent's snapshot remains a valid bound even if a sibling has since
+@@ -133,6 +140,53 @@ impl Context {
+             .store(board, quality, probe, score, beta, best_move);
+         Ok(score)
+     }
++    fn shared_endgame_score(
++        &mut self,
++        board: Board,
++        alpha: i32,
++        beta: i32,
++        known_moves: Option<u64>,
++    ) -> Result<i32, ()> {
++        let empties = board.empty_count();
++        let quality = self.end_quality(empties);
++        let mut best_move = 64;
++        if let Some(entry) = self.runtime.table.get(board) {
++            // Any entry's move is a usable ordering hint; bounds need the same
++            // exact depth and selectivity.
++            best_move = entry.best;
++            if entry.exact_mode && entry.depth == empties && entry.quality == quality {
++                self.stats.tt_hits += 1;
++                if i32::from(entry.lower) >= beta {
++                    self.stats.tt_cuts += 1;
++                    return Ok(i32::from(entry.lower));
++                }
++                if i32::from(entry.upper) <= alpha {
++                    self.stats.tt_cuts += 1;
++                    return Ok(i32::from(entry.upper));
++                }
++            }
++        }
++        let score = self.ordered_endgame(board, alpha, beta, known_moves, &mut best_move)?;
++        let (lower, upper) = if score >= beta {
++            (score as i8, 64)
++        } else {
++            (-64, score as i8)
++        };
++        self.runtime.table.store(
++            board,
++            crate::transposition::Entry {
++                lower,
++                upper,
++                depth: empties,
++                quality,
++                best: best_move,
++                second: 64,
++                generation: self.runtime.generation,
++                exact_mode: true,
++            },
++        );
++        Ok(score)
++    }
+     /// Below the ProbCut range a local result is exact even inside a
+     /// selective stage, so it is cached as exact (quality 0).
+     fn end_quality(&self, empties: u8) -> u8 {

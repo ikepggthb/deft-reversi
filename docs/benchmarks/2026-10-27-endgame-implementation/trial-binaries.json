@@ -1,0 +1,36 @@
+{
+  "base": {
+    "binary_sha256": "c7d4397b5385fabf9788d99b14eb317a74674770a19357ef57af73b843b80bc5"
+  },
+  "tt-first": {
+    "binary_sha256": "ab469376fe84c499df21f9d1d5c9ab7c39cd24791e9ae9aa026732bc9d6a6492"
+  },
+  "etc-first": {
+    "binary_sha256": "bedd7432e9efde54f81da8a8636030d4a65e0d4d91fea25a9db84b12a8d52181"
+  },
+  "probe": {
+    "binary_sha256": "af046993253f5c6c4c7febb34af4b21d12c9b051ac8c90b98c718f3d0a9281dd"
+  },
+  "deep": {
+    "binary_sha256": "d6e778fc0a230e3b3092c3542c4ac368aa867b106b722a746db954bb7900f16d"
+  },
+  "deep-cached": {
+    "binary_sha256": "c2ef0082ca35688e77194ad979c0ea68a522ae438f6ce032ecb3288ace4a6e16"
+  },
+  "deep-one-view": {
+    "binary_sha256": "c8f139f870a2acaa77a2b44de9f45a85aae1524448a53352d8b6f92e60cd32f0"
+  },
+  "deep-compact": {
+    "binary_sha256": "60801c4649e76878969dce403ece7e983010368da03202ce97664ab44d005b1a"
+  },
+  "final-default": {
+    "binary_sha256": "e5fa52375574872a9091746f27e1f8fdb71b588897f731739d2c677cb06f28c1",
+    "features": []
+  },
+  "final-pattern": {
+    "binary_sha256": "0c9e618f22550984951e83d188a5aa5baa4711e5aa7c57b4cf4808cfe042836b",
+    "features": [
+      "endgame-pattern-ordering"
+    ]
+  }
+}

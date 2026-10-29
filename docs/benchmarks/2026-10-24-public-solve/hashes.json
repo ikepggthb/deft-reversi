@@ -1,0 +1,6 @@
+{
+  "tools/engine-compare/target/release/deft-engine-compare": "ea4c2110703a4bd212006c72f3ef82a86153fbc08597b41fba6aef4e80c344de",
+  "../deft-reversi-feature/data/eval/eval-v4.bin": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+  "/tmp/deft-pattern.dpr2": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "deft_reversi_engine_v2/tests/fixtures/ffo40-44.obf": "d474590c49afc7e73243f489dfe3d726743950a28d0d792eb79ae1449f65ff21"
+}

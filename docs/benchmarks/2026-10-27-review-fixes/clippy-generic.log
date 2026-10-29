@@ -1,0 +1,14 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.9
+   Compiling zmij v1.0.23
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.154
+    Checking memchr v2.8.3
+    Checking itoa v1.0.18
+   Compiling serde_derive v1.0.229
+    Checking bincode v1.3.3
+    Checking deft_reversi_engine v2.0.0 (/workspace/deft-reversi/deft-reversi-engine)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.63s

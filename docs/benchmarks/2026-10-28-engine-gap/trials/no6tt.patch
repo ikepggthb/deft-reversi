@@ -1,0 +1,63 @@
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index afbb8a4..86f0cef 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -94,6 +94,14 @@ impl Context {
+             return self.tail_score_impl(board, alpha, beta);
+         }
+         debug_assert!(empties <= LOCAL_END_MAX);
++        if empties == TAIL_EMPTIES {
++            return self.six_moves_score(
++                board,
++                alpha,
++                known_moves.unwrap_or_else(|| board.get_moves()),
++                tail_parity(board),
++            );
++        }
+         self.end_cache.prepare(empties);
+         let quality = self.runtime.quality.load(Ordering::Relaxed);
+         // A parent's snapshot remains a valid bound even if a sibling has since
+@@ -114,16 +122,7 @@ impl Context {
+             }
+         }
+         let mut best_move = probe.best;
+-        let score = if empties > TAIL_EMPTIES {
+-            self.ordered_endgame(board, alpha, beta, known_moves, &mut best_move)?
+-        } else {
+-            self.six_moves_score(
+-                board,
+-                alpha,
+-                known_moves.unwrap_or_else(|| board.get_moves()),
+-                tail_parity(board),
+-            )?
+-        };
++        let score = self.ordered_endgame(board, alpha, beta, known_moves, &mut best_move)?;
+         self.end_cache
+             .store(board, quality, probe, score, beta, best_move);
+         Ok(score)
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 7dc5cb6..406c374 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -1,7 +1,7 @@
+ //! Ordered null-window endgame search for seven to thirteen empties.
+ use super::local_tt::EndProbe;
+ use super::parity::odd_regions;
+-use super::{Board, Context, EvalState, LOCAL_END_MAX, Ordering};
++use super::{Board, Context, EvalState, LOCAL_END_MAX, Ordering, TAIL_EMPTIES};
+ 
+ impl Context {
+     pub(super) fn ordered_endgame(
+@@ -86,7 +86,11 @@ impl Context {
+                 return Ok(64);
+             }
+             let child = board.after_known_move(bit, flips);
+-            let probe = self.end_cache.probe(child, quality);
++            let probe = if board.empty_count() > TAIL_EMPTIES + 1 {
++                self.end_cache.probe(child, quality)
++            } else {
++                EndProbe::EMPTY
++            };
+             if probe.matched {
+                 self.stats.tt_hits += 1;
+                 let lower = -i32::from(probe.upper);

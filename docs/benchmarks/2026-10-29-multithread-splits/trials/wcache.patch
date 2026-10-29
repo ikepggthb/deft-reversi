@@ -1,0 +1,185 @@
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index 5464af2..7e185aa 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -18,7 +18,7 @@ pub use api::*;
+ mod session;
+ use session::*;
+ mod endgame;
+-use endgame::EndgameCache;
++use endgame::{EndgameCache, new_cache_epoch};
+ mod level;
+ mod ordering;
+ mod pv;
+@@ -38,6 +38,8 @@ pub struct Engine {
+     calibration: Arc<[Option<ProbCutRule>]>,
+     cache_sigma: Option<u64>,
+     end_cache: EndgameCache,
++    /// Tags the local endgame caches that are valid for the current state.
++    cache_epoch: u64,
+ }
+ impl Engine {
+     pub fn new(model: PatternModel, options: EngineOptions) -> Result<Self, EngineError> {
+@@ -62,6 +64,7 @@ impl Engine {
+             calibration,
+             cache_sigma: None,
+             end_cache: EndgameCache::default(),
++            cache_epoch: new_cache_epoch(),
+         })
+     }
+     pub fn from_file(
+@@ -100,7 +103,7 @@ impl Engine {
+         self.calibration = indexed_rules(config.rules());
+         self.table = table;
+         self.pv_table = pv_table;
+-        self.end_cache.clear();
++        self.invalidate_end_caches();
+         self.cache_sigma = None;
+         self.mpc = Some(config);
+         Ok(())
+@@ -115,13 +118,19 @@ impl Engine {
+         self.cache_sigma = None;
+         Ok(())
+     }
++    /// Drops the main thread's local endgame cache and, through a new epoch,
++    /// every worker's.
++    fn invalidate_end_caches(&mut self) {
++        self.end_cache.clear();
++        self.cache_epoch = new_cache_epoch();
++    }
+     pub fn clear_tt(&mut self) -> Result<(), EngineError> {
+         let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
+         let pv_table =
+             Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
+         self.table = table;
+         self.pv_table = pv_table;
+-        self.end_cache.clear();
++        self.invalidate_end_caches();
+         Ok(())
+     }
+     /// Replaces the model and invalidates all cached evaluations.
+@@ -135,7 +144,7 @@ impl Engine {
+         self.mpc = Some(MpcConfig::default());
+         self.metadata = None;
+         self.calibration = indexed_rules(self.mpc.as_ref().unwrap().rules());
+-        self.end_cache.clear();
++        self.invalidate_end_caches();
+         self.cache_sigma = None;
+         Ok(())
+     }
+@@ -171,7 +180,7 @@ impl Engine {
+             Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
+         self.calibration = indexed_rules(rules);
+         self.mpc = None;
+-        self.end_cache.clear();
++        self.invalidate_end_caches();
+         self.cache_sigma = None;
+         self.table = table;
+         self.pv_table = pv_table;
+@@ -254,6 +263,7 @@ impl Engine {
+             rules: self.calibration.clone(),
+             // Exact requests use selective stages only to seed the tables;
+             // results below this bound are exact and reused by the final stage.
++            cache_epoch: self.cache_epoch,
+             endgame_probcut_min: if request.mode == SearchMode::Exact {
+                 endgame::EXACT_PREPARATION_PROBCUT_MIN
+             } else {
+diff --git a/deft-reversi-engine/src/search/endgame/local_tt.rs b/deft-reversi-engine/src/search/endgame/local_tt.rs
+index 3da09c0..ee10c1b 100644
+--- a/deft-reversi-engine/src/search/endgame/local_tt.rs
++++ b/deft-reversi-engine/src/search/endgame/local_tt.rs
+@@ -1,6 +1,8 @@
+ //! Context-owned endgame TT; probes are immutable snapshots, never slot pointers.
+ use super::{LOCAL_END_MAX, TAIL_EMPTIES};
+ use crate::Board;
++use std::cell::RefCell;
++use std::sync::atomic::{AtomicU64, Ordering};
+ const LOCAL_SLOTS: usize = 1024;
+ const LAYERS: usize = (LOCAL_END_MAX - TAIL_EMPTIES + 1) as usize;
+ 
+@@ -8,10 +10,36 @@ const LAYERS: usize = (LOCAL_END_MAX - TAIL_EMPTIES + 1) as usize;
+ pub(in crate::search) struct EndgameCache {
+     layers: [Vec<EndEntry>; LAYERS],
+ }
++static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
++thread_local! {
++    /// A worker's cache between helper jobs, with the epoch it belongs to.
++    static WORKER_CACHE: RefCell<(u64, EndgameCache)> = RefCell::new((0, EndgameCache::default()));
++}
++/// A process-unique tag for one model/MPC/table state; a new one invalidates
++/// every cache made under the old one.
++pub(in crate::search) fn new_cache_epoch() -> u64 {
++    NEXT_EPOCH.fetch_add(1, Ordering::Relaxed)
++}
+ impl EndgameCache {
+     pub(in crate::search) fn clear(&mut self) {
+         *self = Self::default();
+     }
++    /// This thread's cache from earlier helper jobs, if made under `epoch`.
++    /// A job nested inside another on the same thread starts empty.
++    pub(in crate::search) fn take_worker(epoch: u64) -> Self {
++        WORKER_CACHE.with(|slot| {
++            let mut slot = slot.borrow_mut();
++            let cache = std::mem::take(&mut slot.1);
++            if slot.0 == epoch {
++                cache
++            } else {
++                Self::default()
++            }
++        })
++    }
++    pub(in crate::search) fn return_worker(self, epoch: u64) {
++        WORKER_CACHE.with(|slot| *slot.borrow_mut() = (epoch, self));
++    }
+     pub(super) fn prepare(&mut self, empties: u8) {
+         let layer = &mut self.layers[usize::from(empties - TAIL_EMPTIES)];
+         if layer.is_empty() {
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index 99d53f3..df8bd1f 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -7,7 +7,7 @@ pub(super) mod parity;
+ mod shallow;
+ mod small;
+ use local_tt::EndProbe;
+-pub(super) use local_tt::EndgameCache;
++pub(super) use local_tt::{EndgameCache, new_cache_epoch};
+ #[cfg(test)]
+ use ordered::EndMove;
+ #[cfg(test)]
+diff --git a/deft-reversi-engine/src/search/session.rs b/deft-reversi-engine/src/search/session.rs
+index 21bde59..b04032d 100644
+--- a/deft-reversi-engine/src/search/session.rs
++++ b/deft-reversi-engine/src/search/session.rs
+@@ -52,6 +52,8 @@ pub(super) struct Runtime {
+     pub(super) rules: Arc<[Option<ProbCutRule>]>,
+     /// Fewest empties at which the local endgame tries ProbCut.
+     pub(super) endgame_probcut_min: u8,
++    /// Helper jobs reuse their thread's local endgame cache only within it.
++    pub(super) cache_epoch: u64,
+ }
+ impl Runtime {
+     pub(super) fn sigma(&self) -> Option<f64> {
+@@ -175,6 +177,7 @@ pub(super) fn test_context() -> Context {
+         quality: AtomicU8::new(0),
+         rules: Arc::from([]),
+         endgame_probcut_min: super::endgame::PROBCUT_MIN_EMPTIES,
++        cache_epoch: 0,
+     });
+     Context::new(runtime, Vec::new(), Vec::new())
+ }
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index 0a7397e..9c7484c 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -56,8 +56,10 @@ impl Context {
+             let job: parallel::Job = Box::new(move || {
+                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                     let mut context = Context::new(runtime.clone(), task_ancestors, task_cuts);
++                    context.end_cache = EndgameCache::take_worker(runtime.cache_epoch);
+                     context.stats.helper_jobs += 1;
+                     context.split_loop(&task_point);
++                    std::mem::take(&mut context.end_cache).return_worker(runtime.cache_epoch);
+                 }));
+                 if result.is_err() {
+                     runtime.control.reason.store(4, Ordering::Release);

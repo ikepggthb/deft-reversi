@@ -1,0 +1,10 @@
+40 nodes all 1.06 | final 4-6 1.07 7-13 1.00 | non-final deft 35146 egar 24336 | time 1.41
+41 nodes all 1.29 | final 4-6 1.31 7-13 1.13 | non-final deft 263409 egar 107450 | time 1.35
+42 nodes all 1.41 | final 4-6 1.47 7-13 1.27 | non-final deft 203034 egar 156025 | time 1.63
+43 nodes all 0.91 | final 4-6 0.91 7-13 0.89 | non-final deft 498974 egar 259903 | time 1.13
+44 nodes all 1.42 | final 4-6 1.48 7-13 1.21 | non-final deft 437627 egar 216872 | time 1.98
+45 nodes all 0.87 | final 4-6 0.88 7-13 0.84 | non-final deft 1041222 egar 795465 | time 0.94
+46 nodes all 1.51 | final 4-6 1.56 7-13 1.31 | non-final deft 839940 egar 357833 | time 1.71
+47 nodes all 1.47 | final 4-6 1.52 7-13 1.29 | non-final deft 290117 egar 68516 | time 1.67
+48 nodes all 1.05 | final 4-6 1.25 7-13 0.86 | non-final deft 461257 egar 348291 | time 0.92
+49 nodes all 0.90 | final 4-6 0.99 7-13 0.75 | non-final deft 2255373 egar 2190369 | time 0.89

@@ -1,0 +1,259 @@
+{
+  "ffo40-49": {
+    "cases": [
+      {
+        "ffo": 40,
+        "old_seconds": 0.099439465,
+        "new_seconds": 0.114539855,
+        "old_over_new": 0.8681647536571441,
+        "score": 38
+      },
+      {
+        "ffo": 41,
+        "old_seconds": 0.228104091,
+        "new_seconds": 0.243699265,
+        "old_over_new": 0.9360064791332054,
+        "score": 0
+      },
+      {
+        "ffo": 42,
+        "old_seconds": 0.298470913,
+        "new_seconds": 0.304101226,
+        "old_over_new": 0.9814853985494948,
+        "score": 6
+      },
+      {
+        "ffo": 43,
+        "old_seconds": 0.915458258,
+        "new_seconds": 0.894006464,
+        "old_over_new": 1.0239951218070835,
+        "score": -12
+      },
+      {
+        "ffo": 44,
+        "old_seconds": 0.256567465,
+        "new_seconds": 0.23851811,
+        "old_over_new": 1.0756728912534146,
+        "score": -14
+      },
+      {
+        "ffo": 45,
+        "old_seconds": 2.7306614,
+        "new_seconds": 2.660918905,
+        "old_over_new": 1.0262099287839814,
+        "score": 6
+      },
+      {
+        "ffo": 46,
+        "old_seconds": 0.821967633,
+        "new_seconds": 0.901955666,
+        "old_over_new": 0.9113171123424153,
+        "score": -8
+      },
+      {
+        "ffo": 47,
+        "old_seconds": 0.28291162,
+        "new_seconds": 0.290072461,
+        "old_over_new": 0.9753136131044166,
+        "score": 4
+      },
+      {
+        "ffo": 48,
+        "old_seconds": 2.227699695,
+        "new_seconds": 2.580673713,
+        "old_over_new": 0.8632240812846999,
+        "score": 28
+      },
+      {
+        "ffo": 49,
+        "old_seconds": 4.668583283,
+        "new_seconds": 4.644553392,
+        "old_over_new": 1.005173778611608,
+        "score": 16
+      }
+    ],
+    "round_totals": {
+      "old": [
+        12.584418616,
+        12.531364822,
+        12.535239066,
+        12.525922976,
+        12.541849994
+      ],
+      "new": [
+        12.912038779,
+        12.880499977,
+        12.867861788999999,
+        12.880341357999999,
+        12.882809576
+      ]
+    },
+    "median_totals": {
+      "old": 12.535239066,
+      "new": 12.880499977
+    },
+    "all_scores_match": true,
+    "all_new_pv_checks_passed": true,
+    "loaded_mpc_parameters_identical": true
+  },
+  "ffo1-19": {
+    "cases": [
+      {
+        "ffo": 1,
+        "old_seconds": 0.001796282,
+        "new_seconds": 0.001073908,
+        "old_over_new": 1.6726591104638386,
+        "score": 18
+      },
+      {
+        "ffo": 2,
+        "old_seconds": 0.001044534,
+        "new_seconds": 0.000769321,
+        "old_over_new": 1.3577349376918086,
+        "score": 10
+      },
+      {
+        "ffo": 3,
+        "old_seconds": 0.003542681,
+        "new_seconds": 0.002164343,
+        "old_over_new": 1.6368389853179466,
+        "score": 2
+      },
+      {
+        "ffo": 4,
+        "old_seconds": 0.001155215,
+        "new_seconds": 0.001132348,
+        "old_over_new": 1.0201943218869112,
+        "score": 0
+      },
+      {
+        "ffo": 5,
+        "old_seconds": 0.000787764,
+        "new_seconds": 0.000470062,
+        "old_over_new": 1.6758725444728568,
+        "score": 32
+      },
+      {
+        "ffo": 6,
+        "old_seconds": 0.002961467,
+        "new_seconds": 0.001812839,
+        "old_over_new": 1.63360728669231,
+        "score": 14
+      },
+      {
+        "ffo": 7,
+        "old_seconds": 0.000996567,
+        "new_seconds": 0.000659614,
+        "old_over_new": 1.5108336087469338,
+        "score": 8
+      },
+      {
+        "ffo": 8,
+        "old_seconds": 0.00543652,
+        "new_seconds": 0.004639292,
+        "old_over_new": 1.1718426001208806,
+        "score": 8
+      },
+      {
+        "ffo": 9,
+        "old_seconds": 0.002887141,
+        "new_seconds": 0.002171764,
+        "old_over_new": 1.3293990507255853,
+        "score": -8
+      },
+      {
+        "ffo": 10,
+        "old_seconds": 0.00236393,
+        "new_seconds": 0.001672909,
+        "old_over_new": 1.4130655044595972,
+        "score": 10
+      },
+      {
+        "ffo": 11,
+        "old_seconds": 0.002972091,
+        "new_seconds": 0.001889233,
+        "old_over_new": 1.5731733460086714,
+        "score": 30
+      },
+      {
+        "ffo": 12,
+        "old_seconds": 0.003655687,
+        "new_seconds": 0.00278179,
+        "old_over_new": 1.3141491629490363,
+        "score": -8
+      },
+      {
+        "ffo": 13,
+        "old_seconds": 0.005268127,
+        "new_seconds": 0.001873883,
+        "old_over_new": 2.811342543798092,
+        "score": 14
+      },
+      {
+        "ffo": 14,
+        "old_seconds": 0.002788749,
+        "new_seconds": 0.002061162,
+        "old_over_new": 1.35299845426997,
+        "score": 18
+      },
+      {
+        "ffo": 15,
+        "old_seconds": 0.006095868,
+        "new_seconds": 0.00539484,
+        "old_over_new": 1.1299441688724783,
+        "score": 4
+      },
+      {
+        "ffo": 16,
+        "old_seconds": 0.003583488,
+        "new_seconds": 0.002914,
+        "old_over_new": 1.2297487989018532,
+        "score": 24
+      },
+      {
+        "ffo": 17,
+        "old_seconds": 0.000925553,
+        "new_seconds": 0.000750749,
+        "old_over_new": 1.2328394709816464,
+        "score": 8
+      },
+      {
+        "ffo": 18,
+        "old_seconds": 0.004180819,
+        "new_seconds": 0.003207781,
+        "old_over_new": 1.3033367926301702,
+        "score": -2
+      },
+      {
+        "ffo": 19,
+        "old_seconds": 0.004524005,
+        "new_seconds": 0.003909925,
+        "old_over_new": 1.1570567210368485,
+        "score": 8
+      }
+    ],
+    "round_totals": {
+      "old": [
+        0.088607928,
+        0.05712811,
+        0.056886577,
+        0.056877351,
+        0.057108027
+      ],
+      "new": [
+        0.073423192,
+        0.041384924,
+        0.041387827,
+        0.041343279999999996,
+        0.041546385
+      ]
+    },
+    "median_totals": {
+      "old": 0.057108027,
+      "new": 0.041387827
+    },
+    "all_scores_match": true,
+    "all_new_pv_checks_passed": true,
+    "loaded_mpc_parameters_identical": true
+  }
+}

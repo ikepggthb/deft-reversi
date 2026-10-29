@@ -1,0 +1,46 @@
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index 99d53f3..56600a3 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -10,6 +10,7 @@ use local_tt::EndProbe;
+ pub(super) use local_tt::EndgameCache;
+ #[cfg(test)]
+ use ordered::EndMove;
++pub(super) use ordered::endgame_ordering as fast_ordering;
+ #[cfg(test)]
+ use parity::{PARITY_REGIONS, SQUARE_PARITY};
+ use parity::{odd_regions, tail_parity};
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index a4ddb2c..e2de5da 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -65,10 +65,14 @@ impl Context {
+             return true;
+         }
+         let empties = board.empty_count();
+-        if empties > super::endgame::LOCAL_END_MAX + 1 {
++        if empties > super::endgame::LOCAL_END_MAX + 2 {
+             return true;
+         }
+         let selective = self.runtime.sigma().is_some();
++        if empties == super::endgame::LOCAL_END_MAX + 2 {
++            // A null-window fourteen-empty child orders its moves without patterns.
++            return !narrow || selective || cfg!(feature = "endgame-pattern-ordering");
++        }
+         if empties == super::endgame::LOCAL_END_MAX + 1 {
+             // A wide thirteen-empty child still orders moves using its state.
+             // The experimental narrow entry seeds its pattern cache from it too.
+@@ -292,8 +296,12 @@ impl Context {
+                 0
+             } else if !exact {
+                 self.midgame_ordering(position, child, bit, flips, alpha, depth)?
+-            } else if board.empty_count() >= super::endgame::LOCAL_END_MAX {
++            } else if board.empty_count()
++                >= super::endgame::LOCAL_END_MAX + 2 * u8::from(beta - alpha == 1)
++            {
+                 self.endgame_ordering(position, child, bit, flips, alpha, beta)?
++            } else if beta - alpha == 1 {
++                super::endgame::fast_ordering(child, child.get_moves(), bit, odd_regions)
+             } else {
+                 let mut value = -(child.get_moves().count_ones() as i32) * ORDERING.mobility;
+                 if bit & odd_regions != 0 {

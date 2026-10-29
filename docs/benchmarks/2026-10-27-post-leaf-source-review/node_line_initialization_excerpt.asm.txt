@@ -1,0 +1,37 @@
+
+/workspace/deft-tail-target/release/examples/solve:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000057bdf <<deft_reversi_engine::search::session::Context>::node+0x71f>:
+   57bdf:	48 8b 86 c0 00 00 00 	mov    0xc0(%rsi),%rax
+   57be6:	48 8b 40 48          	mov    0x48(%rax),%rax
+   57bea:	48 8b 78 10          	mov    0x10(%rax),%rdi
+   57bee:	48 8b 70 18          	mov    0x18(%rax),%rsi
+   57bf2:	c5 f8 77             	vzeroupper
+   57bf5:	e8 16 dc ff ff       	call   55810 <<deft_reversi_engine::evaluation::PatternModel>::evaluate_state>
+   57bfa:	62 f2 7d 48 5a 05 9c 	vbroadcasti32x4 -0x52464(%rip),%zmm0        # 57a0 <__abi_tag+0x54a4>
+   57c01:	db fa ff 
+   57c04:	48 ba 55 55 55 55 55 	movabs $0x5555555555555555,%rdx
+   57c0b:	55 55 55 
+   57c0e:	31 c9                	xor    %ecx,%ecx
+   57c10:	c4 e1 fb 92 ca       	kmovq  %rdx,%k1
+   57c15:	66 66 2e 0f 1f 84 00 	data16 cs nopw 0x0(%rax,%rax,1)
+   57c1c:	00 00 00 00 
+   57c20:	62 f1 7f 49 7f 84 4c 	vmovdqu8 %zmm0,0xcb8(%rsp,%rcx,2){%k1}
+   57c27:	b8 0c 00 00 
+   57c2b:	48 83 c1 20          	add    $0x20,%rcx
+   57c2f:	48 81 f9 80 00 00 00 	cmp    $0x80,%rcx
+   57c36:	75 e8                	jne    57c20 <<deft_reversi_engine::search::session::Context>::node+0x760>
+   57c38:	62 f1 fe 48 6f 84 24 	vmovdqu64 0xcb8(%rsp),%zmm0
+   57c3f:	b8 0c 00 00 
+   57c43:	62 f1 fe 48 6f 8c 24 	vmovdqu64 0xcf8(%rsp),%zmm1
+   57c4a:	f8 0c 00 00 
+   57c4e:	62 f1 fe 48 6f 94 24 	vmovdqu64 0xd38(%rsp),%zmm2
+   57c55:	38 0d 00 00 
+   57c59:	62                   	.byte 0x62
+   57c5a:	f1                   	int1
+   57c5b:	fe 48 6f             	decb   0x6f(%rax)
+   57c5e:	9c                   	pushf
+   57c5f:	24                   	.byte 0x24

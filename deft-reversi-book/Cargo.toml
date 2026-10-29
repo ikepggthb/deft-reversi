@@ -1,0 +1,25 @@
+[package]
+name = "deft_reversi_book"
+version = "0.1.0"
+edition = "2024"
+readme = "README.md"
+
+[features]
+# The CLI also offers the legacy main-branch MPC table.
+book-cli = ["dep:ctrlc", "deft_reversi_engine/tuning"]
+endgame-pattern-ordering = ["deft_reversi_engine/endgame-pattern-ordering"]
+
+[dependencies]
+deft_reversi_engine = { path = "../deft-reversi-engine" }
+sha2 = "0.10"
+ctrlc = { version = "3.4", optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+# The tests build their own models and calibrations.
+deft_reversi_engine = { path = "../deft-reversi-engine", features = ["tuning"] }
+
+[[bin]]
+name = "book"
+path = "src/bin/book.rs"
+required-features = ["book-cli"]

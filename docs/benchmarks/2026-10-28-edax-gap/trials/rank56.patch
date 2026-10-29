@@ -1,0 +1,192 @@
+diff --git a/deft-reversi-engine/src/search/endgame/last_four.rs b/deft-reversi-engine/src/search/endgame/last_four.rs
+index 431affb..b71112e 100644
+--- a/deft-reversi-engine/src/search/endgame/last_four.rs
++++ b/deft-reversi-engine/src/search/endgame/last_four.rs
+@@ -366,14 +366,14 @@ fn solve_score_4_empties(
+         return score;
+     }
+ 
+-    let mut empties = !(player | opponent);
+-    let mut x1 = empties.trailing_zeros() as usize;
+-    empties &= empties - 1;
+-    let mut x2 = empties.trailing_zeros() as usize;
+-    empties &= empties - 1;
+-    let mut x3 = empties.trailing_zeros() as usize;
+-    empties &= empties - 1;
+-    let mut x4 = empties.trailing_zeros() as usize;
++    // Presorted square order, then the parity reordering below.
++    let mut ranks = super::parity::ranked(!(player | opponent));
++    let mut next = || {
++        let square = usize::from(super::parity::UNRANK[ranks.trailing_zeros() as usize]);
++        ranks &= ranks - 1;
++        square
++    };
++    let (mut x1, mut x2, mut x3, mut x4) = (next(), next(), next(), next());
+     let parity = if known_parity < UNKNOWN_PARITY {
+         i32::from(known_parity)
+     } else {
+diff --git a/deft-reversi-engine/src/search/endgame/parity.rs b/deft-reversi-engine/src/search/endgame/parity.rs
+index 22a1324..9ae43d0 100644
+--- a/deft-reversi-engine/src/search/endgame/parity.rs
++++ b/deft-reversi-engine/src/search/endgame/parity.rs
+@@ -60,3 +60,40 @@ pub(super) const QUADRANT_ID: [i32; 64] = {
+     }
+     ids
+ };
++
++/// Reference presorted square order (corners first, X-squares and the centre
++/// last): `RANK[square]` is the square's position in that order.
++#[rustfmt::skip]
++const RANK: [u8; 64] = [
++     0, 50, 18, 26, 28, 20, 52,  2,
++    48, 56, 42, 34, 36, 44, 58, 54,
++    16, 40, 12,  6,  8, 14, 46, 22,
++    24, 32,  4, 60, 61, 10, 38, 30,
++    25, 33,  5, 62, 63, 11, 39, 31,
++    17, 41, 13,  7,  9, 15, 47, 23,
++    49, 57, 43, 35, 37, 45, 59, 55,
++     1, 51, 19, 27, 29, 21, 53,  3,
++];
++#[rustfmt::skip]
++pub(super) const UNRANK: [u8; 64] = [
++     0, 56,  7, 63, 26, 34, 19, 43,
++    20, 44, 29, 37, 18, 42, 21, 45,
++    16, 40,  2, 58,  5, 61, 23, 47,
++    24, 32,  3, 59,  4, 60, 31, 39,
++    25, 33, 11, 51, 12, 52, 30, 38,
++    17, 41, 10, 50, 13, 53, 22, 46,
++     8, 48,  1, 57,  6, 62, 15, 55,
++     9, 49, 14, 54, 27, 28, 35, 36,
++];
++
++/// `squares` mapped to rank space; iterating its bits from the lowest visits
++/// the squares in the presorted order without sorting.
++#[inline(always)]
++pub(super) fn ranked(mut squares: u64) -> u64 {
++    let mut ranks = 0;
++    while squares != 0 {
++        ranks |= 1u64 << RANK[squares.trailing_zeros() as usize];
++        squares &= squares - 1;
++    }
++    ranks
++}
+diff --git a/deft-reversi-engine/src/search/endgame/shallow.rs b/deft-reversi-engine/src/search/endgame/shallow.rs
+index 8c89bc6..0899f25 100644
+--- a/deft-reversi-engine/src/search/endgame/shallow.rs
++++ b/deft-reversi-engine/src/search/endgame/shallow.rs
+@@ -1,5 +1,5 @@
+ //! Dedicated five- and six-empty null-window kernels.
+-use super::parity::SQUARE_PARITY;
++use super::parity::{SQUARE_PARITY, UNRANK, ranked};
+ use super::{Board, Context};
+ 
+ impl Context {
+@@ -7,7 +7,7 @@ impl Context {
+         &mut self,
+         board: Board,
+         alpha: i32,
+-        mut moves: u64,
++        moves: u64,
+         parity: u8,
+     ) -> Result<i32, ()> {
+         debug_assert_eq!(board.empty_count(), 6);
+@@ -33,21 +33,27 @@ impl Context {
+             self.stats.stability_cuts += 1;
+             return Ok(score);
+         }
+-        let mut preferred = moves & isolated_empties(board);
++        let preferred = isolated_empties(board);
++        let ranks = ranked(moves);
+         let mut best = -65;
+-        while moves != 0 {
+-            let options = if preferred != 0 { preferred } else { moves };
+-            let bit = options.isolate_lowest_one();
+-            preferred &= !bit;
+-            moves &= !bit;
+-            let child = board.after_known_move(bit, board.flip_mask(bit));
+-            let child_parity = parity ^ SQUARE_PARITY[bit.trailing_zeros() as usize];
+-            self.enter()?;
+-            let score = -self.five_empty_score(child, child_alpha, child_parity)?;
+-            best = best.max(score);
+-            if score > alpha {
+-                self.stats.beta_cuts += 1;
+-                break;
++        for isolated in [true, false] {
++            let mut rest = ranks;
++            while rest != 0 {
++                let square = usize::from(UNRANK[rest.trailing_zeros() as usize]);
++                rest &= rest - 1;
++                let bit = 1u64 << square;
++                if (preferred & bit != 0) != isolated {
++                    continue;
++                }
++                let child = board.after_known_move(bit, board.flip_mask(bit));
++                let child_parity = parity ^ SQUARE_PARITY[square];
++                self.enter()?;
++                let score = -self.five_empty_score(child, child_alpha, child_parity)?;
++                best = best.max(score);
++                if score > alpha {
++                    self.stats.beta_cuts += 1;
++                    return Ok(best);
++                }
+             }
+         }
+         Ok(best)
+@@ -63,31 +69,34 @@ impl Context {
+             self.stats.stability_cuts += 1;
+             return Ok(score);
+         }
+-        let mut empty = !(board.player_bits() | board.opponent_bits());
+-        let mut preferred = isolated_empties(board);
++        let preferred = isolated_empties(board);
++        let ranks = ranked(!(board.player_bits() | board.opponent_bits()));
+         let child_alpha = -alpha - 1;
+         let mut best = -65;
+-        while empty != 0 {
+-            let options = if preferred != 0 { preferred } else { empty };
+-            let bit = options.isolate_lowest_one();
+-            preferred &= !bit;
+-            empty &= !bit;
+-            let square = bit.trailing_zeros() as usize;
+-            if board.opponent_bits() & super::last_four::NEIGHBOUR[square] == 0 {
+-                continue;
+-            }
+-            let flips = board.flip_mask(bit);
+-            if flips == 0 {
+-                continue;
+-            }
+-            let child = board.after_known_move(bit, flips);
+-            let child_parity = parity ^ SQUARE_PARITY[square];
+-            self.enter()?;
+-            let score = -self.last_four_score_with_parity(child, child_alpha, child_parity)?;
+-            best = best.max(score);
+-            if score > alpha {
+-                self.stats.beta_cuts += 1;
+-                return Ok(best);
++        for isolated in [true, false] {
++            let mut rest = ranks;
++            while rest != 0 {
++                let square = usize::from(UNRANK[rest.trailing_zeros() as usize]);
++                rest &= rest - 1;
++                let bit = 1u64 << square;
++                if (preferred & bit != 0) != isolated
++                    || board.opponent_bits() & super::last_four::NEIGHBOUR[square] == 0
++                {
++                    continue;
++                }
++                let flips = board.flip_mask(bit);
++                if flips == 0 {
++                    continue;
++                }
++                let child = board.after_known_move(bit, flips);
++                let child_parity = parity ^ SQUARE_PARITY[square];
++                self.enter()?;
++                let score = -self.last_four_score_with_parity(child, child_alpha, child_parity)?;
++                best = best.max(score);
++                if score > alpha {
++                    self.stats.beta_cuts += 1;
++                    return Ok(best);
++                }
+             }
+         }
+         // Kernel scores/bounds are in -64..=64; -65 means no legal move.

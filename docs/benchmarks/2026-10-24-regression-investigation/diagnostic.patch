@@ -1,0 +1,483 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -8,3 +8,28 @@
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ bincode = "1.3"
++
++[workspace]
++
++[features]
++diag-no-pv=[]
++diag-no-stabilize=[]
++diag-narrow-mpc=[]
++diag-window4=[]
++diag-window8=[]
++diag-old-root=[]
++diag-no-pv-table=[]
++diag-narrow-tt=[]
++diag-mpc-tree=[]
++diag-mpc-tree-no-write=["diag-mpc-tree"]
++diag-pvs-stability=[]
++diag-tail-first=[]
++diag-six-order=[]
++diag-tail-match=["diag-tail-first","diag-six-order"]
++diag-pv-root4=[]
++
++[profile.release]
++opt-level=3
++lto="fat"
++codegen-units=1
++panic="unwind"
+--- a/src/board/stability.rs
++++ b/src/board/stability.rs
+@@ -113,3 +113,16 @@
+         }
+     }
+ }
++
++const PVS_STABILITY_THRESHOLD: [i32; 64] = [
++    99, 99, 99, 99, -2, 0, 2, 4, 6, 8, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40,
++    40, 42, 42, 44, 44, 46, 46, 48, 48, 50, 50, 52, 52, 54, 54, 56, 56, 58, 58, 60, 60, 62, 62, 99,
++    99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
++];
++
++
++pub(crate) fn wide_window_upper(board:Board,beta:i32)->Option<i32> {
++    if beta<PVS_STABILITY_THRESHOLD[board.empty_count() as usize] {return None;}
++    let full=full_axes(board.player_bits()|board.opponent_bits());
++    Some(64-2*stable(board.opponent_bits(),board.player_bits(),&full).count_ones() as i32)
++}
+--- a/src/search/pv.rs
++++ b/src/search/pv.rs
+@@ -29,9 +29,7 @@
+                     _ => None,
+                 })
+                 .or_else(|| {
+-                    self.runtime
+-                        .pv_table
+-                        .get(board)
++                    (if cfg!(feature="diag-no-pv-table") { None } else { self.runtime.pv_table.get(board) })
+                         .or_else(|| self.runtime.table.get(board))
+                         .and_then(|entry| Square::new(entry.best))
+                 });
+--- a/src/search/root.rs
++++ b/src/search/root.rs
+@@ -91,7 +91,9 @@
+         if spec.depth <= 10 {
+             return self.window(context, spec, -64, 64);
+         }
+-        let radius = if spec.exact {
++        let radius = if spec.exact && context.runtime.sigma().is_none() && cfg!(feature="diag-window8") { 8 }
++        else if spec.exact && context.runtime.sigma().is_none() && cfg!(feature="diag-window4") { 4 }
++        else if spec.exact {
+             (10 - i32::from(self.position.board.empty_count())).max(2 + prediction.rem_euclid(2))
+         } else if spec.depth > 16 {
+             2
+@@ -100,7 +102,8 @@
+         };
+         let mut score = prediction;
+         let mut best = Line::leaf(score);
+-        for retry in 0..10 {
++        let retries = if cfg!(feature="diag-no-stabilize") { 1 } else { 10 };
++        for retry in 0..retries {
+             let previous = score;
+             let width = retry.max(1) * radius;
+             let (mut left, mut right) = (width, width);
+@@ -165,7 +168,17 @@
+         }
+         Ok(line)
+     }
+-    fn window(
++    fn window(&mut self, context: &mut Context, spec: SearchSpec, alpha:i32,beta:i32) -> Result<Line,()> {
++        let tick = Instant::now();
++        let nodes = context.stats.nodes;
++        let first = self.candidates.first().map(|candidate|candidate.square.index());
++        let result = self.search_window(context,spec,alpha,beta);
++        if context.runtime.trace {
++            eprintln!("INV_WINDOW {}",serde_json::json!({"depth":spec.depth,"exact":spec.exact,"sigma":context.runtime.sigma(),"alpha":alpha,"beta":beta,"first":first,"best":self.candidates.first().map(|candidate|candidate.square.index()),"score":result.as_ref().ok().map(|line|line.score),"seconds":tick.elapsed().as_secs_f64(),"nodes":context.stats.nodes-nodes}));
++        }
++        result
++    }
++    fn search_window(
+         &mut self,
+         context: &mut Context,
+         spec: SearchSpec,
+@@ -312,3 +325,24 @@
+         assert_eq!(root.bounds[19].lower, -64);
+     }
+ }
++
++// Diagnostic reconstruction of the previous whole-root Context::node driver.
++pub(super) fn legacy_iteration(context: &mut Context,position: Position,spec: SearchSpec,prediction:i32,target:u8) -> Result<Line,()> {
++    let radius = if spec.exact { (10-i32::from(target)).max(2+prediction.rem_euclid(2)) }
++        else if spec.depth>16 {2} else {6};
++    let full_window = !spec.exact && spec.depth<=10;
++    let mut pivot=prediction;
++    let (mut left,mut right)=(radius,radius);
++    let (mut alpha,mut beta)=if full_window {(-65,65)} else {aspiration_window(pivot,left,right,spec.exact)};
++    loop {
++        let start=Instant::now();let nodes=context.stats.nodes;
++        let line=context.node(position,alpha,beta,spec)?;
++        if context.runtime.trace {eprintln!("INV_LEGACY_WINDOW {}",serde_json::json!({"alpha":alpha,"beta":beta,"depth":spec.depth,"sigma":context.runtime.sigma(),"score":line.score,"nodes":context.stats.nodes-nodes,"seconds":start.elapsed().as_secs_f64()}));}
++        if line.score>alpha && line.score<beta {return Ok(line);}
++        if line.score<=alpha && left!=0 {left=(left*2).min(128);right=0;}
++        else if line.score>=beta && right!=0 {right=(right*2).min(128);left=0;}
++        else {left=128;right=128;}
++        pivot=line.score;
++        (alpha,beta)=aspiration_window(pivot,left,right,spec.exact);
++    }
++}
+--- a/src/search/session.rs
++++ b/src/search/session.rs
+@@ -36,6 +36,7 @@
+     }
+ }
+ pub(super) struct Runtime {
++    pub(super) trace: bool,
+     pub(super) model: Arc<PatternModel>,
+     pub(super) table: Arc<Table>,
+     pub(super) pv_table: Arc<Table>,
+@@ -127,6 +128,7 @@
+     }
+ }
+ pub(super) struct Context {
++    pub(super) mpc_probe_active: bool,
+     pub(super) runtime: Arc<Runtime>,
+     pub(super) stats: SearchStats,
+     pub(super) ancestors: Vec<Arc<Helper>>,
+@@ -158,7 +160,7 @@
+ #[cfg(test)]
+ pub(super) fn test_context() -> Context {
+     let workers = Workers::new(0).unwrap();
+-    let runtime = Arc::new(Runtime {
++    let runtime = Arc::new(Runtime { trace:false,
+         model: Arc::new(PatternModel::zero()),
+         table: Arc::new(Table::new(1).unwrap()),
+         pv_table: Arc::new(Table::new(1).unwrap()),
+--- a/src/search/tail.rs
++++ b/src/search/tail.rs
+@@ -122,7 +122,7 @@
+                 return Ok(i32::from(old.upper));
+             }
+         }
+-        let score = if empties > TAIL_EMPTIES {
++        let score = if empties > TAIL_EMPTIES || (cfg!(feature="diag-six-order") && empties==6) {
+             self.ordered_endgame(board, alpha, beta, known_moves)?
+         } else {
+             self.tail_score_impl(board, alpha, beta)?
+@@ -239,7 +239,11 @@
+             count += 1;
+         }
+         for i in 0..count {
+-            let index = (i..count).max_by_key(|&n| candidates[n].ordering).unwrap();
++            let index = if cfg!(feature="diag-tail-first") {
++                let mut best=i;
++                for n in (i+1)..count { if candidates[n].ordering>candidates[best].ordering { best=n; } }
++                best
++            } else { (i..count).max_by_key(|&n|candidates[n].ordering).unwrap() };
+             candidates.swap(i, index);
+             let action = candidates[i];
+             let child = board.after_known_move(action.bit, action.flips);
+--- a/src/search/tree.rs
++++ b/src/search/tree.rs
+@@ -21,6 +21,7 @@
+         cuts: Vec<Arc<AtomicBool>>,
+     ) -> Self {
+         Self {
++            mpc_probe_active:false,
+             runtime,
+             stats: SearchStats::default(),
+             ancestors,
+@@ -112,8 +113,13 @@
+         } else {
+             0
+         };
++        if cfg!(feature="diag-pvs-stability") && exact && board.empty_count()>12 && original_beta-original_alpha>1
++            && let Some(upper)=crate::board::stability::wide_window_upper(board,beta) {
++            if upper<=alpha {self.stats.stability_cuts+=1;return Ok(Line::leaf(upper));}
++            beta=beta.min(upper);
++        }
+         let main = self.runtime.table.get(board);
+-        let pv = if exact && original_beta - original_alpha > 1 {
++        let pv = if !cfg!(feature="diag-no-pv-table") && diag_pv_allowed(board.empty_count()) && exact && original_beta - original_alpha > 1 {
+             self.runtime.pv_table.get(board)
+         } else {
+             None
+@@ -139,6 +145,9 @@
+         if let Some(entry) = cached {
+             self.stats.tt_hits += 1;
+             if entry.depth == depth && entry.quality == quality && entry.exact_mode == exact {
++                if cfg!(feature="diag-narrow-tt") && original_beta-original_alpha>1 {
++                    if i32::from(entry.upper)>=alpha+2 { beta=beta.min(i32::from(entry.upper)); }
++                } else {
+                 let lower = i32::from(entry.lower);
+                 let upper = i32::from(entry.upper);
+                 let cut = if upper <= alpha {
+@@ -155,6 +164,7 @@
+                 alpha = alpha.max(lower);
+                 beta = beta.min(upper);
+                 known_lower = lower;
++                }
+             }
+         }
+         if exact
+@@ -164,7 +174,7 @@
+             self.stats.stability_cuts += 1;
+             return Ok(Line::leaf(score));
+         }
+-        if allow_probcut
++        if allow_probcut && (!cfg!(feature="diag-narrow-mpc") || beta-alpha==1)
+             && let Some(score) = self.probcut(board, state, depth, alpha, beta, exact)?
+         {
+             return Ok(Line::leaf(score));
+@@ -189,7 +199,7 @@
+             let child = board.after_known_move(bit, flips);
+             // Reference ETC uses the original alpha to skip moves. Preserve
+             // their largest upper bound so a fail-low remains a sound bound.
+-            if (if exact {
++            if (!cfg!(feature="diag-narrow-tt") || (exact && original_beta-original_alpha==1)) && (if exact {
+                 board.empty_count() > 12
+             } else {
+                 depth >= 4
+@@ -342,9 +352,9 @@
+             generation: self.runtime.generation,
+             exact_mode: exact,
+         };
+-        self.runtime.table.store(board, entry);
+-        if exact && original_beta - original_alpha > 1 {
+-            self.runtime.pv_table.store(board, entry);
++        if !cfg!(feature="diag-mpc-tree-no-write") || !self.mpc_probe_active {
++            self.runtime.table.store(board,entry);
++            if !cfg!(feature="diag-no-pv-table") && diag_pv_allowed(board.empty_count()) && exact && original_beta-original_alpha>1 { self.runtime.pv_table.store(board,entry); }
+         }
+         Ok(best)
+     }
+@@ -425,7 +435,7 @@
+             ((f64::from(beta) - rule.intercept + sigma * rule.deviation) / rule.slope).ceil();
+         if high < 64.0 {
+             let bound = high.max(-64.0) as i32;
+-            let score = self.ordering_search(
++            let score = self.mpc_probe(
+                 Position { board, state },
+                 bound - 1,
+                 bound,
+@@ -440,7 +450,7 @@
+             ((f64::from(alpha) - rule.intercept - sigma * rule.deviation) / rule.slope).floor();
+         if low > -64.0 {
+             let bound = low.min(64.0) as i32;
+-            let score = self.ordering_search(
++            let score = self.mpc_probe(
+                 Position { board, state },
+                 bound,
+                 bound + 1,
+@@ -452,6 +462,17 @@
+             }
+         }
+         Ok(None)
++    }
++}
++impl Context {
++    fn mpc_probe(&mut self, position:Position,alpha:i32,beta:i32,depth:u8)->Result<i32,()> {
++        if cfg!(feature="diag-mpc-tree") {
++            let previous=self.mpc_probe_active;
++            self.mpc_probe_active=true;
++            let result=self.node(position,alpha,beta,SearchSpec{depth,exact:false,probcut:false}).map(|line|line.score);
++            self.mpc_probe_active=previous;
++            result
++        } else { self.ordering_search(position,alpha,beta,depth) }
+     }
+ }
+ pub(super) fn pick_best(candidates: &mut [Candidate], index: usize) {
+--- a/src/search.rs
++++ b/src/search.rs
+@@ -13,6 +13,14 @@
+     time::{Duration, Instant},
+ };
+ 
++#[cfg(feature="diag-pv-root4")]
++static DIAG_ROOT_EMPTIES: AtomicU8 = AtomicU8::new(0);
++fn diag_pv_allowed(empties:u8)->bool {
++    #[cfg(feature="diag-pv-root4")]
++    { empties>12 && empties>=DIAG_ROOT_EMPTIES.load(Ordering::Relaxed).saturating_sub(4) }
++    #[cfg(not(feature="diag-pv-root4"))]
++    { let _=empties;true }
++}
+ mod api;
+ pub use api::*;
+ mod session;
+@@ -169,6 +177,8 @@
+         Ok(())
+     }
+     pub fn search(&mut self, request: SearchRequest) -> Result<SearchResult, EngineError> {
++        #[cfg(feature="diag-pv-root4")]
++        DIAG_ROOT_EMPTIES.store(request.board.empty_count(),Ordering::Relaxed);
+         if matches!(request.mode,SearchMode::Depth(d) if d>60) {
+             return Err(EngineError::InvalidRequest("depth must be 0..=60"));
+         }
+@@ -223,6 +233,7 @@
+             None => None,
+         };
+         let runtime = Arc::new(Runtime {
++            trace: std::env::var_os("DEFT_INVESTIGATE_TRACE").is_some(),
+             model: self.model.clone(),
+             table: self.table.clone(),
+             pv_table: self.pv_table.clone(),
+@@ -353,9 +364,13 @@
+         for (depth, final_iteration, sigma, quality) in iterations {
+             runtime.drain();
+             runtime.set_stage(sigma, quality);
++            let stage_start = Instant::now();
++            let stage_nodes = context.stats.nodes;
+             let prediction = result.score.unwrap_or_else(|| self.model.evaluate(&board));
+             let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+-                root.iteration(
++                if cfg!(feature="diag-old-root") {
++                    root::legacy_iteration(&mut context,Position { board,state },SearchSpec { depth,exact:final_iteration,probcut:true },prediction,target)
++                } else { root.iteration(
+                     &mut context,
+                     SearchSpec {
+                         depth,
+@@ -363,7 +378,7 @@
+                         probcut: true,
+                     },
+                     prediction,
+-                )
++                ) }
+             }));
+             let completed = match attempt {
+                 Ok(Ok(line)) if !context.aborted() => Some(line),
+@@ -374,6 +389,9 @@
+                 }
+             };
+             let Some(line) = completed else { break };
++            if runtime.trace {
++                eprintln!("INV_STAGE {}", serde_json::json!({"depth":depth,"exact":final_iteration,"sigma":sigma,"seconds":stage_start.elapsed().as_secs_f64(),"nodes":context.stats.nodes-stage_nodes,"score":line.score,"action":format!("{:?}",line.actions[0])}));
++            }
+             result.selective = sigma.is_some();
+             result.selectivity = if sigma.is_none() {
+                 Some(Selectivity::Full)
+@@ -405,7 +423,9 @@
+         runtime.drain();
+         // Full TT cutoffs return scores without a recursion-built PV. Recover
+         // the line separately, verifying each suggested move against the value.
+-        if !context.aborted()
++        let pv_start = Instant::now();
++        let pv_nodes = context.stats.nodes;
++        if !cfg!(feature="diag-no-pv") && !context.aborted()
+             && !result.selective
+             && result.completed_depth > 0
+             && let Some(score) = result.score
+@@ -419,6 +439,7 @@
+         {
+             result.pv = pv;
+         }
++        if runtime.trace { eprintln!("INV_PV {}",serde_json::json!({"seconds":pv_start.elapsed().as_secs_f64(),"nodes":context.stats.nodes-pv_nodes,"length":result.pv.len()})); }
+         runtime.drain();
+         if runtime.control.reason() != StopReason::WorkerFailed {
+             self.end_cache = std::mem::take(&mut context.end_cache);
+--- /dev/null
++++ b/examples/investigate.rs
+@@ -0,0 +1,102 @@
++//! Minimal verification adapter, not the application CLI.
++use deft_reversi_engine_v2::{Action, Board, Engine, EngineOptions, SearchMode, SearchRequest};
++use std::{
++    error::Error,
++    fs::File,
++    io::{self, BufRead, BufReader},
++    time::Duration,
++};
++fn main() -> Result<(), Box<dyn Error>> {
++    let mut args = std::env::args().skip(1);
++    let model = args
++        .next()
++        .ok_or("usage: solve MODEL POSITIONS [exact|DEPTH] [THREADS] [TT_MiB] [MILLISECONDS]")?;
++    let positions = args.next().ok_or("positions file required")?;
++    let mode = match args.next().as_deref() {
++        None | Some("exact") => SearchMode::Exact,
++        Some(depth) => SearchMode::Depth(depth.parse()?),
++    };
++    if mode != SearchMode::Exact { return Err("investigation uses level 60 only".into()); }
++    let options = EngineOptions {
++        threads: args.next().map(|s| s.parse()).transpose()?.unwrap_or(1),
++        tt_mib: args.next().map(|s| s.parse()).transpose()?.unwrap_or(256),
++    };
++    let time_limit = args
++        .next()
++        .map(|s| s.parse::<u64>())
++        .transpose()?
++        .map(Duration::from_millis);
++    if args.next().is_some() {
++        return Err("unexpected argument".into());
++    }
++    let model = std::fs::read(model)?;
++    println!(
++        "position\tscore\taction\tmode\tdepth\tnodes\tleaves\tsplits\tjobs\thandoffs\tjoin_seconds\tseconds\tstop"
++    );
++    for (index, line) in BufReader::new(File::open(positions)?).lines().enumerate() {
++        let line = line?;
++        let line = line.trim();
++        if line.is_empty() || line.starts_with('#') {
++            continue;
++        }
++        let board = parse_position(line).map_err(|message| {
++            io::Error::new(
++                io::ErrorKind::InvalidData,
++                format!("line {}: {message}", index + 1),
++            )
++        })?;
++        let mut engine = Engine::from_bytes(&model, options)?;
++        let mut request = SearchRequest::for_level(board,60);
++        request.time_limit = time_limit;
++        let result = engine.search(request)?;
++        let action = match result.action {
++            Some(Action::Place(square)) => square.to_string(),
++            Some(Action::Pass) => "pass".into(),
++            None => "terminal".into(),
++        };
++        println!(
++            "{}\t{}\t{}\t{:?}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.9}\t{:.9}\t{:?}",
++            index + 1,
++            result
++                .score
++                .map(|v| v.to_string())
++                .unwrap_or_else(|| "unknown".into()),
++            action,
++            result.mode,
++            result.completed_depth,
++            result.stats.nodes,
++            result.stats.leaves,
++            result.stats.splits,
++            result.stats.helper_jobs,
++            result.stats.ancestor_handoffs,
++            result.stats.join_time.as_secs_f64(),
++            result.elapsed.as_secs_f64(),
++            result.stop_reason
++        );
++    }
++    Ok(())
++}
++fn parse_position(line: &str) -> Result<Board, &'static str> {
++    let mut parts = line.split_whitespace();
++    let cells = parts.next().ok_or("missing board")?.as_bytes();
++    let turn = parts.next().ok_or("missing turn")?.trim_end_matches(';');
++    if cells.len() != 64 {
++        return Err("board must have 64 cells");
++    }
++    let mut black = 0;
++    let mut white = 0;
++    for (i, &cell) in cells.iter().enumerate() {
++        match cell {
++            b'X' | b'x' | b'*' => black |= 1u64 << i,
++            b'O' | b'o' => white |= 1u64 << i,
++            b'-' | b'.' => {}
++            _ => return Err("invalid board character"),
++        }
++    }
++    match turn {
++        "X" | "x" | "*" => Board::from_bits(black, white),
++        "O" | "o" => Board::from_bits(white, black),
++        _ => return Err("turn must be X or O"),
++    }
++    .ok_or("overlapping stones")
++}

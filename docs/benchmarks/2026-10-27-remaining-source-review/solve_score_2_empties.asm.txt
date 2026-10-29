@@ -1,0 +1,710 @@
+
+/workspace/deft-tail-target/release/examples/solve:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000064750 <deft_reversi_engine::search::last_four::solve_score_2_empties>:
+   64750:	push   %rbp
+   64751:	push   %r15
+   64753:	push   %r14
+   64755:	push   %r13
+   64757:	push   %r12
+   64759:	push   %rbx
+   6475a:	sub    $0x98,%rsp
+   64761:	mov    %r9,%rbx
+   64764:	cmpb   $0x0,0x8(%rbx)
+   64768:	mov    %rcx,%r9
+   6476b:	mov    %edx,%r10d
+   6476e:	mov    %rsi,%r15
+   64771:	mov    %rdi,%r11
+   64774:	mov    %rdi,0x20(%rsp)
+   64779:	jne    6487e <deft_reversi_engine::search::last_four::solve_score_2_empties+0x12e>
+   6477f:	mov    (%rbx),%r14
+   64782:	cmpb   $0x0,0x48(%r14)
+   64787:	je     647ba <deft_reversi_engine::search::last_four::solve_score_2_empties+0x6a>
+   64789:	mov    0xc0(%r14),%rcx
+   64790:	cmpl   $0x1,0x10(%rcx)
+   64794:	jne    647b1 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x61>
+   64796:	mov    0x18(%rcx),%rdx
+   6479a:	mov    0x38(%rcx),%rax
+   6479e:	xchg   %ax,%ax
+   647a0:	cmp    %rdx,%rax
+   647a3:	jae    6481b <deft_reversi_engine::search::last_four::solve_score_2_empties+0xcb>
+   647a5:	lea    0x1(%rax),%rsi
+   647a9:	lock cmpxchg %rsi,0x38(%rcx)
+   647af:	jne    647a0 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x50>
+   647b1:	incq   0x48(%r14)
+   647b5:	jmp    6487e <deft_reversi_engine::search::last_four::solve_score_2_empties+0x12e>
+   647ba:	mov    0xc0(%r14),%r12
+   647c1:	mov    0x30(%r12),%rax
+   647c6:	movzbl 0x10(%rax),%eax
+   647ca:	test   %al,%al
+   647cc:	je     647d9 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x89>
+   647ce:	mov    $0x1,%cl
+   647d0:	xor    %eax,%eax
+   647d2:	lock cmpxchg %cl,0x40(%r12)
+   647d9:	mov    0x28(%r12),%ebp
+   647de:	cmp    $0xffffffff,%ebp
+   647e1:	je     64847 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xf7>
+   647e3:	mov    0x20(%r12),%r13
+   647e8:	mov    %r8,0x18(%rsp)
+   647ed:	mov    %r10,0x8(%rsp)
+   647f2:	mov    %r9,0x10(%rsp)
+   647f7:	call   9ad60 <<std::sys::pal::unix::time::Timespec>::now>
+   647fc:	cmp    %r13,%rax
+   647ff:	jne    64826 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xd6>
+   64801:	mov    0x20(%rsp),%r11
+   64806:	mov    0x10(%rsp),%r9
+   6480b:	mov    0x8(%rsp),%r10
+   64810:	mov    0x18(%rsp),%r8
+   64815:	cmp    %ebp,%edx
+   64817:	jae    6483c <deft_reversi_engine::search::last_four::solve_score_2_empties+0xec>
+   64819:	jmp    64847 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xf7>
+   6481b:	mov    $0x3,%dl
+   6481d:	xor    %eax,%eax
+   6481f:	lock cmpxchg %dl,0x40(%rcx)
+   64824:	jmp    6487a <deft_reversi_engine::search::last_four::solve_score_2_empties+0x12a>
+   64826:	mov    0x20(%rsp),%r11
+   6482b:	mov    0x10(%rsp),%r9
+   64830:	mov    0x8(%rsp),%r10
+   64835:	mov    0x18(%rsp),%r8
+   6483a:	jl     64847 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xf7>
+   6483c:	mov    $0x2,%cl
+   6483e:	xor    %eax,%eax
+   64840:	lock cmpxchg %cl,0x40(%r12)
+   64847:	movzbl 0x40(%r12),%eax
+   6484d:	test   %al,%al
+   6484f:	jne    6487a <deft_reversi_engine::search::last_four::solve_score_2_empties+0x12a>
+   64851:	mov    0x28(%r14),%rcx
+   64855:	mov    0x20(%r14),%rax
+   64859:	xor    %edx,%edx
+   6485b:	shl    $0x3,%rcx
+   6485f:	nop
+   64860:	cmp    %rdx,%rcx
+   64863:	je     64789 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x39>
+   64869:	mov    (%rax,%rdx,1),%rsi
+   6486d:	add    $0x8,%rdx
+   64871:	movzbl 0x10(%rsi),%esi
+   64875:	test   %sil,%sil
+   64878:	je     64860 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x110>
+   6487a:	movb   $0x1,0x8(%rbx)
+   6487e:	cmp    $0x3f,%r9
+   64882:	ja     65276 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xb26>
+   64888:	lea    -0x5710f(%rip),%r13        # d780 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x177c>
+   6488f:	mov    %r15,%rbp
+   64892:	mov    $0xffffffbf,%r12d
+   64898:	vpbroadcastq %r11,%ymm7
+   6489e:	not    %rbp
+   648a1:	mov    0x0(%r13,%r9,8),%rax
+   648a6:	mov    %rax,0x70(%rsp)
+   648ab:	test   %r15,%rax
+   648ae:	je     64ac8 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x378>
+   648b4:	mov    %r9,%rax
+   648b7:	shl    $0x6,%rax
+   648bb:	lea    -0x56c42(%rip),%rcx        # dc80 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x1c7c>
+   648c2:	vpbroadcastq %rbp,%ymm8
+   648c8:	vpcmpeqd %ymm6,%ymm6,%ymm6
+   648cc:	vmovdqa 0x20(%rax,%rcx,1),%ymm1
+   648d2:	vmovdqa (%rax,%rcx,1),%ymm0
+   648d7:	vpand  %ymm7,%ymm1,%ymm2
+   648db:	vpsrlvq -0x5e844(%rip),%ymm2,%ymm3        # 60a0 <__abi_tag+0x5da4>
+   648e4:	vmovdqa %ymm1,%ymm5
+   648e8:	vpternlogq $0x60,%ymm7,%ymm8,%ymm5
+   648ef:	vpcmpgtq %ymm5,%ymm2,%k1
+   648f5:	vpor   %ymm2,%ymm3,%ymm3
+   648f9:	vpsrlvq -0x5e6c2(%rip),%ymm3,%ymm4        # 6240 <__abi_tag+0x5f44>
+   64902:	vpand  %ymm0,%ymm8,%ymm2
+   64906:	vpaddq %ymm6,%ymm2,%ymm2
+   6490a:	vpternlogq $0x48,%ymm8,%ymm0,%ymm2
+   64911:	vpandn %ymm2,%ymm7,%ymm0
+   64915:	vpor   %ymm3,%ymm4,%ymm3
+   64919:	vpsrlvq -0x5e862(%rip),%ymm3,%ymm4        # 60c0 <__abi_tag+0x5dc4>
+   64922:	vpor   %ymm3,%ymm4,%ymm3
+   64926:	vpandnq %ymm1,%ymm3,%ymm1{%k1}{z}
+   6492c:	vpcmpneqq %ymm2,%ymm0,%k1
+   64933:	vporq  %ymm0,%ymm1,%ymm1{%k1}
+   64939:	vextracti128 $0x1,%ymm1,%xmm0
+   6493f:	vpor   %xmm1,%xmm0,%xmm0
+   64943:	vpshufd $0xee,%xmm0,%xmm1
+   64948:	vpor   %xmm1,%xmm0,%xmm0
+   6494c:	vmovq  %xmm0,%r14
+   64951:	test   %r14,%r14
+   64954:	je     64ac8 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x378>
+   6495a:	cmpb   $0x0,0x8(%rbx)
+   6495e:	lea    0x1(%r10),%eax
+   64962:	vmovdqu %ymm7,0x40(%rsp)
+   64968:	mov    %r9,0x10(%rsp)
+   6496d:	mov    %eax,0x28(%rsp)
+   64971:	jne    64a7e <deft_reversi_engine::search::last_four::solve_score_2_empties+0x32e>
+   64977:	mov    (%rbx),%r12
+   6497a:	cmpb   $0x0,0x48(%r12)
+   64980:	je     649bb <deft_reversi_engine::search::last_four::solve_score_2_empties+0x26b>
+   64982:	mov    0xc0(%r12),%rcx
+   6498a:	cmpl   $0x1,0x10(%rcx)
+   6498e:	jne    649b1 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x261>
+   64990:	mov    0x18(%rcx),%rdx
+   64994:	mov    0x38(%rcx),%rax
+   64998:	nopl   0x0(%rax,%rax,1)
+   649a0:	cmp    %rdx,%rax
+   649a3:	jae    64a22 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x2d2>
+   649a5:	lea    0x1(%rax),%rsi
+   649a9:	lock cmpxchg %rsi,0x38(%rcx)
+   649af:	jne    649a0 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x250>
+   649b1:	incq   0x48(%r12)
+   649b6:	jmp    64a7e <deft_reversi_engine::search::last_four::solve_score_2_empties+0x32e>
+   649bb:	mov    0xc0(%r12),%rdx
+   649c3:	mov    0x30(%rdx),%rax
+   649c7:	movzbl 0x10(%rax),%eax
+   649cb:	test   %al,%al
+   649cd:	je     649d8 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x288>
+   649cf:	mov    $0x1,%cl
+   649d1:	xor    %eax,%eax
+   649d3:	lock cmpxchg %cl,0x40(%rdx)
+   649d8:	mov    0x28(%rdx),%eax
+   649db:	cmp    $0xffffffff,%eax
+   649de:	je     64a47 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x2f7>
+   649e0:	mov    0x20(%rdx),%rcx
+   649e4:	mov    %eax,0x3c(%rsp)
+   649e8:	mov    %r8,0x18(%rsp)
+   649ed:	mov    %r10,0x8(%rsp)
+   649f2:	mov    %rdx,0x30(%rsp)
+   649f7:	mov    %rcx,0x68(%rsp)
+   649fc:	vzeroupper
+   649ff:	call   9ad60 <<std::sys::pal::unix::time::Timespec>::now>
+   64a04:	cmp    0x68(%rsp),%rax
+   64a09:	jne    64a2d <deft_reversi_engine::search::last_four::solve_score_2_empties+0x2dd>
+   64a0b:	mov    0x8(%rsp),%r10
+   64a10:	mov    0x18(%rsp),%r8
+   64a15:	cmp    0x3c(%rsp),%edx
+   64a19:	mov    0x30(%rsp),%rdx
+   64a1e:	jae    64a3e <deft_reversi_engine::search::last_four::solve_score_2_empties+0x2ee>
+   64a20:	jmp    64a47 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x2f7>
+   64a22:	mov    $0x3,%dl
+   64a24:	xor    %eax,%eax
+   64a26:	lock cmpxchg %dl,0x40(%rcx)
+   64a2b:	jmp    64a7a <deft_reversi_engine::search::last_four::solve_score_2_empties+0x32a>
+   64a2d:	mov    0x8(%rsp),%r10
+   64a32:	mov    0x18(%rsp),%r8
+   64a37:	mov    0x30(%rsp),%rdx
+   64a3c:	jl     64a47 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x2f7>
+   64a3e:	mov    $0x2,%cl
+   64a40:	xor    %eax,%eax
+   64a42:	lock cmpxchg %cl,0x40(%rdx)
+   64a47:	movzbl 0x40(%rdx),%eax
+   64a4b:	test   %al,%al
+   64a4d:	jne    64a7a <deft_reversi_engine::search::last_four::solve_score_2_empties+0x32a>
+   64a4f:	mov    0x28(%r12),%rcx
+   64a54:	mov    0x20(%r12),%rax
+   64a59:	xor    %edx,%edx
+   64a5b:	shl    $0x3,%rcx
+   64a5f:	nop
+   64a60:	cmp    %rdx,%rcx
+   64a63:	je     64982 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x232>
+   64a69:	mov    (%rax,%rdx,1),%rsi
+   64a6d:	add    $0x8,%rdx
+   64a71:	movzbl 0x10(%rsi),%esi
+   64a75:	test   %sil,%sil
+   64a78:	je     64a60 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x310>
+   64a7a:	movb   $0x1,0x8(%rbx)
+   64a7e:	mov    (%rbx),%rax
+   64a81:	mov    %r10d,%esi
+   64a84:	xor    %r15,%r14
+   64a87:	not    %esi
+   64a89:	mov    %r8,%rdx
+   64a8c:	mov    %r8,%r12
+   64a8f:	mov    %r14,%rdi
+   64a92:	mov    %r10,%r14
+   64a95:	incq   0x50(%rax)
+   64a99:	vzeroupper
+   64a9c:	call   652b0 <deft_reversi_engine::search::last_four::solve_score_1_empties>
+   64aa1:	vmovdqu 0x40(%rsp),%ymm7
+   64aa7:	mov    0x20(%rsp),%r11
+   64aac:	mov    0x10(%rsp),%r9
+   64ab1:	mov    %r12,%r8
+   64ab4:	mov    %eax,%r12d
+   64ab7:	neg    %r12d
+   64aba:	mov    %r14,%r10
+   64abd:	cmp    %r12d,0x28(%rsp)
+   64ac2:	jle    6525e <deft_reversi_engine::search::last_four::solve_score_2_empties+0xb0e>
+   64ac8:	cmp    $0x40,%r8
+   64acc:	jae    6528a <deft_reversi_engine::search::last_four::solve_score_2_empties+0xb3a>
+   64ad2:	mov    0x0(%r13,%r8,8),%r14
+   64ad7:	test   %r15,%r14
+   64ada:	je     64ced <deft_reversi_engine::search::last_four::solve_score_2_empties+0x59d>
+   64ae0:	mov    %r8,%rax
+   64ae3:	shl    $0x6,%rax
+   64ae7:	lea    -0x56e6e(%rip),%rcx        # dc80 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x1c7c>
+   64aee:	vpbroadcastq %rbp,%ymm8
+   64af4:	vpcmpeqd %ymm6,%ymm6,%ymm6
+   64af8:	vmovdqa 0x20(%rax,%rcx,1),%ymm1
+   64afe:	vmovdqa (%rax,%rcx,1),%ymm0
+   64b03:	vpand  %ymm7,%ymm1,%ymm2
+   64b07:	vpsrlvq -0x5ea70(%rip),%ymm2,%ymm3        # 60a0 <__abi_tag+0x5da4>
+   64b10:	vmovdqa %ymm1,%ymm5
+   64b14:	vpternlogq $0x60,%ymm7,%ymm8,%ymm5
+   64b1b:	vpcmpgtq %ymm5,%ymm2,%k1
+   64b21:	vpor   %ymm2,%ymm3,%ymm3
+   64b25:	vpsrlvq -0x5e8ee(%rip),%ymm3,%ymm4        # 6240 <__abi_tag+0x5f44>
+   64b2e:	vpand  %ymm0,%ymm8,%ymm2
+   64b32:	vpaddq %ymm6,%ymm2,%ymm2
+   64b36:	vpternlogq $0x48,%ymm8,%ymm0,%ymm2
+   64b3d:	vpandn %ymm2,%ymm7,%ymm0
+   64b41:	vpor   %ymm3,%ymm4,%ymm3
+   64b45:	vpsrlvq -0x5ea8e(%rip),%ymm3,%ymm4        # 60c0 <__abi_tag+0x5dc4>
+   64b4e:	vpor   %ymm3,%ymm4,%ymm3
+   64b52:	vpandnq %ymm1,%ymm3,%ymm1{%k1}{z}
+   64b58:	vpcmpneqq %ymm2,%ymm0,%k1
+   64b5f:	vporq  %ymm0,%ymm1,%ymm1{%k1}
+   64b65:	vextracti128 $0x1,%ymm1,%xmm0
+   64b6b:	vpor   %xmm1,%xmm0,%xmm0
+   64b6f:	vpshufd $0xee,%xmm0,%xmm1
+   64b74:	vpor   %xmm1,%xmm0,%xmm0
+   64b78:	vmovq  %xmm0,%rdi
+   64b7d:	test   %rdi,%rdi
+   64b80:	je     64ced <deft_reversi_engine::search::last_four::solve_score_2_empties+0x59d>
+   64b86:	cmpb   $0x0,0x8(%rbx)
+   64b8a:	mov    %r14,0x40(%rsp)
+   64b8f:	jne    64cae <deft_reversi_engine::search::last_four::solve_score_2_empties+0x55e>
+   64b95:	mov    (%rbx),%r13
+   64b98:	cmpb   $0x0,0x48(%r13)
+   64b9d:	je     64bde <deft_reversi_engine::search::last_four::solve_score_2_empties+0x48e>
+   64b9f:	mov    0xc0(%r13),%rcx
+   64ba6:	cmpl   $0x1,0x10(%rcx)
+   64baa:	jne    64bd5 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x485>
+   64bac:	mov    0x18(%rcx),%rdx
+   64bb0:	mov    0x38(%rcx),%rax
+   64bb4:	data16 data16 cs nopw 0x0(%rax,%rax,1)
+   64bc0:	cmp    %rdx,%rax
+   64bc3:	jae    64c4b <deft_reversi_engine::search::last_four::solve_score_2_empties+0x4fb>
+   64bc9:	lea    0x1(%rax),%rsi
+   64bcd:	lock cmpxchg %rsi,0x38(%rcx)
+   64bd3:	jne    64bc0 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x470>
+   64bd5:	incq   0x48(%r13)
+   64bd9:	jmp    64cae <deft_reversi_engine::search::last_four::solve_score_2_empties+0x55e>
+   64bde:	mov    0xc0(%r13),%rbp
+   64be5:	mov    0x30(%rbp),%rax
+   64be9:	movzbl 0x10(%rax),%eax
+   64bed:	test   %al,%al
+   64bef:	je     64bfa <deft_reversi_engine::search::last_four::solve_score_2_empties+0x4aa>
+   64bf1:	mov    $0x1,%cl
+   64bf3:	xor    %eax,%eax
+   64bf5:	lock cmpxchg %cl,0x40(%rbp)
+   64bfa:	mov    0x28(%rbp),%r14d
+   64bfe:	cmp    $0xffffffff,%r14d
+   64c02:	je     64c75 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x525>
+   64c04:	mov    0x20(%rbp),%rax
+   64c08:	mov    %r8,0x18(%rsp)
+   64c0d:	mov    %r10,0x8(%rsp)
+   64c12:	mov    %r9,0x10(%rsp)
+   64c17:	mov    %rdi,0x28(%rsp)
+   64c1c:	mov    %rax,0x30(%rsp)
+   64c21:	vzeroupper
+   64c24:	call   9ad60 <<std::sys::pal::unix::time::Timespec>::now>
+   64c29:	cmp    0x30(%rsp),%rax
+   64c2e:	jne    64c56 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x506>
+   64c30:	mov    0x28(%rsp),%rdi
+   64c35:	mov    0x10(%rsp),%r9
+   64c3a:	mov    0x8(%rsp),%r10
+   64c3f:	mov    0x18(%rsp),%r8
+   64c44:	cmp    %r14d,%edx
+   64c47:	jae    64c6c <deft_reversi_engine::search::last_four::solve_score_2_empties+0x51c>
+   64c49:	jmp    64c75 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x525>
+   64c4b:	mov    $0x3,%dl
+   64c4d:	xor    %eax,%eax
+   64c4f:	lock cmpxchg %dl,0x40(%rcx)
+   64c54:	jmp    64caa <deft_reversi_engine::search::last_four::solve_score_2_empties+0x55a>
+   64c56:	mov    0x28(%rsp),%rdi
+   64c5b:	mov    0x10(%rsp),%r9
+   64c60:	mov    0x8(%rsp),%r10
+   64c65:	mov    0x18(%rsp),%r8
+   64c6a:	jl     64c75 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x525>
+   64c6c:	mov    $0x2,%cl
+   64c6e:	xor    %eax,%eax
+   64c70:	lock cmpxchg %cl,0x40(%rbp)
+   64c75:	movzbl 0x40(%rbp),%eax
+   64c79:	test   %al,%al
+   64c7b:	jne    64caa <deft_reversi_engine::search::last_four::solve_score_2_empties+0x55a>
+   64c7d:	mov    0x28(%r13),%rcx
+   64c81:	mov    0x20(%r13),%rax
+   64c85:	xor    %edx,%edx
+   64c87:	shl    $0x3,%rcx
+   64c8b:	nopl   0x0(%rax,%rax,1)
+   64c90:	cmp    %rdx,%rcx
+   64c93:	je     64b9f <deft_reversi_engine::search::last_four::solve_score_2_empties+0x44f>
+   64c99:	mov    (%rax,%rdx,1),%rsi
+   64c9d:	add    $0x8,%rdx
+   64ca1:	movzbl 0x10(%rsi),%esi
+   64ca5:	test   %sil,%sil
+   64ca8:	je     64c90 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x540>
+   64caa:	movb   $0x1,0x8(%rbx)
+   64cae:	mov    (%rbx),%rax
+   64cb1:	mov    %r10d,%esi
+   64cb4:	xor    %r15,%rdi
+   64cb7:	not    %esi
+   64cb9:	mov    %r9,%rdx
+   64cbc:	mov    %r9,%r13
+   64cbf:	mov    %r10,%rbp
+   64cc2:	mov    %r8,%r14
+   64cc5:	incq   0x50(%rax)
+   64cc9:	vzeroupper
+   64ccc:	call   652b0 <deft_reversi_engine::search::last_four::solve_score_1_empties>
+   64cd1:	mov    %r14,%r8
+   64cd4:	mov    0x20(%rsp),%r11
+   64cd9:	mov    0x40(%rsp),%r14
+   64cde:	neg    %eax
+   64ce0:	mov    %rbp,%r10
+   64ce3:	mov    %r13,%r9
+   64ce6:	cmp    %eax,%r12d
+   64ce9:	cmovle %eax,%r12d
+   64ced:	cmp    $0xffffffbf,%r12d
+   64cf1:	jne    6525e <deft_reversi_engine::search::last_four::solve_score_2_empties+0xb0e>
+   64cf7:	cmpb   $0x0,0x8(%rbx)
+   64cfb:	jne    64e1e <deft_reversi_engine::search::last_four::solve_score_2_empties+0x6ce>
+   64d01:	mov    (%rbx),%r12
+   64d04:	cmpb   $0x0,0x48(%r12)
+   64d0a:	je     64d4b <deft_reversi_engine::search::last_four::solve_score_2_empties+0x5fb>
+   64d0c:	mov    0xc0(%r12),%rcx
+   64d14:	cmpl   $0x1,0x10(%rcx)
+   64d18:	jne    64d41 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x5f1>
+   64d1a:	mov    0x18(%rcx),%rdx
+   64d1e:	mov    0x38(%rcx),%rax
+   64d22:	data16 data16 data16 data16 cs nopw 0x0(%rax,%rax,1)
+   64d30:	cmp    %rdx,%rax
+   64d33:	jae    64db3 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x663>
+   64d35:	lea    0x1(%rax),%rsi
+   64d39:	lock cmpxchg %rsi,0x38(%rcx)
+   64d3f:	jne    64d30 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x5e0>
+   64d41:	incq   0x48(%r12)
+   64d46:	jmp    64e1e <deft_reversi_engine::search::last_four::solve_score_2_empties+0x6ce>
+   64d4b:	mov    0xc0(%r12),%r13
+   64d53:	mov    0x30(%r13),%rax
+   64d57:	movzbl 0x10(%rax),%eax
+   64d5b:	test   %al,%al
+   64d5d:	je     64d69 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x619>
+   64d5f:	mov    $0x1,%cl
+   64d61:	xor    %eax,%eax
+   64d63:	lock cmpxchg %cl,0x40(%r13)
+   64d69:	mov    0x28(%r13),%ebp
+   64d6d:	cmp    $0xffffffff,%ebp
+   64d70:	je     64dde <deft_reversi_engine::search::last_four::solve_score_2_empties+0x68e>
+   64d72:	mov    0x20(%r13),%rax
+   64d76:	mov    %r8,0x18(%rsp)
+   64d7b:	mov    %r10,0x8(%rsp)
+   64d80:	mov    %r9,0x10(%rsp)
+   64d85:	mov    %rax,0x40(%rsp)
+   64d8a:	vzeroupper
+   64d8d:	call   9ad60 <<std::sys::pal::unix::time::Timespec>::now>
+   64d92:	cmp    0x40(%rsp),%rax
+   64d97:	jne    64dbe <deft_reversi_engine::search::last_four::solve_score_2_empties+0x66e>
+   64d99:	mov    0x20(%rsp),%r11
+   64d9e:	mov    0x10(%rsp),%r9
+   64da3:	mov    0x8(%rsp),%r10
+   64da8:	mov    0x18(%rsp),%r8
+   64dad:	cmp    %ebp,%edx
+   64daf:	jae    64dd4 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x684>
+   64db1:	jmp    64dde <deft_reversi_engine::search::last_four::solve_score_2_empties+0x68e>
+   64db3:	mov    $0x3,%dl
+   64db5:	xor    %eax,%eax
+   64db7:	lock cmpxchg %dl,0x40(%rcx)
+   64dbc:	jmp    64e1a <deft_reversi_engine::search::last_four::solve_score_2_empties+0x6ca>
+   64dbe:	mov    0x20(%rsp),%r11
+   64dc3:	mov    0x10(%rsp),%r9
+   64dc8:	mov    0x8(%rsp),%r10
+   64dcd:	mov    0x18(%rsp),%r8
+   64dd2:	jl     64dde <deft_reversi_engine::search::last_four::solve_score_2_empties+0x68e>
+   64dd4:	mov    $0x2,%cl
+   64dd6:	xor    %eax,%eax
+   64dd8:	lock cmpxchg %cl,0x40(%r13)
+   64dde:	movzbl 0x40(%r13),%eax
+   64de3:	test   %al,%al
+   64de5:	jne    64e1a <deft_reversi_engine::search::last_four::solve_score_2_empties+0x6ca>
+   64de7:	mov    0x28(%r12),%rcx
+   64dec:	mov    0x20(%r12),%rax
+   64df1:	xor    %edx,%edx
+   64df3:	shl    $0x3,%rcx
+   64df7:	nopw   0x0(%rax,%rax,1)
+   64e00:	cmp    %rdx,%rcx
+   64e03:	je     64d0c <deft_reversi_engine::search::last_four::solve_score_2_empties+0x5bc>
+   64e09:	mov    (%rax,%rdx,1),%rsi
+   64e0d:	add    $0x8,%rdx
+   64e11:	movzbl 0x10(%rsi),%esi
+   64e15:	test   %sil,%sil
+   64e18:	je     64e00 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x6b0>
+   64e1a:	movb   $0x1,0x8(%rbx)
+   64e1e:	vpbroadcastq %r15,%ymm7
+   64e24:	mov    %r11,%r15
+   64e27:	mov    $0x41,%r12d
+   64e2d:	not    %r15
+   64e30:	test   %r11,0x70(%rsp)
+   64e35:	je     6504d <deft_reversi_engine::search::last_four::solve_score_2_empties+0x8fd>
+   64e3b:	mov    %r9,%rax
+   64e3e:	shl    $0x6,%rax
+   64e42:	lea    -0x571c9(%rip),%rcx        # dc80 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x1c7c>
+   64e49:	vpbroadcastq %r15,%ymm8
+   64e4f:	vpcmpeqd %ymm6,%ymm6,%ymm6
+   64e53:	vmovdqa 0x20(%rax,%rcx,1),%ymm1
+   64e59:	vmovdqa (%rax,%rcx,1),%ymm0
+   64e5e:	vpand  %ymm7,%ymm1,%ymm2
+   64e62:	vpsrlvq -0x5edcb(%rip),%ymm2,%ymm3        # 60a0 <__abi_tag+0x5da4>
+   64e6b:	vmovdqa %ymm1,%ymm5
+   64e6f:	vpternlogq $0x60,%ymm8,%ymm7,%ymm5
+   64e76:	vpcmpgtq %ymm5,%ymm2,%k1
+   64e7c:	vpor   %ymm2,%ymm3,%ymm3
+   64e80:	vpsrlvq -0x5ec49(%rip),%ymm3,%ymm4        # 6240 <__abi_tag+0x5f44>
+   64e89:	vpand  %ymm0,%ymm8,%ymm2
+   64e8d:	vpaddq %ymm6,%ymm2,%ymm2
+   64e91:	vpternlogq $0x48,%ymm8,%ymm0,%ymm2
+   64e98:	vpandn %ymm2,%ymm7,%ymm0
+   64e9c:	vpor   %ymm3,%ymm4,%ymm3
+   64ea0:	vpsrlvq -0x5ede9(%rip),%ymm3,%ymm4        # 60c0 <__abi_tag+0x5dc4>
+   64ea9:	vpor   %ymm3,%ymm4,%ymm3
+   64ead:	vpandnq %ymm1,%ymm3,%ymm1{%k1}{z}
+   64eb3:	vpcmpneqq %ymm2,%ymm0,%k1
+   64eba:	vporq  %ymm0,%ymm1,%ymm1{%k1}
+   64ec0:	vextracti128 $0x1,%ymm1,%xmm0
+   64ec6:	vpor   %xmm1,%xmm0,%xmm0
+   64eca:	vpshufd $0xee,%xmm0,%xmm1
+   64ecf:	vpor   %xmm1,%xmm0,%xmm0
+   64ed3:	vmovq  %xmm0,%rdi
+   64ed8:	test   %rdi,%rdi
+   64edb:	je     6504d <deft_reversi_engine::search::last_four::solve_score_2_empties+0x8fd>
+   64ee1:	cmpb   $0x0,0x8(%rbx)
+   64ee5:	mov    %r9,%rbp
+   64ee8:	vmovdqu %ymm7,0x70(%rsp)
+   64eee:	jne    6500f <deft_reversi_engine::search::last_four::solve_score_2_empties+0x8bf>
+   64ef4:	mov    (%rbx),%r12
+   64ef7:	cmpb   $0x0,0x48(%r12)
+   64efd:	je     64f3f <deft_reversi_engine::search::last_four::solve_score_2_empties+0x7ef>
+   64eff:	mov    0xc0(%r12),%rcx
+   64f07:	cmpl   $0x1,0x10(%rcx)
+   64f0b:	jne    64f35 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x7e5>
+   64f0d:	mov    0x18(%rcx),%rdx
+   64f11:	mov    0x38(%rcx),%rax
+   64f15:	data16 cs nopw 0x0(%rax,%rax,1)
+   64f20:	cmp    %rdx,%rax
+   64f23:	jae    64fad <deft_reversi_engine::search::last_four::solve_score_2_empties+0x85d>
+   64f29:	lea    0x1(%rax),%rsi
+   64f2d:	lock cmpxchg %rsi,0x38(%rcx)
+   64f33:	jne    64f20 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x7d0>
+   64f35:	incq   0x48(%r12)
+   64f3a:	jmp    6500f <deft_reversi_engine::search::last_four::solve_score_2_empties+0x8bf>
+   64f3f:	mov    0xc0(%r12),%r13
+   64f47:	mov    0x30(%r13),%rax
+   64f4b:	movzbl 0x10(%rax),%eax
+   64f4f:	test   %al,%al
+   64f51:	je     64f5d <deft_reversi_engine::search::last_four::solve_score_2_empties+0x80d>
+   64f53:	mov    $0x1,%cl
+   64f55:	xor    %eax,%eax
+   64f57:	lock cmpxchg %cl,0x40(%r13)
+   64f5d:	mov    0x28(%r13),%eax
+   64f61:	cmp    $0xffffffff,%eax
+   64f64:	je     64fd8 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x888>
+   64f66:	mov    0x20(%r13),%rcx
+   64f6a:	mov    %eax,0x28(%rsp)
+   64f6e:	mov    %r8,0x18(%rsp)
+   64f73:	mov    %r10,0x8(%rsp)
+   64f78:	mov    %rdi,0x10(%rsp)
+   64f7d:	mov    %rcx,0x40(%rsp)
+   64f82:	vzeroupper
+   64f85:	call   9ad60 <<std::sys::pal::unix::time::Timespec>::now>
+   64f8a:	cmp    0x40(%rsp),%rax
+   64f8f:	jne    64fb8 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x868>
+   64f91:	mov    0x10(%rsp),%rdi
+   64f96:	mov    0x20(%rsp),%r11
+   64f9b:	mov    0x8(%rsp),%r10
+   64fa0:	mov    0x18(%rsp),%r8
+   64fa5:	cmp    0x28(%rsp),%edx
+   64fa9:	jae    64fce <deft_reversi_engine::search::last_four::solve_score_2_empties+0x87e>
+   64fab:	jmp    64fd8 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x888>
+   64fad:	mov    $0x3,%dl
+   64faf:	xor    %eax,%eax
+   64fb1:	lock cmpxchg %dl,0x40(%rcx)
+   64fb6:	jmp    6500b <deft_reversi_engine::search::last_four::solve_score_2_empties+0x8bb>
+   64fb8:	mov    0x10(%rsp),%rdi
+   64fbd:	mov    0x20(%rsp),%r11
+   64fc2:	mov    0x8(%rsp),%r10
+   64fc7:	mov    0x18(%rsp),%r8
+   64fcc:	jl     64fd8 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x888>
+   64fce:	mov    $0x2,%cl
+   64fd0:	xor    %eax,%eax
+   64fd2:	lock cmpxchg %cl,0x40(%r13)
+   64fd8:	movzbl 0x40(%r13),%eax
+   64fdd:	test   %al,%al
+   64fdf:	jne    6500b <deft_reversi_engine::search::last_four::solve_score_2_empties+0x8bb>
+   64fe1:	mov    0x28(%r12),%rcx
+   64fe6:	mov    0x20(%r12),%rax
+   64feb:	xor    %edx,%edx
+   64fed:	shl    $0x3,%rcx
+   64ff1:	cmp    %rdx,%rcx
+   64ff4:	je     64eff <deft_reversi_engine::search::last_four::solve_score_2_empties+0x7af>
+   64ffa:	mov    (%rax,%rdx,1),%rsi
+   64ffe:	add    $0x8,%rdx
+   65002:	movzbl 0x10(%rsi),%esi
+   65006:	test   %sil,%sil
+   65009:	je     64ff1 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x8a1>
+   6500b:	movb   $0x1,0x8(%rbx)
+   6500f:	mov    (%rbx),%rax
+   65012:	xor    %r11,%rdi
+   65015:	mov    %r10d,%esi
+   65018:	mov    %r8,%rdx
+   6501b:	mov    %r10,%r12
+   6501e:	mov    %r8,%r13
+   65021:	incq   0x50(%rax)
+   65025:	vzeroupper
+   65028:	call   652b0 <deft_reversi_engine::search::last_four::solve_score_1_empties>
+   6502d:	vmovdqu 0x70(%rsp),%ymm7
+   65033:	mov    0x20(%rsp),%r11
+   65038:	mov    %r12,%r10
+   6503b:	mov    %r13,%r8
+   6503e:	mov    %eax,%r12d
+   65041:	mov    %rbp,%r9
+   65044:	cmp    %r10d,%eax
+   65047:	jle    6525e <deft_reversi_engine::search::last_four::solve_score_2_empties+0xb0e>
+   6504d:	test   %r11,%r14
+   65050:	je     6522e <deft_reversi_engine::search::last_four::solve_score_2_empties+0xade>
+   65056:	shl    $0x6,%r8
+   6505a:	lea    -0x573e1(%rip),%rax        # dc80 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x1c7c>
+   65061:	vpbroadcastq %r15,%ymm8
+   65067:	vpcmpeqd %ymm6,%ymm6,%ymm6
+   6506b:	vmovdqa 0x20(%r8,%rax,1),%ymm1
+   65072:	vmovdqa (%r8,%rax,1),%ymm0
+   65078:	vpand  %ymm7,%ymm1,%ymm2
+   6507c:	vpsrlvq -0x5efe5(%rip),%ymm2,%ymm3        # 60a0 <__abi_tag+0x5da4>
+   65085:	vmovdqa %ymm1,%ymm5
+   65089:	vpternlogq $0x60,%ymm8,%ymm7,%ymm5
+   65090:	vpcmpgtq %ymm5,%ymm2,%k1
+   65096:	vpor   %ymm2,%ymm3,%ymm3
+   6509a:	vpsrlvq -0x5ee63(%rip),%ymm3,%ymm4        # 6240 <__abi_tag+0x5f44>
+   650a3:	vpand  %ymm0,%ymm8,%ymm2
+   650a7:	vpaddq %ymm6,%ymm2,%ymm2
+   650ab:	vpternlogq $0x48,%ymm8,%ymm0,%ymm2
+   650b2:	vpandn %ymm2,%ymm7,%ymm0
+   650b6:	vpor   %ymm3,%ymm4,%ymm3
+   650ba:	vpsrlvq -0x5f003(%rip),%ymm3,%ymm4        # 60c0 <__abi_tag+0x5dc4>
+   650c3:	vpor   %ymm3,%ymm4,%ymm3
+   650c7:	vpandnq %ymm1,%ymm3,%ymm1{%k1}{z}
+   650cd:	vpcmpneqq %ymm2,%ymm0,%k1
+   650d4:	vporq  %ymm0,%ymm1,%ymm1{%k1}
+   650da:	vextracti128 $0x1,%ymm1,%xmm0
+   650e0:	vpor   %xmm1,%xmm0,%xmm0
+   650e4:	vpshufd $0xee,%xmm0,%xmm1
+   650e9:	vpor   %xmm1,%xmm0,%xmm0
+   650ed:	vmovq  %xmm0,%rdi
+   650f2:	test   %rdi,%rdi
+   650f5:	je     6522e <deft_reversi_engine::search::last_four::solve_score_2_empties+0xade>
+   650fb:	cmpb   $0x0,0x8(%rbx)
+   650ff:	jne    6520a <deft_reversi_engine::search::last_four::solve_score_2_empties+0xaba>
+   65105:	mov    (%rbx),%r14
+   65108:	cmpb   $0x0,0x48(%r14)
+   6510d:	je     6514a <deft_reversi_engine::search::last_four::solve_score_2_empties+0x9fa>
+   6510f:	mov    0xc0(%r14),%rcx
+   65116:	cmpl   $0x1,0x10(%rcx)
+   6511a:	jne    65141 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x9f1>
+   6511c:	mov    0x18(%rcx),%rdx
+   65120:	mov    0x38(%rcx),%rax
+   65124:	data16 data16 cs nopw 0x0(%rax,%rax,1)
+   65130:	cmp    %rdx,%rax
+   65133:	jae    651aa <deft_reversi_engine::search::last_four::solve_score_2_empties+0xa5a>
+   65135:	lea    0x1(%rax),%rsi
+   65139:	lock cmpxchg %rsi,0x38(%rcx)
+   6513f:	jne    65130 <deft_reversi_engine::search::last_four::solve_score_2_empties+0x9e0>
+   65141:	incq   0x48(%r14)
+   65145:	jmp    6520a <deft_reversi_engine::search::last_four::solve_score_2_empties+0xaba>
+   6514a:	mov    0xc0(%r14),%r15
+   65151:	mov    0x30(%r15),%rax
+   65155:	movzbl 0x10(%rax),%eax
+   65159:	test   %al,%al
+   6515b:	je     65167 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xa17>
+   6515d:	mov    $0x1,%cl
+   6515f:	xor    %eax,%eax
+   65161:	lock cmpxchg %cl,0x40(%r15)
+   65167:	mov    0x28(%r15),%ebp
+   6516b:	cmp    $0xffffffff,%ebp
+   6516e:	je     651d5 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xa85>
+   65170:	mov    0x20(%r15),%r13
+   65174:	mov    %r10,0x8(%rsp)
+   65179:	mov    %r9,0x10(%rsp)
+   6517e:	mov    %rdi,0x70(%rsp)
+   65183:	vzeroupper
+   65186:	call   9ad60 <<std::sys::pal::unix::time::Timespec>::now>
+   6518b:	cmp    %r13,%rax
+   6518e:	jne    651b5 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xa65>
+   65190:	mov    0x70(%rsp),%rdi
+   65195:	mov    0x20(%rsp),%r11
+   6519a:	mov    0x10(%rsp),%r9
+   6519f:	mov    0x8(%rsp),%r10
+   651a4:	cmp    %ebp,%edx
+   651a6:	jae    651cb <deft_reversi_engine::search::last_four::solve_score_2_empties+0xa7b>
+   651a8:	jmp    651d5 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xa85>
+   651aa:	mov    $0x3,%dl
+   651ac:	xor    %eax,%eax
+   651ae:	lock cmpxchg %dl,0x40(%rcx)
+   651b3:	jmp    65206 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xab6>
+   651b5:	mov    0x70(%rsp),%rdi
+   651ba:	mov    0x20(%rsp),%r11
+   651bf:	mov    0x10(%rsp),%r9
+   651c4:	mov    0x8(%rsp),%r10
+   651c9:	jl     651d5 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xa85>
+   651cb:	mov    $0x2,%cl
+   651cd:	xor    %eax,%eax
+   651cf:	lock cmpxchg %cl,0x40(%r15)
+   651d5:	movzbl 0x40(%r15),%eax
+   651da:	test   %al,%al
+   651dc:	jne    65206 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xab6>
+   651de:	mov    0x28(%r14),%rcx
+   651e2:	mov    0x20(%r14),%rax
+   651e6:	xor    %edx,%edx
+   651e8:	shl    $0x3,%rcx
+   651ec:	cmp    %rdx,%rcx
+   651ef:	je     6510f <deft_reversi_engine::search::last_four::solve_score_2_empties+0x9bf>
+   651f5:	mov    (%rax,%rdx,1),%rsi
+   651f9:	add    $0x8,%rdx
+   651fd:	movzbl 0x10(%rsi),%esi
+   65201:	test   %sil,%sil
+   65204:	je     651ec <deft_reversi_engine::search::last_four::solve_score_2_empties+0xa9c>
+   65206:	movb   $0x1,0x8(%rbx)
+   6520a:	mov    (%rbx),%rax
+   6520d:	xor    %r11,%rdi
+   65210:	mov    %r10d,%esi
+   65213:	mov    %r9,%rdx
+   65216:	incq   0x50(%rax)
+   6521a:	vzeroupper
+   6521d:	call   652b0 <deft_reversi_engine::search::last_four::solve_score_1_empties>
+   65222:	mov    0x20(%rsp),%r11
+   65227:	cmp    %r12d,%eax
+   6522a:	cmovl  %eax,%r12d
+   6522e:	cmp    $0x41,%r12d
+   65232:	jne    6525e <deft_reversi_engine::search::last_four::solve_score_2_empties+0xb0e>
+   65234:	mov    (%rbx),%rax
+   65237:	popcnt %r11,%rcx
+   6523c:	incq   0x50(%rax)
+   65240:	lea    (%rcx,%rcx,1),%eax
+   65243:	cmp    $0x1f,%rcx
+   65247:	jbe    65251 <deft_reversi_engine::search::last_four::solve_score_2_empties+0xb01>
+   65249:	add    $0xffffffc4,%eax
+   6524c:	mov    %eax,%r12d
+   6524f:	jmp    6525e <deft_reversi_engine::search::last_four::solve_score_2_empties+0xb0e>
+   65251:	or     $0xffffffc0,%eax
+   65254:	xor    %r12d,%r12d
+   65257:	cmp    $0x1f,%ecx
+   6525a:	cmovne %eax,%r12d
+   6525e:	mov    %r12d,%eax
+   65261:	add    $0x98,%rsp
+   65268:	pop    %rbx
+   65269:	pop    %r12
+   6526b:	pop    %r13
+   6526d:	pop    %r14
+   6526f:	pop    %r15
+   65271:	pop    %rbp
+   65272:	vzeroupper
+   65275:	ret
+   65276:	lea    0x3d0cb(%rip),%rdx        # a2348 <__frame_dummy_init_array_entry+0x1068>
+   6527d:	mov    $0x40,%esi
+   65282:	mov    %r9,%rdi
+   65285:	call   2db51 <core::panicking::panic_bounds_check>
+   6528a:	lea    0x3d0cf(%rip),%rdx        # a2360 <__frame_dummy_init_array_entry+0x1080>
+   65291:	mov    $0x40,%esi
+   65296:	mov    %r8,%rdi
+   65299:	vzeroupper
+   6529c:	call   2db51 <core::panicking::panic_bounds_check>

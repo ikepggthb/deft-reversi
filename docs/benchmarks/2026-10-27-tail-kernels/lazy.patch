@@ -1,0 +1,311 @@
+--- a/deft-reversi-engine/src/search/tail.rs
++++ b/deft-reversi-engine/src/search/tail.rs
+@@ -3,6 +3,45 @@
+ pub(super) const TAIL_EMPTIES: u8 = 6;
+ pub(super) const LOCAL_END_MAX: u8 = 13;
+ const LOCAL_SLOTS: usize = 2048;
++const QUADRANT_MASKS: [u64; 4] = [
++    0x000000000f0f0f0f,
++    0x00000000f0f0f0f0,
++    0x0f0f0f0f00000000,
++    0xf0f0f0f000000000,
++];
++const PARITY_REGIONS: [u64; 16] = {
++    let mut masks = [0; 16];
++    let mut parity = 0;
++    while parity < 16 {
++        let mut region = 0;
++        while region < 4 {
++            if parity & (1 << region) != 0 {
++                masks[parity] |= QUADRANT_MASKS[region];
++            }
++            region += 1;
++        }
++        parity += 1;
++    }
++    masks
++};
++const SQUARE_PARITY: [u8; 64] = {
++    let mut ids = [0; 64];
++    let mut square = 0;
++    while square < 64 {
++        ids[square] = 1 << (((square >> 2) & 1) | ((square >> 4) & 2));
++        square += 1;
++    }
++    ids
++};
++fn tail_parity(board: Board) -> u8 {
++    let empty = !(board.player_bits() | board.opponent_bits());
++    QUADRANT_MASKS
++        .iter()
++        .enumerate()
++        .fold(0, |parity, (i, mask)| {
++            parity | (((empty & mask).count_ones() as u8 & 1) << i)
++        })
++}
+ 
+ impl Context {
+     /// Exact tail: features and TT are unnecessary once no heuristic is consulted.
+@@ -127,7 +166,12 @@
+         let score = if empties > TAIL_EMPTIES {
+             self.ordered_endgame(board, alpha, beta, known_moves, &mut best_move)?
+         } else {
+-            self.tail_score_impl(board, alpha, beta)?
++            self.six_moves_score(
++                board,
++                alpha,
++                known_moves.unwrap_or_else(|| board.get_moves()),
++                tail_parity(board),
++            )?
+         };
+         let (lower, upper) = if score >= beta {
+             (score as i8, probe.upper)
+@@ -349,7 +393,7 @@
+         }
+         probe
+     }
+-    fn tail_score_impl(&mut self, board: Board, mut alpha: i32, beta: i32) -> Result<i32, ()> {
++    fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, ()> {
+         let empty = !(board.player_bits() | board.opponent_bits());
+         let count = empty.count_ones() as u8;
+         if count == 4 {
+@@ -368,18 +412,38 @@
+                 false,
+             );
+         }
+-        let mut moves = board.get_moves();
++        debug_assert_eq!(count, 5);
++        debug_assert_eq!(beta, alpha + 1);
++        self.five_empty_score(board, alpha, tail_parity(board))
++    }
++    // Six empties still use the local TT and often arrive with known legal moves.
++    fn six_moves_score(
++        &mut self,
++        board: Board,
++        alpha: i32,
++        mut moves: u64,
++        parity: u8,
++    ) -> Result<i32, ()> {
++        debug_assert_eq!(board.empty_count(), 6);
++        let child_alpha = -alpha - 1;
+         if moves == 0 {
+-            if board.get_opponent_moves() == 0 {
++            let legal = board.get_opponent_moves();
++            if legal == 0 {
+                 self.stats.leaves += 1;
+                 return Ok(board.final_score());
+             }
+             self.enter()?;
+             return self
+-                .tail_score_entered(board.board_after_pass(), -beta, -alpha)
++                .endgame_score_entered(
++                    board.board_after_pass(),
++                    child_alpha,
++                    -alpha,
++                    Some(legal),
++                    None,
++                )
+                 .map(|score| -score);
+         }
+-        let mut preferred = moves & odd_regions(board);
++        let mut preferred = moves & PARITY_REGIONS[usize::from(parity)];
+         let mut best = -65;
+         while moves != 0 {
+             let options = if preferred != 0 { preferred } else { moves };
+@@ -387,16 +451,61 @@
+             preferred &= !bit;
+             moves &= !bit;
+             let child = board.after_known_move(bit, board.flip_mask(bit));
++            let child_parity = parity ^ SQUARE_PARITY[bit.trailing_zeros() as usize];
+             self.enter()?;
+-            let score = -self.tail_score_entered(child, -beta, -alpha)?;
++            let score = -self.five_empty_score(child, child_alpha, child_parity)?;
+             best = best.max(score);
+-            alpha = alpha.max(score);
+-            if alpha >= beta {
++            if score > alpha {
+                 self.stats.beta_cuts += 1;
+                 break;
+             }
+         }
+         Ok(best)
++    }
++    // At five empties, discover legal moves lazily in the same parity/square
++    // order as the bitboard path. A cutoff need not test all remaining squares.
++    fn five_empty_score(&mut self, board: Board, alpha: i32, parity: u8) -> Result<i32, ()> {
++        debug_assert_eq!(board.empty_count(), 5);
++        let mut empty = !(board.player_bits() | board.opponent_bits());
++        let mut preferred = empty & PARITY_REGIONS[usize::from(parity)];
++        let child_alpha = -alpha - 1;
++        let mut best = -65;
++        let mut found = false;
++        while empty != 0 {
++            let options = if preferred != 0 { preferred } else { empty };
++            let bit = options & options.wrapping_neg();
++            preferred &= !bit;
++            empty &= !bit;
++            let square = bit.trailing_zeros() as usize;
++            if board.opponent_bits() & super::last_four::NEIGHBOUR[square] == 0 {
++                continue;
++            }
++            let flips = board.flip_mask(bit);
++            if flips == 0 {
++                continue;
++            }
++            found = true;
++            let child = board.after_known_move(bit, flips);
++            let child_parity = parity ^ SQUARE_PARITY[square];
++            self.enter()?;
++            let score =
++                -self.last_four_score_with_parity(child, child_alpha, Some(child_parity))?;
++            best = best.max(score);
++            if score > alpha {
++                self.stats.beta_cuts += 1;
++                return Ok(best);
++            }
++        }
++        if found {
++            return Ok(best);
++        }
++        if board.get_opponent_moves() == 0 {
++            self.stats.leaves += 1;
++            return Ok(board.final_score());
++        }
++        self.enter()?;
++        self.five_empty_score(board.board_after_pass(), child_alpha, parity)
++            .map(|score| -score)
+     }
+ }
+ 
+@@ -494,6 +603,80 @@
+         board
+     }
+     #[test]
++    fn carried_parity_matches_board_regions_through_moves_and_passes() {
++        for seed in 1..=32u64 {
++            let mut random = seed;
++            let mut board = Board::new();
++            while !board.is_terminal() {
++                let parity = tail_parity(board);
++                assert_eq!(PARITY_REGIONS[usize::from(parity)], odd_regions(board));
++                let mut moves = board.get_moves();
++                if moves == 0 {
++                    board = board.board_after_pass();
++                    assert_eq!(tail_parity(board), parity);
++                    continue;
++                }
++                random ^= random << 13;
++                random ^= random >> 7;
++                random ^= random << 17;
++                for _ in 0..random % u64::from(moves.count_ones()) {
++                    moves &= moves - 1;
++                }
++                let bit = moves & moves.wrapping_neg();
++                board = board.board_after_move(bit);
++                assert_eq!(
++                    tail_parity(board),
++                    parity ^ SQUARE_PARITY[bit.trailing_zeros() as usize],
++                );
++            }
++        }
++    }
++    #[test]
++    fn five_empty_kernel_matches_exhaustive_for_both_turns_and_boundary_windows() {
++        let empty = 0x1fu64;
++        let mut boards = vec![
++            Board::from_bits(!empty, 0).unwrap(),
++            Board::from_bits(0, !empty).unwrap(),
++        ];
++        for seed in 1..=64u64 {
++            let mut random = seed;
++            let mut board = Board::new();
++            while board.empty_count() > 5 && !board.is_terminal() {
++                let mut moves = board.get_moves();
++                if moves == 0 {
++                    board = board.board_after_pass();
++                    continue;
++                }
++                random ^= random << 13;
++                random ^= random >> 7;
++                random ^= random << 17;
++                for _ in 0..random % u64::from(moves.count_ones()) {
++                    moves &= moves - 1;
++                }
++                board = board.board_after_move(moves & moves.wrapping_neg());
++            }
++            if board.empty_count() == 5 {
++                boards.push(board);
++                boards.push(board.board_after_pass());
++            }
++        }
++        let mut pass_positions = 0;
++        for board in boards {
++            if board.get_moves() == 0 && board.get_opponent_moves() != 0 {
++                pass_positions += 1;
++            }
++            let expected = brute(board);
++            for alpha in [expected - 1, expected] {
++                let mut context = context();
++                let actual = context
++                    .five_empty_score(board, alpha, tail_parity(board))
++                    .unwrap();
++                assert_eq!(actual, expected, "board={board:?} alpha={alpha}");
++            }
++        }
++        assert!(pass_positions > 0);
++    }
++    #[test]
+     fn probe_snapshot_survives_replacement_and_rejects_other_quality() {
+         assert_eq!(std::mem::size_of::<EndProbe>(), 6);
+         assert_eq!(std::mem::size_of::<EndMove>(), 32);
+--- a/deft-reversi-engine/src/search/last_four.rs
++++ b/deft-reversi-engine/src/search/last_four.rs
+@@ -15,6 +15,14 @@
+ }
+ impl Context {
+     pub(super) fn last_four_score(&mut self, board: Board, alpha: i32) -> Result<i32, ()> {
++        self.last_four_score_with_parity(board, alpha, None)
++    }
++    pub(super) fn last_four_score_with_parity(
++        &mut self,
++        board: Board,
++        alpha: i32,
++        parity: Option<u8>,
++    ) -> Result<i32, ()> {
+         let mut search = LeafSearch {
+             context: self,
+             failed: false,
+@@ -23,6 +31,7 @@
+             board.player_bits(),
+             board.opponent_bits(),
+             alpha,
++            parity,
+             &mut search,
+         );
+         if search.failed { Err(()) } else { Ok(score) }
+@@ -69,7 +78,7 @@
+ ///
+ /// 参考: <https://eukaryote.hateblo.jp/entry/2020/04/26/031246>
+ #[rustfmt::skip]
+-const NEIGHBOUR: [u64; 64] = [
++pub(super) const NEIGHBOUR: [u64; 64] = [
+     0x0000000000000302, 0x0000000000000604, 0x0000000000000e0a, 0x0000000000001c14, 0x0000000000003828, 0x0000000000007050, 0x0000000000006020, 0x000000000000c040,
+     0x0000000000030200, 0x0000000000060400, 0x00000000000e0a00, 0x00000000001c1400, 0x0000000000382800, 0x0000000000705000, 0x0000000000602000, 0x0000000000c04000,
+     0x0000000003020300, 0x0000000006040600, 0x000000000e0a0e00, 0x000000001c141c00, 0x0000000038283800, 0x0000000070507000, 0x0000000060206000, 0x00000000c040c000,
+@@ -354,6 +363,7 @@
+     player: u64,
+     opponent: u64,
+     alpha: i32,
++    known_parity: Option<u8>,
+     search: &mut LeafSearch<'_>,
+ ) -> i32 {
+     // The caller has already entered this four-empty node.
+@@ -371,7 +381,7 @@
+     let mut x3 = empties.trailing_zeros() as usize;
+     empties &= empties - 1;
+     let mut x4 = empties.trailing_zeros() as usize;
+-    let parity = final_parity(player, opponent);
++    let parity = known_parity.map_or_else(|| final_parity(player, opponent), i32::from);
+     let beta = alpha + 1;
+ 
+     if parity & QUADRANT_ID[x1] == 0 {
