@@ -268,6 +268,9 @@ export class UI {
         const pendingStart = Boolean(vm?.pendingAutoStart) && !this._studyMode;
         const canUndo = this.gameService.canUndo;
         const canRedo = this.gameService.canRedo;
+        const record = this.gameService.record ?? [];
+        const graphCursor = this._graphCursor(this._graph, record);
+        const positionEval = graphCursor === null ? this._graph.series.at(-1) : this._graph.series[graphCursor];
         const startButtonHtml = pendingStart
             ? '<div class="inline-controls__action"><button class="chip chip--primary chip--cta" data-click="start-match">対局開始</button></div>'
             : '';
@@ -292,12 +295,9 @@ export class UI {
               </div>
             </section>
 
+            <div class="position-meta" aria-label="局面情報">Lv ${this._graph.level} · ply ${(this.gameService.record ?? []).length} · 評価 ${formatSigned(positionEval ?? 0)}</div>
             <section class="main-grid">
               <section class="board-area">
-                <div class="board-tools">
-                  <button class="chip chip--study ${this._studyMode ? 'active' : ''}" data-click="toggle-study-mode">${this._studyMode ? '検討モード ON' : '検討モード OFF'}</button>
-                  <button class="chip chip--board-eval ${this._showBoardEval ? 'active' : ''}" data-click="toggle-board-eval">${this._showBoardEval ? '評価値表示 ON' : '評価値表示 OFF'}</button>
-                </div>
                 ${this._renderBoard(vm)}
                 <section class="inline-controls">
                   <div class="inline-controls__nav">
@@ -358,11 +358,9 @@ export class UI {
           <section class="graph-area">
             <div class="graph-head">
               <div class="graph-head__title">
-                <strong>評価グラフ</strong>
                 ${graphBadge}
                 ${this._studyMode && this._studyGraph ? '<span class="status-badge status-badge--study">検討プロット</span>' : ''}
               </div>
-              <span class="mini">評価 Lv ${activeGraph.level}</span>
             </div>
             ${graphProgress}
             ${this._studyMode && this._studyGraph ? '<div class="graph-legend"><span class="graph-legend__item graph-legend__item--main">本線</span><span class="graph-legend__item graph-legend__item--study">検討</span></div>' : ''}
@@ -452,17 +450,17 @@ export class UI {
         const numbers = ['1', '2', '3', '4', '5', '6', '7', '8'];
         const tiles = [];
 
-        for (let row = 0; row < 10; row++) {
-            for (let col = 0; col < 10; col++) {
-                if ((row === 0 || row === 9) && (col === 0 || col === 9)) {
+        for (let row = 0; row < 9; row++) {
+            for (let col = 0; col < 9; col++) {
+                if (row === 0 && col === 0) {
                     tiles.push('<div class="coord"></div>');
                     continue;
                 }
-                if ((row === 0 || row === 9) && col >= 1 && col <= 8) {
+                if (row === 0) {
                     tiles.push(`<div class="coord">${letters[col - 1]}</div>`);
                     continue;
                 }
-                if ((col === 0 || col === 9) && row >= 1 && row <= 8) {
+                if (col === 0) {
                     tiles.push(`<div class="coord">${numbers[row - 1]}</div>`);
                     continue;
                 }
@@ -722,6 +720,10 @@ export class UI {
           <div class="panel-section mode-panel-section">
             <div class="panel-section-title">評価レベル</div>
             ${this._renderSelectRow('盤面評価', 'analysis-level-select', analysisLevelOptions)}
+          </div>
+          <div class="panel-section mode-panel-section settings-toggles">
+            <button class="secondary-btn" data-click="toggle-study-mode" aria-pressed="${this._studyMode}">検討モード ${this._studyMode ? 'ON' : 'OFF'}</button>
+            <button class="secondary-btn" data-click="toggle-board-eval" aria-pressed="${this._showBoardEval}">評価値表示 ${this._showBoardEval ? 'ON' : 'OFF'}</button>
           </div>
           <div class="panel-section mode-panel-section">
             <button class="secondary-btn" data-click="rotate-board">90° 回転</button>
