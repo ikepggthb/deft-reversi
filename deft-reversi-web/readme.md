@@ -1,14 +1,18 @@
-# Deft Reversi Web
-![image](https://github.com/ikepggthb/deft_web/assets/61868325/4c8cfa95-0b81-42c8-b24c-cb7c4855c0a1)
+# Deft Reversi Web v2
 
-## AIと遊ぶ
-https://az.recazbowl.net/deft-reversi-web/index.html
+`feature/web-ui` のUIを v2 エンジンに接続したブラウザ版です。
 
-## 難易度について
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack --locked
+wasm-pack build deft-reversi-wasm --target web --release --out-dir ../deft-reversi-web/app/pkg
+cd deft-reversi-web/app
+python3 -m http.server 8000
+```
 
-レベルは、0~24まであります。
+http://localhost:8000/ を開いてください。評価モデルは初回に読み込まれ、Web Worker内で探索します。gzip解凍には `DecompressionStream` を利用します。
 
-レベル3程度でも、ほとんどの人が勝てないのではないかと思います。
-
-レベル20以上は、重いので推奨しないです。
-
+```sh
+cd deft-reversi-web/app
+node --test
+```

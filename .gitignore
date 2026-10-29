@@ -7,3 +7,5 @@ deft-reversi-cli/self-play*
 deft-reversi-cli/problem/test.obf
 
 deft-reversi-wasm/pkg/
+
+deft-reversi-web/app/pkg/
