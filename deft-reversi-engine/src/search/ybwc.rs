@@ -143,7 +143,7 @@ impl Context {
             let Some((candidate, alpha)) = next else {
                 break;
             };
-            let Ok(Some(line)) = self.sibling(
+            let Ok(line) = self.sibling(
                 point.position,
                 candidate,
                 alpha,

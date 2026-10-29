@@ -1,6 +1,7 @@
 use super::endgame::parity::odd_regions;
 use super::*;
 use crate::board::CORNERS;
+use std::ops::ControlFlow;
 // Midgame nodes split down to four plies of remaining depth: the shallow
 // iterations before an endgame solve otherwise leave most threads idle.
 pub(super) const SPLIT_DEPTH: u8 = 4;
@@ -103,9 +104,9 @@ impl Context {
         if exact && board.empty_count() <= super::endgame::TAIL_EMPTIES {
             return self.tail_entered(board, alpha, beta);
         }
-        let original_alpha = alpha;
-        let original_beta = beta;
-        let mut moves = board.get_moves();
+        // The caller's window decides the bound type stored for the result.
+        let window = (alpha, beta);
+        let moves = board.get_moves();
         if moves == 0 {
             if board.get_opponent_moves() == 0 {
                 self.stats.leaves += 1;
@@ -118,11 +119,7 @@ impl Context {
                 },
                 -beta,
                 -alpha,
-                SearchSpec {
-                    depth,
-                    exact,
-                    probcut: allow_probcut,
-                },
+                spec,
             )?;
             return Ok(Line::prepend(Action::Pass, &child));
         }
@@ -131,40 +128,18 @@ impl Context {
             return Ok(Line::leaf(self.evaluate(board, &state)));
         }
         if !exact && depth == 1 {
-            return self.one_ply(Position { board, state }, alpha, beta, allow_probcut);
+            return self.one_ply(position, alpha, beta, allow_probcut);
         }
         let quality = if allow_probcut && self.runtime.sigma().is_some() {
             self.runtime.quality.load(Ordering::Relaxed)
         } else {
             0
         };
-        let main = self.runtime.table.get(board);
-        let pv = if exact && original_beta - original_alpha > 1 {
-            self.runtime.pv_table.get(board)
-        } else {
-            None
-        };
-        let matches = |entry: Entry| {
-            entry.depth == depth && entry.quality == quality && entry.exact_mode == exact
-        };
-        let cached = match (pv, main) {
-            (Some(pv), Some(main)) if matches(pv) && matches(main) => Some(
-                if i32::from(pv.upper) - i32::from(pv.lower)
-                    <= i32::from(main.upper) - i32::from(main.lower)
-                {
-                    pv
-                } else {
-                    main
-                },
-            ),
-            (Some(pv), _) if matches(pv) => Some(pv),
-            (_, Some(main)) if matches(main) => Some(main),
-            _ => pv.or(main),
-        };
+        let cached = self.probe_tables(board, spec, quality, beta - alpha > 1);
         let mut known_lower = -64;
         if let Some(entry) = cached {
             self.stats.tt_hits += 1;
-            if entry.depth == depth && entry.quality == quality && entry.exact_mode == exact {
+            if fits(entry, spec, quality) {
                 let lower = i32::from(entry.lower);
                 let upper = i32::from(entry.upper);
                 let cut = if upper <= alpha {
@@ -195,100 +170,218 @@ impl Context {
         {
             return Ok(Line::leaf(score));
         }
-        let tt_move = cached.map(|e| e.best).unwrap_or(64);
         // A move list has at most 64 entries and never allocates per node.
-        let position = Position { board, state };
-        let placeholder = Candidate {
-            square: Square::new(0).unwrap(),
+        let mut candidates = [Candidate {
+            square: Square::lowest(1),
             flips: 0,
             ordering: 0,
+        }; 64];
+        let bounds = ChildBounds {
+            original_alpha: window.0,
+            alpha,
+            beta,
+            known_lower,
         };
-        let mut candidates = [placeholder; 64];
+        let (mut count, skipped_upper, bounds) =
+            match self.child_tt_pass(board, moves, spec, quality, bounds, &mut candidates) {
+                ControlFlow::Continue(pass) => pass,
+                ControlFlow::Break(score) => {
+                    self.stats.tt_cuts += 1;
+                    return Ok(Line::leaf(score));
+                }
+            };
+        let ChildBounds {
+            mut alpha,
+            known_lower,
+            ..
+        } = bounds;
+        let child_spec = SearchSpec {
+            depth: depth - 1,
+            ..spec
+        };
+        // Complete cheap child-TT cutoffs before spending search effort on
+        // the TT move. Remaining moves are still unevaluated here.
+        let tt_move = cached.map_or(64, |e| e.best);
+        let preferred =
+            if let Some(index) = (0..count).find(|&i| candidates[i].square.index() == tt_move) {
+                let candidate = candidates[index];
+                candidates.copy_within(index + 1..count, index);
+                count -= 1;
+                let child = self.node(
+                    candidate.child(
+                        position,
+                        self.child_needs_eval(board, exact, beta - alpha == 1),
+                    ),
+                    -beta,
+                    -alpha,
+                    child_spec,
+                )?;
+                let mut line = Line::prepend(candidate.action(), &child);
+                alpha = alpha.max(line.score);
+                if alpha >= beta {
+                    self.stats.beta_cuts += 1;
+                    if self.aborted() {
+                        return Err(Aborted);
+                    }
+                    line.score = line.score.max(known_lower);
+                    self.store_node_line(board, &line, window, spec, quality);
+                    return Ok(line);
+                }
+                Some(line)
+            } else {
+                None
+            };
+        let candidates = &mut candidates[..count];
+        let second = cached.map_or(64, |e| e.second);
+        self.score_moves(position, candidates, alpha, beta, spec, second)?;
+        let (start, first) = if let Some(line) = preferred {
+            (0, line)
+        } else {
+            pick_best(candidates, 0);
+            let first = candidates[0];
+            let child = self.node(
+                first.child(
+                    position,
+                    self.child_needs_eval(board, exact, beta - alpha == 1),
+                ),
+                -beta,
+                -alpha,
+                child_spec,
+            )?;
+            (1, Line::prepend(first.action(), &child))
+        };
+        let mut best = self.search_siblings(
+            position,
+            candidates,
+            start,
+            first,
+            (alpha, beta),
+            child_spec,
+        )?;
+        if self.aborted() {
+            return Err(Aborted);
+        }
+        if skipped_upper > best.score {
+            best = Line::leaf(skipped_upper);
+        }
+        best.score = best.score.max(known_lower);
+        self.store_node_line(board, &best, window, spec, quality);
+        Ok(best)
+    }
+    /// The TT entry for `board`. A wide exact window also reads the PV table
+    /// and prefers the narrower of two entries that both fit the search.
+    // This and the next three helpers are parts of `node`. Kept inline:
+    // as calls they cost 0.6% at one thread.
+    #[inline(always)]
+    fn probe_tables(
+        &self,
+        board: Board,
+        spec: SearchSpec,
+        quality: u8,
+        wide: bool,
+    ) -> Option<Entry> {
+        let main = self.runtime.table.get(board);
+        let pv = if spec.exact && wide {
+            self.runtime.pv_table.get(board)
+        } else {
+            None
+        };
+        let matches = |entry: Entry| fits(entry, spec, quality);
+        match (pv, main) {
+            (Some(pv), Some(main)) if matches(pv) && matches(main) => Some(
+                if i32::from(pv.upper) - i32::from(pv.lower)
+                    <= i32::from(main.upper) - i32::from(main.lower)
+                {
+                    pv
+                } else {
+                    main
+                },
+            ),
+            (Some(pv), _) if matches(pv) => Some(pv),
+            (_, Some(main)) if matches(main) => Some(main),
+            _ => pv.or(main),
+        }
+    }
+    /// Enhanced transposition cutoff: looks up every child in the main table,
+    /// fills `candidates` with the moves that still need a search, and
+    /// returns their count and the largest upper bound of the skipped ones.
+    /// Breaks with the score when a child alone fails high.
+    #[inline(always)]
+    fn child_tt_pass(
+        &mut self,
+        board: Board,
+        mut moves: u64,
+        spec: SearchSpec,
+        quality: u8,
+        mut bounds: ChildBounds,
+        candidates: &mut [Candidate; 64],
+    ) -> ControlFlow<i32, (usize, i32, ChildBounds)> {
+        let SearchSpec { depth, exact, .. } = spec;
         let mut count = 0;
         let mut skipped_upper = -65;
         while moves != 0 {
             let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
-            let square = Square::lowest(bit);
             let flips = board.flip_mask(bit);
-            let child = board.after_known_move(bit, flips);
-            // Reference ETC uses the original alpha to skip moves. Preserve
-            // their largest upper bound so a fail-low remains a sound bound.
-            // Null-window children with thirteen or fewer empties live only in
-            // the local endgame cache, so the main table cannot cut them.
-            if (if exact {
-                board.empty_count() > 12 + 2 * u8::from(beta - alpha == 1)
+            // Null-window children with thirteen or fewer empties live only
+            // in the local endgame cache, so the main table cannot cut them.
+            // The window narrows during the pass, so this is checked per move.
+            let probe = if exact {
+                board.empty_count() > 12 + 2 * u8::from(bounds.beta - bounds.alpha == 1)
             } else {
                 depth >= 4
-            }) && let Some(entry) = self.runtime.table.get(child)
+            };
+            if probe
+                && let Some(entry) = self.runtime.table.get(board.after_known_move(bit, flips))
                 && entry.exact_mode == exact
                 && entry.depth == depth - 1
                 && entry.quality == quality
             {
                 let lower = -i32::from(entry.upper);
                 let upper = -i32::from(entry.lower);
-                if lower >= beta {
-                    self.stats.tt_cuts += 1;
-                    return Ok(Line::leaf(lower));
+                if lower >= bounds.beta {
+                    return ControlFlow::Break(lower);
                 }
-                if upper <= original_alpha {
+                // Reference ETC uses the original alpha to skip moves. Keep
+                // their largest upper bound so a fail-low remains sound.
+                if upper <= bounds.original_alpha {
                     skipped_upper = skipped_upper.max(upper);
                     continue;
                 }
-                alpha = alpha.max(lower);
-                known_lower = known_lower.max(lower);
+                bounds.alpha = bounds.alpha.max(lower);
+                bounds.known_lower = bounds.known_lower.max(lower);
             }
             candidates[count] = Candidate {
-                square,
+                square: Square::lowest(bit),
                 flips,
                 ordering: 0,
             };
             count += 1;
         }
         if count == 0 {
-            self.stats.tt_cuts += 1;
-            return Ok(Line::leaf(skipped_upper));
+            return ControlFlow::Break(skipped_upper);
         }
-        // Complete cheap child-TT cutoffs before spending search effort on
-        // the TT move. Remaining moves are still unevaluated here.
-        let preferred = if let Some(index) =
-            (0..count).find(|&i| candidates[i].square.index() == tt_move)
-        {
-            let candidate = candidates[index];
-            candidates.copy_within(index + 1..count, index);
-            count -= 1;
-            let child = self.node(
-                candidate.child(
-                    Position { board, state },
-                    self.child_needs_eval(board, exact, beta - alpha == 1),
-                ),
-                -beta,
-                -alpha,
-                SearchSpec {
-                    depth: depth - 1,
-                    ..spec
-                },
-            )?;
-            let mut line = Line::prepend(candidate.action(), &child);
-            alpha = alpha.max(line.score);
-            if alpha >= beta {
-                self.stats.beta_cuts += 1;
-                if self.aborted() {
-                    return Err(Aborted);
-                }
-                line.score = line.score.max(known_lower);
-                self.store_node_line(board, &line, (original_alpha, original_beta), spec, quality);
-                return Ok(line);
-            }
-            Some(line)
-        } else {
-            None
-        };
-        let only_move = count <= 1;
+        ControlFlow::Continue((count, skipped_upper, bounds))
+    }
+    /// Sets the ordering key of every candidate; `second` is the TT's
+    /// second-best move.
+    #[inline(always)]
+    fn score_moves(
+        &mut self,
+        position: Position,
+        candidates: &mut [Candidate],
+        alpha: i32,
+        beta: i32,
+        spec: SearchSpec,
+        second: u8,
+    ) -> Result<(), Aborted> {
+        let SearchSpec { depth, exact, .. } = spec;
+        let board = position.board;
+        let only_move = candidates.len() <= 1;
         let odd_regions = if exact { odd_regions(board) } else { 0 };
-        for candidate in &mut candidates[..count] {
-            let square = candidate.square;
-            let bit = square.bit();
+        let tt_priority = if exact { ORDERING.tt } else { 1 << 8 };
+        for candidate in candidates {
+            let bit = candidate.square.bit();
             let flips = candidate.flips;
             let child = board.after_known_move(bit, flips);
             let mut ordering = if only_move {
@@ -307,98 +400,71 @@ impl Context {
                 }
                 value
             };
-            let tt_priority = if exact { ORDERING.tt } else { 1 << 8 };
-            if cached.is_some_and(|entry| entry.second == square.index()) {
+            if candidate.square.index() == second {
                 ordering += tt_priority / 2;
             }
             candidate.ordering = ordering;
         }
-        let start = usize::from(preferred.is_none());
-        let mut best = if let Some(line) = preferred {
-            line
-        } else {
-            pick_best(&mut candidates[..count], 0);
-            let first = candidates[0];
-            let first_position = first.child(
-                position,
-                self.child_needs_eval(board, exact, beta - alpha == 1),
-            );
-            let child = self.node(
-                Position {
-                    board: first_position.board,
-                    state: first_position.state,
-                },
-                -beta,
-                -alpha,
-                SearchSpec {
-                    depth: depth - 1,
-                    exact,
-                    probcut: allow_probcut,
-                },
-            )?;
-            Line::prepend(first.action(), &child)
-        };
-        alpha = alpha.max(best.score);
-        if alpha < beta && count > start {
-            let can_split = self.runtime.parallel
-                && allow_probcut
-                && if exact {
-                    board.empty_count() >= SPLIT_EMPTIES
-                } else {
-                    depth >= SPLIT_DEPTH
-                };
-            let child_spec = SearchSpec {
-                depth: depth - 1,
-                exact,
-                probcut: allow_probcut,
-            };
-            let mut index = start;
-            while index < count {
-                // Like the reference node_split, retry after every sibling:
-                // a thread that became idle meanwhile can still take the
-                // remaining moves instead of waiting for another split point.
-                let enough = if index == start {
-                    count >= 3
-                } else {
-                    count - index >= 2
-                };
-                if can_split && enough && self.runtime.pool.can_offer(&self.ancestors) {
-                    best = self.split(
-                        position,
-                        candidates[index..count].to_vec(),
-                        (alpha, beta),
-                        child_spec,
-                        best,
-                        None,
-                    )?;
-                    break;
-                }
-                pick_best(&mut candidates[..count], index);
-                index += 1;
-                if let Some(line) =
-                    self.sibling(position, candidates[index - 1], alpha, beta, child_spec)?
-                {
-                    if line.score > best.score {
-                        best = line;
-                    }
-                    alpha = alpha.max(best.score);
-                    if alpha >= beta {
-                        self.stats.beta_cuts += 1;
-                        break;
-                    }
-                }
-            }
-        } else if alpha >= beta {
+        Ok(())
+    }
+    /// Searches `candidates[start..]` after the first move returned `best`,
+    /// splitting when idle threads can take the remaining moves.
+    #[inline(always)]
+    fn search_siblings(
+        &mut self,
+        position: Position,
+        candidates: &mut [Candidate],
+        start: usize,
+        mut best: Line,
+        (alpha, beta): (i32, i32),
+        child_spec: SearchSpec,
+    ) -> Result<Line, Aborted> {
+        let mut alpha = alpha.max(best.score);
+        if alpha >= beta {
             self.stats.beta_cuts += 1;
+            return Ok(best);
         }
-        if self.aborted() {
-            return Err(Aborted);
+        let count = candidates.len();
+        let depth = child_spec.depth + 1;
+        let can_split = self.runtime.parallel
+            && child_spec.probcut
+            && if child_spec.exact {
+                position.board.empty_count() >= SPLIT_EMPTIES
+            } else {
+                depth >= SPLIT_DEPTH
+            };
+        let mut index = start;
+        while index < count {
+            // Like the reference node_split, retry after every sibling:
+            // a thread that became idle meanwhile can still take the
+            // remaining moves instead of waiting for another split point.
+            let enough = if index == start {
+                count >= 3
+            } else {
+                count - index >= 2
+            };
+            if can_split && enough && self.runtime.pool.can_offer(&self.ancestors) {
+                return self.split(
+                    position,
+                    candidates[index..].to_vec(),
+                    (alpha, beta),
+                    child_spec,
+                    best,
+                    None,
+                );
+            }
+            pick_best(candidates, index);
+            let line = self.sibling(position, candidates[index], alpha, beta, child_spec)?;
+            index += 1;
+            if line.score > best.score {
+                best = line;
+            }
+            alpha = alpha.max(best.score);
+            if alpha >= beta {
+                self.stats.beta_cuts += 1;
+                break;
+            }
         }
-        if skipped_upper > best.score {
-            best = Line::leaf(skipped_upper);
-        }
-        best.score = best.score.max(known_lower);
-        self.store_node_line(board, &best, (original_alpha, original_beta), spec, quality);
         Ok(best)
     }
     fn store_node_line(
@@ -435,6 +501,8 @@ impl Context {
             self.runtime.pv_table.store(board, entry);
         }
     }
+    /// Searches one later move with a null window and, if it lands inside
+    /// the window, again with the full window.
     pub(super) fn sibling(
         &mut self,
         position: Position,
@@ -442,50 +510,21 @@ impl Context {
         alpha: i32,
         beta: i32,
         spec: SearchSpec,
-    ) -> Result<Option<Line>, Aborted> {
-        let SearchSpec {
-            depth,
-            exact,
-            probcut: allow_probcut,
-        } = spec;
-        let update_eval = self.child_needs_eval(position.board, exact, true);
+    ) -> Result<Line, Aborted> {
+        let update_eval = self.child_needs_eval(position.board, spec.exact, true);
         let next = candidate.child(position, update_eval);
-        let child = self.node(
-            Position {
-                board: next.board,
-                state: next.state,
-            },
-            -alpha - 1,
-            -alpha,
-            SearchSpec {
-                depth,
-                exact,
-                probcut: allow_probcut,
-            },
-        )?;
+        let child = self.node(next, -alpha - 1, -alpha, spec)?;
         let mut line = Line::prepend(candidate.action(), &child);
         if line.score > alpha && line.score < beta {
-            let next = if !update_eval && self.child_needs_eval(position.board, exact, false) {
+            let next = if !update_eval && self.child_needs_eval(position.board, spec.exact, false) {
                 candidate.child(position, true)
             } else {
                 next
             };
-            let child = self.node(
-                Position {
-                    board: next.board,
-                    state: next.state,
-                },
-                -beta,
-                -alpha,
-                SearchSpec {
-                    depth,
-                    exact,
-                    probcut: allow_probcut,
-                },
-            )?;
+            let child = self.node(next, -beta, -alpha, spec)?;
             line = Line::prepend(candidate.action(), &child);
         }
-        Ok(Some(line))
+        Ok(line)
     }
     pub(super) fn probcut(
         &mut self,
@@ -541,6 +580,19 @@ impl Context {
         }
         Ok(None)
     }
+}
+/// Whether a TT entry was stored by a search of the same depth, mode and
+/// selectivity, so that its bounds apply.
+fn fits(entry: Entry, spec: SearchSpec, quality: u8) -> bool {
+    entry.depth == spec.depth && entry.quality == quality && entry.exact_mode == spec.exact
+}
+/// The bounds the child-TT pass reads and narrows.
+#[derive(Clone, Copy)]
+struct ChildBounds {
+    original_alpha: i32,
+    alpha: i32,
+    beta: i32,
+    known_lower: i32,
 }
 pub(super) fn pick_best(candidates: &mut [Candidate], index: usize) {
     let best = (index..candidates.len())
@@ -637,7 +689,6 @@ mod tt_tests {
             let mut lazy = make_context();
             let actual = lazy
                 .sibling(position, candidate, alpha, beta, spec)
-                .unwrap()
                 .unwrap();
             assert_eq!(actual.score, -reference.score);
             assert_eq!(
