@@ -1,5 +1,5 @@
 use super::*;
-use crate::{SearchRequest, SearchResult};
+use deft_reversi_engine::{SearchRequest, SearchResult};
 use std::{sync::Arc, time::Instant};
 #[derive(Clone, Copy, Debug, Default)]
 pub enum MovePolicy {
@@ -59,7 +59,7 @@ impl BookPlayer {
         seed: u64,
     ) -> Result<Self> {
         validate_policy(policy)?;
-        let identity = engine.book_identity()?;
+        let identity = analysis_identity(&engine)?;
         Ok(Self {
             engine,
             identity,
@@ -69,7 +69,7 @@ impl BookPlayer {
         })
     }
     pub fn replace_engine(&mut self, engine: Engine) -> Result<Engine> {
-        let id = engine.book_identity()?;
+        let id = analysis_identity(&engine)?;
         self.identity = id;
         Ok(std::mem::replace(&mut self.engine, engine))
     }

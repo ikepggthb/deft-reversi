@@ -1,6 +1,6 @@
 //! Opening books: immutable play snapshots, editable evidence, offline generation.
 //! Search itself never reads a book. See docs/book-implementation.md.
-use crate::{Action, Board, Bound, Engine, EngineError, Selectivity};
+use deft_reversi_engine::{Action, Board, Bound, Engine, EngineError, Selectivity};
 use std::{fmt, io, time::Duration};
 mod editor;
 mod format;
@@ -155,7 +155,7 @@ fn action_from(c: u8) -> Result<Action> {
     if c == 64 {
         Ok(Action::Pass)
     } else {
-        crate::Square::new(c)
+        deft_reversi_engine::Square::new(c)
             .map(Action::Place)
             .ok_or_else(|| invalid("action"))
     }
@@ -167,7 +167,7 @@ fn legal_actions(b: Board) -> Vec<Action> {
         let bit = moves.isolate_lowest_one();
         moves ^= bit;
         out.push(Action::Place(
-            crate::Square::new(bit.trailing_zeros() as u8).unwrap(),
+            deft_reversi_engine::Square::new(bit.trailing_zeros() as u8).unwrap(),
         ));
     }
     if out.is_empty() && b.get_opponent_moves() != 0 {
@@ -212,4 +212,28 @@ struct Extension {
 }
 fn extension_bytes(es: &[Extension]) -> u64 {
     es.iter().map(|e| e.bytes.capacity() as u64).sum::<u64>() + std::mem::size_of_val(es) as u64
+}
+
+// Kept byte-compatible with the original in-engine book analysis identity.
+fn analysis_identity(engine: &Engine) -> std::io::Result<AnalysisIdentity> {
+    use sha2::{Digest, Sha256};
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = HashWriter(Sha256::new());
+    {
+        let mut buffered = std::io::BufWriter::with_capacity(64 * 1024, &mut writer);
+        engine.evaluation_model().write_to(&mut buffered)?;
+        std::io::Write::flush(&mut buffered)?;
+    }
+    writer.0.update(b"deft-book-analysis-v1");
+    engine.write_analysis_settings(&mut writer)?;
+    Ok(writer.0.finalize().into())
 }

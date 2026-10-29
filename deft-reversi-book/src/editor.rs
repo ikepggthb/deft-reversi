@@ -53,12 +53,12 @@ impl BookEditor {
         }
     }
     pub fn for_engine(engine: &Engine) -> Result<Self> {
-        Ok(Self::new(engine.book_identity()?))
+        Ok(Self::new(analysis_identity(engine)?))
     }
     /// Invalidate incompatible estimates, retain proven game results, and rebuild.
     /// The old file is not changed until the caller explicitly saves.
     pub fn retarget(&mut self, engine: &Engine) -> Result<()> {
-        let identity = engine.book_identity()?;
+        let identity = analysis_identity(engine)?;
         if identity == self.identity {
             return Ok(());
         }

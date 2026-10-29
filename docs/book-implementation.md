@@ -1,6 +1,8 @@
 # 対局用book
 
-`deft_reversi_engine::book` に、参照・生成・強化・保存再開・対局利用を実装した。既存の `Engine::search` / `solve` はbookを参照しない。
+`deft_reversi_book` に、参照・生成・強化・保存再開・対局利用を実装した。既存の `Engine::search` / `solve` はbookを参照しない。
+
+エンジンとは別クレート。依存は `deft_reversi_book → deft_reversi_engine` の一方向で、エンジンはbookやSHA-256・シグナル処理の依存を持たない。保存形式と解析識別情報は分離前と互換。
 
 ## 構成
 
@@ -32,7 +34,7 @@ Editorの `retarget(&Engine)` は、互換でない推定の直接値を無効�
 
 ```rust,no_run
 use deft_reversi_engine::{Board, Engine, EngineOptions, SearchRequest};
-use deft_reversi_engine::book::{Book, BookPlayer, PlaySource, ReadLimits, UsePolicy};
+use deft_reversi_book::{Book, BookPlayer, PlaySource, ReadLimits, UsePolicy};
 use std::sync::Arc;
 
 let mut engine = Engine::from_file("model.dpr2", EngineOptions::default())?;
@@ -97,7 +99,7 @@ Book::probeは借用ビューを返し、正規化・座標復元・候補選択
 ## CLI
 
 ```sh
-cargo build --locked --release --features book-cli --bin book
+cargo build --locked --release -p deft_reversi_book --features book-cli --bin book
 
 # 小規模の動作確認用。強いbookの既定解析より浅く設定している。
 target/release/book build --model MODEL --work small.dbook-work --book small.dbook \
@@ -148,3 +150,9 @@ main由来DPR2に対応する校正を使う場合は、生成系コマンドの
 大規模bookはこの環境で生成しない。1000個の小さい局面を登録して参照・保存往復を確認する試験と、別環境での実モデル生成・メモリ・読込時間・参照p50/p95/p99測定を区別する。bookの強さやElo向上は、十分な生成と対局試験を行うまで保証しない。
 
 検証結果と小さな確認用データは [2026-10-29の検証記録](benchmarks/2026-10-29-book/README.md) に保存した。既存のストレス試験を含む全体試験に加え、最後の生成品質の修正後にbook関連の試験を両feature構成で再実行している。
+
+## 別クレート化の確認
+
+`deft-reversi-book` への分離後、全feature構成でbookの29試験と既存エンジンの64試験が成功。残る重い完全列挙の1試験はdebug実行を中断し、releaseで成功を確認した（合計94成功、既存のignoredストレス試験1件は今回対象外）。全workspace・全target・全featureのClippyも警告なし。エンジン単体の依存からsha2・ctrlcが外れたことを確認した。
+
+分離前の小規模 `.dbook` を新CLIで検証し、実モデルで保存した `.dbook-work` のコピーをノード予算0で再開した。解析識別情報が一致し、再保存も元ファイルとバイト一致した。

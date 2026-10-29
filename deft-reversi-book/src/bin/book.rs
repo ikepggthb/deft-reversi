@@ -1,5 +1,6 @@
 //! Offline book adapter. No application history, file policy, or signals in search.
-use deft_reversi_engine::{Board, Engine, EngineOptions, Selectivity, StopHandle, book::*};
+use deft_reversi_book::*;
+use deft_reversi_engine::{Board, Engine, EngineOptions, Selectivity, StopHandle};
 use std::{collections::BTreeMap, error::Error, path::Path, time::Duration};
 fn main() {
     if let Err(e) = run() {

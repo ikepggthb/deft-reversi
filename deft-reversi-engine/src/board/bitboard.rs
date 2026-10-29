@@ -178,7 +178,8 @@ impl Board {
             .unwrap()
     }
 
-    pub(crate) fn symmetries(self) -> [Self; 8] {
+    /// Eight geometric symmetries in the same order used by `canonical`.
+    pub fn symmetries(self) -> [Self; 8] {
         let transposed = self.transpose();
 
         [

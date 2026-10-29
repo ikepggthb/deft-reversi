@@ -1,4 +1,5 @@
-use deft_reversi_engine::{book::*, *};
+use deft_reversi_book::*;
+use deft_reversi_engine::*;
 use std::{
     path::PathBuf,
     sync::{

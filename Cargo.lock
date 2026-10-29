@@ -78,14 +78,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "deft_reversi_book"
+version = "0.1.0"
+dependencies = [
+ "ctrlc",
+ "deft_reversi_engine",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "deft_reversi_engine"
 version = "2.0.0"
 dependencies = [
  "bincode",
- "ctrlc",
  "serde",
  "serde_json",
- "sha2",
 ]
 
 [[package]]

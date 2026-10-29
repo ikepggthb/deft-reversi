@@ -1,8 +1,6 @@
 //! Read-only probe benchmark. Never generates a book or starts engine searches.
-use deft_reversi_engine::{
-    Board,
-    book::{Book, ReadLimits},
-};
+use deft_reversi_book::{Book, ReadLimits};
+use deft_reversi_engine::Board;
 use std::{error::Error, hint::black_box, time::Instant};
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();

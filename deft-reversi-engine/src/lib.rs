@@ -1,6 +1,5 @@
 //! Native Reversi engine. Search I/O and application history belong to adapters.
 mod board;
-pub mod book;
 mod diagnostics;
 mod evaluation;
 mod model;

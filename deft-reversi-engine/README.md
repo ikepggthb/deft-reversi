@@ -150,6 +150,4 @@ RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release --example solve -
 
 ## 対局用book
 
-`deft_reversi_engine::book` は、対局用の不変Book、編集用BookEditor、生成モジュール、BookPlayerを提供する。疎bookの参照、最善手・seed付きランダム選択、生成・再解析・中断再開に対応する。既存のsearch/solveはbookを参照しない。
-
-[bookのAPI・生成・CLI・保存形式](../docs/book-implementation.md)を参照。生成用CLIは `cargo build --locked --release --features book-cli --bin book` でビルドする。初版の検証では大規模bookは生成していない。
+bookの参照・生成・更新・対局選択は、別クレート [deft-reversi-book](../deft-reversi-book/README.md) が提供する。エンジン本体はbookに依存しない。

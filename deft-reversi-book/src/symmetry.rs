@@ -24,7 +24,7 @@ impl Symmetry {
             }
             _ => {}
         }
-        Action::Place(crate::Square::new(y * 8 + x).unwrap())
+        Action::Place(deft_reversi_engine::Square::new(y * 8 + x).unwrap())
     }
     pub fn inverse(self) -> Self {
         match self.0 {

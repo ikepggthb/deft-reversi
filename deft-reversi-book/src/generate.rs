@@ -1,6 +1,6 @@
 use super::editor::{Pending, dominates};
 use super::*;
-use crate::{SearchMode, SearchRequest, StopHandle, StopReason};
+use deft_reversi_engine::{SearchMode, SearchRequest, StopHandle, StopReason};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     time::Instant,
@@ -309,7 +309,7 @@ impl BookEditor {
         mut checkpoint: impl FnMut(&BookEditor, &GenerationReport) -> Result<()>,
     ) -> Result<GenerationReport> {
         limits.validate()?;
-        if engine.book_identity()? != self.identity {
+        if analysis_identity(engine)? != self.identity {
             return Err(invalid(
                 "engine/model/calibration does not match workspace; create a new workspace for a new identity",
             ));

@@ -497,41 +497,27 @@ fn next_selectivity(current: u8, target: u8, empties: u8) -> u8 {
 }
 
 impl Engine {
-    /// Stable identity of evaluation weights and the actual expanded calibration.
-    /// Called only when attaching an engine to book tooling, never in search.
-    pub(crate) fn book_identity(&self) -> std::io::Result<[u8; 32]> {
-        use sha2::{Digest, Sha256};
-        struct HashWriter(Sha256);
-        impl std::io::Write for HashWriter {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.update(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let mut writer = HashWriter(Sha256::new());
-        {
-            let mut buffered = std::io::BufWriter::with_capacity(64 * 1024, &mut writer);
-            self.model.write_to(&mut buffered)?;
-            std::io::Write::flush(&mut buffered)?;
-        }
-        writer.0.update(b"deft-book-analysis-v1");
-        writer
-            .0
-            .update([u8::from(cfg!(feature = "endgame-pattern-ordering"))]);
+    /// Evaluation weights used by this engine, without exposing mutable state.
+    pub fn evaluation_model(&self) -> &PatternModel {
+        &self.model
+    }
+
+    /// Serialize the effective analysis settings in a stable order.
+    /// Includes the compiled evaluation variant and expanded calibration rules.
+    /// Callers can combine this with evaluation weights to identify compatible analyses.
+    pub fn write_analysis_settings(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
+        out.write_all(&[u8::from(cfg!(feature = "endgame-pattern-ordering"))])?;
         for rule in self.calibration.iter().flatten() {
-            writer.0.update([
+            out.write_all(&[
                 u8::from(rule.exact),
                 rule.depth,
                 rule.empties,
                 rule.shallow_depth,
-            ]);
+            ])?;
             for value in [rule.slope, rule.intercept, rule.deviation] {
-                writer.0.update(value.to_bits().to_le_bytes());
+                out.write_all(&value.to_bits().to_le_bytes())?;
             }
         }
-        Ok(writer.0.finalize().into())
+        Ok(())
     }
 }
