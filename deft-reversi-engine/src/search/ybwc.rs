@@ -56,8 +56,10 @@ impl Context {
             let job: parallel::Job = Box::new(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut context = Context::new(runtime.clone(), task_ancestors, task_cuts);
+                    context.end_cache = EndgameCache::take_thread(runtime.cache_epoch);
                     context.stats.helper_jobs += 1;
                     context.split_loop(&task_point);
+                    std::mem::take(&mut context.end_cache).put_thread(runtime.cache_epoch);
                 }));
                 if result.is_err() {
                     runtime.control.reason.store(4, Ordering::Release);
@@ -90,9 +92,13 @@ impl Context {
         let old_cuts = std::mem::replace(&mut self.cuts, cuts);
         self.split_loop(&point);
         let join_start = Instant::now();
+        // Jobs this thread runs while joining share its cache.
+        let epoch = self.runtime.cache_epoch;
+        std::mem::take(&mut self.end_cache).put_thread(epoch);
         point
             .helper
             .wait(|| point.active.load(Ordering::Acquire) == 0);
+        self.end_cache = EndgameCache::take_thread(epoch);
         self.stats.join_time += join_start.elapsed();
         self.ancestors = old_ancestors;
         self.cuts = old_cuts;

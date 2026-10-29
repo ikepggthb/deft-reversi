@@ -18,7 +18,7 @@ pub use api::*;
 mod session;
 use session::*;
 mod endgame;
-use endgame::EndgameCache;
+use endgame::{EndgameCache, new_cache_epoch};
 mod level;
 mod ordering;
 mod pv;
@@ -38,6 +38,8 @@ pub struct Engine {
     calibration: Arc<[Option<ProbCutRule>]>,
     cache_sigma: Option<u64>,
     end_cache: EndgameCache,
+    /// Tags the local endgame caches that are valid for the current state.
+    cache_epoch: u64,
 }
 impl Engine {
     pub fn new(model: PatternModel, options: EngineOptions) -> Result<Self, EngineError> {
@@ -62,6 +64,7 @@ impl Engine {
             calibration,
             cache_sigma: None,
             end_cache: EndgameCache::default(),
+            cache_epoch: new_cache_epoch(),
         })
     }
     pub fn from_file(
@@ -100,7 +103,7 @@ impl Engine {
         self.calibration = indexed_rules(config.rules());
         self.table = table;
         self.pv_table = pv_table;
-        self.end_cache.clear();
+        self.invalidate_end_caches();
         self.cache_sigma = None;
         self.mpc = Some(config);
         Ok(())
@@ -115,13 +118,19 @@ impl Engine {
         self.cache_sigma = None;
         Ok(())
     }
+    /// Drops the main thread's local endgame cache and, through a new epoch,
+    /// every worker's.
+    fn invalidate_end_caches(&mut self) {
+        self.end_cache.clear();
+        self.cache_epoch = new_cache_epoch();
+    }
     pub fn clear_tt(&mut self) -> Result<(), EngineError> {
         let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
         let pv_table =
             Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
         self.table = table;
         self.pv_table = pv_table;
-        self.end_cache.clear();
+        self.invalidate_end_caches();
         Ok(())
     }
     /// Replaces the model and invalidates all cached evaluations.
@@ -135,7 +144,7 @@ impl Engine {
         self.mpc = Some(MpcConfig::default());
         self.metadata = None;
         self.calibration = indexed_rules(self.mpc.as_ref().unwrap().rules());
-        self.end_cache.clear();
+        self.invalidate_end_caches();
         self.cache_sigma = None;
         Ok(())
     }
@@ -171,7 +180,7 @@ impl Engine {
             Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
         self.calibration = indexed_rules(rules);
         self.mpc = None;
-        self.end_cache.clear();
+        self.invalidate_end_caches();
         self.cache_sigma = None;
         self.table = table;
         self.pv_table = pv_table;
@@ -254,6 +263,7 @@ impl Engine {
             rules: self.calibration.clone(),
             // Exact requests use selective stages only to seed the tables;
             // results below this bound are exact and reused by the final stage.
+            cache_epoch: self.cache_epoch,
             endgame_probcut_min: if request.mode == SearchMode::Exact {
                 endgame::EXACT_PREPARATION_PROBCUT_MIN
             } else {

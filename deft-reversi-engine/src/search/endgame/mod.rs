@@ -7,7 +7,7 @@ pub(super) mod parity;
 mod shallow;
 mod small;
 use local_tt::EndProbe;
-pub(super) use local_tt::EndgameCache;
+pub(super) use local_tt::{EndgameCache, new_cache_epoch};
 #[cfg(test)]
 use ordered::EndMove;
 #[cfg(test)]
