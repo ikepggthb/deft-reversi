@@ -4,41 +4,30 @@ enum Config {
     Final(i32),
 }
 
-impl SearchRequest {
-    /// Same level clamp, mode mapping and opening correction as Solver::solve.
-    pub fn for_level(board: Board, level: i32) -> Self {
-        let level = level.clamp(1, 60);
-        let (mode, selectivity) = match level_to_config(i32::from(board.empty_count()), level) {
-            Config::Eval(mut depth, mut selectivity) => {
-                if 60 - i32::from(board.empty_count()) < 20 && depth > 14 {
-                    depth -= 4;
-                    if selectivity != 6 {
-                        selectivity = 3;
-                    }
+/// The reference engine's mapping from a level (1..=60) to the search mode
+/// and selectivity, with its opening correction.
+pub(super) fn level_plan(empties: u8, level: u8) -> (SearchMode, Selectivity) {
+    match level_to_config(i32::from(empties), i32::from(level)) {
+        Config::Eval(mut depth, mut selectivity) => {
+            if 60 - i32::from(empties) < 20 && depth > 14 {
+                depth -= 4;
+                if selectivity != 6 {
+                    selectivity = 3;
                 }
-                (
-                    SearchMode::Depth(depth as u8),
-                    Selectivity::from_level(selectivity as u8),
-                )
             }
-            Config::Final(selectivity) => (
-                if selectivity == 6 {
-                    SearchMode::Exact
-                } else {
-                    SearchMode::SelectiveEndgame
-                },
+            (
+                SearchMode::Depth(depth as u8),
                 Selectivity::from_level(selectivity as u8),
-            ),
-        };
-        let mut request = Self::new(board, mode);
-        request.selectivity = selectivity;
-        request.level = Some(level as u8);
-        request
-    }
-}
-impl Engine {
-    pub fn solve(&mut self, board: Board, level: i32) -> Result<SearchResult, EngineError> {
-        self.search(SearchRequest::for_level(board, level))
+            )
+        }
+        Config::Final(selectivity) => (
+            if selectivity == 6 {
+                SearchMode::Exact
+            } else {
+                SearchMode::SelectiveEndgame
+            },
+            Selectivity::from_level(selectivity as u8),
+        ),
     }
 }
 fn level_to_config(n_empties: i32, level: i32) -> Config {
@@ -205,16 +194,10 @@ mod tests {
                 }
             }
         }
-        let request = SearchRequest::for_level(Board::new(), 16);
-        assert_eq!(request.mode, SearchMode::Depth(12));
-        assert_eq!(request.selectivity, Selectivity::Percent95);
         assert_eq!(
-            SearchRequest::for_level(Board::new(), -1).mode,
-            SearchMode::Depth(1)
+            level_plan(60, 16),
+            (SearchMode::Depth(12), Selectivity::Percent95)
         );
-        assert_eq!(
-            SearchRequest::for_level(Board::new(), 100).mode,
-            SearchMode::Exact
-        );
+        assert_eq!(level_plan(60, 60).0, SearchMode::Exact);
     }
 }

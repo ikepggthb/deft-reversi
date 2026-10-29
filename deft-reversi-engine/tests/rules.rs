@@ -1,4 +1,4 @@
-use deft_reversi_engine::{Board, MoveError, perft};
+use deft_reversi_engine::{Action, Board, MoveError, Square, perft};
 
 // Deliberately uses coordinates rather than the engine's bit operations.
 fn reference_flips(board: Board, index: i32) -> u64 {
@@ -43,15 +43,15 @@ fn reachable_positions_match_coordinate_reference() {
                 let flips = reference_flips(board, index);
                 if flips != 0 {
                     expected |= 1u64 << index;
-                    assert_eq!(board.flip_mask(1u64 << index), flips);
+                    assert_eq!(board.flips(Square::new(index as u8).unwrap()), flips);
                 }
             }
-            assert_eq!(board.get_moves(), expected);
+            assert_eq!(board.legal_moves().bits(), expected);
             if expected == 0 {
                 if board.is_terminal() {
                     break;
                 }
-                board.try_pass().unwrap();
+                board = board.play(Action::Pass).unwrap();
                 continue;
             }
             random ^= random << 13;
@@ -68,26 +68,27 @@ fn reachable_positions_match_coordinate_reference() {
                 board.player_bits() | flips | action,
             )
             .unwrap();
-            board.try_play(action).unwrap();
+            let square = Square::new(action.trailing_zeros() as u8).unwrap();
+            board = board.play(Action::Place(square)).unwrap();
             assert_eq!(board, expected_board);
         }
     }
 }
 
 #[test]
-fn rejected_actions_preserve_position() {
-    let mut board = Board::new();
-    let before = board;
-    for action in [0, 1, board.player_bits(), board.get_moves(), u64::MAX] {
-        assert_eq!(board.try_play(action), Err(MoveError::IllegalMove));
-        assert_eq!(board, before);
+fn rejected_actions_are_errors() {
+    let board = Board::new();
+    for index in [0, 27, 28, 63] {
+        let action = Action::Place(Square::new(index).unwrap());
+        assert_eq!(board.play(action), Err(MoveError::IllegalMove));
+        assert_eq!(board.flips(Square::new(index).unwrap()), 0);
     }
-    assert_eq!(board.try_pass(), Err(MoveError::IllegalPass));
-    assert_eq!(board, before);
+    assert_eq!(board.play(Action::Pass), Err(MoveError::IllegalPass));
     assert!(Board::from_bits(1, 1).is_none());
-    let mut terminal = Board::from_bits(u64::MAX, 0).unwrap();
+    let terminal = Board::from_bits(u64::MAX, 0).unwrap();
     assert!(terminal.is_terminal());
-    assert_eq!(terminal.try_pass(), Err(MoveError::IllegalPass));
+    assert!(!terminal.must_pass());
+    assert_eq!(terminal.play(Action::Pass), Err(MoveError::IllegalPass));
 }
 
 #[test]

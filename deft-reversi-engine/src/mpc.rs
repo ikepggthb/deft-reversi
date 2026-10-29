@@ -241,7 +241,7 @@ impl MpcConfig {
 
 /// The discrete final-search table from main at 5a17bdce. The older model
 /// does not embed MPC parameters; callers must opt in for that model.
-pub(crate) fn legacy_main_rules() -> Vec<crate::ProbCutRule> {
+pub(crate) fn legacy_main_rules() -> Vec<crate::search::ProbCutRule> {
     let mut rules = MpcConfig::default().rules();
     rules.retain(|r| !r.exact);
     let measured = [
@@ -302,7 +302,7 @@ pub(crate) fn legacy_main_rules() -> Vec<crate::ProbCutRule> {
                 5
             };
         }
-        rules.push(crate::ProbCutRule {
+        rules.push(crate::search::ProbCutRule {
             exact: true,
             depth: empties,
             empties,
@@ -316,7 +316,7 @@ pub(crate) fn legacy_main_rules() -> Vec<crate::ProbCutRule> {
 }
 
 impl MpcConfig {
-    pub(crate) fn rules(&self) -> Vec<crate::ProbCutRule> {
+    pub(crate) fn rules(&self) -> Vec<crate::search::ProbCutRule> {
         let mut rules = Vec::new();
         for exact in [false, true] {
             for depth in (if exact { 12 } else { 4 })..=60u8 {
@@ -338,7 +338,7 @@ impl MpcConfig {
                     {
                         continue;
                     }
-                    rules.push(crate::ProbCutRule {
+                    rules.push(crate::search::ProbCutRule {
                         exact,
                         depth,
                         empties,

@@ -8,7 +8,9 @@
 
 - `board`: 非公開のビットボードと検証付き着手。内部探索は合法手と反転ビットを再利用。
 - `evaluation`: 11パターン×4回転、60フェーズ、合法手数差、バイアス。両手番の特徴量を差分更新。
-- `search/api`: 要求・結果・停止・統計・エラー。
+- `position`: 手番の色を持つ局面と、その文字列形式。
+- `worker`: 探索を別スレッドで動かす `EngineWorker`。
+- `search/api`: 要求・結果・進捗・停止・統計・エラー。
 - `search.rs`: モデルと資源の所有、反復深化、最大24手の終盤準備探索と選択性の段階移行、アスピレーション窓。
 - `model` / `mpc`: 元のv3/v4パターンモデルとMPC設定の同時読込、回帰係数・深さ表、元の既定設定。
 - `search/root`: ルート候補ごとの境界、アスピレーションの安定化、最善手順の継承。
@@ -26,56 +28,55 @@
 - `parallel`: 常駐ワーカーのメールボックスと、待機中の祖先への直接ハンドオフ。
 - `transposition`: 64バイトクラスタ、完全な盤面照合、atomicスナップショット。通常窓・ゼロ窓のカット、両境界の絞り込み、ETC、候補2手。PV専用表は主表の1/16（最低1 MiB）。
 
-UI、対局履歴、ファイルパスの決定、環境変数、標準出力は探索ランタイムの責務に含めない。呼び出し側が指定したモデルファイルの読込はEngine APIで提供する。
+UI、対局履歴、定石、持ち時間の配分、ファイルパスの決定、環境変数、標準出力は探索ランタイムの責務に含めない。呼び出し側が指定したモデルファイルの読込はEngine APIで提供する。
 
 ## API
 
+設計と使い方の全体は [docs/api.md](docs/api.md) にある。
+
 ```rust,no_run
-use deft_reversi_engine::{Board, Engine, EngineOptions, SearchRequest};
+use deft_reversi_engine::{Engine, EngineOptions, Goal, Model, Position, SearchRequest};
 use std::time::Duration;
 
-let mut engine = Engine::from_file("eval-v4.bin", EngineOptions { threads: 4, tt_mib: 256 })?;
-let mut request = SearchRequest::for_level(Board::new(), 16);
-request.time_limit = Some(Duration::from_secs(1));
-let stop = request.stop.clone();
-let result = engine.search(request)?;
-// 制限なしの通常探索は engine.solve(board, level) でも呼べる。
+let mut engine = Engine::new(Model::from_file("eval-v4.bin")?, EngineOptions::default().threads(4))?;
+let position: Position = "---------------------------OX------XO--------------------------- X".parse()?;
+let request = SearchRequest::new(Goal::Level(16)).time_limit(Duration::from_secs(1));
+let result = engine.search(&position, &request)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 - スレッド数は呼び出し元を含む。既定値1ではワーカーを作らない。
-- 同じEngineへの要求は直列。別Engineは独立したTTとワーカーを持つ。
-- `Board::from_bits` は石の重複を拒否する。A1が最下位ビット。
-- `Action::Place(Square)` と `Action::Pass` を区別。`result.action == None` は終局。
-- `SearchRequest::for_level(board, level)` / `Engine::solve(board, level)` は元の1〜60へのクランプ、探索方式、選択率、序盤補正を適用する。
-- `selectivity` は元の68/77/85/95/98/99/100%の7段階。`result.selectivity` と `result.probcut_sigma` は最後に完了した段階の設定を表す。カスタムsigmaを明示した場合は前者がNoneになる。
-- `SearchMode::Depth(n)` は着手数基準。パスでは深さを減らさない。
-- `SearchMode::Exact` は最終段階でMPCを使わない終盤完全読み。元の既定MPC設定または読込モデルのMPC設定で、その前に元実装と同じ選択性の段階で準備探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（`SelectiveEndgame` は従来どおり12マスからMPC）。最終段階にMPCを指定する要求は拒否する。
-- `SelectiveEndgame` はMPCを使う終盤探索。既定選択率は85%。完全読みの保証を持たない。
-- `requested_mode` は要求、`mode` は最後に完了した反復の方式。完全読み要求の中断結果が `Depth(n)` や `SelectiveEndgame` になることがある。`mode == Exact` かつ `selective == false` の完了結果だけを完全読みとして扱う。
+- 同じEngineへの要求は直列。別Engineは独立したTTとワーカーを持つ。別スレッドで探索するには `EngineWorker` を使う。
+- `Board::from_bits` と `Position::from_colors` は石の重複を拒否する。A1が最下位ビット。
+- `Action::Place(Square)` と `Action::Pass` を区別。`result.best_move == None` は終局。
+- `Goal::Level(n)` は元の1〜60のレベルの探索方式、選択率、序盤補正を適用する。範囲外はエラー。
+- `selectivity` は元の68/77/85/95/98/99/100%の7段階。`result.kind` は最後に完了した反復の深さと選択率を表す。
+- `Goal::Depth(n)` は着手数基準。パスでは深さを減らさない。
+- `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。元の既定MPC設定または読込モデルのMPC設定で、その前に元実装と同じ選択性の段階で準備探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
+- 選択率を下げた `Goal::Endgame` はMPCを使う終盤探索で、完全読みの保証を持たない。
+- 中断した完全読み要求の結果は、準備段階の `Depth` や選択的な `Endgame` になることがある。完全読みかどうかは `result.is_solved()` で判定する。
 - `score == None` は完了反復がない状態。合法な代替手は返す。深さ0の着手は探索で選んだ最善手ではない。
-- `Bound::Exact` は返された探索方式における窓内の値。固定深さ評価や選択的評価を、ゲームの確定値とは扱わない。
 - スコアは入力手番側から見た石単位の整数。終局時は空きマスを勝者に加算する。
 - ノード上限は全ワーカー・反復を通じた再帰入口の総数。手順付けの浅い探索もノード上限に含み、評価回数も別カウンタへ記録する。
 - 停止要求と並列カットは別状態。配布した仕事を回収してから戻る。停止・時刻の確認は最大256ノード間隔。ノード上限は各ノードで予約し、超過しない。
-- StopHandleは一方向。再要求には新しいSearchRequestまたは新しいStopHandleを使う。
+- StopHandleは一方向。再要求には新しいSearchRequestを使う。
 - 局所TTは要求中のContextが所有し、主スレッド分をEngineで再利用する。各層は必要時に確保し、最大約384 KiB。メインTTのMiB指定とは別の作業領域。
-- `clear_tt`、`set_mpc_config`、`set_probcut_rules` は主表・PV表・局所表を無効化する。`set_model` は全表を無効化し、元の既定MPC設定に戻す。
+- `clear_tt` は主表・PV表・局所表を無効化する。`set_model` は全表を無効化し、新しいモデルのMPC設定に切り替える。
 - 通常窓のTTカット後もPVを返せるよう、PV表・主表の候補を使って確定値に到達する手を検証する。この復元も探索時間とノード予算に含む。スコア確定後、PV復元中に上限へ達した場合は、確定スコアを保持したまま停止理由と取得済みPVを返す。
+- `all_moves()` は最後に完了した反復と同じ深さ・選択率で、ルートの全手を窓 [-64, 64] で探索し直す。途中で止まった場合は `moves` を空にする。
 
 ## モデルとMPC
 
-`Engine::from_file` / `Engine::from_bytes` は元のv3/v4パターンモデル（JSON・bincode）から、重み・メタデータ・MPC設定をまとめて読み込む。変換やsidecarの手動設定は不要。パターンの構成、位相、スケール、評価の丸め方は維持する。NNUEは対象外。
+`Model::from_file` / `Model::from_bytes` は元のv3/v4パターンモデル（JSON・bincode）から、重み・メタデータ・MPC設定をまとめて読み込む。変換やsidecarの手動設定は不要。パターンの構成、位相、スケール、評価の丸め方は維持する。NNUEは対象外。
 
-`Engine::mpc_config()` で読込設定を取得し、`set_mpc_config` で元と同じ回帰係数・深さ表を変更できる。確認探索の深さは、実際に使う各表の範囲で本探索より浅い必要があります。不正な設定は読込時と設定時に拒否します。MPCは通常窓にも適用し、浅い確認探索にはTTや再帰的なMPCを使わない。係数は元の式で展開し、実行時は直接参照する。回帰式を外挿した結果の負の偏差も、元設定と同じ符号のまま保持する。
+旧JSONパターンラッパーと重みだけのDPR2は、元の既定MPC設定で読む。モデル固有の設定を持つ場合は、元の統合モデルファイルを直接読む。DPR2の `.mpc.tsv` は自動では読まない。DPR2は重みだけの互換形式として引き続き使用できる。変換ツール `tools/convert_pattern_v2.py` も残すが、通常の利用・性能比較では元のモデルファイルを使う。
 
-`Engine::new(PatternModel, options)`、旧JSONパターンラッパー、重みだけのDPR2読込では元の既定MPC設定を使う。モデル固有の設定を持つ場合は、元の統合モデルファイルを直接読む。DPR2の `.mpc.tsv` は自動では読まない。
+以下は `tuning` feature を有効にしたときだけ使える。
 
-`set_probcut_rules` は個別ルールを明示する互換APIとして残す。この場合、回帰係数形式の設定がないため `mpc_config()` はNone。`set_probcut_rules(Vec::new())` は校正を空にする。Exactでは全段階MPCなしとなり、選択的探索を要求した場合は校正不足のエラーになる。
-
-DPR2は重みだけの互換形式として引き続き使用できる。変換ツール `tools/convert_pattern_v2.py` も残すが、通常の利用・性能比較では元のモデルファイルを使う。
-
-旧 `main` の `data/eval/eval.json` は `tools/convert_legacy_eval.py` で変換できる。変換済みの旧モデルには `engine.set_legacy_main_mpc()?` を明示して `main` のMPC係数表を使える。表はモデルに埋め込まれていないため、別のモデルには自動適用しない。切替時にはTTを無効化し、`mpc_config()` は `None` を返す。例のsolveでは `--legacy-main-mpc` を指定する。
+- `Engine::mpc_config()` で読込設定を取得し、`set_mpc_config` で元と同じ回帰係数・深さ表を変更できる。確認探索の深さは、実際に使う各表の範囲で本探索より浅い必要がある。不正な設定は読込時と設定時に拒否する。MPCは通常窓にも適用し、浅い確認探索にはTTや再帰的なMPCを使わない。係数は元の式で展開し、実行時は直接参照する。回帰式を外挿した結果の負の偏差も、元設定と同じ符号のまま保持する。
+- `Model::from_pattern(PatternModel)` は重みだけのモデルを元の既定MPC設定で作る。
+- `set_probcut_rules` は個別ルールを明示する。この場合、回帰係数形式の設定がないため `mpc_config()` はNone。`set_probcut_rules(Vec::new())` は校正を空にする。完全読みでは全段階MPCなしとなり、選択的探索を要求した場合は校正不足のエラーになる。
+- 旧 `main` の `data/eval/eval.json` は `tools/convert_legacy_eval.py` で変換できる。変換済みの旧モデルには `engine.set_legacy_main_mpc()?` を明示して `main` のMPC係数表を使える。表はモデルに埋め込まれていないため、別のモデルには自動適用しない。切替時にはTTを無効化し、`mpc_config()` は `None` を返す。例のsolveでは `--legacy-main-mpc` を指定する。
 
 ## 検証
 

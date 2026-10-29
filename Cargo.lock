@@ -16,6 +16,7 @@ name = "deft_reversi_engine"
 version = "2.0.0"
 dependencies = [
  "bincode",
+ "deft_reversi_engine",
  "serde",
  "serde_json",
 ]

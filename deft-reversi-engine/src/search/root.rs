@@ -82,6 +82,31 @@ impl RootSearch {
         }
         outcome
     }
+    /// Scores every root move with a full window, best first.
+    pub(super) fn move_scores(
+        &self,
+        context: &mut Context,
+        spec: SearchSpec,
+    ) -> Result<Vec<MoveScore>, Aborted> {
+        let mut moves = Vec::with_capacity(self.candidates.len());
+        for candidate in &self.candidates {
+            let child = context.node(
+                candidate.child(self.position, true),
+                -64,
+                64,
+                SearchSpec {
+                    depth: spec.depth - 1,
+                    ..spec
+                },
+            )?;
+            moves.push(MoveScore {
+                action: candidate.action(),
+                score: -child.score,
+            });
+        }
+        moves.sort_by_key(|entry| std::cmp::Reverse(entry.score));
+        Ok(moves)
+    }
     fn aspiration(
         &mut self,
         context: &mut Context,

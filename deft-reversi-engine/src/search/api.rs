@@ -1,18 +1,13 @@
 use super::*;
 
+/// The internal search driver mode a request resolves to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SearchMode {
+pub(crate) enum SearchMode {
     Depth(u8),
     /// Exact final result. Calibrated selective preparation may precede it.
     Exact,
-    /// Terminal-depth search with explicitly calibrated probabilistic cuts.
+    /// Terminal-depth search with calibrated probabilistic cuts.
     SelectiveEndgame,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Bound {
-    Exact,
-    Lower,
-    Upper,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
@@ -23,6 +18,8 @@ pub enum StopReason {
     NodeLimit = 3,
     WorkerFailed = 4,
 }
+/// Stops a search from another thread. Clones share the same flag, and a
+/// stopped handle stays stopped, so each search needs a new request.
 #[derive(Clone, Default, Debug)]
 pub struct StopHandle(pub(super) Arc<AtomicBool>);
 impl StopHandle {
@@ -36,9 +33,13 @@ impl StopHandle {
         self.0.load(Ordering::Acquire)
     }
 }
+/// Build with `EngineOptions::default().threads(n).tt_mib(m)`.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct EngineOptions {
+    /// Search threads, including the calling thread: 1..=256.
     pub threads: usize,
+    /// Size of the main transposition table.
     pub tt_mib: usize,
 }
 impl Default for EngineOptions {
@@ -49,7 +50,18 @@ impl Default for EngineOptions {
         }
     }
 }
-/// Reference selectivity levels 0..=6. Full disables MPC in the final pass.
+impl EngineOptions {
+    pub fn threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
+        self
+    }
+    pub fn tt_mib(mut self, tt_mib: usize) -> Self {
+        self.tt_mib = tt_mib;
+        self
+    }
+}
+/// How strongly multi-ProbCut prunes: the confidence that a pruned move is
+/// really outside the window. `Full` does not prune.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Selectivity {
@@ -63,7 +75,7 @@ pub enum Selectivity {
     Full,
 }
 impl Selectivity {
-    pub fn sigma(self) -> Option<f64> {
+    pub(crate) fn sigma(self) -> Option<f64> {
         [
             Some(1.0),
             Some(1.20),
@@ -90,39 +102,72 @@ impl Selectivity {
     }
 }
 
+/// What a search reads to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Goal {
+    /// That many moves ahead, 0..=60. Passes are not counted.
+    Depth(u8),
+    /// To the end of the game; an exact solve at `Selectivity::Full`.
+    Endgame,
+    /// A reference-engine level, 1..=60, which also chooses the depth, the
+    /// switch to the endgame and the selectivity.
+    Level(u8),
+}
+
+/// Built with `SearchRequest::new(goal)` and the setters below.
 #[derive(Clone, Debug)]
 pub struct SearchRequest {
-    pub board: Board,
-    pub mode: SearchMode,
-    pub time_limit: Option<Duration>,
-    pub node_limit: Option<u64>,
-    pub stop: StopHandle,
-    /// Optional custom sigma override; None uses `selectivity`. Exact requires
-    /// Full for the final pass, but may use selective preparation.
-    pub probcut_sigma: Option<f64>,
-    /// Preferred MPC setting: the same seven levels as the reference engine.
-    pub selectivity: Selectivity,
-    pub(super) level: Option<u8>,
+    pub(super) goal: Goal,
+    pub(super) selectivity: Option<Selectivity>,
+    pub(super) time_limit: Option<Duration>,
+    pub(super) node_limit: Option<u64>,
+    pub(super) all_moves: bool,
+    pub(super) stop: StopHandle,
 }
 impl SearchRequest {
-    pub fn new(board: Board, mode: SearchMode) -> Self {
+    pub fn new(goal: Goal) -> Self {
         Self {
-            board,
-            mode,
+            goal,
+            selectivity: None,
             time_limit: None,
             node_limit: None,
+            all_moves: false,
             stop: StopHandle::new(),
-            probcut_sigma: None,
-            selectivity: if mode == SearchMode::SelectiveEndgame {
-                Selectivity::Percent85
-            } else {
-                Selectivity::Full
-            },
-            level: None,
         }
     }
+    /// Pruning for `Depth` and `Endgame`; `Full` when not set. A `Level`
+    /// chooses its own, so setting one there is an invalid request.
+    pub fn selectivity(mut self, selectivity: Selectivity) -> Self {
+        self.selectivity = Some(selectivity);
+        self
+    }
+    /// Stops after this much time, returning the last completed iteration.
+    pub fn time_limit(mut self, limit: Duration) -> Self {
+        self.time_limit = Some(limit);
+        self
+    }
+    /// Stops before visiting more nodes than this, across all threads.
+    pub fn node_limit(mut self, limit: u64) -> Self {
+        self.node_limit = Some(limit);
+        self
+    }
+    /// Also scores every legal move with a full window (`SearchResult::moves`).
+    /// This searches each move again, so it takes several times longer.
+    pub fn all_moves(mut self) -> Self {
+        self.all_moves = true;
+        self
+    }
+    pub fn stop_handle(&self) -> StopHandle {
+        self.stop.clone()
+    }
+    pub fn goal(&self) -> Goal {
+        self.goal
+    }
 }
+/// Counters of one search. The parallel ones (`splits` to `join_time`) are
+/// diagnostics and may change between versions.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct SearchStats {
     pub nodes: u64,
     pub leaves: u64,
@@ -158,25 +203,71 @@ impl SearchStats {
         self.stability_cuts += other.stability_cuts;
     }
 }
+/// What a completed iteration searched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResultKind {
+    Depth { depth: u8, selectivity: Selectivity },
+    Endgame { selectivity: Selectivity },
+}
+impl ResultKind {
+    pub fn selectivity(self) -> Selectivity {
+        match self {
+            Self::Depth { selectivity, .. } | Self::Endgame { selectivity } => selectivity,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MoveScore {
+    pub action: Action,
+    pub score: i32,
+}
+
+/// Scores are disc differences for the side to move.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct SearchResult {
-    /// None means terminal; Pass is explicit, including on interrupted requests.
-    pub action: Option<Action>,
+    /// None only at the end of the game. A search stopped before any
+    /// iteration completed still returns a legal action.
+    pub best_move: Option<Action>,
+    /// None when no iteration completed.
     pub score: Option<i32>,
-    pub bound: Option<Bound>,
-    pub requested_mode: SearchMode,
-    pub mode: SearchMode,
-    pub selective: bool,
-    /// Actual completed stage. None denotes an explicit custom sigma override.
-    pub selectivity: Option<Selectivity>,
-    pub probcut_sigma: Option<f64>,
-    pub completed_depth: u8,
+    /// The last completed iteration; None with `score`.
+    pub kind: Option<ResultKind>,
     pub pv: Vec<Action>,
+    /// Every legal move with its score, best first, when the request asked
+    /// for `all_moves` and the search completed.
+    pub moves: Vec<MoveScore>,
     pub stop_reason: StopReason,
     pub stats: SearchStats,
     pub elapsed: Duration,
 }
+impl SearchResult {
+    /// Whether `score` is the exact game value: a full-selectivity endgame
+    /// iteration completed.
+    pub fn is_solved(&self) -> bool {
+        self.kind
+            == Some(ResultKind::Endgame {
+                selectivity: Selectivity::Full,
+            })
+    }
+}
+
+/// Reported after every completed iteration.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct Progress {
+    pub kind: ResultKind,
+    pub score: i32,
+    pub best_move: Option<Action>,
+    pub pv: Vec<Action>,
+    /// Nodes so far, across all threads.
+    pub nodes: u64,
+    pub elapsed: Duration,
+}
+
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EngineError {
     InvalidOptions(&'static str),
     InvalidRequest(&'static str),
@@ -184,6 +275,8 @@ pub enum EngineError {
     Memory(&'static str),
     Thread(std::io::Error),
     Model(std::io::Error),
+    /// `EngineWorker::start` while a search is running.
+    Busy,
 }
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -194,6 +287,7 @@ impl fmt::Display for EngineError {
             | Self::Memory(s) => f.write_str(s),
             Self::Thread(e) => write!(f, "search worker could not start: {e}"),
             Self::Model(e) => write!(f, "engine model: {e}"),
+            Self::Busy => f.write_str("a search is already running"),
         }
     }
 }

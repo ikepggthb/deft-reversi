@@ -23,11 +23,8 @@ fn mpc_confirmation_must_be_shallower_and_rejection_is_atomic() {
     let valid = MpcConfig::default();
     valid.validate().unwrap();
     let mut engine = Engine::new(
-        PatternModel::zero(),
-        EngineOptions {
-            threads: 1,
-            tt_mib: 1,
-        },
+        Model::from_pattern(PatternModel::zero()),
+        EngineOptions::default().tt_mib(1),
     )
     .unwrap();
     engine.set_mpc_config(valid.clone()).unwrap();

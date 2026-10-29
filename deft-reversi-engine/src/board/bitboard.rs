@@ -1,4 +1,5 @@
 use crate::board::{flip, moves};
+use crate::{Action, Moves, Square};
 
 /// A rejected action leaves the board unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7,7 +8,7 @@ pub enum MoveError {
     IllegalPass,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Board {
     pub(crate) player: u64,
     pub(crate) opponent: u64,
@@ -38,7 +39,7 @@ impl Board {
     }
 
     /// Validates a single-square move and advances to the opponent's turn.
-    pub fn try_play(&mut self, move_mask: u64) -> Result<(), MoveError> {
+    fn try_play(&mut self, move_mask: u64) -> Result<(), MoveError> {
         if move_mask.count_ones() != 1 || self.get_moves() & move_mask == 0 {
             return Err(MoveError::IllegalMove);
         }
@@ -47,7 +48,7 @@ impl Board {
     }
 
     /// Passes only when this player has no move and the opponent does.
-    pub fn try_pass(&mut self) -> Result<(), MoveError> {
+    fn try_pass(&mut self) -> Result<(), MoveError> {
         if self.get_moves() != 0 || self.get_opponent_moves() == 0 {
             return Err(MoveError::IllegalPass);
         }
@@ -73,13 +74,29 @@ impl Board {
         let difference = self.player.count_ones() as i32 - self.opponent.count_ones() as i32;
         difference + difference.signum() * i32::from(self.empty_count())
     }
-    pub fn play(&self, action: crate::Action) -> Result<Self, MoveError> {
+    /// The position after `action`, with the opponent to move.
+    pub fn play(&self, action: Action) -> Result<Self, MoveError> {
         let mut next = *self;
         match action {
-            crate::Action::Place(square) => next.try_play(square.bit())?,
-            crate::Action::Pass => next.try_pass()?,
+            Action::Place(square) => next.try_play(square.bit())?,
+            Action::Pass => next.try_pass()?,
         }
         Ok(next)
+    }
+    pub fn legal_moves(&self) -> Moves {
+        Moves(self.get_moves())
+    }
+    /// Whether the player to move must pass: no move here, but one for the opponent.
+    pub fn must_pass(&self) -> bool {
+        self.get_moves() == 0 && self.get_opponent_moves() != 0
+    }
+    /// The discs that a move on `square` turns over; zero if it is illegal.
+    pub fn flips(&self, square: Square) -> u64 {
+        if self.get_moves() & square.bit() == 0 {
+            0
+        } else {
+            self.flip_mask(square.bit())
+        }
     }
     pub(crate) fn after_known_move(&self, bit: u64, flips: u64) -> Self {
         Self {
@@ -92,17 +109,17 @@ impl Board {
         Self::default()
     }
 
-    pub fn get_moves(&self) -> u64 {
+    pub(crate) fn get_moves(&self) -> u64 {
         moves::get_moves(self.player, self.opponent)
     }
 
     #[inline(always)]
-    pub fn get_opponent_moves(&self) -> u64 {
+    pub(crate) fn get_opponent_moves(&self) -> u64 {
         moves::get_moves(self.opponent, self.player)
     }
 
     #[inline(always)]
-    pub fn flip_mask(&self, move_mask: u64) -> u64 {
+    pub(crate) fn flip_mask(&self, move_mask: u64) -> u64 {
         flip::flip(move_mask, self.player, self.opponent)
     }
 
@@ -131,7 +148,7 @@ impl Board {
     }
 
     #[inline(always)]
-    pub fn board_after_pass(&self) -> Board {
+    pub(crate) fn board_after_pass(&self) -> Board {
         Board {
             player: self.opponent,
             opponent: self.player,
@@ -170,6 +187,7 @@ impl Board {
         }
     }
 
+    /// The least of the eight symmetric images, for symmetry-aware lookups.
     #[inline]
     pub fn canonical(self) -> Self {
         let transposed = self.transpose();

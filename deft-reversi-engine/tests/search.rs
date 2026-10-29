@@ -1,16 +1,19 @@
 use deft_reversi_engine::*;
 use std::time::Duration;
+fn model() -> Model {
+    Model::from_pattern(PatternModel::zero())
+}
 fn engine(threads: usize) -> Engine {
-    Engine::new(PatternModel::zero(), EngineOptions { threads, tt_mib: 1 }).unwrap()
+    Engine::new(model(), EngineOptions::default().threads(threads).tt_mib(1)).unwrap()
+}
+fn exact() -> SearchRequest {
+    SearchRequest::new(Goal::Endgame)
+}
+fn depth(depth: u8) -> SearchRequest {
+    SearchRequest::new(Goal::Depth(depth))
 }
 fn actions(board: Board) -> Vec<Action> {
-    let mut moves = board.get_moves();
-    let mut actions = Vec::new();
-    while moves != 0 {
-        let i = moves.trailing_zeros() as u8;
-        moves &= moves - 1;
-        actions.push(Action::Place(Square::new(i).unwrap()));
-    }
+    let mut actions: Vec<Action> = board.legal_moves().map(Action::Place).collect();
     if actions.is_empty() && !board.is_terminal() {
         actions.push(Action::Pass)
     }
@@ -45,108 +48,102 @@ fn exact_matches_exhaustive_and_pv_is_legal() {
     for seed in 1..=24 {
         let board = position(seed, 6);
         let expected = reference(board);
-        let result = engine
-            .search(SearchRequest::new(board, SearchMode::Exact))
-            .unwrap();
+        let result = engine.search(board, &exact()).unwrap();
         assert_eq!(result.stop_reason, StopReason::Completed);
-        assert_eq!(result.mode, SearchMode::Exact);
+        assert!(result.is_solved());
         assert_eq!(result.score, Some(expected));
         let mut end = board;
         for action in result.pv {
             end = end.play(action).unwrap();
         }
         assert!(end.is_terminal());
-        let mut request = SearchRequest::new(board, SearchMode::Exact);
-        request.node_limit = Some(100_000);
-        assert_eq!(engine.search(request).unwrap().score, Some(expected));
+        let request = exact().node_limit(100_000);
+        assert_eq!(
+            engine.search(board, &request).unwrap().score,
+            Some(expected)
+        );
     }
 }
 #[test]
 fn interrupted_search_never_claims_an_exact_solution() {
     for kind in 0..3 {
         let mut engine = engine(2);
-        let mut request = SearchRequest::new(Board::new(), SearchMode::Exact);
-        match kind {
-            0 => request.node_limit = Some(0),
-            1 => request.time_limit = Some(Duration::ZERO),
-            _ => request.stop.stop(),
+        let request = match kind {
+            0 => exact().node_limit(0),
+            1 => exact().time_limit(Duration::ZERO),
+            _ => exact(),
+        };
+        if kind == 2 {
+            request.stop_handle().stop();
         }
-        let result = engine.search(request).unwrap();
-        assert!(matches!(result.action, Some(Action::Place(_))));
+        let result = engine.search(Board::new(), &request).unwrap();
+        assert!(matches!(result.best_move, Some(Action::Place(_))));
         assert_eq!(result.score, None);
-        assert_eq!(result.completed_depth, 0);
-        assert_eq!(result.mode, SearchMode::Depth(0));
+        assert_eq!(result.kind, None);
+        assert!(!result.is_solved());
         assert_ne!(result.stop_reason, StopReason::Completed);
-        let recovered = engine
-            .search(SearchRequest::new(Board::new(), SearchMode::Depth(2)))
-            .unwrap();
+        let recovered = engine.search(Board::new(), &depth(2)).unwrap();
         assert_eq!(recovered.stop_reason, StopReason::Completed);
     }
 }
 #[test]
 fn budget_is_shared_across_workers_and_iterations() {
     let mut engine = engine(4);
-    let mut request = SearchRequest::new(Board::new(), SearchMode::Depth(12));
-    request.node_limit = Some(1500);
-    let result = engine.search(request).unwrap();
+    let result = engine
+        .search(Board::new(), &depth(12).node_limit(1500))
+        .unwrap();
     assert!(result.stats.nodes <= 1500);
     assert_eq!(result.stop_reason, StopReason::NodeLimit);
     if result.score.is_some() {
-        assert!(result.completed_depth > 0);
-        assert_eq!(result.mode, SearchMode::Depth(result.completed_depth));
+        assert!(matches!(result.kind, Some(ResultKind::Depth { depth, .. }) if depth > 0));
     }
 }
 #[test]
 fn pass_and_terminal_are_distinct() {
-    let board = Board::from_bits(1, 2).unwrap().board_after_pass();
-    assert_eq!(board.get_moves(), 0);
-    assert_ne!(board.get_opponent_moves(), 0);
-    let result = engine(1)
-        .search(SearchRequest::new(board, SearchMode::Depth(2)))
-        .unwrap();
-    assert_eq!(result.action, Some(Action::Pass));
+    let board = Board::from_bits(2, 1).unwrap();
+    assert!(board.legal_moves().is_empty());
+    assert!(board.must_pass());
+    let result = engine(1).search(board, &depth(2).all_moves()).unwrap();
+    assert_eq!(result.best_move, Some(Action::Pass));
     assert_eq!(result.pv.first(), Some(&Action::Pass));
+    assert_eq!(
+        result.moves,
+        [MoveScore {
+            action: Action::Pass,
+            score: result.score.unwrap()
+        }]
+    );
     let terminal = Board::from_bits(1, 0).unwrap();
-    let result = engine(1)
-        .search(SearchRequest::new(terminal, SearchMode::Exact))
-        .unwrap();
-    assert_eq!(result.action, None);
+    let result = engine(1).search(terminal, &exact()).unwrap();
+    assert_eq!(result.best_move, None);
     assert_eq!(result.score, Some(64));
+    assert!(result.is_solved());
 }
 #[test]
 fn configuration_is_validated() {
-    assert!(
-        Engine::new(
-            PatternModel::zero(),
-            EngineOptions {
-                threads: 0,
-                tt_mib: 1
-            }
-        )
-        .is_err()
-    );
+    assert!(Engine::new(model(), EngineOptions::default().threads(0)).is_err());
     assert!(Square::new(64).is_none());
     assert!("A9".parse::<Square>().is_err());
     assert!("あ".parse::<Square>().is_err());
+    assert_eq!("pass".parse::<Action>(), Ok(Action::Pass));
     let mut engine = engine(1);
-    assert!(
-        engine
-            .search(SearchRequest::new(Board::new(), SearchMode::Depth(61)))
-            .is_err()
-    );
-    let mut request = SearchRequest::new(Board::new(), SearchMode::Depth(3));
-    request.probcut_sigma = Some(f64::NAN);
-    assert!(engine.search(request).is_err());
+    for request in [
+        depth(61),
+        SearchRequest::new(Goal::Level(0)),
+        SearchRequest::new(Goal::Level(61)),
+        SearchRequest::new(Goal::Level(10)).selectivity(Selectivity::Percent95),
+    ] {
+        assert!(matches!(
+            engine.search(Board::new(), &request),
+            Err(EngineError::InvalidRequest(_))
+        ));
+    }
 }
 #[test]
 fn parallel_matches_serial_at_fixed_depth() {
     let board = Board::new();
-    let serial = engine(1)
-        .search(SearchRequest::new(board, SearchMode::Depth(8)))
-        .unwrap();
-    let parallel = engine(4)
-        .search(SearchRequest::new(board, SearchMode::Depth(8)))
-        .unwrap();
+    let serial = engine(1).search(board, &depth(8)).unwrap();
+    let parallel = engine(4).search(board, &depth(8)).unwrap();
     assert_eq!(serial.score, parallel.score);
     assert_eq!(parallel.stop_reason, StopReason::Completed);
     // Assignment can fail if a helper is still releasing its previous mailbox;
@@ -165,9 +162,7 @@ fn ybwc_exact_repetition_and_thread_counts() {
             let board = position(seed, 10);
             let expected = reference(board);
             for _ in 0..20 {
-                let result = engine
-                    .search(SearchRequest::new(board, SearchMode::Exact))
-                    .unwrap();
+                let result = engine.search(board, &exact()).unwrap();
                 assert_eq!(result.score, Some(expected));
                 assert_eq!(result.stop_reason, StopReason::Completed);
                 splits += result.stats.splits;
@@ -204,41 +199,43 @@ fn selective_cache_does_not_leak_into_full_search() {
         }
     }
     engine.set_probcut_rules(rules).unwrap();
-    let mut request = SearchRequest::new(board, SearchMode::Depth(5));
-    request.probcut_sigma = Some(2.0);
-    let result = engine.search(request).unwrap();
-    assert!(result.selective);
+    let selective = depth(5).selectivity(Selectivity::Percent95);
+    let result = engine.search(board, &selective).unwrap();
+    assert_eq!(
+        result.kind,
+        Some(ResultKind::Depth {
+            depth: 5,
+            selectivity: Selectivity::Percent95
+        })
+    );
     assert!(result.stats.probcut_cuts > 0);
-    let result = engine
-        .search(SearchRequest::new(board, SearchMode::Depth(5)))
-        .unwrap();
-    assert!(!result.selective);
+    let result = engine.search(board, &depth(5)).unwrap();
+    assert_eq!(result.kind.unwrap().selectivity(), Selectivity::Full);
     assert_eq!(result.score, Some(0));
     assert_eq!(result.stats.probcut_tries, 0);
-    engine.set_model(PatternModel::zero()).unwrap();
-    let mut request = SearchRequest::new(board, SearchMode::Depth(4));
-    request.probcut_sigma = Some(f64::NAN);
-    assert!(engine.search(request).is_err());
+    engine.set_probcut_rules(Vec::new()).unwrap();
+    assert!(matches!(
+        engine.search(board, &selective),
+        Err(EngineError::InvalidCalibration(_))
+    ));
 }
 
 #[test]
 fn external_stop_joins_workers_and_engine_can_be_reused() {
     let mut engine = engine(4);
     for _ in 0..3 {
-        let request = SearchRequest::new(Board::new(), SearchMode::Depth(60));
-        let stop = request.stop.clone();
+        let request = depth(60);
+        let stop = request.stop_handle();
         let stopper = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(5));
             stop.stop();
         });
-        let result = engine.search(request).unwrap();
+        let result = engine.search(Board::new(), &request).unwrap();
         stopper.join().unwrap();
         assert_eq!(result.stop_reason, StopReason::Requested);
         assert!(result.stats.nodes > 0);
-        assert!(Board::new().play(result.action.unwrap()).is_ok());
-        let result = engine
-            .search(SearchRequest::new(Board::new(), SearchMode::Depth(2)))
-            .unwrap();
+        assert!(Board::new().play(result.best_move.unwrap()).is_ok());
+        let result = engine.search(Board::new(), &depth(2)).unwrap();
         assert_eq!(result.stop_reason, StopReason::Completed);
     }
 }
@@ -254,11 +251,9 @@ fn exact_endgame_cache_is_consistent_when_warm_cleared_or_model_changes() {
                 engine.clear_tt().unwrap();
             }
             if run == 3 {
-                engine.set_model(PatternModel::zero()).unwrap();
+                engine.set_model(model()).unwrap();
             }
-            let result = engine
-                .search(SearchRequest::new(board, SearchMode::Exact))
-                .unwrap();
+            let result = engine.search(board, &exact()).unwrap();
             assert_eq!(result.score, Some(expected));
             assert_eq!(result.stop_reason, StopReason::Completed);
             let mut terminal = board;
@@ -295,12 +290,9 @@ fn selective_preparation_cannot_supply_the_exact_final_score() {
             let board = position(seed, 13);
             let expected = reference(board);
             for run in 0..2 {
-                let result = engine
-                    .search(SearchRequest::new(board, SearchMode::Exact))
-                    .unwrap();
+                let result = engine.search(board, &exact()).unwrap();
                 assert_eq!(result.stop_reason, StopReason::Completed);
-                assert_eq!(result.mode, SearchMode::Exact);
-                assert!(!result.selective);
+                assert!(result.is_solved());
                 assert_eq!(result.score, Some(expected));
                 if run == 0 {
                     assert!(result.stats.probcut_tries > 0);
@@ -332,32 +324,139 @@ fn stopping_after_selective_preparation_does_not_report_exact() {
             deviation: 0.0,
         }])
         .unwrap();
-    let mut preparation = SearchRequest::new(board, SearchMode::SelectiveEndgame);
-    preparation.probcut_sigma = Some(1.43953);
-    let prepared = engine.search(preparation).unwrap();
+    let preparation = exact().selectivity(Selectivity::Percent85);
+    let prepared = engine.search(board, &preparation).unwrap();
     assert_eq!(prepared.stop_reason, StopReason::Completed);
     engine.clear_tt().unwrap();
-    let mut exact = SearchRequest::new(board, SearchMode::Exact);
-    exact.node_limit = Some(prepared.stats.nodes);
-    let stopped = engine.search(exact).unwrap();
+    let stopped = engine
+        .search(board, &exact().node_limit(prepared.stats.nodes))
+        .unwrap();
     assert_eq!(stopped.stop_reason, StopReason::NodeLimit);
-    assert_eq!(stopped.mode, SearchMode::SelectiveEndgame);
-    assert!(stopped.selective);
-    assert_eq!(stopped.selectivity, Some(Selectivity::Percent85));
-    assert_eq!(stopped.probcut_sigma, Some(1.43953));
-    assert_eq!(stopped.completed_depth, board.empty_count());
+    assert!(!stopped.is_solved());
+    assert_eq!(
+        stopped.kind,
+        Some(ResultKind::Endgame {
+            selectivity: Selectivity::Percent85
+        })
+    );
     assert_eq!(stopped.score, prepared.score);
 }
 
 #[test]
 fn level_midgame_iterations_keep_the_requested_selectivity() {
     let mut engine = engine(1);
-    let mut request = SearchRequest::for_level(Board::new(), 16);
-    assert_eq!(request.selectivity, Selectivity::Percent95);
-    request.node_limit = Some(2000);
-    let result = engine.search(request).unwrap();
+    let request = SearchRequest::new(Goal::Level(16)).node_limit(2000);
+    let result = engine.search(Board::new(), &request).unwrap();
     assert_eq!(result.stop_reason, StopReason::NodeLimit);
-    assert!(result.completed_depth > 0 && result.completed_depth < 12);
-    assert_eq!(result.selectivity, Some(Selectivity::Percent95));
-    assert_eq!(result.probcut_sigma, Selectivity::Percent95.sigma());
+    let Some(ResultKind::Depth { depth, selectivity }) = result.kind else {
+        panic!("expected a depth result, got {:?}", result.kind);
+    };
+    assert!(depth > 0 && depth < 12);
+    assert_eq!(selectivity, Selectivity::Percent95);
+}
+
+#[test]
+fn all_moves_scores_every_move_exactly() {
+    for threads in [1, 4] {
+        let mut engine = engine(threads);
+        for seed in [5, 9] {
+            let board = position(seed, 8);
+            let result = engine.search(board, &exact().all_moves()).unwrap();
+            assert!(result.is_solved());
+            let mut expected: Vec<MoveScore> = actions(board)
+                .into_iter()
+                .map(|action| MoveScore {
+                    action,
+                    score: -reference(board.play(action).unwrap()),
+                })
+                .collect();
+            expected.sort_by_key(|entry| std::cmp::Reverse(entry.score));
+            let scores = |moves: &[MoveScore]| moves.iter().map(|m| m.score).collect::<Vec<_>>();
+            assert_eq!(scores(&result.moves), scores(&expected));
+            for entry in &result.moves {
+                assert!(expected.contains(entry), "{entry:?}");
+            }
+            assert_eq!(result.moves[0].score, result.score.unwrap());
+        }
+    }
+    // A stopped search leaves the list empty rather than partial.
+    let result = engine(1)
+        .search(Board::new(), &depth(10).all_moves().node_limit(500))
+        .unwrap();
+    assert!(result.moves.is_empty());
+}
+
+#[test]
+fn progress_reports_each_completed_iteration() {
+    let mut engine = engine(2);
+    let board = position(3, 12);
+    let mut reports = Vec::new();
+    let result = engine
+        .search_with(board, &exact(), |progress| reports.push(progress.clone()))
+        .unwrap();
+    assert!(result.is_solved());
+    let last = reports.last().unwrap();
+    assert_eq!(Some(last.kind), result.kind);
+    assert_eq!(Some(last.score), result.score);
+    assert!(reports.windows(2).all(|w| w[0].nodes <= w[1].nodes));
+    assert!(last.nodes <= result.stats.nodes);
+    // After a forced pass the reports are for the side that passes.
+    let passing = Board::from_bits(2, 1).unwrap();
+    let mut seen = Vec::new();
+    let result = engine
+        .search_with(passing, &exact(), |progress| seen.push(progress.clone()))
+        .unwrap();
+    let last = seen.last().unwrap();
+    assert_eq!(Some(last.score), result.score);
+    assert_eq!(last.best_move, Some(Action::Pass));
+    assert_eq!(last.pv.first(), Some(&Action::Pass));
+}
+
+#[test]
+fn positions_are_searched_for_the_side_to_move() {
+    let mut engine = engine(1);
+    let black = Position::initial();
+    let white = black.play("F5".parse::<Action>().unwrap()).unwrap();
+    let from_position = engine.search(white, &depth(4)).unwrap();
+    let from_board = engine.search(white.board(), &depth(4)).unwrap();
+    assert_eq!(from_position.score, from_board.score);
+    assert_eq!(from_position.best_move, from_board.best_move);
+    assert!(white.play(from_position.best_move.unwrap()).is_ok());
+}
+
+#[test]
+fn worker_runs_searches_in_the_background() {
+    let worker = EngineWorker::new(engine(2));
+    let board = position(7, 11);
+    let expected = reference(board);
+    let search = worker.start(board, exact()).unwrap();
+    assert!(matches!(
+        worker.start(board, exact()),
+        Err(EngineError::Busy)
+    ));
+    let reports: Vec<Progress> = search.events().iter().collect();
+    let result = search.wait().unwrap();
+    assert_eq!(result.score, Some(expected));
+    assert_eq!(reports.last().map(|p| p.score), Some(expected));
+    // A long search stops on request and leaves the worker reusable.
+    let search = worker.start(Board::new(), depth(60)).unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    search.stop();
+    let result = search.wait().unwrap();
+    assert_eq!(result.stop_reason, StopReason::Requested);
+    worker.with(|engine| engine.clear_tt()).unwrap();
+    // Dropping a handle stops its search, which then ends by itself.
+    drop(worker.start(Board::new(), depth(60)).unwrap());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while worker.is_busy() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "dropped search kept running"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let result = worker
+        .with(|engine| engine.search(board, &exact()))
+        .unwrap();
+    assert_eq!(result.score, Some(expected));
 }
