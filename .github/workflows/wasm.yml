@@ -19,7 +19,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --release --locked
       - run: wasm-pack build deft-reversi-wasm --target web --release --locked
       - run: wasm-pack test deft-reversi-wasm --node --locked
       - run: wasm-pack test deft-reversi-wasm --headless --chrome --locked

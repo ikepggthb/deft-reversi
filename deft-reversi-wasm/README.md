@@ -50,7 +50,7 @@ try {
 ## 検証
 
 ```sh
-cargo test --workspace
+cargo test --workspace --release
 wasm-pack test deft-reversi-wasm --node
 wasm-pack test deft-reversi-wasm --headless --chrome
 ```
