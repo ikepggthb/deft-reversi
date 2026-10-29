@@ -1,0 +1,2 @@
+position	score	action	mode	depth	nodes	leaves	splits	jobs	handoffs	join_seconds	seconds	stop
+1	28	F6	Exact	25	106830120	26363610	7077	9196	2196	0.227897787	0.286550479	Completed

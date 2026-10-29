@@ -1,0 +1,66 @@
+diff --git a/deft-reversi-engine/src/parallel.rs b/deft-reversi-engine/src/parallel.rs
+index af1d395..197ae8e 100644
+--- a/deft-reversi-engine/src/parallel.rs
++++ b/deft-reversi-engine/src/parallel.rs
+@@ -13,6 +13,9 @@ pub(crate) enum Dispatch {
+     Worker,
+ }
+ pub(crate) type Job = Box<dyn FnOnce() + Send + 'static>;
++pub static DIAG_JOIN_TIMEOUTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++pub static DIAG_JOIN_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++pub static DIAG_DRAIN_TIMEOUTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+ /// Keeps a value on cache lines of its own (two lines, for the adjacent-line
+ /// prefetcher), so that writes to it do not evict data other threads read
+ /// on every node, and `Arc` reference counts stay off its line.
+@@ -196,10 +199,14 @@ impl Helper {
+             }
+             state.waiting = true;
+             self.available.store(true, Ordering::Release);
+-            let (mut state, _) = self
++            DIAG_JOIN_WAITS.fetch_add(1, Ordering::Relaxed);
++            let (mut state, timeout) = self
+                 .ready
+                 .wait_timeout(state, Duration::from_millis(5))
+                 .unwrap_or_else(|p| p.into_inner());
++            if timeout.timed_out() {
++                DIAG_JOIN_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
++            }
+             state.waiting = false;
+             self.available.store(false, Ordering::Release);
+         }
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index 5dee1c6..2d65bed 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -452,6 +452,12 @@ impl Engine {
+         drop(context);
+         result.stop_reason = runtime.control.reason();
+         result.stats = parallel::lock(&runtime.stats).clone();
++        eprintln!(
++            "DIAGWAIT join_waits={} join_timeouts={} drain_timeouts={}",
++            parallel::DIAG_JOIN_WAITS.load(Ordering::Relaxed),
++            parallel::DIAG_JOIN_TIMEOUTS.load(Ordering::Relaxed),
++            parallel::DIAG_DRAIN_TIMEOUTS.load(Ordering::Relaxed)
++        );
+         result.elapsed = start.elapsed();
+         Ok(result)
+     }
+diff --git a/deft-reversi-engine/src/search/session.rs b/deft-reversi-engine/src/search/session.rs
+index 0294179..ec49b04 100644
+--- a/deft-reversi-engine/src/search/session.rs
++++ b/deft-reversi-engine/src/search/session.rs
+@@ -73,10 +73,13 @@ impl Runtime {
+     pub(super) fn drain(&self) {
+         let mut guard = parallel::lock(&self.pending_lock);
+         while self.pending.load(Ordering::Acquire) != 0 {
+-            let (next, _) = self
++            let (next, timeout) = self
+                 .pending_ready
+                 .wait_timeout(guard, Duration::from_millis(5))
+                 .unwrap_or_else(|p| p.into_inner());
++            if timeout.timed_out() {
++                crate::parallel::DIAG_DRAIN_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
++            }
+             guard = next;
+         }
+     }

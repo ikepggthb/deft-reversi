@@ -1,0 +1,12 @@
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index 1fe5723..c758381 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -1,6 +1,6 @@
+ use super::tree::pick_best;
+ use super::*;
+-const MAX_HELPERS: usize = 3;
++const MAX_HELPERS: usize = 2;
+ 
+ impl Context {
+     pub(super) fn split(
