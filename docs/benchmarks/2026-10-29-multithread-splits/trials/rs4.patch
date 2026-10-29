@@ -1,0 +1,83 @@
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index a4ddb2c..365c5ed 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -344,41 +344,44 @@ impl Context {
+                 } else {
+                     depth >= SPLIT_DEPTH
+                 };
+-            if can_split && count >= 3 && self.runtime.pool.can_offer(&self.ancestors) {
+-                best = self.split(
+-                    position,
+-                    candidates[start..count].to_vec(),
+-                    (alpha, beta),
+-                    SearchSpec {
+-                        depth: depth - 1,
+-                        exact,
+-                        probcut: allow_probcut,
+-                    },
+-                    best,
+-                    None,
+-                )?;
+-            } else {
+-                for index in start..count {
+-                    pick_best(&mut candidates[..count], index);
+-                    if let Some(line) = self.sibling(
++            let child_spec = SearchSpec {
++                depth: depth - 1,
++                exact,
++                probcut: allow_probcut,
++            };
++            let mut index = start;
++            while index < count {
++                // Like the reference node_split, retry after every sibling:
++                // a thread that became idle meanwhile can still take the
++                // remaining moves instead of waiting for another split point.
++                let enough = if index == start {
++                    count >= 3
++                } else {
++                    count - index >= 4
++                };
++                if can_split && enough && self.runtime.pool.can_offer(&self.ancestors) {
++                    best = self.split(
+                         position,
+-                        candidates[index],
+-                        alpha,
+-                        beta,
+-                        SearchSpec {
+-                            depth: depth - 1,
+-                            exact,
+-                            probcut: allow_probcut,
+-                        },
+-                    )? {
+-                        if line.score > best.score {
+-                            best = line;
+-                        }
+-                        alpha = alpha.max(best.score);
+-                        if alpha >= beta {
+-                            self.stats.beta_cuts += 1;
+-                            break;
+-                        }
++                        candidates[index..count].to_vec(),
++                        (alpha, beta),
++                        child_spec,
++                        best,
++                        None,
++                    )?;
++                    break;
++                }
++                pick_best(&mut candidates[..count], index);
++                index += 1;
++                if let Some(line) =
++                    self.sibling(position, candidates[index - 1], alpha, beta, child_spec)?
++                {
++                    if line.score > best.score {
++                        best = line;
++                    }
++                    alpha = alpha.max(best.score);
++                    if alpha >= beta {
++                        self.stats.beta_cuts += 1;
++                        break;
+                     }
+                 }
+             }

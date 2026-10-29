@@ -1,0 +1,17 @@
+{
+  "threads": 1,
+  "cpu_affinity": [
+    1
+  ],
+  "rounds": 5,
+  "reference_api": "Solver::from_file + solve(board, 60)",
+  "new_api": "SearchMode::Exact with same model MPC calibration for preparation",
+  "main_tt_mib": 256,
+  "hashes": {
+    "tools/engine-compare/target/release/deft-engine-compare": "4eeeff778c7f818771fb9997ef36c421e75619b2593734c17596164f0230d799",
+    "../deft-reversi-feature/data/eval/eval-v4.bin": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+    "/tmp/deft-pattern.dpr2": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+    "docs/benchmarks/2026-10-24-ffo40-49/ffo40-49.obf": "f855c6181c11b539faed53125be1aff85b8c16b77817a036313533a43e2f1d16"
+  },
+  "reference_commit": "f4192a0bfe62f456d6ffe5716fb797d697f6c6d3"
+}

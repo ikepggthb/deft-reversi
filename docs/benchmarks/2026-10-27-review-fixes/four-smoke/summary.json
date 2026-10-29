@@ -1,0 +1,137 @@
+{
+  "rounds": 4,
+  "positions": 1,
+  "runs": 16,
+  "cpu": 0,
+  "threads": 1,
+  "main_tt_entries": 8388608,
+  "orders": [
+    [
+      "deft",
+      "edax",
+      "egar_avx512",
+      "egar_simd"
+    ],
+    [
+      "edax",
+      "egar_simd",
+      "deft",
+      "egar_avx512"
+    ],
+    [
+      "egar_simd",
+      "egar_avx512",
+      "edax",
+      "deft"
+    ],
+    [
+      "egar_avx512",
+      "deft",
+      "egar_simd",
+      "edax"
+    ]
+  ],
+  "round_seconds": {
+    "deft": [
+      0.24273585,
+      0.254097512,
+      0.233127108,
+      0.227334188
+    ],
+    "edax": [
+      0.184,
+      0.189,
+      0.183,
+      0.175
+    ],
+    "egar_simd": [
+      0.178,
+      0.191,
+      0.17,
+      0.17
+    ],
+    "egar_avx512": [
+      0.191,
+      0.196,
+      0.16,
+      0.174
+    ]
+  },
+  "seconds_median": {
+    "deft": 0.237931479,
+    "edax": 0.1835,
+    "egar_simd": 0.174,
+    "egar_avx512": 0.1825
+  },
+  "paired_deft_time_ratios": {
+    "edax": [
+      1.3192165760869565,
+      1.3444312804232805,
+      1.2739186229508197,
+      1.299052502857143
+    ],
+    "egar_simd": [
+      1.3636845505617978,
+      1.3303534659685865,
+      1.3713359294117646,
+      1.3372599294117646
+    ],
+    "egar_avx512": [
+      1.2708683246073298,
+      1.2964158775510204,
+      1.4570444249999999,
+      1.3065183218390806
+    ]
+  },
+  "paired_deft_time_ratio_medians": {
+    "edax": 1.3091345394720497,
+    "egar_simd": 1.3504722399867812,
+    "egar_avx512": 1.3014670996950506
+  },
+  "deft_faster_rounds": {
+    "edax": 0,
+    "egar_simd": 0,
+    "egar_avx512": 0
+  },
+  "per_position": {
+    "40": {
+      "deft": {
+        "seconds_median": 0.237931479,
+        "nodes_values": [
+          8762000
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.1835,
+        "nodes_values": [
+          10105232
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.174,
+        "nodes_values": [
+          9539933
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.1825,
+        "nodes_values": [
+          9539933
+        ]
+      }
+    }
+  },
+  "all_scores_match_published_answers": true,
+  "all_full_depth_and_nonselective": true,
+  "all_engine_nodes_stable_across_repetitions": true,
+  "binary_sha256": {
+    "deft": "e02a54f3a660ac4f7eafdb6445cf329e0ffe99ff3c8f0d5530baf2fbd66afbde",
+    "edax": "a9b8c64891781832aadf89df938f2a377b9abfc62f9b2b740607bc03274d0ad9",
+    "egar_simd": "80fdd6999eb2a66b269b83ad8f6caf4bdb8a416e7f6bba225323a75c55b4c5ab",
+    "egar_avx512": "4d9c55bc3f5f7d2c5dd1116d4c1f3dcf1c329c62b49bab7c2b9896c515e206a0"
+  },
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "085e974cbace8dcaf105e89728384d9777e9ae9eaf24e7b4a6b2eabff700a988",
+  "answers_sha256": "b88349438defdd32bf0f9785263166387e8cd179dddd2e4d90bc27a11fac38f4"
+}

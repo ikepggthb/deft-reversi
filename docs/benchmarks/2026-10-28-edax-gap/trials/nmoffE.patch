@@ -1,0 +1,24 @@
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 44a3366..4b97156 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -104,19 +104,6 @@ impl Context {
+             }
+             let legal = child.get_moves();
+             let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();
+-            if mobility <= 1 {
+-                self.enter()?;
+-                let score =
+-                    -self.endgame_score_entered(child, -beta, -alpha, Some(legal), Some(probe))?;
+-                if score > best {
+-                    best = score;
+-                    *best_move = bit.trailing_zeros() as u8;
+-                }
+-                if score >= beta {
+-                    return Ok(score);
+-                }
+-                continue;
+-            }
+             let ordering = endgame_ordering(child, legal, bit, odd);
+             #[cfg(feature = "endgame-pattern-ordering")]
+             let ordering = if board.empty_count() >= 11 {

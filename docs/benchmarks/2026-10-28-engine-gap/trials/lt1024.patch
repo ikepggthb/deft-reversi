@@ -1,0 +1,22 @@
+diff --git a/deft-reversi-engine/src/search/endgame/local_tt.rs b/deft-reversi-engine/src/search/endgame/local_tt.rs
+index f1b0083..3da09c0 100644
+--- a/deft-reversi-engine/src/search/endgame/local_tt.rs
++++ b/deft-reversi-engine/src/search/endgame/local_tt.rs
+@@ -1,7 +1,7 @@
+ //! Context-owned endgame TT; probes are immutable snapshots, never slot pointers.
+ use super::{LOCAL_END_MAX, TAIL_EMPTIES};
+ use crate::Board;
+-const LOCAL_SLOTS: usize = 2048;
++const LOCAL_SLOTS: usize = 1024;
+ const LAYERS: usize = (LOCAL_END_MAX - TAIL_EMPTIES + 1) as usize;
+ 
+ #[derive(Default)]
+@@ -36,7 +36,7 @@ impl EndgameCache {
+         // separated by 32 squares, creating systematic aliases.
+         let hash = board.player_bits().wrapping_mul(0x9dda1c54cfe6b6e9)
+             ^ board.opponent_bits().wrapping_mul(0xa2e6c0300831e05a);
+-        let index = (hash >> 53) as u16;
++        let index = (hash >> 54) as u16;
+         let mut probe = EndProbe {
+             index,
+             ..EndProbe::EMPTY

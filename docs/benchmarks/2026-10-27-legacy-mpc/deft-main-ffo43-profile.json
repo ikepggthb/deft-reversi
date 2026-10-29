@@ -1,0 +1,191 @@
+{
+  "binary_sha256": "220a4a196faa0f9ea34612662f831d3d37b54c2485e2fdabc09b69e9c5f58301",
+  "total_samples": 471,
+  "outside_executable": 43,
+  "mapped_samples": 428,
+  "method": "ITIMER_PROF 1ms, executable self-time",
+  "functions": [
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::endgame_score_entered",
+      "samples": 146,
+      "fraction_mapped": 0.3411214953271028
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::tail_score_impl",
+      "samples": 85,
+      "fraction_mapped": 0.1985981308411215
+    },
+    {
+      "name": "deft_reversi_engine::board::stability::null_window_upper",
+      "samples": 46,
+      "fraction_mapped": 0.10747663551401869
+    },
+    {
+      "name": "deft_reversi_engine::search::last_four::solve_score_2_empties",
+      "samples": 39,
+      "fraction_mapped": 0.0911214953271028
+    },
+    {
+      "name": "deft_reversi_engine::search::last_four::solve_score_3_empties",
+      "samples": 25,
+      "fraction_mapped": 0.05841121495327103
+    },
+    {
+      "name": "<deft_reversi_engine::transposition::Table>::get",
+      "samples": 23,
+      "fraction_mapped": 0.053738317757009345
+    },
+    {
+      "name": "<deft_reversi_engine::evaluation::EvalState>::played",
+      "samples": 18,
+      "fraction_mapped": 0.04205607476635514
+    },
+    {
+      "name": "<deft_reversi_engine::evaluation::PatternModel>::evaluate_state",
+      "samples": 13,
+      "fraction_mapped": 0.030373831775700934
+    },
+    {
+      "name": "deft_reversi_engine::board::edge_stability::find_edge_stable",
+      "samples": 11,
+      "fraction_mapped": 0.02570093457943925
+    },
+    {
+      "name": "deft_reversi_engine::search::last_four::solve_score_1_empties",
+      "samples": 9,
+      "fraction_mapped": 0.02102803738317757
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::ordering_search",
+      "samples": 5,
+      "fraction_mapped": 0.011682242990654205
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::node",
+      "samples": 4,
+      "fraction_mapped": 0.009345794392523364
+    },
+    {
+      "name": "deft_reversi_engine::search::tree::odd_regions",
+      "samples": 1,
+      "fraction_mapped": 0.002336448598130841
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::sibling",
+      "samples": 1,
+      "fraction_mapped": 0.002336448598130841
+    },
+    {
+      "name": "deft_reversi_engine::search::tree::pick_best",
+      "samples": 1,
+      "fraction_mapped": 0.002336448598130841
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::one_ply",
+      "samples": 1,
+      "fraction_mapped": 0.002336448598130841
+    }
+  ],
+  "instructions": [
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::endgame_score_entered",
+      "offset": "0x5a875",
+      "samples": 27
+    },
+    {
+      "name": "<deft_reversi_engine::transposition::Table>::get",
+      "offset": "0x5750c",
+      "samples": 21
+    },
+    {
+      "name": "deft_reversi_engine::board::stability::null_window_upper",
+      "offset": "0x5c946",
+      "samples": 10
+    },
+    {
+      "name": "deft_reversi_engine::search::last_four::solve_score_2_empties",
+      "offset": "0x63574",
+      "samples": 6
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::endgame_score_entered",
+      "offset": "0x5a058",
+      "samples": 5
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::tail_score_impl",
+      "offset": "0x611c7",
+      "samples": 5
+    },
+    {
+      "name": "<deft_reversi_engine::evaluation::EvalState>::played",
+      "offset": "0x5767c",
+      "samples": 5
+    },
+    {
+      "name": "deft_reversi_engine::search::last_four::solve_score_3_empties",
+      "offset": "0x62137",
+      "samples": 5
+    },
+    {
+      "name": "<deft_reversi_engine::evaluation::EvalState>::played",
+      "offset": "0x57695",
+      "samples": 5
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::endgame_score_entered",
+      "offset": "0x59e52",
+      "samples": 5
+    },
+    {
+      "name": "deft_reversi_engine::search::last_four::solve_score_2_empties",
+      "offset": "0x63911",
+      "samples": 4
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::endgame_score_entered",
+      "offset": "0x5a9a3",
+      "samples": 4
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::tail_score_impl",
+      "offset": "0x61658",
+      "samples": 4
+    },
+    {
+      "name": "deft_reversi_engine::search::last_four::solve_score_1_empties",
+      "offset": "0x63f6a",
+      "samples": 4
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::endgame_score_entered",
+      "offset": "0x5a575",
+      "samples": 3
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::tail_score_impl",
+      "offset": "0x60e99",
+      "samples": 3
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::endgame_score_entered",
+      "offset": "0x5a81b",
+      "samples": 3
+    },
+    {
+      "name": "deft_reversi_engine::board::stability::null_window_upper",
+      "offset": "0x5c84f",
+      "samples": 3
+    },
+    {
+      "name": "<deft_reversi_engine::search::session::Context>::tail_score_impl",
+      "offset": "0x611b2",
+      "samples": 3
+    },
+    {
+      "name": "deft_reversi_engine::board::edge_stability::find_edge_stable",
+      "offset": "0x60df6",
+      "samples": 3
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+diff --git a/deft-reversi-engine/src/search/endgame/shallow.rs b/deft-reversi-engine/src/search/endgame/shallow.rs
+index dddb740..71cea14 100644
+--- a/deft-reversi-engine/src/search/endgame/shallow.rs
++++ b/deft-reversi-engine/src/search/endgame/shallow.rs
+@@ -1,5 +1,5 @@
+ //! Dedicated five- and six-empty null-window kernels.
+-use super::parity::{PARITY_REGIONS, SQUARE_PARITY};
++use super::parity::SQUARE_PARITY;
+ use super::{Board, Context};
+ 
+ impl Context {
+@@ -29,7 +29,7 @@ impl Context {
+                 )
+                 .map(|score| -score);
+         }
+-        let mut preferred = moves & PARITY_REGIONS[usize::from(parity)];
++        let mut preferred = moves & isolated_empties(board);
+         let mut best = -65;
+         while moves != 0 {
+             let options = if preferred != 0 { preferred } else { moves };
+@@ -56,7 +56,7 @@ impl Context {
+     ) -> Result<i32, ()> {
+         debug_assert_eq!(board.empty_count(), 5);
+         let mut empty = !(board.player_bits() | board.opponent_bits());
+-        let mut preferred = empty & PARITY_REGIONS[usize::from(parity)];
++        let mut preferred = isolated_empties(board);
+         let child_alpha = -alpha - 1;
+         let mut best = -65;
+         while empty != 0 {
+@@ -95,3 +95,13 @@ impl Context {
+             .map(|score| -score)
+     }
+ }
++
++/// Empty squares without an empty king-move neighbour.
++#[inline(always)]
++fn isolated_empties(board: Board) -> u64 {
++    let empty = !(board.player_bits() | board.opponent_bits());
++    let horizontal = ((empty >> 1) & 0x7f7f7f7f7f7f7f7f) | ((empty << 1) & 0xfefefefefefefefe);
++    let row = horizontal | empty;
++    let around = horizontal | (row >> 8) | (row << 8);
++    empty & !around
++}

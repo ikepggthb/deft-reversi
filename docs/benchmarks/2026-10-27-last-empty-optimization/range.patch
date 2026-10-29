@@ -1,0 +1,15 @@
+--- a/deft-reversi-engine/src/board/last.rs
++++ b/deft-reversi-engine/src/board/last.rs
+@@ -97,8 +97,10 @@
+         let mut sum = i32::from(COUNTS[square % 8][((player >> (square & 56)) & 255) as usize]);
+         for line in &LINES[square] {
+             // SAFETY: the complete module is compiled only with BMI2 enabled.
+-            let packed = unsafe { _pext_u64(player, line.mask) } as usize;
+-            sum += i32::from(COUNTS[line.position][packed]);
++            // Every generated line has at most eight squares. Express the
++            // PEXT result's range in its type so table indexing needs no guard.
++            let packed = unsafe { _pext_u64(player, line.mask) } as u8;
++            sum += i32::from(COUNTS[line.position][usize::from(packed)]);
+         }
+         sum
+     }

@@ -1,0 +1,30 @@
+round=1 threads=1 deft=9.983 edax455=10.352 edax46=14.222 egar781_gcc=11.292 egar781_clang=9.969
+round=1 threads=2 deft=5.153 edax455=5.354 edax46=7.116 egar781_gcc=6.982 egar781_clang=6.161
+round=1 threads=4 deft=2.892 edax455=2.996 edax46=4.127 egar781_gcc=4.075 egar781_clang=3.540
+round=1 threads=8 deft=1.817 edax455=1.816 edax46=2.410 egar781_gcc=1.780 egar781_clang=1.584
+round=2 threads=8 deft=1.847 edax455=1.769 edax46=2.455 egar781_gcc=1.752 egar781_clang=1.953
+round=2 threads=4 deft=2.904 edax455=3.037 edax46=4.169 egar781_gcc=3.889 egar781_clang=3.469
+round=2 threads=2 deft=5.176 edax455=5.349 edax46=7.115 egar781_gcc=6.979 egar781_clang=6.096
+round=2 threads=1 deft=9.960 edax455=10.361 edax46=14.199 egar781_gcc=11.289 egar781_clang=9.920
+round=3 threads=1 deft=9.968 edax455=10.379 edax46=14.238 egar781_gcc=11.267 egar781_clang=9.935
+round=3 threads=2 deft=5.171 edax455=5.357 edax46=7.130 egar781_gcc=6.969 egar781_clang=6.156
+round=3 threads=4 deft=2.900 edax455=3.005 edax46=4.114 egar781_gcc=3.903 egar781_clang=3.501
+round=3 threads=8 deft=1.859 edax455=1.840 edax46=2.407 egar781_gcc=1.705 egar781_clang=1.594
+round=4 threads=8 deft=1.830 edax455=1.803 edax46=2.385 egar781_gcc=1.685 egar781_clang=1.566
+round=4 threads=4 deft=2.894 edax455=3.039 edax46=4.109 egar781_gcc=3.989 egar781_clang=3.620
+round=4 threads=2 deft=5.149 edax455=5.321 edax46=7.116 egar781_gcc=6.987 egar781_clang=6.141
+round=4 threads=1 deft=9.971 edax455=10.345 edax46=14.239 egar781_gcc=11.255 egar781_clang=9.925
+round=5 threads=1 deft=9.960 edax455=10.337 edax46=14.232 egar781_gcc=11.273 egar781_clang=9.945
+round=5 threads=2 deft=5.150 edax455=5.319 edax46=7.079 egar781_gcc=6.975 egar781_clang=6.158
+round=5 threads=4 deft=2.895 edax455=3.017 edax46=4.121 egar781_gcc=4.087 egar781_clang=3.561
+round=5 threads=8 deft=1.838 edax455=1.805 edax46=2.445 egar781_gcc=1.776 egar781_clang=1.577
+round=6 threads=8 deft=1.868 edax455=1.838 edax46=2.415 egar781_gcc=1.693 egar781_clang=1.548
+round=6 threads=4 deft=2.895 edax455=3.057 edax46=4.133 egar781_gcc=3.897 egar781_clang=3.438
+round=6 threads=2 deft=5.148 edax455=5.311 edax46=7.242 egar781_gcc=6.967 egar781_clang=6.131
+round=6 threads=1 deft=9.965 edax455=10.392 edax46=14.199 egar781_gcc=11.287 egar781_clang=9.917
+deft t1=9.966s(x1.00) t2=5.152s(x1.93) t4=2.895s(x3.44) t8=1.843s(x5.41)
+edax455 t1=10.357s(x1.00) t2=5.335s(x1.94) t4=3.027s(x3.42) t8=1.810s(x5.72)
+edax46 t1=14.227s(x1.00) t2=7.116s(x2.00) t4=4.124s(x3.45) t8=2.412s(x5.90)
+egar781_gcc t1=11.280s(x1.00) t2=6.977s(x1.62) t4=3.946s(x2.86) t8=1.728s(x6.53)
+egar781_clang t1=9.930s(x1.00) t2=6.149s(x1.62) t4=3.521s(x2.82) t8=1.581s(x6.28)
+exit=0

@@ -1,0 +1,20 @@
+{
+  "selected": "returned-boundary",
+  "default_native_tests_passed": 61,
+  "feature_native_tests_passed": 61,
+  "include_ignored": true,
+  "test_threads": 1,
+  "default_test_log": "returned-boundary-tests.log",
+  "feature_test_log": "feature-tests.log",
+  "provided_boundary_default_tests_passed": 61,
+  "provided_boundary_test_log": "provided-boundary-tests.log",
+  "cargo_fmt_check": true,
+  "git_diff_check": true,
+  "all_cumulative_patches_apply_to_task_baseline": true,
+  "final_patch_reconstructs_current_source": true,
+  "final_default_binary_sha256": "37c7921866885a22a7e8b407e253d3d85a4f54ea7977a9ca2ca8417fbbcc0ae8",
+  "final_rebuild_matches_measured_binary": true,
+  "benchmark_total_runs": 180,
+  "benchmark_all_scores_and_nodes_match": true,
+  "warning": "Pre-existing deprecated AtomicU64::fetch_update in search/tree.rs."
+}

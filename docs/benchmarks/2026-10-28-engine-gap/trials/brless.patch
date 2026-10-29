@@ -1,0 +1,148 @@
+diff --git a/deft-reversi-engine/src/board/stability.rs b/deft-reversi-engine/src/board/stability.rs
+index b4e50d4..8ebcc94 100644
+--- a/deft-reversi-engine/src/board/stability.rs
++++ b/deft-reversi-engine/src/board/stability.rs
+@@ -10,7 +10,10 @@ pub(crate) fn null_window_upper(board: Board, alpha: i32) -> Option<i32> {
+         46, 48, 48, 50, 50, 52, 52, 54, 54, 56, 56, 58, 58, 60, 60, 62, 62, 64, 64, 64, 64, 64, 64,
+         64, 64, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
+     ];
+-    if alpha < THRESHOLD[usize::from(board.empty_count())] {
++    // Stable discs are a subset of the opponent's discs.
++    if alpha < THRESHOLD[usize::from(board.empty_count())]
++        || 64 - 2 * board.opponent_bits().count_ones() as i32 > alpha
++    {
+         return None;
+     }
+     stability_upper(board, alpha)
+@@ -18,9 +21,26 @@ pub(crate) fn null_window_upper(board: Board, alpha: i32) -> Option<i32> {
+ #[inline(never)]
+ fn stability_upper(board: Board, alpha: i32) -> Option<i32> {
+     let full = full_axes(board.player_bits() | board.opponent_bits());
+-    let upper =
+-        64 - 2 * stable(board.opponent_bits(), board.player_bits(), &full).count_ones() as i32;
+-    (upper <= alpha).then_some(upper)
++    // 64 - 2 * stable <= alpha; stop propagating once enough discs are stable.
++    let needed = (65 - alpha).div_euclid(2) as u32;
++    let bits = board.opponent_bits();
++    let central = bits & 0x007e7e7e7e7e7e00;
++    let mut result = super::edge_stability::get_stable_edge(bits, board.player_bits())
++        | (full[0] & full[1] & full[2] & full[3] & central);
++    loop {
++        if result.count_ones() >= needed {
++            return Some(64 - 2 * result.count_ones() as i32);
++        }
++        let horizontal = (result >> 1) | (result << 1) | full[0];
++        let vertical = (result >> 8) | (result << 8) | full[1];
++        let diagonal7 = (result >> 7) | (result << 7) | full[2];
++        let diagonal9 = (result >> 9) | (result << 9) | full[3];
++        let next = result | (horizontal & vertical & diagonal7 & diagonal9 & central);
++        if next == result {
++            return None;
++        }
++        result = next;
++    }
+ }
+ #[cfg(test)]
+ pub(crate) fn score_bounds(board: Board) -> (i32, i32) {
+diff --git a/deft-reversi-engine/src/search/endgame/local_tt.rs b/deft-reversi-engine/src/search/endgame/local_tt.rs
+index 3da09c0..2bab149 100644
+--- a/deft-reversi-engine/src/search/endgame/local_tt.rs
++++ b/deft-reversi-engine/src/search/endgame/local_tt.rs
+@@ -43,14 +43,16 @@ impl EndgameCache {
+         };
+         if let Some(entry) =
+             self.layers[usize::from(empties - TAIL_EMPTIES)].get(usize::from(index))
+-            && entry.player == board.player_bits()
+-            && entry.opponent == board.opponent_bits()
+-            && entry.quality == quality
+         {
+-            probe.lower = entry.lower;
+-            probe.upper = entry.upper;
+-            probe.best = entry.best;
+-            probe.matched = true;
++            // Hits are unpredictable; select instead of branching on them.
++            // A miss keeps the -64..64 bounds, which never cut a window.
++            let hit = (entry.player == board.player_bits())
++                & (entry.opponent == board.opponent_bits())
++                & (entry.quality == quality);
++            probe.lower = if hit { entry.lower } else { -64 };
++            probe.upper = if hit { entry.upper } else { 64 };
++            probe.best = if hit { entry.best } else { 64 };
++            probe.matched = hit;
+         }
+         probe
+     }
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index afbb8a4..73848a1 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -99,19 +99,19 @@ impl Context {
+         // A parent's snapshot remains a valid bound even if a sibling has since
+         // replaced the slot. This cache is owned by this Context, and quality is
+         // fixed until the search stage has joined all workers.
+-        let probe = known_probe.unwrap_or_else(|| self.end_cache.probe(board, quality));
+-        if probe.matched {
+-            if known_probe.is_none() {
+-                self.stats.tt_hits += 1;
+-            }
+-            if i32::from(probe.lower) >= beta {
+-                self.stats.tt_cuts += 1;
+-                return Ok(i32::from(probe.lower));
+-            }
+-            if i32::from(probe.upper) <= alpha {
+-                self.stats.tt_cuts += 1;
+-                return Ok(i32::from(probe.upper));
+-            }
++        let probe = known_probe.unwrap_or_else(|| {
++            let probe = self.end_cache.probe(board, quality);
++            self.stats.tt_hits += u64::from(probe.matched);
++            probe
++        });
++        // Unmatched probes carry -64..64, which never cut.
++        if i32::from(probe.lower) >= beta {
++            self.stats.tt_cuts += 1;
++            return Ok(i32::from(probe.lower));
++        }
++        if i32::from(probe.upper) <= alpha {
++            self.stats.tt_cuts += 1;
++            return Ok(i32::from(probe.upper));
+         }
+         let mut best_move = probe.best;
+         let score = if empties > TAIL_EMPTIES {
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 7dc5cb6..565eb14 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -87,20 +87,18 @@ impl Context {
+             }
+             let child = board.after_known_move(bit, flips);
+             let probe = self.end_cache.probe(child, quality);
+-            if probe.matched {
+-                self.stats.tt_hits += 1;
+-                let lower = -i32::from(probe.upper);
+-                let upper = -i32::from(probe.lower);
+-                if lower >= beta {
+-                    *best_move = bit.trailing_zeros() as u8;
+-                    self.stats.tt_cuts += 1;
+-                    return Ok(lower);
+-                }
+-                if upper <= alpha {
+-                    self.stats.tt_cuts += 1;
+-                    best = best.max(upper);
+-                    continue;
+-                }
++            self.stats.tt_hits += u64::from(probe.matched);
++            let lower = -i32::from(probe.upper);
++            let upper = -i32::from(probe.lower);
++            if lower >= beta {
++                *best_move = bit.trailing_zeros() as u8;
++                self.stats.tt_cuts += 1;
++                return Ok(lower);
++            }
++            if upper <= alpha {
++                self.stats.tt_cuts += 1;
++                best = best.max(upper);
++                continue;
+             }
+             let legal = child.get_moves();
+             let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();

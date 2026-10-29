@@ -1,0 +1,55 @@
+{
+  "commits": {
+    "deft": "8ab1682e7a8d26815ce57cff6202702b20ceadf8",
+    "edax": "786421f355219ade872ce7285c1cab1eaf67836a",
+    "egaroucid": "2a65c87860be999373088ad833aa00b0844883b6"
+  },
+  "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           46 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  3\nOn-line CPU(s) list:                     0-2\nVendor ID:                               AuthenticAMD\nModel name:                              AMD EPYC 9V74 80-Core Processor\nCPU family:                              25\nModel:                                   17\nThread(s) per core:                      1\nCore(s) per socket:                      3\nSocket(s):                               1\nStepping:                                1\nBogoMIPS:                                5192.27\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx512_bf16 clzero xsaveerptr arat npt nrip_save tsc_scale vmcb_clean flushbyasid pausefilter pfthreshold v_vmsave_vmload avx512vbmi umip avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid fsrm arch_capabilities\nHypervisor vendor:                       KVM\nVirtualization type:                     full\nL1d cache:                               64 KiB (2 instances)\nL1i cache:                               64 KiB (2 instances)\nL2 cache:                                2 MiB (2 instances)\nL3 cache:                                32 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-2\nVulnerability Gather data sampling:      Not affected\nVulnerability Ghostwrite:                Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Old microcode:             Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Vulnerable\nVulnerability Spec store bypass:         Vulnerable\nVulnerability Spectre v1:                Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers\nVulnerability Spectre v2:                Vulnerable; STIBP: disabled; PBRSB-eIBRS: Not affected; BHI: Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Vulnerable\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Not affected\n",
+  "cpp_compiler": "g++ (Debian 14.2.0-19) 14.2.0",
+  "builds": {
+    "deft": "Rust 1.99.1, release, fat LTO, codegen-units=1, RUSTFLAGS=-C target-cpu=native, default features; reused verified current binary",
+    "edax": "Existing GCC 14.2 native binary, previous build record: -Ofast -flto -march=native; unchanged clean source checkout",
+    "egar_simd": "Existing G++ 14.2 native binary, previous build record: -O3 -flto -march=native -DHAS_AMD_PROCESSOR; unchanged clean source checkout",
+    "egar_avx512": "g++ -std=c++20 -O3 -flto -march=native -DHAS_AMD_PROCESSOR -DHAS_AVX512 -pthread src/Egaroucid_for_Console.cpp -o bin/Egaroucid_for_Console_AVX512.out"
+  },
+  "data_sha256": {
+    "deft_model": {
+      "path": "/tmp/deft-eval-main.dpr2",
+      "sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069"
+    },
+    "edax_eval": {
+      "path": "/workspace/edax-reversi/bin/data/eval.dat",
+      "sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792"
+    },
+    "egar_eval": {
+      "path": "/workspace/Egaroucid/bin/resources/eval.egev2",
+      "sha256": "0a8acbcbc23067933627f1bcc83c3f7ae6b7ff3e603d174a3364271fcaeeef2f"
+    },
+    "egar_ordering": {
+      "path": "/workspace/Egaroucid/bin/resources/eval_move_ordering_end.egev",
+      "sha256": "bd908885e8bb85e72a9be2b0399f8ca52ed40a138bcaaecca3d13710945b9a93"
+    },
+    "egar_hash23": {
+      "path": "/tmp/deft-three-engines-20261027/hash23.eghs",
+      "sha256": "0a44b764e10b250229d25a007cda5a16857733b92d8566b65d95243739b7d323"
+    }
+  },
+  "main_tt_entries": 8388608,
+  "main_tt_nominal_mib": {
+    "deft": 256,
+    "edax": 192,
+    "egar_simd": 192,
+    "egar_avx512": 192
+  },
+  "auxiliary_tt_notes": "deft PV TT 16 MiB plus local per-depth TT; Edax PV 12 MiB, shallow 12 MiB, local 1024 entries; Egaroucid has local tables and default static capacity beyond the active main table. Equal main entry count does not mean identical memory use.",
+  "comparability": "Each engine uses its own real evaluation and MPC parameters; final searches must be full and scores match. Node definitions and counters differ across engines. Timers use each engine reported search duration, excluding process startup/model/TT allocation. Process wall duration also recorded.",
+  "tt_layout_evidence": {
+    "deft_slot_bytes": 32,
+    "edax_hash_bytes": 24,
+    "egar_hash_node_bytes": 24,
+    "egar_hash_node_fields": "Board: 16, Hash_data: 7, Spinlock atomic<bool>: 1",
+    "egar_static_transposition_table_symbol_bytes_hex": "0x30000078",
+    "egar_default_static_entries": 33554434,
+    "egar_active_hash23_entries": 8388610
+  }
+}

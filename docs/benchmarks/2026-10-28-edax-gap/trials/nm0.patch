@@ -1,0 +1,13 @@
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 48be766..3d73d9b 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -104,7 +104,7 @@ impl Context {
+             }
+             let legal = child.get_moves();
+             let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();
+-            if mobility <= 1 {
++            if mobility == 0 {
+                 self.enter()?;
+                 let score =
+                     -self.endgame_score_entered(child, -beta, -alpha, Some(legal), Some(probe))?;

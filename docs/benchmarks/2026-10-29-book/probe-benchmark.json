@@ -1,0 +1,1 @@
+{"candidates":9,"hits":10000,"includes":"normalization, lookup, candidate coordinate restoration, timer overhead; warm supplied working set","load_seconds":0.000018292,"p50_ns":66,"p95_ns":67,"p99_ns":67,"positions":4,"queries":10000,"resident_bytes":347}

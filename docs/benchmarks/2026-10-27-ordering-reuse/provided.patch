@@ -1,0 +1,82 @@
+--- a/deft-reversi-engine/src/evaluation/mod.rs
++++ b/deft-reversi-engine/src/evaluation/mod.rs
+@@ -71,6 +71,15 @@
+         self.evaluate_state(board, &EvalState::from_board(*board))
+     }
+     pub(crate) fn evaluate_state(&self, board: &Board, state: &EvalState) -> i32 {
++        self.evaluate_state_with_moves(board, state, board.get_moves())
++    }
++    /// Reuse the current player's legal moves already needed for move ordering.
++    pub(crate) fn evaluate_state_with_moves(
++        &self,
++        board: &Board,
++        state: &EvalState,
++        moves: u64,
++    ) -> i32 {
+         let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
+         let weights = &self.phases[phase];
+         let mut raw = i32::from(weights.bias);
+@@ -81,7 +90,7 @@
+             }
+             offset += size;
+         }
+-        let mobility = 64 + board.get_moves().count_ones() as i32
++        let mobility = 64 + moves.count_ones() as i32
+             - board.get_opponent_moves().count_ones() as i32;
+         raw += i32::from(weights.mobility[mobility as usize]);
+         ((raw + raw.signum() * 64) / 128).clamp(-64, 64)
+--- a/deft-reversi-engine/src/search/ordering.rs
++++ b/deft-reversi-engine/src/search/ordering.rs
+@@ -34,8 +34,16 @@
+             )
+         };
+         let state = parent.state.played(bit, flips);
+-        let value = if depth == 0 {
+-            self.evaluate(child, &state)
++        let moves = child.get_moves();
++        let value = if depth <= 1 {
++            if depth == 1 {
++                // Preserve the depth-zero ordering_search visit and hard budget.
++                self.enter()?;
++            }
++            self.stats.evaluations += 1;
++            self.runtime
++                .model
++                .evaluate_state_with_moves(&child, &state, moves)
+         } else {
+             self.ordering_search(
+                 Position {
+@@ -47,7 +55,6 @@
+                 depth - 1,
+             )?
+         };
+-        let moves = child.get_moves();
+         let mobility =
+             -2 * moves.count_ones() as i32 - (moves & 0x8100000000000081).count_ones() as i32;
+         let presence = if depth > 2 && self.runtime.table.get(child).is_some() {
+@@ -75,8 +82,15 @@
+             _ => 3,
+         };
+         let state = parent.state.played(bit, flips);
+-        let value = if ordering_depth == 0 {
+-            self.evaluate(child, &state)
++        let legal = child.get_moves();
++        let value = if ordering_depth <= 1 {
++            if ordering_depth == 1 {
++                self.enter()?;
++            }
++            self.stats.evaluations += 1;
++            self.runtime
++                .model
++                .evaluate_state_with_moves(&child, &state, legal)
+         } else {
+             self.ordering_search(
+                 Position {
+@@ -88,7 +102,6 @@
+                 ordering_depth - 1,
+             )?
+         };
+-        let legal = child.get_moves();
+         Ok(-value
+             - 2 * legal.count_ones() as i32
+             - (legal & 0x8100000000000081).count_ones() as i32)

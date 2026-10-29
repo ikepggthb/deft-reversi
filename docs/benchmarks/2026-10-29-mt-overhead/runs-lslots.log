@@ -1,0 +1,25 @@
+round=1 c0ed2aa=1.6821 lslots2048=1.6855 lslots4096=1.6597 lslots8192=1.6897
+round=2 c0ed2aa=1.6796 lslots2048=1.6931 lslots4096=1.6827 lslots8192=1.7240
+round=3 c0ed2aa=1.6628 lslots2048=1.6745 lslots4096=1.6801 lslots8192=1.6837
+round=4 c0ed2aa=1.6835 lslots2048=1.6698 lslots4096=1.6721 lslots8192=1.7086
+       c0ed2aa: median 1.6808s ratio 1.0000 faster 0/4 nodes [668658182, 672422371, 673671893, 676846170]
+    lslots2048: median 1.6800s ratio 1.0046 faster 1/4 nodes [663446038, 665062037, 673794611, 674690656]
+    lslots4096: median 1.6761s ratio 0.9975 faster 2/4 nodes [658744722, 662607526, 663965910, 664372554]
+    lslots8192: median 1.6992s ratio 1.0137 faster 0/4 nodes [657526558, 658420581, 664975821, 671100581]
+round=1 c0ed2aa=1.2974 lslots2048=1.2622 lslots4096=1.2830 lslots8192=1.3133
+round=2 c0ed2aa=1.2478 lslots2048=1.2565 lslots4096=1.2492 lslots8192=1.3351
+round=3 c0ed2aa=1.2725 lslots2048=1.2232 lslots4096=1.3024 lslots8192=1.3379
+round=4 c0ed2aa=1.2414 lslots2048=1.2863 lslots4096=1.2592 lslots8192=1.3264
+       c0ed2aa: median 1.2601s ratio 1.0000 faster 0/4 nodes [769823749, 778714615, 792486786, 800607556]
+    lslots2048: median 1.2594s ratio 0.9899 faster 2/4 nodes [751734540, 773913972, 776180564, 783624243]
+    lslots4096: median 1.2711s ratio 1.0077 faster 1/4 nodes [760204396, 763648427, 779686408, 785668402]
+    lslots8192: median 1.3308s ratio 1.0600 faster 0/4 nodes [753109530, 768310131, 769024799, 774260204]
+round=1 c0ed2aa=9.9274 lslots2048=9.8544 lslots4096=9.7178 lslots8192=9.7061
+round=2 c0ed2aa=9.9451 lslots2048=9.8220 lslots4096=9.7171 lslots8192=9.6786
+round=3 c0ed2aa=9.9284 lslots2048=9.8261 lslots4096=9.7430 lslots8192=9.6900
+round=4 c0ed2aa=9.9308 lslots2048=9.8348 lslots4096=9.7223 lslots8192=9.7022
+       c0ed2aa: median 9.9296s ratio 1.0000 faster 0/4 nodes [598775406]
+    lslots2048: median 9.8305s ratio 0.9900 faster 4/4 nodes [591006483]
+    lslots4096: median 9.7201s ratio 0.9789 faster 4/4 nodes [584497674]
+    lslots8192: median 9.6961s ratio 0.9765 faster 4/4 nodes [578528547]
+exit=0

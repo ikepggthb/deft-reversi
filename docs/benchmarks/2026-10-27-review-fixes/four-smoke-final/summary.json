@@ -1,0 +1,137 @@
+{
+  "rounds": 4,
+  "positions": 1,
+  "runs": 16,
+  "cpu": 0,
+  "threads": 1,
+  "main_tt_entries": 8388608,
+  "orders": [
+    [
+      "deft",
+      "edax",
+      "egar_avx512",
+      "egar_simd"
+    ],
+    [
+      "edax",
+      "egar_simd",
+      "deft",
+      "egar_avx512"
+    ],
+    [
+      "egar_simd",
+      "egar_avx512",
+      "edax",
+      "deft"
+    ],
+    [
+      "egar_avx512",
+      "deft",
+      "egar_simd",
+      "edax"
+    ]
+  ],
+  "round_seconds": {
+    "deft": [
+      0.220914294,
+      0.23614894,
+      0.222397637,
+      0.23186592
+    ],
+    "edax": [
+      0.175,
+      0.18,
+      0.197,
+      0.182
+    ],
+    "egar_simd": [
+      0.179,
+      0.172,
+      0.183,
+      0.181
+    ],
+    "egar_avx512": [
+      0.159,
+      0.172,
+      0.187,
+      0.17
+    ]
+  },
+  "seconds_median": {
+    "deft": 0.2271317785,
+    "edax": 0.181,
+    "egar_simd": 0.18,
+    "egar_avx512": 0.17099999999999999
+  },
+  "paired_deft_time_ratios": {
+    "edax": [
+      1.2623673942857145,
+      1.3119385555555556,
+      1.1289220152284265,
+      1.2739885714285715
+    ],
+    "egar_simd": [
+      1.2341580670391064,
+      1.3729589534883722,
+      1.2152876338797816,
+      1.281027182320442
+    ],
+    "egar_avx512": [
+      1.3893980754716981,
+      1.3729589534883722,
+      1.1892921764705884,
+      1.3639171764705882
+    ]
+  },
+  "paired_deft_time_ratio_medians": {
+    "edax": 1.268177982857143,
+    "egar_simd": 1.2575926246797742,
+    "egar_avx512": 1.3684380649794803
+  },
+  "deft_faster_rounds": {
+    "edax": 0,
+    "egar_simd": 0,
+    "egar_avx512": 0
+  },
+  "per_position": {
+    "40": {
+      "deft": {
+        "seconds_median": 0.2271317785,
+        "nodes_values": [
+          8767895
+        ]
+      },
+      "edax": {
+        "seconds_median": 0.181,
+        "nodes_values": [
+          10105232
+        ]
+      },
+      "egar_simd": {
+        "seconds_median": 0.18,
+        "nodes_values": [
+          9539933
+        ]
+      },
+      "egar_avx512": {
+        "seconds_median": 0.17099999999999999,
+        "nodes_values": [
+          9539933
+        ]
+      }
+    }
+  },
+  "all_scores_match_published_answers": true,
+  "all_full_depth_and_nonselective": true,
+  "all_engine_nodes_stable_across_repetitions": true,
+  "binary_sha256": {
+    "deft": "d2eeaae3bfe3ef9fde5d905b1dd929394fdf405c791e5c6965a2abebf7a33d72",
+    "edax": "a9b8c64891781832aadf89df938f2a377b9abfc62f9b2b740607bc03274d0ad9",
+    "egar_simd": "80fdd6999eb2a66b269b83ad8f6caf4bdb8a416e7f6bba225323a75c55b4c5ab",
+    "egar_avx512": "4d9c55bc3f5f7d2c5dd1116d4c1f3dcf1c329c62b49bab7c2b9896c515e206a0"
+  },
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "085e974cbace8dcaf105e89728384d9777e9ae9eaf24e7b4a6b2eabff700a988",
+  "answers_sha256": "b88349438defdd32bf0f9785263166387e8cd179dddd2e4d90bc27a11fac38f4"
+}

@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-29",
+  "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+  "cpu_topology": "20 cores, no SMT; P-cores CPU 0-7 (max 5.5 GHz, CPU 1 and 3 5.6 GHz), E-cores CPU 8-19 (max 4.6 GHz); no AVX-512",
+  "l3": "30 MiB",
+  "memory_gib": 62,
+  "kernel": "7.2.11-zen1-1-zen",
+  "governor": "intel_pstate powersave, turbo on",
+  "machine": "desktop (GUI session running; no other benchmarks/builds during measurement)",
+  "cpusets": {
+    "1": "4",
+    "2": "4-5",
+    "4": "4-7",
+    "8": "0-7"
+  },
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "gcc": "gcc (GCC) 16.2.1 20260810",
+  "deft": {
+    "commit": "3b4e83d",
+    "build": "RUSTFLAGS='-C target-cpu=native' cargo build --locked --release --example solve",
+    "binary_sha256": "a9637e7511330d9ac8e872233b985e86cb977eae33b92e257a67040a86622f5d",
+    "options": "exact N 256 --legacy-main-mpc"
+  },
+  "edax": {
+    "commit": "786421f355219ade872ce7285c1cab1eaf67836a",
+    "build": "make build CC=gcc ARCH=native (src/)",
+    "binary_sha256": "289aff4c65a5cf7274a6683a4fc52106aa76fa227f18abbd88aceae4028fcb09",
+    "options": "-solve case -n N -l 60 -h 23 -eval-file eval.dat -book-usage off"
+  },
+  "egaroucid": {
+    "commit": "2a65c87860be999373088ad833aa00b0844883b6 + ../2026-10-28-engine-gap/egaroucid-console-readlink.patch",
+    "build": "g++ -std=c++20 -O3 -flto -march=native -pthread src/Egaroucid_for_Console.cpp (SIMD; no AVX-512 on this CPU, Intel so no -DHAS_AMD_PROCESSOR)",
+    "binary_sha256": "bbea78a3d48e1e246b729ee87c0d49906dfd582bc17f2f73a82cb11aeeee433d",
+    "options": "-t N -l 60 -nobook -hash 23 -s case"
+  },
+  "data_sha256": {
+    "deft-eval-main.dpr2": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+    "edax eval.dat": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+    "egaroucid eval.egev2": "0a8acbcbc23067933627f1bcc83c3f7ae6b7ff3e603d174a3364271fcaeeef2f",
+    "egaroucid eval_move_ordering_end.egev": "bd908885e8bb85e72a9be2b0399f8ca52ed40a138bcaaecca3d13710945b9a93",
+    "egaroucid hash23.eghs": "0a44b764e10b250229d25a007cda5a16857733b92d8566b65d95243739b7d323"
+  },
+  "edax_eval_source": "copied from ~/Downloads/edax-4.6-linux-x86/data/eval.dat; SHA-256 equals the v4.4 eval.7z data/eval.dat recorded earlier",
+  "release_comparison": {
+    "run": "runs/mt-release",
+    "clang": "clang version 23.1.4",
+    "edax455": {
+      "source": "distributed binary ~/dev/edax-4.5.5/bin/lEdax-x86-64-v3 (from ~/Downloads/edax-4.5.5.zip, sha256 6f446149092b37cbaa57f68a5610c6e960d45c4f0cbb9a3c8e7a563b503fa9a4); reports \"Edax version 4.5.5 Jun 25 2025\"",
+      "binary_sha256": "04d07fdd161dbf0150d45d98277a3ee233e385035e59249e482c2412ebb71476",
+      "note": "x86-64-v4 build needs AVX-512, unavailable on this CPU"
+    },
+    "edax46": {
+      "source": "git tag v4.6 of abulmo/edax-reversi",
+      "build": "mkdir bin; make build CC=gcc ARCH=native (src/)",
+      "binary_sha256": "8188d3a0c2238405d73f1a30342e534c48c5ea460828f5d146938ce0c5cc74da"
+    },
+    "egaroucid781": {
+      "source": "https://github.com/Nyanyan/Egaroucid/archive/refs/tags/console_v7.8.1.zip (official console distribution for Linux), sha256 41e5a46ece9bebe3fa39c901b2029458a7270b3ee0dd0444ed82eb7b73254b88, + ../2026-10-28-engine-gap/egaroucid-console-readlink.patch (bug still present in 7.8.1)",
+      "gcc_build": "g++ -O2 ./src/Egaroucid_for_Console.cpp -o ./bin/Egaroucid_for_Console_gcc.out -mtune=native -march=native -mfpmath=both -pthread -std=c++20 (official instructions)",
+      "clang_build": "clang++ -O2 ./src/Egaroucid_for_Console.cpp -o ./bin/Egaroucid_for_Console_clang.out -mtune=native -march=native -pthread -std=c++20 (official instructions)",
+      "gcc_sha256": "3a51c419e88729a6b86ed8c77c1ed51eaf4ec2909147854b0210faf2e199fba0",
+      "clang_sha256": "7105ea085e6e0034d7eb26fc1b6f8c780b273fa321456938b404a7c82a9c86dd",
+      "eval.egev2": "0a8acbcbc23067933627f1bcc83c3f7ae6b7ff3e603d174a3364271fcaeeef2f",
+      "eval_move_ordering_end.egev": "bd908885e8bb85e72a9be2b0399f8ca52ed40a138bcaaecca3d13710945b9a93",
+      "hash23.eghs": "0a44b764e10b250229d25a007cda5a16857733b92d8566b65d95243739b7d323"
+    },
+    "edax_eval": "same eval.dat for all Edax builds (f8b22996...b792, identical to edax-4.5.5/bin/data/eval.dat)"
+  }
+}

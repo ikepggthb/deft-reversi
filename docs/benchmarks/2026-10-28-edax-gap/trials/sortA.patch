@@ -1,0 +1,20 @@
+diff --git a/deft-reversi-engine/src/search/ordering.rs b/deft-reversi-engine/src/search/ordering.rs
+index 8771245..a41c310 100644
+--- a/deft-reversi-engine/src/search/ordering.rs
++++ b/deft-reversi-engine/src/search/ordering.rs
+@@ -14,7 +14,14 @@ impl Context {
+         let empties = parent.board.empty_count();
+         let narrow = beta - alpha == 1;
+         let depth = if narrow {
+-            if empties < 24 { empties >> 4 } else { 1 }
++            // Reference sort depth: (empties - 15) / 3 plies below the child.
++            if empties >= 18 {
++                (empties.saturating_sub(15) / 3).min(6) + 1
++            } else if empties < 24 {
++                empties >> 4
++            } else {
++                1
++            }
+         } else {
+             (empties >> 3).max(1)
+         };

@@ -1,0 +1,34 @@
+{
+  "cpu": 0,
+  "rounds": 5,
+  "mode": "exact",
+  "repeat_in_process": 1,
+  "tt_mib": 256,
+  "legacy_main_mpc": true,
+  "seconds_median": {
+    "before": 7.142672646,
+    "after": 7.513552256
+  },
+  "round_seconds": {
+    "before": [
+      6.92806732,
+      7.142672646,
+      7.142963386,
+      6.765556157000001,
+      7.3015177630000005
+    ],
+    "after": [
+      7.16593027,
+      7.513552256,
+      7.815398419999999,
+      7.498422485,
+      7.527364653999999
+    ]
+  },
+  "speedup": 0.9506385798137185,
+  "all_scores_match": true,
+  "before_sha256": "220a4a196faa0f9ea34612662f831d3d37b54c2485e2fdabc09b69e9c5f58301",
+  "after_sha256": "f242e9806ed8954d4f8710a7b873968ec6f20d6c30b083f0c4c7f868ece289a6",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "2143be7098ef1e3e11653ab87b541218d5233d3e29fb36d81c225e5c3530d83e"
+}

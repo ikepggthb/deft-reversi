@@ -1,0 +1,25 @@
+round=1 c0ed2aa=1.6782 ljoin=1.6470
+round=2 c0ed2aa=1.6690 ljoin=1.6617
+round=3 c0ed2aa=1.6949 ljoin=1.7029
+round=4 c0ed2aa=1.6658 ljoin=1.6720
+round=5 c0ed2aa=1.6586 ljoin=1.6955
+round=6 c0ed2aa=1.6646 ljoin=1.6928
+       c0ed2aa: median 1.6674s ratio 1.0000 faster 0/6 nodes [666092258, 668641724, 669142827, 671010077, 672364565, 679066467]
+         ljoin: median 1.6824s ratio 1.0042 faster 2/6 nodes [666780618, 668277547, 672450861, 674263868, 676103887, 686487540]
+round=1 c0ed2aa=1.2706 ljoin=1.2375
+round=2 c0ed2aa=1.2405 ljoin=1.2397
+round=3 c0ed2aa=1.2412 ljoin=1.2216
+round=4 c0ed2aa=1.2638 ljoin=1.2280
+round=5 c0ed2aa=1.2482 ljoin=1.2321
+round=6 c0ed2aa=1.2814 ljoin=1.2226
+       c0ed2aa: median 1.2560s ratio 1.0000 faster 0/6 nodes [762303280, 773482472, 783766738, 794428417, 794536580, 800239740]
+         ljoin: median 1.2300s ratio 0.9791 faster 6/6 nodes [757818801, 761155587, 763805607, 772444221, 775405047, 777181465]
+round=1 c0ed2aa=2.8461 ljoin=2.8783
+round=2 c0ed2aa=2.8431 ljoin=2.8771
+round=3 c0ed2aa=2.8576 ljoin=2.8522
+round=4 c0ed2aa=2.8575 ljoin=2.8750
+round=5 c0ed2aa=2.8556 ljoin=2.8845
+round=6 c0ed2aa=2.8515 ljoin=2.8565
+       c0ed2aa: median 2.8536s ratio 1.0000 faster 0/6 nodes [631835148, 633589859, 634030139, 635148287, 635514050, 635992471]
+         ljoin: median 2.8760s ratio 1.0081 faster 1/6 nodes [633472723, 634718049, 636377512, 637488638, 637739014, 639701010]
+exit=0
