@@ -117,15 +117,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "deft-reversi-wasm"
+name = "deft-reversi-wasm-engine"
 version = "2.0.0"
 dependencies = [
- "deft_reversi_engine",
+ "bincode",
+ "deft-reversi-wasm-engine",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-test",
+ "web-time",
 ]
 
 [[package]]

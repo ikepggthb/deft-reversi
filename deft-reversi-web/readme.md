@@ -5,7 +5,8 @@
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack --locked
-wasm-pack build deft-reversi-wasm --target web --release --out-dir ../deft-reversi-web/app/pkg
+wasm-pack build deft-reversi-wasm-engine --target web --release --out-dir ../deft-reversi-web/app/pkg
+python3 deft-reversi-web/scripts/build-model.py
 cd deft-reversi-web/app
 python3 -m http.server 8000
 ```
@@ -16,3 +17,5 @@ http://localhost:8000/ を開いてください。評価モデルは初回に読
 cd deft-reversi-web/app
 node --test
 ```
+
+GitHub Actions は `feature/web-v2` の更新時に `gh-pages` へビルドを公開します。

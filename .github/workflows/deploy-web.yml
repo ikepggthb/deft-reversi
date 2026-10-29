@@ -1,0 +1,38 @@
+name: Publish web v2
+on:
+  push:
+    branches: [feature/web-v2]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: web-v2-pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - run: node --test
+        working-directory: deft-reversi-web/app
+      - run: wasm-pack build deft-reversi-wasm-engine --target web --release --out-dir ../deft-reversi-web/app/pkg --locked
+      - run: python3 deft-reversi-web/scripts/build-model.py
+      - run: |
+          mkdir -p /tmp/deft-pages
+          cp -a deft-reversi-web/app/. /tmp/deft-pages/
+          rm -rf /tmp/deft-pages/test /tmp/deft-pages/assets/deft_eval_2024-01-27.json.gz
+          touch /tmp/deft-pages/.nojekyll
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: /tmp/deft-pages
+          publish_branch: gh-pages

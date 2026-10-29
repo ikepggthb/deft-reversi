@@ -1,7 +1,33 @@
-//! Single-threaded browser bindings for the v2 engine. Run searches in a Web Worker.
-use deft_reversi_engine::{
-    Action, Color, Engine, EngineOptions, Goal, Model, Position, ResultKind, SearchRequest,
+mod board;
+mod diagnostics;
+#[cfg_attr(not(feature = "tuning"), allow(dead_code))]
+mod evaluation;
+mod model;
+#[cfg_attr(not(feature = "tuning"), allow(dead_code))]
+mod mpc;
+mod parallel;
+mod position;
+mod search;
+#[cfg(test)]
+mod test_util;
+mod transposition;
+mod types;
+pub use board::bitboard::{Board, MoveError};
+pub use diagnostics::perft;
+pub use model::{Model, ModelMetadata};
+pub use position::{Color, ParsePositionError, Position};
+pub use search::{
+    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, SearchRequest,
+    SearchResult, SearchStats, Selectivity, StopHandle, StopReason,
 };
+pub use types::{Action, Moves, Square};
+#[cfg(feature = "tuning")]
+pub use {
+    evaluation::{PATTERN_COUNT, PHASE_COUNT, PatternModel, PatternPhase},
+    mpc::{EvalSearchMpcConfig, FinalSearchMpcConfig, MpcConfig, MpcParams, MpcRegression},
+    search::ProbCutRule,
+};
+
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
@@ -24,6 +50,14 @@ impl WasmPosition {
     #[wasm_bindgen(js_name = fromString)]
     pub fn from_string(value: &str) -> Result<WasmPosition, JsValue> {
         value.parse().map(Self).map_err(error)
+    }
+
+    /// Construct a side-to-move-relative position from bitboards.
+    #[wasm_bindgen(js_name = fromBits)]
+    pub fn from_bits(player: u64, opponent: u64) -> Result<WasmPosition, JsValue> {
+        Position::from_colors(player, opponent, Color::Black)
+            .map(Self)
+            .ok_or_else(|| error("overlapping discs"))
     }
 
     #[wasm_bindgen(js_name = toString)]

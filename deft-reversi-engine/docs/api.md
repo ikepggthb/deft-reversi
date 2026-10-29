@@ -1,6 +1,6 @@
 # エンジン API の設計
 
-`deft_reversi_engine` はGUI と CUI から呼び出すコアクレート。wasm 向けの公開は [`deft-reversi-wasm`](../../deft-reversi-wasm/README.md) が受け持つ。対局の履歴・棋譜・定石、持ち時間の配分は呼び出し側のクレートが受け持つ。
+`deft_reversi_engine` はGUI と CUI から呼び出すコアクレート。wasm 向けの公開は [`deft-reversi-wasm-engine`](../../deft-reversi-wasm-engine/README.md) が受け持つ。対局の履歴・棋譜・定石、持ち時間の配分は呼び出し側のクレートが受け持つ。
 
 ## 方針
 

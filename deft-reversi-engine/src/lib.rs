@@ -1,5 +1,5 @@
 //! Reversi engine for GUI and CUI front ends, with browser bindings in
-//! `deft-reversi-wasm`. Game records, opening
+//! `deft-reversi-wasm-engine`. Game records, opening
 //! books and clock management belong to the caller; see `docs/api.md`.
 //!
 //! ```no_run

@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
-use deft_reversi_engine::PatternModel;
-use deft_reversi_wasm::{WasmEngine, WasmPosition};
+use deft_reversi_wasm_engine::PatternModel;
+use deft_reversi_wasm_engine::{WasmEngine, WasmPosition};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
@@ -33,6 +33,9 @@ struct Output {
 #[wasm_bindgen_test]
 fn position_operations_and_errors() {
     let position = WasmPosition::new();
+    let bits = WasmPosition::from_bits(0x0000000810000000, 0x0000001008000000).unwrap();
+    assert_eq!(bits.cells(), position.cells());
+    assert!(WasmPosition::from_bits(1, 1).is_err());
     assert_eq!(position.cells().iter().filter(|&&c| c != 0).count(), 4);
     assert_eq!(position.legal_moves(), ["D3", "C4", "F5", "E6"]);
     let next = position.play("f5").unwrap();

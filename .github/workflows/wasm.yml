@@ -20,6 +20,6 @@ jobs:
         with:
           tool: wasm-pack
       - run: cargo test --workspace --release --locked
-      - run: wasm-pack build deft-reversi-wasm --target web --release --locked
-      - run: wasm-pack test deft-reversi-wasm --node --locked
-      - run: wasm-pack test deft-reversi-wasm --headless --chrome --locked
+      - run: wasm-pack build deft-reversi-wasm-engine --target web --release --locked
+      - run: wasm-pack test deft-reversi-wasm-engine --node --locked
+      - run: wasm-pack test deft-reversi-wasm-engine --headless --chrome --locked
