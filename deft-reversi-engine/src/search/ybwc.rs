@@ -68,8 +68,7 @@ impl Context {
                 }
                 task_point.active.fetch_sub(1, Ordering::AcqRel);
                 task_point.helper.wake();
-                runtime.pending.fetch_sub(1, Ordering::AcqRel);
-                runtime.pending_ready.notify_all();
+                runtime.finish_pending();
             });
             match self.runtime.pool.offer(job, &self.ancestors) {
                 Ok(dispatch) => {

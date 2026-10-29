@@ -70,6 +70,15 @@ impl Runtime {
         self.quality.store(quality, Ordering::Relaxed);
     }
 
+    /// Ends one helper job counted in `pending`. The last one notifies under
+    /// the lock `drain` holds between its check and its wait, so the wakeup
+    /// cannot fall between the two.
+    pub(super) fn finish_pending(&self) {
+        if self.pending.fetch_sub(1, Ordering::AcqRel) == 1 {
+            let _guard = parallel::lock(&self.pending_lock);
+            self.pending_ready.notify_all();
+        }
+    }
     pub(super) fn drain(&self) {
         let mut guard = parallel::lock(&self.pending_lock);
         while self.pending.load(Ordering::Acquire) != 0 {

@@ -176,6 +176,9 @@ impl Helper {
         }
     }
     pub(crate) fn wake(&self) {
+        // Under the lock: `wait` checks completion and starts waiting while
+        // holding it, so the notification cannot fall between the two.
+        let _state = lock(&self.state);
         self.ready.notify_all();
     }
     pub(crate) fn wait(&self, complete: impl Fn() -> bool) {
