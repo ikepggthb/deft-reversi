@@ -8,31 +8,37 @@ pub(super) struct Control {
     pub(super) issued: Padded<AtomicU64>,
 }
 impl Control {
-    pub(super) fn set(&self, reason: u8) {
+    /// Records the first reason to stop; later ones keep it.
+    pub(super) fn set(&self, reason: StopReason) {
         let _ = self
             .reason
-            .compare_exchange(0, reason, Ordering::AcqRel, Ordering::Relaxed);
+            .compare_exchange(0, reason as u8, Ordering::AcqRel, Ordering::Relaxed);
+    }
+    /// A failed worker overrides any earlier reason: its results are lost.
+    pub(super) fn fail(&self) {
+        self.reason
+            .store(StopReason::WorkerFailed as u8, Ordering::Release);
     }
     pub(super) fn check(&self) -> bool {
         if self.stop.is_stopped() {
-            self.set(1)
+            self.set(StopReason::Requested)
         }
         if self
             .deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
-            self.set(2)
+            self.set(StopReason::TimeLimit)
         }
         self.reason.load(Ordering::Acquire) != 0
     }
     pub(super) fn reason(&self) -> StopReason {
-        match self.reason.load(Ordering::Acquire) {
-            1 => StopReason::Requested,
-            2 => StopReason::TimeLimit,
-            3 => StopReason::NodeLimit,
-            4 => StopReason::WorkerFailed,
-            _ => StopReason::Completed,
-        }
+        [
+            StopReason::Completed,
+            StopReason::Requested,
+            StopReason::TimeLimit,
+            StopReason::NodeLimit,
+            StopReason::WorkerFailed,
+        ][usize::from(self.reason.load(Ordering::Acquire))]
     }
 }
 /// Read on every node by every thread; the fields written during a search

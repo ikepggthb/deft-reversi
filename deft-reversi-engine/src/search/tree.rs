@@ -52,7 +52,7 @@ impl Context {
                 })
                 .is_err()
         {
-            self.runtime.control.set(3);
+            self.runtime.control.set(StopReason::NodeLimit);
             return Err(());
         }
         self.stats.nodes += 1;

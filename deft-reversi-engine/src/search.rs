@@ -46,9 +46,7 @@ impl Engine {
         if options.threads == 0 || options.threads > 256 {
             return Err(EngineError::InvalidOptions("threads must be 1..=256"));
         }
-        let table = Arc::new(Table::new(options.tt_mib).map_err(EngineError::Memory)?);
-        let pv_table =
-            Arc::new(Table::new((options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
+        let (table, pv_table) = new_tables(options.tt_mib)?;
         let workers = Workers::new(options.threads - 1).map_err(EngineError::Thread)?;
         let mpc = MpcConfig::default();
         let calibration = indexed_rules(mpc.rules());
@@ -97,24 +95,23 @@ impl Engine {
     }
     pub fn set_mpc_config(&mut self, config: MpcConfig) -> Result<(), EngineError> {
         config.validate().map_err(EngineError::Model)?;
-        let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
-        let pv_table =
-            Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
-        self.calibration = indexed_rules(config.rules());
-        self.table = table;
-        self.pv_table = pv_table;
-        self.invalidate_end_caches();
-        self.cache_sigma = None;
-        self.mpc = Some(config);
-        Ok(())
+        self.set_rules(config.rules(), Some(config))
     }
     /// Use the MPC table from the legacy main-branch evaluator. This is an
     /// explicit opt-in for models converted from main's `data/eval/eval.json`.
     pub fn set_legacy_main_mpc(&mut self) -> Result<(), EngineError> {
-        let calibration = indexed_rules(crate::mpc::legacy_main_rules());
+        self.set_rules(crate::mpc::legacy_main_rules(), None)
+    }
+    /// Installs new ProbCut rules. Every cached result depends on them, so
+    /// the tables are replaced first; on failure nothing changes.
+    fn set_rules(
+        &mut self,
+        rules: Vec<ProbCutRule>,
+        mpc: Option<MpcConfig>,
+    ) -> Result<(), EngineError> {
         self.clear_tt()?;
-        self.calibration = calibration;
-        self.mpc = None;
+        self.calibration = indexed_rules(rules);
+        self.mpc = mpc;
         self.cache_sigma = None;
         Ok(())
     }
@@ -125,27 +122,16 @@ impl Engine {
         self.cache_epoch = new_cache_epoch();
     }
     pub fn clear_tt(&mut self) -> Result<(), EngineError> {
-        let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
-        let pv_table =
-            Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
-        self.table = table;
-        self.pv_table = pv_table;
+        (self.table, self.pv_table) = new_tables(self.options.tt_mib)?;
         self.invalidate_end_caches();
         Ok(())
     }
     /// Replaces the model and invalidates all cached evaluations.
     pub fn set_model(&mut self, model: PatternModel) -> Result<(), EngineError> {
-        let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
-        let pv_table =
-            Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
+        let mpc = MpcConfig::default();
+        self.set_rules(mpc.rules(), Some(mpc))?;
         self.model = Arc::new(model);
-        self.table = table;
-        self.pv_table = pv_table;
-        self.mpc = Some(MpcConfig::default());
         self.metadata = None;
-        self.calibration = indexed_rules(self.mpc.as_ref().unwrap().rules());
-        self.invalidate_end_caches();
-        self.cache_sigma = None;
         Ok(())
     }
     pub fn set_probcut_rules(&mut self, rules: Vec<ProbCutRule>) -> Result<(), EngineError> {
@@ -175,41 +161,10 @@ impl Engine {
                 ));
             }
         }
-        let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
-        let pv_table =
-            Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
-        self.calibration = indexed_rules(rules);
-        self.mpc = None;
-        self.invalidate_end_caches();
-        self.cache_sigma = None;
-        self.table = table;
-        self.pv_table = pv_table;
-        Ok(())
+        self.set_rules(rules, None)
     }
     pub fn search(&mut self, request: SearchRequest) -> Result<SearchResult, EngineError> {
-        if matches!(request.mode,SearchMode::Depth(d) if d>60) {
-            return Err(EngineError::InvalidRequest("depth must be 0..=60"));
-        }
-        let target_sigma = request
-            .probcut_sigma
-            .or_else(|| request.selectivity.sigma());
-        if request.mode == SearchMode::Exact && target_sigma.is_some() {
-            return Err(EngineError::InvalidRequest(
-                "Exact forbids probabilistic cuts; use SelectiveEndgame",
-            ));
-        }
-        if request.mode == SearchMode::SelectiveEndgame && target_sigma.is_none() {
-            return Err(EngineError::InvalidRequest(
-                "SelectiveEndgame requires calibrated ProbCut",
-            ));
-        }
-        if let Some(sigma) = target_sigma
-            && (!sigma.is_finite() || sigma <= 0.0 || self.calibration.is_empty())
-        {
-            return Err(EngineError::InvalidCalibration(
-                "ProbCut requires positive sigma and model-specific calibration",
-            ));
-        }
+        let target_sigma = self.validate(&request)?;
         // The reference handles a forced root pass before starting its driver.
         if request.board.get_moves() == 0 && request.board.get_opponent_moves() != 0 {
             let pass_start = Instant::now();
@@ -240,14 +195,119 @@ impl Engine {
             ),
             None => None,
         };
-        let runtime = Arc::new(Runtime {
+        let board = request.board;
+        let mut result = initial_result(&request, target_sigma);
+        if result.action.is_none() {
+            result.mode = SearchMode::Exact;
+            result.selective = false;
+            result.selectivity = Some(Selectivity::Full);
+            result.probcut_sigma = None;
+            result.score = Some(board.final_score());
+            result.bound = Some(Bound::Exact);
+            result.elapsed = start.elapsed();
+            return Ok(result);
+        }
+        let runtime = self.runtime(&request, target_sigma, deadline);
+        let state = EvalState::from_board(board);
+        let mut root = root::RootSearch::new(Position { board, state });
+        let mut context = Context::new(runtime.clone(), Vec::new(), Vec::new());
+        // Owned by the active context; retained by this Engine between requests.
+        context.end_cache = std::mem::take(&mut self.end_cache);
+        for iteration in self.plan(&request, target_sigma) {
+            runtime.drain();
+            runtime.set_stage(iteration.sigma, iteration.quality);
+            let prediction = result.score.unwrap_or_else(|| self.model.evaluate(&board));
+            let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                root.iteration(
+                    &mut context,
+                    SearchSpec {
+                        depth: iteration.depth,
+                        exact: iteration.exact,
+                        probcut: true,
+                    },
+                    prediction,
+                )
+            }));
+            let completed = match attempt {
+                Ok(Ok(line)) if !context.aborted() => Some(line),
+                Ok(_) => None,
+                Err(_) => {
+                    runtime.control.fail();
+                    None
+                }
+            };
+            let Some(line) = completed else { break };
+            iteration.record(&mut result, request.mode, &line);
+        }
+        runtime.drain();
+        // Full TT cutoffs return scores without a recursion-built PV. Recover
+        // the line separately, verifying each suggested move against the value.
+        if !context.aborted()
+            && !result.selective
+            && result.completed_depth > 0
+            && let Some(score) = result.score
+            && let Ok(pv) = context.extract_pv(
+                board,
+                score,
+                result.completed_depth,
+                result.mode == SearchMode::Exact,
+                result.action,
+            )
+        {
+            result.pv = pv;
+        }
+        runtime.drain();
+        if runtime.control.reason() != StopReason::WorkerFailed {
+            self.end_cache = std::mem::take(&mut context.end_cache);
+        }
+        drop(context);
+        result.stop_reason = runtime.control.reason();
+        result.stats = parallel::lock(&runtime.stats).clone();
+        result.elapsed = start.elapsed();
+        Ok(result)
+    }
+    /// Checks the request against the calibration and returns the sigma of
+    /// its final iteration.
+    fn validate(&self, request: &SearchRequest) -> Result<Option<f64>, EngineError> {
+        if matches!(request.mode,SearchMode::Depth(d) if d>60) {
+            return Err(EngineError::InvalidRequest("depth must be 0..=60"));
+        }
+        let target_sigma = request
+            .probcut_sigma
+            .or_else(|| request.selectivity.sigma());
+        if request.mode == SearchMode::Exact && target_sigma.is_some() {
+            return Err(EngineError::InvalidRequest(
+                "Exact forbids probabilistic cuts; use SelectiveEndgame",
+            ));
+        }
+        if request.mode == SearchMode::SelectiveEndgame && target_sigma.is_none() {
+            return Err(EngineError::InvalidRequest(
+                "SelectiveEndgame requires calibrated ProbCut",
+            ));
+        }
+        if let Some(sigma) = target_sigma
+            && (!sigma.is_finite() || sigma <= 0.0 || self.calibration.is_empty())
+        {
+            return Err(EngineError::InvalidCalibration(
+                "ProbCut requires positive sigma and model-specific calibration",
+            ));
+        }
+        Ok(target_sigma)
+    }
+    fn runtime(
+        &self,
+        request: &SearchRequest,
+        target_sigma: Option<f64>,
+        deadline: Option<Instant>,
+    ) -> Arc<Runtime> {
+        Arc::new(Runtime {
             model: self.model.clone(),
             table: self.table.clone(),
             pv_table: self.pv_table.clone(),
             pool: self.workers.pool.clone(),
             control: Control {
                 reason: AtomicU8::new(0),
-                stop: request.stop,
+                stop: request.stop.clone(),
                 deadline,
                 node_limit: request.node_limit,
                 issued: Padded(AtomicU64::new(0)),
@@ -269,52 +329,12 @@ impl Engine {
             } else {
                 endgame::PROBCUT_MIN_EMPTIES
             },
-        });
+        })
+    }
+    /// The iterative deepening schedule: evaluation iterations, then for
+    /// endgame requests the selective stages and the final solve.
+    fn plan(&self, request: &SearchRequest, target_sigma: Option<f64>) -> Vec<Iteration> {
         let board = request.board;
-        let moves = board.get_moves();
-        let fallback = if moves != 0 {
-            Some(Action::Place(
-                Square::new(moves.trailing_zeros() as u8).unwrap(),
-            ))
-        } else if board.get_opponent_moves() != 0 {
-            Some(Action::Pass)
-        } else {
-            None
-        };
-        let mut result = SearchResult {
-            action: fallback,
-            score: None,
-            bound: None,
-            requested_mode: request.mode,
-            mode: SearchMode::Depth(0),
-            selective: target_sigma.is_some(),
-            selectivity: if request.probcut_sigma.is_some() {
-                None
-            } else {
-                Some(request.selectivity)
-            },
-            probcut_sigma: target_sigma,
-            completed_depth: 0,
-            pv: Vec::new(),
-            stop_reason: StopReason::Completed,
-            stats: SearchStats::default(),
-            elapsed: Duration::ZERO,
-        };
-        if fallback.is_none() {
-            result.mode = SearchMode::Exact;
-            result.selective = false;
-            result.selectivity = Some(Selectivity::Full);
-            result.probcut_sigma = None;
-            result.score = Some(board.final_score());
-            result.bound = Some(Bound::Exact);
-            result.elapsed = start.elapsed();
-            return Ok(result);
-        }
-        let state = EvalState::from_board(board);
-        let mut root = root::RootSearch::new(Position { board, state });
-        let mut context = Context::new(runtime.clone(), Vec::new(), Vec::new());
-        // Owned by the active context; retained by this Engine between requests.
-        context.end_cache = std::mem::take(&mut self.end_cache);
         let target = match request.mode {
             SearchMode::Depth(d) => d.min(board.empty_count()),
             SearchMode::Exact | SearchMode::SelectiveEndgame => board.empty_count(),
@@ -343,117 +363,125 @@ impl Engine {
         } else {
             target_stage + 1
         };
-        let mut iterations: Vec<(u8, bool, Option<f64>, u8)> = depths
+        // Eval iterations all use the requested selectivity. Only endgame
+        // preparation fixes it to the reference's level 2.
+        let prepare = calibrated && exact;
+        let mut iterations: Vec<Iteration> = depths
             .into_iter()
-            .map(|depth| {
-                // Eval iterations all use the requested selectivity. Only
-                // endgame preparation fixes it to the reference's level 2.
-                let prepare = calibrated && exact;
-                (
-                    depth,
-                    false,
-                    if prepare {
-                        Selectivity::Percent85.sigma()
-                    } else {
-                        target_sigma
-                    },
-                    if prepare { 3 } else { target_quality },
-                )
+            .map(|depth| Iteration {
+                depth,
+                exact: false,
+                sigma: if prepare {
+                    Selectivity::Percent85.sigma()
+                } else {
+                    target_sigma
+                },
+                quality: if prepare { 3 } else { target_quality },
             })
             .collect();
-        if calibrated && exact && request.probcut_sigma.is_none() {
+        if prepare && request.probcut_sigma.is_none() {
             let mut stage = target_stage.min(2);
             while stage < target_stage {
-                iterations.push((
-                    target,
-                    true,
-                    Selectivity::from_level(stage).sigma(),
-                    stage + 1,
-                ));
+                iterations.push(Iteration {
+                    depth: target,
+                    exact: true,
+                    sigma: Selectivity::from_level(stage).sigma(),
+                    quality: stage + 1,
+                });
                 stage = next_selectivity(stage, target_stage, target);
             }
         }
         if exact {
-            iterations.push((target, true, target_sigma, target_quality));
+            iterations.push(Iteration {
+                depth: target,
+                exact: true,
+                sigma: target_sigma,
+                quality: target_quality,
+            });
         }
-        for (depth, final_iteration, sigma, quality) in iterations {
-            runtime.drain();
-            runtime.set_stage(sigma, quality);
-            let prediction = result.score.unwrap_or_else(|| self.model.evaluate(&board));
-            let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                root.iteration(
-                    &mut context,
-                    SearchSpec {
-                        depth,
-                        exact: final_iteration,
-                        probcut: true,
-                    },
-                    prediction,
-                )
-            }));
-            let completed = match attempt {
-                Ok(Ok(line)) if !context.aborted() => Some(line),
-                Ok(_) => None,
-                Err(_) => {
-                    runtime.control.reason.store(4, Ordering::Release);
-                    None
-                }
-            };
-            let Some(line) = completed else { break };
-            result.selective = sigma.is_some();
-            result.selectivity = if sigma.is_none() {
-                Some(Selectivity::Full)
-            } else if quality == 7 {
-                None
-            } else {
-                Some(Selectivity::from_level(quality - 1))
-            };
-            result.probcut_sigma = sigma;
-            result.mode = if final_iteration && sigma.is_some() {
-                SearchMode::SelectiveEndgame
-            } else if final_iteration {
-                request.mode
-            } else {
-                SearchMode::Depth(depth)
-            };
-            result.score = Some(line.score);
-            result.bound = Some(Bound::Exact);
-            result.completed_depth = depth;
-            result.pv = line.moves();
-            if let Some(action) = result.pv.first() {
-                result.action = Some(*action)
-            }
-            // Depth-0 evaluates the position without claiming a searched best move.
-            if depth == 0 {
-                result.pv.clear();
-            }
+        iterations
+    }
+}
+
+fn new_tables(tt_mib: usize) -> Result<(Arc<Table>, Arc<Table>), EngineError> {
+    let table = Table::new(tt_mib).map_err(EngineError::Memory)?;
+    let pv_table = Table::new((tt_mib / 16).max(1)).map_err(EngineError::Memory)?;
+    Ok((Arc::new(table), Arc::new(pv_table)))
+}
+
+/// The result before any iteration completes: the first legal action, if any.
+fn initial_result(request: &SearchRequest, target_sigma: Option<f64>) -> SearchResult {
+    let board = request.board;
+    let moves = board.get_moves();
+    let action = if moves != 0 {
+        Some(Action::Place(
+            Square::new(moves.trailing_zeros() as u8).unwrap(),
+        ))
+    } else if board.get_opponent_moves() != 0 {
+        Some(Action::Pass)
+    } else {
+        None
+    };
+    SearchResult {
+        action,
+        score: None,
+        bound: None,
+        requested_mode: request.mode,
+        mode: SearchMode::Depth(0),
+        selective: target_sigma.is_some(),
+        selectivity: if request.probcut_sigma.is_some() {
+            None
+        } else {
+            Some(request.selectivity)
+        },
+        probcut_sigma: target_sigma,
+        completed_depth: 0,
+        pv: Vec::new(),
+        stop_reason: StopReason::Completed,
+        stats: SearchStats::default(),
+        elapsed: Duration::ZERO,
+    }
+}
+
+/// One root iteration of `Engine::search`.
+struct Iteration {
+    depth: u8,
+    /// Searches to the end of the game rather than to an evaluation.
+    exact: bool,
+    sigma: Option<f64>,
+    /// TT selectivity tag: 0 exact, 1..=6 a reference level, 7 a custom sigma.
+    quality: u8,
+}
+impl Iteration {
+    /// Makes `line`, the completed iteration's result, the search result.
+    fn record(&self, result: &mut SearchResult, requested: SearchMode, line: &Line) {
+        result.selective = self.sigma.is_some();
+        result.selectivity = if self.sigma.is_none() {
+            Some(Selectivity::Full)
+        } else if self.quality == 7 {
+            None
+        } else {
+            Some(Selectivity::from_level(self.quality - 1))
+        };
+        result.probcut_sigma = self.sigma;
+        result.mode = if self.exact && self.sigma.is_some() {
+            SearchMode::SelectiveEndgame
+        } else if self.exact {
+            requested
+        } else {
+            SearchMode::Depth(self.depth)
+        };
+        result.score = Some(line.score);
+        result.bound = Some(Bound::Exact);
+        result.completed_depth = self.depth;
+        result.pv = line.moves();
+        if let Some(action) = result.pv.first() {
+            result.action = Some(*action)
         }
-        runtime.drain();
-        // Full TT cutoffs return scores without a recursion-built PV. Recover
-        // the line separately, verifying each suggested move against the value.
-        if !context.aborted()
-            && !result.selective
-            && result.completed_depth > 0
-            && let Some(score) = result.score
-            && let Ok(pv) = context.extract_pv(
-                board,
-                score,
-                result.completed_depth,
-                result.mode == SearchMode::Exact,
-                result.action,
-            )
-        {
-            result.pv = pv;
+        // Depth-0 evaluates the position without claiming a searched best move.
+        if self.depth == 0 {
+            result.pv.clear();
         }
-        runtime.drain();
-        if runtime.control.reason() != StopReason::WorkerFailed {
-            self.end_cache = std::mem::take(&mut context.end_cache);
-        }
-        drop(context);
-        result.stop_reason = runtime.control.reason();
-        result.stats = parallel::lock(&runtime.stats).clone();
-        result.elapsed = start.elapsed();
-        Ok(result)
     }
 }
 

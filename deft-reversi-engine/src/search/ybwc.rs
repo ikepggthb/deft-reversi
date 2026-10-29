@@ -100,7 +100,7 @@ impl Context {
                     std::mem::take(&mut context.end_cache).put_thread(runtime.cache_epoch);
                 }));
                 if result.is_err() {
-                    runtime.control.reason.store(4, Ordering::Release);
+                    runtime.control.fail();
                 }
                 task_point.active.fetch_sub(1, Ordering::AcqRel);
                 task_point.helper.wake();
@@ -212,7 +212,7 @@ struct JoinOnUnwind {
 impl Drop for JoinOnUnwind {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            self.runtime.control.reason.store(4, Ordering::Release);
+            self.runtime.control.fail();
             self.point.cut.store(true, Ordering::Release);
             self.point
                 .helper

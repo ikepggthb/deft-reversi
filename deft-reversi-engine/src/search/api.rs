@@ -16,11 +16,12 @@ pub enum Bound {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
-    Completed,
-    Requested,
-    TimeLimit,
-    NodeLimit,
-    WorkerFailed,
+    // Stored in an `AtomicU8` during the search; zero means still running.
+    Completed = 0,
+    Requested = 1,
+    TimeLimit = 2,
+    NodeLimit = 3,
+    WorkerFailed = 4,
 }
 #[derive(Clone, Default, Debug)]
 pub struct StopHandle(pub(super) Arc<AtomicBool>);
