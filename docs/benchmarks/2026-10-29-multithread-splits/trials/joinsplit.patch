@@ -1,0 +1,261 @@
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index a4ddb2c..e0d860d 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -344,41 +344,44 @@ impl Context {
+                 } else {
+                     depth >= SPLIT_DEPTH
+                 };
+-            if can_split && count >= 3 && self.runtime.pool.can_offer(&self.ancestors) {
+-                best = self.split(
+-                    position,
+-                    candidates[start..count].to_vec(),
+-                    (alpha, beta),
+-                    SearchSpec {
+-                        depth: depth - 1,
+-                        exact,
+-                        probcut: allow_probcut,
+-                    },
+-                    best,
+-                    None,
+-                )?;
+-            } else {
+-                for index in start..count {
+-                    pick_best(&mut candidates[..count], index);
+-                    if let Some(line) = self.sibling(
++            let child_spec = SearchSpec {
++                depth: depth - 1,
++                exact,
++                probcut: allow_probcut,
++            };
++            let mut index = start;
++            while index < count {
++                // Like the reference node_split, retry after every sibling:
++                // a thread that became idle meanwhile can still take the
++                // remaining moves instead of waiting for another split point.
++                let enough = if index == start {
++                    count >= 3
++                } else {
++                    count - index >= 2
++                };
++                if can_split && enough && self.runtime.pool.can_offer(&self.ancestors) {
++                    best = self.split(
+                         position,
+-                        candidates[index],
+-                        alpha,
+-                        beta,
+-                        SearchSpec {
+-                            depth: depth - 1,
+-                            exact,
+-                            probcut: allow_probcut,
+-                        },
+-                    )? {
+-                        if line.score > best.score {
+-                            best = line;
+-                        }
+-                        alpha = alpha.max(best.score);
+-                        if alpha >= beta {
+-                            self.stats.beta_cuts += 1;
+-                            break;
+-                        }
++                        candidates[index..count].to_vec(),
++                        (alpha, beta),
++                        child_spec,
++                        best,
++                        None,
++                    )?;
++                    break;
++                }
++                pick_best(&mut candidates[..count], index);
++                index += 1;
++                if let Some(line) =
++                    self.sibling(position, candidates[index - 1], alpha, beta, child_spec)?
++                {
++                    if line.score > best.score {
++                        best = line;
++                    }
++                    alpha = alpha.max(best.score);
++                    if alpha >= beta {
++                        self.stats.beta_cuts += 1;
++                        break;
+                     }
+                 }
+             }
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index 0a7397e..5062824 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -18,6 +18,12 @@ impl Context {
+             exact,
+             probcut: allow_probcut,
+         } = spec;
++        let helper = Arc::new(Helper::new());
++        let cut = Arc::new(AtomicBool::new(false));
++        let mut ancestors = self.ancestors.clone();
++        ancestors.push(helper.clone());
++        let mut cuts = self.cuts.clone();
++        cuts.push(cut.clone());
+         let point = Arc::new(Split {
+             position,
+             root_bounds,
+@@ -31,9 +37,12 @@ impl Context {
+             depth,
+             exact,
+             allow_probcut,
+-            cut: Arc::new(AtomicBool::new(false)),
+-            helper: Arc::new(Helper::new()),
++            cut,
++            helper,
+             active: AtomicUsize::new(0),
++            helpers: AtomicUsize::new(0),
++            ancestors: ancestors.clone(),
++            cuts: cuts.clone(),
+         });
+         // Unwind must join descendants too: a queued handoff can otherwise retain
+         // its own ancestor slot with nobody left to execute it.
+@@ -41,46 +50,12 @@ impl Context {
+             point: point.clone(),
+             runtime: self.runtime.clone(),
+         };
+-        let mut ancestors = self.ancestors.clone();
+-        ancestors.push(point.helper.clone());
+-        let mut cuts = self.cuts.clone();
+-        cuts.push(point.cut.clone());
+         let mut spawned = 0;
+         for _ in 0..MAX_HELPERS {
+-            let runtime = self.runtime.clone();
+-            let task_point = point.clone();
+-            let task_ancestors = ancestors.clone();
+-            let task_cuts = cuts.clone();
+-            point.active.fetch_add(1, Ordering::AcqRel);
+-            self.runtime.pending.fetch_add(1, Ordering::AcqRel);
+-            let job: parallel::Job = Box::new(move || {
+-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+-                    let mut context = Context::new(runtime.clone(), task_ancestors, task_cuts);
+-                    context.stats.helper_jobs += 1;
+-                    context.split_loop(&task_point);
+-                }));
+-                if result.is_err() {
+-                    runtime.control.reason.store(4, Ordering::Release);
+-                }
+-                task_point.active.fetch_sub(1, Ordering::AcqRel);
+-                task_point.helper.wake();
+-                runtime.pending.fetch_sub(1, Ordering::AcqRel);
+-                runtime.pending_ready.notify_all();
+-            });
+-            match self.runtime.pool.offer(job, &self.ancestors) {
+-                Ok(dispatch) => {
+-                    spawned += 1;
+-                    match dispatch {
+-                        parallel::Dispatch::Ancestor => self.stats.ancestor_handoffs += 1,
+-                        parallel::Dispatch::Worker => self.stats.worker_dispatches += 1,
+-                    }
+-                }
+-                Err(_) => {
+-                    point.active.fetch_sub(1, Ordering::AcqRel);
+-                    self.runtime.pending.fetch_sub(1, Ordering::AcqRel);
+-                    break;
+-                }
++            if !self.add_helper(&point) {
++                break;
+             }
++            spawned += 1;
+         }
+         if spawned != 0 {
+             self.stats.splits += 1;
+@@ -102,7 +77,58 @@ impl Context {
+         let result = parallel::lock(&point.state).best.clone();
+         Ok(result)
+     }
+-    fn split_loop(&mut self, point: &Split) {
++    /// Offers one more helper job for `point`; false if none was taken.
++    fn add_helper(&mut self, point: &Arc<Split>) -> bool {
++        if point
++            .helpers
++            .try_update(Ordering::AcqRel, Ordering::Relaxed, |n| {
++                (n < MAX_HELPERS).then_some(n + 1)
++            })
++            .is_err()
++        {
++            return false;
++        }
++        let runtime = self.runtime.clone();
++        let task_point = point.clone();
++        point.active.fetch_add(1, Ordering::AcqRel);
++        self.runtime.pending.fetch_add(1, Ordering::AcqRel);
++        let job: parallel::Job = Box::new(move || {
++            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++                let mut context = Context::new(
++                    runtime.clone(),
++                    task_point.ancestors.clone(),
++                    task_point.cuts.clone(),
++                );
++                context.stats.helper_jobs += 1;
++                context.split_loop(&task_point);
++            }));
++            if result.is_err() {
++                runtime.control.reason.store(4, Ordering::Release);
++            }
++            task_point.active.fetch_sub(1, Ordering::AcqRel);
++            task_point.helper.wake();
++            runtime.pending.fetch_sub(1, Ordering::AcqRel);
++            runtime.pending_ready.notify_all();
++        });
++        // Offer through the ancestors of the point, not of a later helper.
++        let offer_from = &point.ancestors[..point.ancestors.len() - 1];
++        match self.runtime.pool.offer(job, offer_from) {
++            Ok(dispatch) => {
++                match dispatch {
++                    parallel::Dispatch::Ancestor => self.stats.ancestor_handoffs += 1,
++                    parallel::Dispatch::Worker => self.stats.worker_dispatches += 1,
++                }
++                true
++            }
++            Err(_) => {
++                point.helpers.fetch_sub(1, Ordering::AcqRel);
++                point.active.fetch_sub(1, Ordering::AcqRel);
++                self.runtime.pending.fetch_sub(1, Ordering::AcqRel);
++                false
++            }
++        }
++    }
++    fn split_loop(&mut self, point: &Arc<Split>) {
+         loop {
+             if self.aborted() {
+                 break;
+@@ -116,12 +142,21 @@ impl Context {
+                     pick_best(&mut state.candidates, index);
+                     let candidate = state.candidates[index];
+                     state.next += 1;
+-                    Some((candidate, state.alpha))
++                    Some((candidate, state.alpha, state.candidates.len() - state.next))
+                 }
+             };
+-            let Some((candidate, alpha)) = next else {
++            let Some((candidate, alpha, remaining)) = next else {
+                 break;
+             };
++            // A thread that became idle after the split can still join it.
++            if remaining >= 2
++                && self
++                    .runtime
++                    .pool
++                    .can_offer(&point.ancestors[..point.ancestors.len() - 1])
++            {
++                self.add_helper(point);
++            }
+             let Ok(Some(line)) = self.sibling(
+                 point.position,
+                 candidate,
+@@ -170,6 +205,11 @@ struct Split {
+     cut: Arc<AtomicBool>,
+     helper: Arc<Helper>,
+     active: AtomicUsize,
++    /// Helper jobs ever offered for this point, at most `MAX_HELPERS`.
++    helpers: AtomicUsize,
++    /// Ancestor helpers and cut flags for jobs, ending with this point's own.
++    ancestors: Vec<Arc<Helper>>,
++    cuts: Vec<Arc<AtomicBool>>,
+ }
+ 
+ struct JoinOnUnwind {
