@@ -185,7 +185,7 @@ export class UI {
             record.length === currentRecord.length &&
             record.every((move, index) => move === currentRecord[index])
         ) {
-            return this._viewModel.nextTurn ?? 'black';
+            return (this._viewModel.nextTurn ?? 'black').toLowerCase();
         }
         return record.length % 2 === 0 ? 'black' : 'white';
     }
@@ -201,10 +201,10 @@ export class UI {
             </header>
             <main class="content" id="content"></main>
             <nav class="dock">
-              <button class="dock-btn" data-action="open-panel" data-panel="mode"><span class="dock-icon">[]</span><span class="dock-label">対局</span></button>
-              <button class="dock-btn" data-action="open-panel" data-panel="record"><span class="dock-icon">|||</span><span class="dock-label">棋譜</span></button>
-              <button class="dock-btn" data-action="open-panel" data-panel="analysis"><span class="dock-icon">##</span><span class="dock-label">分析</span></button>
-              <button class="dock-btn" data-action="open-panel" data-panel="settings"><span class="dock-icon">==</span><span class="dock-label">設定</span></button>
+              <button class="dock-btn" data-action="open-panel" data-panel="mode"><span class="dock-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/></svg></span><span class="dock-label">対局</span></button>
+              <button class="dock-btn" data-action="open-panel" data-panel="record"><span class="dock-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h10l3 3V20H6zM15.5 3.5v4H19M9 11h7M9 14h7M9 17h5"/></svg></span><span class="dock-label">棋譜</span></button>
+              <button class="dock-btn" data-action="open-panel" data-panel="analysis"><span class="dock-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M7 15l3-4 3 2 5-7"/><circle cx="18" cy="6" r="1"/></svg></span><span class="dock-label">分析</span></button>
+              <button class="dock-btn" data-action="open-panel" data-panel="settings"><span class="dock-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="10" cy="17" r="2"/></svg></span><span class="dock-label">設定</span></button>
             </nav>
           </div>
           <div class="panel-overlay" id="panel-overlay" role="dialog" aria-modal="true" aria-label="panel">
@@ -262,7 +262,7 @@ export class UI {
         const vm = this._viewModel;
         const blackCount = Board.countBits(vm?.blackBits ?? 0n);
         const whiteCount = Board.countBits(vm?.whiteBits ?? 0n);
-        const nextTurn = vm?.nextTurn ?? 'black';
+        const nextTurn = (vm?.nextTurn ?? 'black').toLowerCase();
         const blackActive = nextTurn === 'black';
         const whiteActive = nextTurn === 'white';
         const pendingStart = Boolean(vm?.pendingAutoStart) && !this._studyMode;
@@ -278,7 +278,7 @@ export class UI {
         return `
           <div class="page">
             <section class="status-line">
-              <div class="status-player status-player--black ${blackActive ? 'is-active' : ''}">
+              <div class="status-player status-player--black ${blackActive ? 'is-active' : ''}" ${blackActive ? 'aria-label="黒の手番"' : ''}>
                 <span class="stone-dot stone-dot--black" aria-hidden="true"></span>
                 <div class="status-stack">
                   <span class="status-name">${escapeHtml(this._blackPlayerName || 'BLACK')}</span>
@@ -286,7 +286,7 @@ export class UI {
                 </div>
               </div>
               <div class="status-divider" aria-hidden="true"></div>
-              <div class="status-player status-player--white ${whiteActive ? 'is-active' : ''}">
+              <div class="status-player status-player--white ${whiteActive ? 'is-active' : ''}" ${whiteActive ? 'aria-label="白の手番"' : ''}>
                 <div class="status-stack status-stack--right">
                   <span class="status-name">${escapeHtml(this._whitePlayerName || 'WHITE')}</span>
                   <strong class="status-count">${whiteCount}</strong>
@@ -869,7 +869,7 @@ export class UI {
 
     _manualAiLevel() {
         if (this._playMode !== 'ai_both') return this._aiLevel;
-        return this._viewModel?.nextTurn === 'black' ? this._blackAiLevel : this._whiteAiLevel;
+        return this._viewModel?.nextTurn?.toLowerCase() === 'black' ? this._blackAiLevel : this._whiteAiLevel;
     }
 
     _resetAnalysisProgress() {
