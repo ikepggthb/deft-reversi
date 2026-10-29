@@ -51,6 +51,6 @@ try {
 
 ```sh
 cargo test --workspace --release
-wasm-pack test deft-reversi-wasm-engine --node
-wasm-pack test deft-reversi-wasm-engine --headless --chrome
+wasm-pack test --node deft-reversi-wasm-engine
+wasm-pack test --headless --chrome deft-reversi-wasm-engine
 ```
