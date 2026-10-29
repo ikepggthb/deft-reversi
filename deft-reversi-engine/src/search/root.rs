@@ -189,9 +189,9 @@ impl RootSearch {
         let split = context.runtime.parallel
             && self.candidates.len() >= 3
             && if spec.exact {
-                self.position.board.empty_count() >= 10
+                self.position.board.empty_count() >= tree::SPLIT_EMPTIES
             } else {
-                spec.depth >= 8
+                spec.depth >= tree::SPLIT_DEPTH
             };
         if split && context.runtime.pool.can_offer(&context.ancestors) {
             let bounds = reuse.then(|| Arc::new(Mutex::new(self.bounds)));

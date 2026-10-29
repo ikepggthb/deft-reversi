@@ -1,7 +1,9 @@
 use super::endgame::parity::odd_regions;
 use super::*;
-const SPLIT_DEPTH: u8 = 8;
-const SPLIT_EMPTIES: u8 = 10;
+// Midgame nodes split down to four plies of remaining depth: the shallow
+// iterations before an endgame solve otherwise leave most threads idle.
+pub(super) const SPLIT_DEPTH: u8 = 4;
+pub(super) const SPLIT_EMPTIES: u8 = 10;
 struct OrderingWeights {
     mobility: i32,
     corner: i32,
