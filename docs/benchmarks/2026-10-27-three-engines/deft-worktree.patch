@@ -1,0 +1,1815 @@
+diff --git a/deft-reversi-engine/Cargo.toml b/deft-reversi-engine/Cargo.toml
+index d66cd82..0a86203 100644
+--- a/deft-reversi-engine/Cargo.toml
++++ b/deft-reversi-engine/Cargo.toml
+@@ -4,6 +4,10 @@ version = "2.0.0"
+ edition = "2024"
+ readme = "README.md"
+ 
++[features]
++# Experimental: main-model pattern weights are not calibrated for ordering.
++endgame-pattern-ordering = []
++
+ [dependencies]
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+diff --git a/deft-reversi-engine/examples/solve.rs b/deft-reversi-engine/examples/solve.rs
+index ce1deae..092a233 100644
+--- a/deft-reversi-engine/examples/solve.rs
++++ b/deft-reversi-engine/examples/solve.rs
+@@ -7,7 +7,15 @@ use std::{
+     time::Duration,
+ };
+ fn main() -> Result<(), Box<dyn Error>> {
+-    let mut args = std::env::args().skip(1);
++    let mut legacy_mpc = false;
++    let mut args = std::env::args().skip(1).filter(|arg| {
++        if arg == "--legacy-main-mpc" {
++            legacy_mpc = true;
++            false
++        } else {
++            true
++        }
++    });
+     let model = args
+         .next()
+         .ok_or("usage: solve MODEL POSITIONS [exact|DEPTH] [THREADS] [TT_MiB] [MILLISECONDS]")?;
+@@ -29,6 +37,9 @@ fn main() -> Result<(), Box<dyn Error>> {
+         return Err("unexpected argument".into());
+     }
+     let mut engine = Engine::from_file(model, options)?;
++    if legacy_mpc {
++        engine.set_legacy_main_mpc()?;
++    }
+     println!(
+         "position\tscore\taction\tmode\tdepth\tnodes\tleaves\tsplits\tjobs\thandoffs\tjoin_seconds\tseconds\tstop"
+     );
+diff --git a/deft-reversi-engine/src/board/edge_stability.rs b/deft-reversi-engine/src/board/edge_stability.rs
+index 4457deb..cb95211 100644
+--- a/deft-reversi-engine/src/board/edge_stability.rs
++++ b/deft-reversi-engine/src/board/edge_stability.rs
+@@ -126,10 +126,11 @@ fn pack_h1h8(x: u64) -> usize {
+ }
+ 
+ pub(super) fn get_stable_edge(player: u64, opponent: u64) -> u64 {
+-    EDGE_STABILITY[((player & 0xff) * 256 + (opponent & 0xff)) as usize] as u64
+-        | ((EDGE_STABILITY[(((player >> 56) & 0xff) * 256 + ((opponent >> 56) & 0xff)) as usize]
+-            as u64)
++    // Resolve LazyLock once, then use the immutable table for all four edges.
++    let table = &*EDGE_STABILITY;
++    table[((player & 0xff) * 256 + (opponent & 0xff)) as usize] as u64
++        | ((table[(((player >> 56) & 0xff) * 256 + ((opponent >> 56) & 0xff)) as usize] as u64)
+             << 56)
+-        | unpack_a2a7(EDGE_STABILITY[pack_a1a8(player) * 256 + pack_a1a8(opponent)])
+-        | unpack_h2h7(EDGE_STABILITY[pack_h1h8(player) * 256 + pack_h1h8(opponent)])
++        | unpack_a2a7(table[pack_a1a8(player) * 256 + pack_a1a8(opponent)])
++        | unpack_h2h7(table[pack_h1h8(player) * 256 + pack_h1h8(opponent)])
+ }
+diff --git a/deft-reversi-engine/src/board/last.rs b/deft-reversi-engine/src/board/last.rs
+index ee28b0a..a29ea1c 100644
+--- a/deft-reversi-engine/src/board/last.rs
++++ b/deft-reversi-engine/src/board/last.rs
+@@ -24,12 +24,9 @@ pub(crate) fn doubled_flips(square: usize, player: u64) -> i32 {
+ mod bmi2 {
+     use std::arch::x86_64::_pext_u64;
+     const COUNTS: [[u8; 256]; 8] = counts();
+-    const LINES: [[Line; 3]; 64] = lines();
+-    #[derive(Clone, Copy)]
+-    struct Line {
+-        mask: u64,
+-        position: usize,
+-    }
++    // Three full-height extraction masks plus the actual four-axis union.
++    // Dummy bits outside a short diagonal are cleared by the union first.
++    const MASKS: [[u64; 4]; 64] = masks();
+     const fn counts() -> [[u8; 256]; 8] {
+         let mut out = [[0; 256]; 8];
+         let mut pos = 0;
+@@ -58,16 +55,14 @@ mod bmi2 {
+         }
+         out
+     }
+-    const fn lines() -> [[Line; 3]; 64] {
+-        let mut out = [[Line {
+-            mask: 0,
+-            position: 0,
+-        }; 3]; 64];
++    const fn masks() -> [[u64; 4]; 64] {
++        let mut out = [[0u64; 4]; 64];
+         let mut square = 0;
+         while square < 64 {
+             let file = square % 8;
+             let rank = square / 8;
+             let mut other = 0;
++            let mut actual = [0u64; 3];
+             while other < 64 {
+                 let f = other % 8;
+                 let r = other / 8;
+@@ -79,26 +74,48 @@ mod bmi2 {
+                 let mut axis = 0;
+                 while axis < 3 {
+                     if membership[axis] {
+-                        out[square][axis].mask |= 1u64 << other;
+-                        if other < square {
+-                            out[square][axis].position += 1;
+-                        }
++                        actual[axis] |= 1u64 << other;
+                     }
+                     axis += 1;
+                 }
+                 other += 1;
+             }
++            let union = actual[0] | actual[1] | actual[2] | (0xffu64 << (rank * 8));
++            out[square][3] = union;
++            let mut axis = 0;
++            while axis < 3 {
++                let mut padded = actual[axis];
++                let mut r = 0;
++                while r < 8 {
++                    let row = 0xffu64 << (r * 8);
++                    if padded & row == 0 {
++                        // This is outside the physical diagonal. Select one
++                        // unrelated square in that row; the union clears it.
++                        let available = row & !union;
++                        assert!(available != 0);
++                        padded |= available & available.wrapping_neg();
++                    }
++                    r += 1;
++                }
++                assert!(padded.count_ones() == 8);
++                out[square][axis] = padded;
++                axis += 1;
++            }
+             square += 1;
+         }
+         out
+     }
+     #[inline(always)]
+     pub(super) fn doubled_flips(square: usize, player: u64) -> i32 {
+-        let mut sum = i32::from(COUNTS[square % 8][((player >> (square & 56)) & 255) as usize]);
+-        for line in &LINES[square] {
+-            // SAFETY: the complete module is compiled only with BMI2 enabled.
+-            let packed = unsafe { _pext_u64(player, line.mask) } as usize;
+-            sum += i32::from(COUNTS[line.position][packed]);
++        let masks = &MASKS[square];
++        let player = player & masks[3];
++        let horizontal = &COUNTS[square & 7];
++        let vertical = &COUNTS[square >> 3];
++        let mut sum = i32::from(horizontal[usize::from((player >> (square & 56)) as u8)]);
++        for &mask in &masks[..3] {
++            // SAFETY: BMI2 is enabled; every padded mask has exactly eight bits.
++            let packed = unsafe { _pext_u64(player, mask) } as u8;
++            sum += i32::from(vertical[usize::from(packed)]);
+         }
+         sum
+     }
+@@ -122,6 +139,12 @@ mod tests {
+                     doubled_flips(square, player),
+                     2 * board.flip_mask(empty).count_ones() as i32
+                 );
++                // The opponent-count path uses !player, which sets the last
++                // square's bit. That bit must not affect either line table.
++                assert_eq!(
++                    doubled_flips(square, player | empty),
++                    doubled_flips(square, player)
++                );
+             }
+         }
+     }
+diff --git a/deft-reversi-engine/src/evaluation/mod.rs b/deft-reversi-engine/src/evaluation/mod.rs
+index 51908ad..537607d 100644
+--- a/deft-reversi-engine/src/evaluation/mod.rs
++++ b/deft-reversi-engine/src/evaluation/mod.rs
+@@ -1,3 +1,5 @@
++#[cfg(feature = "endgame-pattern-ordering")]
++mod end_ordering;
+ mod pattern;
+ use crate::Board;
+ use pattern::definition::{
+@@ -68,7 +70,29 @@ impl PatternModel {
+     pub fn evaluate(&self, board: &Board) -> i32 {
+         self.evaluate_state(board, &EvalState::from_board(*board))
+     }
++    #[cfg(test)]
++    pub(crate) fn nonzero_for_tests() -> Self {
++        let mut model = Self::zero();
++        for (phase, values) in Arc::get_mut(&mut model.phases)
++            .unwrap()
++            .iter_mut()
++            .enumerate()
++        {
++            for (i, weight) in values.weights.iter_mut().enumerate() {
++                *weight = ((i * 37 + phase * 19) % 257) as i16 - 128;
++            }
++            for (i, weight) in values.mobility.iter_mut().enumerate() {
++                *weight = (i as i16 - 64) * 3;
++            }
++            values.bias = phase as i16 - 30;
++        }
++        model
++    }
+     pub(crate) fn evaluate_state(&self, board: &Board, state: &EvalState) -> i32 {
++        self.evaluate_state_and_moves(board, state).0
++    }
++    /// Return the legal moves already computed for the model's mobility term.
++    pub(crate) fn evaluate_state_and_moves(&self, board: &Board, state: &EvalState) -> (i32, u64) {
+         let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
+         let weights = &self.phases[phase];
+         let mut raw = i32::from(weights.bias);
+@@ -79,10 +103,11 @@ impl PatternModel {
+             }
+             offset += size;
+         }
+-        let mobility = 64 + board.get_moves().count_ones() as i32
+-            - board.get_opponent_moves().count_ones() as i32;
++        let moves = board.get_moves();
++        let mobility =
++            64 + moves.count_ones() as i32 - board.get_opponent_moves().count_ones() as i32;
+         raw += i32::from(weights.mobility[mobility as usize]);
+-        ((raw + raw.signum() * 64) / 128).clamp(-64, 64)
++        (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
+     }
+     /// DPR2 version 1: LE i16, 60 phases, 11 fixed-schema tables, mobility, bias.
+     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
+@@ -223,6 +248,11 @@ mod tests {
+                 }
+                 let bit = moves & moves.wrapping_neg();
+                 let flips = board.flip_mask(bit);
++                #[cfg(feature = "endgame-pattern-ordering")]
++                assert_eq!(
++                    state.ordering_child_indices(bit, flips),
++                    EvalState::from_board(board.after_known_move(bit, flips)).current,
++                );
+                 state = state.played(bit, flips);
+                 board = board.after_known_move(bit, flips);
+             }
+diff --git a/deft-reversi-engine/src/mpc.rs b/deft-reversi-engine/src/mpc.rs
+index c256526..3fba23f 100644
+--- a/deft-reversi-engine/src/mpc.rs
++++ b/deft-reversi-engine/src/mpc.rs
+@@ -225,6 +225,114 @@ impl MpcConfig {
+     }
+ }
+ 
++/// The discrete final-search table from main at 5a17bdce. The older model
++/// does not embed MPC parameters; callers must opt in for that model.
++pub(crate) fn legacy_main_rules() -> Vec<crate::ProbCutRule> {
++    let mut rules = MpcConfig::default().rules();
++    rules.retain(|r| !r.exact);
++    let measured = [
++        (
++            4,
++            1.0124526095640112,
++            0.48931748030193045,
++            4.914869788936018,
++        ),
++        (
++            3,
++            1.0133739578163794,
++            -1.7543169526476112,
++            5.389238400539998,
++        ),
++        (
++            4,
++            1.0139957691780979,
++            0.44804332300410943,
++            5.086939241974191,
++        ),
++        (
++            3,
++            1.0196101764153223,
++            -1.8127583017145918,
++            5.446378502556965,
++        ),
++        (4, 1.0240411920303725, 0.495222385942482, 5.08401904278953),
++        (
++            5,
++            1.0253130521132232,
++            -1.6594124445791587,
++            4.817367363807651,
++        ),
++        (6, 1.0281382671934618, 0.7327216969440862, 4.589407020617368),
++        (
++            5,
++            1.0316652919636162,
++            -1.8229371340268825,
++            4.810056307416734,
++        ),
++        (6, 1.0368717822009714, 0.8963184321993207, 4.575580119070469),
++    ];
++    for empties in 12..=60u8 {
++        let (mut shallow_depth, slope, intercept, deviation) =
++            measured[usize::from((empties - 12).min(8))];
++        let (slope, intercept, deviation) = if empties > 20 && empties % 2 == 1 {
++            (measured[7].1, measured[7].2, measured[7].3)
++        } else {
++            (slope, intercept, deviation)
++        };
++        if empties > 20 {
++            shallow_depth = if empties >= 29 {
++                if empties % 2 == 0 { 8 } else { 7 }
++            } else if empties % 2 == 0 {
++                6
++            } else {
++                5
++            };
++        }
++        rules.push(crate::ProbCutRule {
++            exact: true,
++            depth: empties,
++            empties,
++            shallow_depth,
++            slope,
++            intercept,
++            deviation,
++        });
++    }
++    rules
++}
++
++#[cfg(test)]
++mod legacy_tests {
++    use super::*;
++
++    #[test]
++    fn main_final_table_boundaries_and_reused_coefficients() {
++        let rules = legacy_main_rules();
++        let entry = |n| *rules.iter().find(|r| r.exact && r.empties == n).unwrap();
++        assert!(!rules.iter().any(|r| r.exact && r.empties < 12));
++        assert_eq!(
++            (entry(12).shallow_depth, entry(12).slope),
++            (4, 1.0124526095640112)
++        );
++        assert_eq!(
++            (entry(19).shallow_depth, entry(19).intercept),
++            (5, -1.8229371340268825)
++        );
++        assert_eq!(entry(21).slope, entry(19).slope);
++        assert_eq!(entry(28).slope, entry(20).slope);
++        assert_eq!(
++            (
++                entry(28).shallow_depth,
++                entry(29).shallow_depth,
++                entry(30).shallow_depth
++            ),
++            (6, 7, 8)
++        );
++        assert_eq!(entry(59).slope, entry(19).slope);
++        assert_eq!(entry(60).slope, entry(20).slope);
++    }
++}
++
+ impl MpcConfig {
+     pub(crate) fn rules(&self) -> Vec<crate::ProbCutRule> {
+         let mut rules = Vec::new();
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index ace32e7..87af62f 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -106,6 +106,16 @@ impl Engine {
+         self.mpc = Some(config);
+         Ok(())
+     }
++    /// Use the MPC table from the legacy main-branch evaluator. This is an
++    /// explicit opt-in for models converted from main's `data/eval/eval.json`.
++    pub fn set_legacy_main_mpc(&mut self) -> Result<(), EngineError> {
++        let calibration = indexed_rules(crate::mpc::legacy_main_rules());
++        self.clear_tt()?;
++        self.calibration = calibration;
++        self.mpc = None;
++        self.cache_sigma = None;
++        Ok(())
++    }
+     pub fn clear_tt(&mut self) -> Result<(), EngineError> {
+         let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
+         let pv_table =
+diff --git a/deft-reversi-engine/src/search/last_four.rs b/deft-reversi-engine/src/search/last_four.rs
+index 5ead880..1e4fed0 100644
+--- a/deft-reversi-engine/src/search/last_four.rs
++++ b/deft-reversi-engine/src/search/last_four.rs
+@@ -2,6 +2,8 @@
+ //! The wrapper propagates cancellation before any caller can publish a bound.
+ use super::*;
+ const SCORE_MAX: i32 = 64;
++// All valid quadrant parity values fit in four bits.
++const UNKNOWN_PARITY: u8 = 16;
+ struct LeafSearch<'a> {
+     context: &'a mut Context,
+     failed: bool,
+@@ -15,6 +17,15 @@ impl LeafSearch<'_> {
+ }
+ impl Context {
+     pub(super) fn last_four_score(&mut self, board: Board, alpha: i32) -> Result<i32, ()> {
++        self.last_four_score_with_parity(board, alpha, UNKNOWN_PARITY)
++    }
++    pub(super) fn last_four_score_with_parity(
++        &mut self,
++        board: Board,
++        alpha: i32,
++        parity: u8,
++    ) -> Result<i32, ()> {
++        debug_assert!(parity <= UNKNOWN_PARITY);
+         let mut search = LeafSearch {
+             context: self,
+             failed: false,
+@@ -23,11 +34,13 @@ impl Context {
+             board.player_bits(),
+             board.opponent_bits(),
+             alpha,
++            parity,
+             &mut search,
+         );
+         if search.failed { Err(()) } else { Ok(score) }
+     }
+ }
++#[inline(always)]
+ fn solve_score_1_empties(player: u64, alpha: i32, pos: usize) -> i32 {
+     debug_assert!(pos < 64);
+ 
+@@ -69,7 +82,7 @@ fn solve_score_1_empties(player: u64, alpha: i32, pos: usize) -> i32 {
+ ///
+ /// 参考: <https://eukaryote.hateblo.jp/entry/2020/04/26/031246>
+ #[rustfmt::skip]
+-const NEIGHBOUR: [u64; 64] = [
++pub(super) const NEIGHBOUR: [u64; 64] = [
+     0x0000000000000302, 0x0000000000000604, 0x0000000000000e0a, 0x0000000000001c14, 0x0000000000003828, 0x0000000000007050, 0x0000000000006020, 0x000000000000c040,
+     0x0000000000030200, 0x0000000000060400, 0x00000000000e0a00, 0x00000000001c1400, 0x0000000000382800, 0x0000000000705000, 0x0000000000602000, 0x0000000000c04000,
+     0x0000000003020300, 0x0000000006040600, 0x000000000e0a0e00, 0x000000001c141c00, 0x0000000038283800, 0x0000000070507000, 0x0000000060206000, 0x00000000c040c000,
+@@ -354,6 +367,7 @@ fn solve_score_4_empties(
+     player: u64,
+     opponent: u64,
+     alpha: i32,
++    known_parity: u8,
+     search: &mut LeafSearch<'_>,
+ ) -> i32 {
+     // The caller has already entered this four-empty node.
+@@ -371,7 +385,11 @@ fn solve_score_4_empties(
+     let mut x3 = empties.trailing_zeros() as usize;
+     empties &= empties - 1;
+     let mut x4 = empties.trailing_zeros() as usize;
+-    let parity = final_parity(player, opponent);
++    let parity = if known_parity < UNKNOWN_PARITY {
++        i32::from(known_parity)
++    } else {
++        final_parity(player, opponent)
++    };
+     let beta = alpha + 1;
+ 
+     if parity & QUADRANT_ID[x1] == 0 {
+@@ -482,3 +500,60 @@ fn solve_score_4_empties(
+         solve_score_bits(player, 4)
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn last_one_bounds_match_full_board_rules() {
++        let mut random = 0x0123456789abcdefu64;
++        for square in 0..64 {
++            let empty = 1u64 << square;
++            for _ in 0..128 {
++                random ^= random << 13;
++                random ^= random >> 7;
++                random ^= random << 17;
++                let player = random & !empty;
++                let board = Board::from_bits(player, !player & !empty).unwrap();
++                let expected = if board.get_moves() != 0 {
++                    -board.board_after_move(empty).final_score()
++                } else if board.get_opponent_moves() != 0 {
++                    board
++                        .board_after_pass()
++                        .board_after_move(empty)
++                        .final_score()
++                } else {
++                    board.final_score()
++                };
++                let base = 2 * player.count_ones() as i32 - 62;
++                for alpha in [
++                    -65,
++                    -31,
++                    -1,
++                    0,
++                    31,
++                    63,
++                    64,
++                    base - 1,
++                    base,
++                    expected - 1,
++                    expected,
++                ] {
++                    let actual = solve_score_1_empties(player, alpha, square);
++                    if expected <= alpha {
++                        assert!(
++                            expected <= actual && actual <= alpha,
++                            "upper: board={board:?} alpha={alpha} actual={actual} expected={expected}"
++                        );
++                    } else {
++                        assert!(
++                            alpha < actual && actual <= expected,
++                            "lower: board={board:?} alpha={alpha} actual={actual} expected={expected}"
++                        );
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/deft-reversi-engine/src/search/ordering.rs b/deft-reversi-engine/src/search/ordering.rs
+index 33e941f..758ae2d 100644
+--- a/deft-reversi-engine/src/search/ordering.rs
++++ b/deft-reversi-engine/src/search/ordering.rs
+@@ -34,10 +34,15 @@ impl Context {
+             )
+         };
+         let state = parent.state.played(bit, flips);
+-        let value = if depth == 0 {
+-            self.evaluate(child, &state)
++        let (value, moves) = if depth <= 1 {
++            if depth == 1 {
++                // Preserve the depth-zero ordering_search visit and hard budget.
++                self.enter()?;
++            }
++            self.stats.evaluations += 1;
++            self.runtime.model.evaluate_state_and_moves(&child, &state)
+         } else {
+-            self.ordering_search(
++            let value = self.ordering_search(
+                 Position {
+                     board: child,
+                     state,
+@@ -45,9 +50,9 @@ impl Context {
+                 low,
+                 high,
+                 depth - 1,
+-            )?
++            )?;
++            (value, child.get_moves())
+         };
+-        let moves = child.get_moves();
+         let mobility =
+             -2 * moves.count_ones() as i32 - (moves & 0x8100000000000081).count_ones() as i32;
+         let presence = if depth > 2 && self.runtime.table.get(child).is_some() {
+@@ -75,10 +80,14 @@ impl Context {
+             _ => 3,
+         };
+         let state = parent.state.played(bit, flips);
+-        let value = if ordering_depth == 0 {
+-            self.evaluate(child, &state)
++        let (value, legal) = if ordering_depth <= 1 {
++            if ordering_depth == 1 {
++                self.enter()?;
++            }
++            self.stats.evaluations += 1;
++            self.runtime.model.evaluate_state_and_moves(&child, &state)
+         } else {
+-            self.ordering_search(
++            let value = self.ordering_search(
+                 Position {
+                     board: child,
+                     state,
+@@ -86,9 +95,9 @@ impl Context {
+                 (-alpha - 6).max(-64),
+                 (-alpha + 16).min(64),
+                 ordering_depth - 1,
+-            )?
++            )?;
++            (value, child.get_moves())
+         };
+-        let legal = child.get_moves();
+         Ok(-value
+             - 2 * legal.count_ones() as i32
+             - (legal & 0x8100000000000081).count_ones() as i32)
+@@ -143,3 +152,39 @@ impl Context {
+         Ok(best)
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::super::session::test_context;
++    use super::*;
++
++    #[test]
++    fn static_ordering_preserves_visits_and_hard_budget() {
++        let board = Board::new();
++        let bit = board.get_moves() & board.get_moves().wrapping_neg();
++        let flips = board.flip_mask(bit);
++        let child = board.after_known_move(bit, flips);
++        let parent = Position {
++            board,
++            state: EvalState::from_board(board),
++        };
++        for (depth, visits) in [(4, 0), (7, 1)] {
++            let mut context = test_context();
++            context
++                .midgame_ordering(parent, child, bit, flips, 0, depth)
++                .unwrap();
++            assert_eq!(context.stats.nodes, visits);
++            assert_eq!(context.stats.evaluations, 1);
++
++            let mut limited = test_context();
++            Arc::get_mut(&mut limited.runtime)
++                .unwrap()
++                .control
++                .node_limit = Some(0);
++            let result = limited.midgame_ordering(parent, child, bit, flips, 0, depth);
++            assert_eq!(result.is_err(), visits != 0);
++            assert_eq!(limited.stats.nodes, 0);
++            assert_eq!(limited.stats.evaluations, u64::from(visits == 0));
++        }
++    }
++}
+diff --git a/deft-reversi-engine/src/search/session.rs b/deft-reversi-engine/src/search/session.rs
+index 45e3564..7c575c5 100644
+--- a/deft-reversi-engine/src/search/session.rs
++++ b/deft-reversi-engine/src/search/session.rs
+@@ -132,6 +132,8 @@ pub(super) struct Context {
+     pub(super) ancestors: Vec<Arc<Helper>>,
+     pub(super) cuts: Vec<Arc<AtomicBool>>,
+     pub(super) end_cache: Vec<Vec<EndEntry>>,
++    #[cfg(feature = "endgame-pattern-ordering")]
++    pub(super) end_ordering: [Option<(Board, EvalState)>; 3],
+ }
+ impl Drop for Context {
+     fn drop(&mut self) {
+@@ -153,6 +155,7 @@ pub(super) struct EndEntry {
+     pub(super) opponent: u64,
+     pub(super) lower: i8,
+     pub(super) upper: i8,
++    pub(super) best: u8,
+ }
+ 
+ #[cfg(test)]
+diff --git a/deft-reversi-engine/src/search/tail.rs b/deft-reversi-engine/src/search/tail.rs
+index 4c37eb9..a7f9156 100644
+--- a/deft-reversi-engine/src/search/tail.rs
++++ b/deft-reversi-engine/src/search/tail.rs
+@@ -3,6 +3,45 @@ use super::*;
+ pub(super) const TAIL_EMPTIES: u8 = 6;
+ pub(super) const LOCAL_END_MAX: u8 = 13;
+ const LOCAL_SLOTS: usize = 2048;
++const QUADRANT_MASKS: [u64; 4] = [
++    0x000000000f0f0f0f,
++    0x00000000f0f0f0f0,
++    0x0f0f0f0f00000000,
++    0xf0f0f0f000000000,
++];
++const PARITY_REGIONS: [u64; 16] = {
++    let mut masks = [0; 16];
++    let mut parity = 0;
++    while parity < 16 {
++        let mut region = 0;
++        while region < 4 {
++            if parity & (1 << region) != 0 {
++                masks[parity] |= QUADRANT_MASKS[region];
++            }
++            region += 1;
++        }
++        parity += 1;
++    }
++    masks
++};
++const SQUARE_PARITY: [u8; 64] = {
++    let mut ids = [0; 64];
++    let mut square = 0;
++    while square < 64 {
++        ids[square] = 1 << (((square >> 2) & 1) | ((square >> 4) & 2));
++        square += 1;
++    }
++    ids
++};
++fn tail_parity(board: Board) -> u8 {
++    let empty = !(board.player_bits() | board.opponent_bits());
++    QUADRANT_MASKS
++        .iter()
++        .enumerate()
++        .fold(0, |parity, (i, mask)| {
++            parity | (((empty & mask).count_ones() as u8 & 1) << i)
++        })
++}
+ 
+ impl Context {
+     /// Exact tail: features and TT are unnecessary once no heuristic is consulted.
+@@ -72,7 +111,7 @@ impl Context {
+         alpha: i32,
+         beta: i32,
+     ) -> Result<i32, ()> {
+-        self.endgame_score_entered(board, alpha, beta, None)
++        self.endgame_score_entered(board, alpha, beta, None, None)
+     }
+     fn endgame_score_entered(
+         &mut self,
+@@ -80,6 +119,7 @@ impl Context {
+         alpha: i32,
+         beta: i32,
+         known_moves: Option<u64>,
++        known_probe: Option<EndProbe>,
+     ) -> Result<i32, ()> {
+         let empties = board.empty_count();
+         if empties < TAIL_EMPTIES {
+@@ -100,44 +140,51 @@ impl Context {
+                     opponent: 0,
+                     lower: -64,
+                     upper: 64,
++                    best: 64,
+                 },
+             );
+         }
+-        let hash = (board.player_bits() ^ board.opponent_bits().rotate_left(32))
+-            .wrapping_mul(0x9e3779b97f4a7c15);
+-        let index = (hash >> 53) as usize;
+-        let old = self.end_cache[layer][index];
+         let quality = self.runtime.quality.load(Ordering::Relaxed);
+-        let same = old.player == board.player_bits()
+-            && old.opponent == board.opponent_bits()
+-            && old.quality == quality;
+-        if same {
+-            self.stats.tt_hits += 1;
+-            if i32::from(old.lower) >= beta {
++        // A parent's snapshot remains a valid bound even if a sibling has since
++        // replaced the slot. This cache is owned by this Context, and quality is
++        // fixed until the search stage has joined all workers.
++        let probe = known_probe.unwrap_or_else(|| self.local_end_probe(board, quality));
++        if probe.matched {
++            if known_probe.is_none() {
++                self.stats.tt_hits += 1;
++            }
++            if i32::from(probe.lower) >= beta {
+                 self.stats.tt_cuts += 1;
+-                return Ok(i32::from(old.lower));
++                return Ok(i32::from(probe.lower));
+             }
+-            if i32::from(old.upper) <= alpha {
++            if i32::from(probe.upper) <= alpha {
+                 self.stats.tt_cuts += 1;
+-                return Ok(i32::from(old.upper));
++                return Ok(i32::from(probe.upper));
+             }
+         }
++        let mut best_move = probe.best;
+         let score = if empties > TAIL_EMPTIES {
+-            self.ordered_endgame(board, alpha, beta, known_moves)?
++            self.ordered_endgame(board, alpha, beta, known_moves, &mut best_move)?
+         } else {
+-            self.tail_score_impl(board, alpha, beta)?
++            self.six_moves_score(
++                board,
++                alpha,
++                known_moves.unwrap_or_else(|| board.get_moves()),
++                tail_parity(board),
++            )?
+         };
+         let (lower, upper) = if score >= beta {
+-            (score as i8, if same { old.upper } else { 64 })
++            (score as i8, probe.upper)
+         } else {
+-            (if same { old.lower } else { -64 }, score as i8)
++            (probe.lower, score as i8)
+         };
+-        self.end_cache[layer][index] = EndEntry {
++        self.end_cache[layer][usize::from(probe.index)] = EndEntry {
+             quality,
+             player: board.player_bits(),
+             opponent: board.opponent_bits(),
+             lower,
+             upper,
++            best: best_move,
+         };
+         Ok(score)
+     }
+@@ -148,6 +195,7 @@ impl Context {
+         mut alpha: i32,
+         beta: i32,
+         known_moves: Option<u64>,
++        best_move: &mut u8,
+     ) -> Result<i32, ()> {
+         let mut moves = known_moves.unwrap_or_else(|| board.get_moves());
+         if moves == 0 {
+@@ -159,7 +207,7 @@ impl Context {
+             }
+             self.enter()?;
+             return self
+-                .endgame_score_entered(passed, -beta, -alpha, Some(legal))
++                .endgame_score_entered(passed, -beta, -alpha, Some(legal), None)
+                 .map(|score| -score);
+         }
+         if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
+@@ -180,35 +228,56 @@ impl Context {
+             return Ok(score);
+         }
+         if moves.is_power_of_two() {
++            *best_move = moves.trailing_zeros() as u8;
+             let child = board.after_known_move(moves, board.flip_mask(moves));
+             self.enter()?;
+             return self
+-                .endgame_score_entered(child, -beta, -alpha, None)
++                .endgame_score_entered(child, -beta, -alpha, None, None)
+                 .map(|score| -score);
+         }
++        let tt_move = *best_move;
++        let mut best = -65;
++        if tt_move < 64 && moves & (1u64 << tt_move) != 0 {
++            let bit = 1u64 << tt_move;
++            moves &= !bit;
++            let child = board.after_known_move(bit, board.flip_mask(bit));
++            self.enter()?;
++            let score = -self.endgame_score_entered(child, -beta, -alpha, None, None)?;
++            best = score;
++            if score >= beta {
++                self.stats.beta_cuts += 1;
++                return Ok(score);
++            }
++        }
+         let mut candidates = [EndMove {
+-            bit: 0,
++            square: 0,
+             flips: 0,
+             legal: 0,
+             ordering: 0,
++            probe: EndProbe::EMPTY,
+         }; LOCAL_END_MAX as usize];
+         let odd = odd_regions(board);
+         let mut count = 0;
+-        let mut best = -65;
++        let quality = self.runtime.quality.load(Ordering::Relaxed);
++        #[cfg(feature = "endgame-pattern-ordering")]
++        let mut ordering_state = None;
+         while moves != 0 {
+             let bit = moves & moves.wrapping_neg();
+             moves &= moves - 1;
+             let flips = board.flip_mask(bit);
+             if flips == board.opponent_bits() {
++                *best_move = bit.trailing_zeros() as u8;
+                 self.stats.leaves += 1;
+                 return Ok(64);
+             }
+             let child = board.after_known_move(bit, flips);
+-            if let Some(entry) = self.local_end_entry(child) {
++            let probe = self.local_end_probe(child, quality);
++            if probe.matched {
+                 self.stats.tt_hits += 1;
+-                let lower = -i32::from(entry.upper);
+-                let upper = -i32::from(entry.lower);
++                let lower = -i32::from(probe.upper);
++                let upper = -i32::from(probe.lower);
+                 if lower >= beta {
++                    *best_move = bit.trailing_zeros() as u8;
+                     self.stats.tt_cuts += 1;
+                     return Ok(lower);
+                 }
+@@ -222,19 +291,36 @@ impl Context {
+             let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();
+             if mobility <= 1 {
+                 self.enter()?;
+-                let score = -self.endgame_score_entered(child, -beta, -alpha, Some(legal))?;
+-                best = best.max(score);
++                let score =
++                    -self.endgame_score_entered(child, -beta, -alpha, Some(legal), Some(probe))?;
++                if score > best {
++                    best = score;
++                    *best_move = bit.trailing_zeros() as u8;
++                }
+                 if score >= beta {
+                     return Ok(score);
+                 }
+                 continue;
+             }
+             let ordering = super::tree::endgame_ordering(legal, bit, odd);
++            #[cfg(feature = "endgame-pattern-ordering")]
++            let ordering = if board.empty_count() >= 11 {
++                let state = ordering_state.get_or_insert_with(|| self.end_ordering_state(board));
++                self.stats.evaluations += 1;
++                let value = self
++                    .runtime
++                    .model
++                    .end_ordering_child_value(child, state, bit, flips);
++                -(mobility as i32) * 40 - value * 12
++            } else {
++                ordering
++            };
+             candidates[count] = EndMove {
+-                bit,
++                square: bit.trailing_zeros() as u8,
+                 flips,
+                 legal,
+                 ordering,
++                probe,
+             };
+             count += 1;
+         }
+@@ -242,10 +328,26 @@ impl Context {
+             let index = (i..count).max_by_key(|&n| candidates[n].ordering).unwrap();
+             candidates.swap(i, index);
+             let action = candidates[i];
+-            let child = board.after_known_move(action.bit, action.flips);
++            let child = board.after_known_move(1u64 << action.square, action.flips);
++            #[cfg(feature = "endgame-pattern-ordering")]
++            if child.empty_count() >= 11
++                && let Some(state) = ordering_state
++            {
++                self.end_ordering[usize::from(child.empty_count() - 11)] =
++                    Some((child, state.played(1u64 << action.square, action.flips)));
++            }
+             self.enter()?;
+-            let score = -self.endgame_score_entered(child, -beta, -alpha, Some(action.legal))?;
+-            best = best.max(score);
++            let score = -self.endgame_score_entered(
++                child,
++                -beta,
++                -alpha,
++                Some(action.legal),
++                Some(action.probe),
++            )?;
++            if score > best {
++                best = score;
++                *best_move = action.square;
++            }
+             alpha = alpha.max(score);
+             if alpha >= beta {
+                 self.stats.beta_cuts += 1;
+@@ -254,23 +356,44 @@ impl Context {
+         }
+         Ok(best)
+     }
+-    fn local_end_entry(&self, board: Board) -> Option<EndEntry> {
+-        let empties = board.empty_count();
+-        if !(TAIL_EMPTIES..=LOCAL_END_MAX).contains(&empties) {
+-            return None;
++    #[cfg(feature = "endgame-pattern-ordering")]
++    fn end_ordering_state(&mut self, board: Board) -> EvalState {
++        let slot = &mut self.end_ordering[usize::from(board.empty_count() - 11)];
++        if let Some((cached, state)) = *slot
++            && cached == board
++        {
++            return state;
+         }
++        let state = EvalState::from_board(board);
++        *slot = Some((board, state));
++        state
++    }
++    fn local_end_probe(&self, board: Board, quality: u8) -> EndProbe {
++        let empties = board.empty_count();
++        debug_assert!((TAIL_EMPTIES..=LOCAL_END_MAX).contains(&empties));
+         let hash = (board.player_bits() ^ board.opponent_bits().rotate_left(32))
+             .wrapping_mul(0x9e3779b97f4a7c15);
+-        let entry = *self
++        let index = (hash >> 53) as u16;
++        let mut probe = EndProbe {
++            index,
++            ..EndProbe::EMPTY
++        };
++        if let Some(entry) = self
+             .end_cache
+-            .get(usize::from(empties - TAIL_EMPTIES))?
+-            .get((hash >> 53) as usize)?;
+-        (entry.player == board.player_bits()
++            .get(usize::from(empties - TAIL_EMPTIES))
++            .and_then(|layer| layer.get(usize::from(index)))
++            && entry.player == board.player_bits()
+             && entry.opponent == board.opponent_bits()
+-            && entry.quality == self.runtime.quality.load(Ordering::Relaxed))
+-        .then_some(entry)
++            && entry.quality == quality
++        {
++            probe.lower = entry.lower;
++            probe.upper = entry.upper;
++            probe.best = entry.best;
++            probe.matched = true;
++        }
++        probe
+     }
+-    fn tail_score_impl(&mut self, board: Board, mut alpha: i32, beta: i32) -> Result<i32, ()> {
++    fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, ()> {
+         let empty = !(board.player_bits() | board.opponent_bits());
+         let count = empty.count_ones() as u8;
+         if count == 4 {
+@@ -289,18 +412,38 @@ impl Context {
+                 false,
+             );
+         }
+-        let mut moves = board.get_moves();
++        debug_assert_eq!(count, 5);
++        debug_assert_eq!(beta, alpha + 1);
++        self.five_empty_score(board, alpha, tail_parity(board))
++    }
++    // Six empties still use the local TT and often arrive with known legal moves.
++    fn six_moves_score(
++        &mut self,
++        board: Board,
++        alpha: i32,
++        mut moves: u64,
++        parity: u8,
++    ) -> Result<i32, ()> {
++        debug_assert_eq!(board.empty_count(), 6);
++        let child_alpha = -alpha - 1;
+         if moves == 0 {
+-            if board.get_opponent_moves() == 0 {
++            let legal = board.get_opponent_moves();
++            if legal == 0 {
+                 self.stats.leaves += 1;
+                 return Ok(board.final_score());
+             }
+             self.enter()?;
+             return self
+-                .tail_score_entered(board.board_after_pass(), -beta, -alpha)
++                .endgame_score_entered(
++                    board.board_after_pass(),
++                    child_alpha,
++                    -alpha,
++                    Some(legal),
++                    None,
++                )
+                 .map(|score| -score);
+         }
+-        let mut preferred = moves & odd_regions(board);
++        let mut preferred = moves & PARITY_REGIONS[usize::from(parity)];
+         let mut best = -65;
+         while moves != 0 {
+             let options = if preferred != 0 { preferred } else { moves };
+@@ -308,17 +451,60 @@ impl Context {
+             preferred &= !bit;
+             moves &= !bit;
+             let child = board.after_known_move(bit, board.flip_mask(bit));
++            let child_parity = parity ^ SQUARE_PARITY[bit.trailing_zeros() as usize];
+             self.enter()?;
+-            let score = -self.tail_score_entered(child, -beta, -alpha)?;
++            let score = -self.five_empty_score(child, child_alpha, child_parity)?;
+             best = best.max(score);
+-            alpha = alpha.max(score);
+-            if alpha >= beta {
++            if score > alpha {
+                 self.stats.beta_cuts += 1;
+                 break;
+             }
+         }
+         Ok(best)
+     }
++    // At five empties, discover legal moves lazily in the same parity/square
++    // order as the bitboard path. A cutoff need not test all remaining squares.
++    fn five_empty_score(&mut self, board: Board, alpha: i32, parity: u8) -> Result<i32, ()> {
++        debug_assert_eq!(board.empty_count(), 5);
++        let mut empty = !(board.player_bits() | board.opponent_bits());
++        let mut preferred = empty & PARITY_REGIONS[usize::from(parity)];
++        let child_alpha = -alpha - 1;
++        let mut best = -65;
++        while empty != 0 {
++            let options = if preferred != 0 { preferred } else { empty };
++            let bit = options & options.wrapping_neg();
++            preferred &= !bit;
++            empty &= !bit;
++            let square = bit.trailing_zeros() as usize;
++            if board.opponent_bits() & super::last_four::NEIGHBOUR[square] == 0 {
++                continue;
++            }
++            let flips = board.flip_mask(bit);
++            if flips == 0 {
++                continue;
++            }
++            let child = board.after_known_move(bit, flips);
++            let child_parity = parity ^ SQUARE_PARITY[square];
++            self.enter()?;
++            let score = -self.last_four_score_with_parity(child, child_alpha, child_parity)?;
++            best = best.max(score);
++            if score > alpha {
++                self.stats.beta_cuts += 1;
++                return Ok(best);
++            }
++        }
++        // Kernel scores/bounds are in -64..=64; -65 means no legal move.
++        if best != -65 {
++            return Ok(best);
++        }
++        if board.get_opponent_moves() == 0 {
++            self.stats.leaves += 1;
++            return Ok(board.final_score());
++        }
++        self.enter()?;
++        self.five_empty_score(board.board_after_pass(), child_alpha, parity)
++            .map(|score| -score)
++    }
+ }
+ 
+ #[inline(always)]
+@@ -347,10 +533,30 @@ pub(super) fn last_square_bound(board: Board, empty: u64, alpha: i32) -> i32 {
+ 
+ #[derive(Clone, Copy)]
+ struct EndMove {
+-    bit: u64,
++    square: u8,
+     flips: u64,
+     legal: u64,
+     ordering: i32,
++    probe: EndProbe,
++}
++
++// Six bytes: no board copy, pointer, or evaluation state in the candidate.
++#[derive(Clone, Copy)]
++struct EndProbe {
++    index: u16,
++    lower: i8,
++    upper: i8,
++    best: u8,
++    matched: bool,
++}
++impl EndProbe {
++    const EMPTY: Self = Self {
++        index: 0,
++        lower: -64,
++        upper: 64,
++        best: 64,
++        matched: false,
++    };
+ }
+ 
+ #[cfg(test)]
+@@ -374,6 +580,187 @@ mod tests {
+         }
+         best
+     }
++    fn seven_empty_board() -> Board {
++        let mut board = Board::new();
++        let mut random = 1u64;
++        while board.empty_count() > 7 {
++            let mut moves = board.get_moves();
++            if moves == 0 {
++                assert!(!board.is_terminal());
++                board = board.board_after_pass();
++                continue;
++            }
++            random ^= random << 13;
++            random ^= random >> 7;
++            random ^= random << 17;
++            for _ in 0..random % u64::from(moves.count_ones()) {
++                moves &= moves - 1;
++            }
++            board = board.board_after_move(moves & moves.wrapping_neg());
++        }
++        board
++    }
++    #[test]
++    fn carried_parity_matches_board_regions_through_moves_and_passes() {
++        for seed in 1..=32u64 {
++            let mut random = seed;
++            let mut board = Board::new();
++            while !board.is_terminal() {
++                let parity = tail_parity(board);
++                assert_eq!(PARITY_REGIONS[usize::from(parity)], odd_regions(board));
++                let mut moves = board.get_moves();
++                if moves == 0 {
++                    board = board.board_after_pass();
++                    assert_eq!(tail_parity(board), parity);
++                    continue;
++                }
++                random ^= random << 13;
++                random ^= random >> 7;
++                random ^= random << 17;
++                for _ in 0..random % u64::from(moves.count_ones()) {
++                    moves &= moves - 1;
++                }
++                let bit = moves & moves.wrapping_neg();
++                board = board.board_after_move(bit);
++                assert_eq!(
++                    tail_parity(board),
++                    parity ^ SQUARE_PARITY[bit.trailing_zeros() as usize],
++                );
++            }
++        }
++    }
++    #[test]
++    fn five_empty_kernel_matches_exhaustive_for_both_turns_and_boundary_windows() {
++        let empty = 0x1fu64;
++        let mut boards = vec![
++            Board::from_bits(!empty, 0).unwrap(),
++            Board::from_bits(0, !empty).unwrap(),
++        ];
++        for seed in 1..=64u64 {
++            let mut random = seed;
++            let mut board = Board::new();
++            while board.empty_count() > 5 && !board.is_terminal() {
++                let mut moves = board.get_moves();
++                if moves == 0 {
++                    board = board.board_after_pass();
++                    continue;
++                }
++                random ^= random << 13;
++                random ^= random >> 7;
++                random ^= random << 17;
++                for _ in 0..random % u64::from(moves.count_ones()) {
++                    moves &= moves - 1;
++                }
++                board = board.board_after_move(moves & moves.wrapping_neg());
++            }
++            if board.empty_count() == 5 {
++                boards.push(board);
++                boards.push(board.board_after_pass());
++            }
++        }
++        let mut pass_positions = 0;
++        for board in boards {
++            if board.get_moves() == 0 && board.get_opponent_moves() != 0 {
++                pass_positions += 1;
++            }
++            let expected = brute(board);
++            for alpha in [expected - 1, expected] {
++                let mut context = context();
++                let actual = context
++                    .five_empty_score(board, alpha, tail_parity(board))
++                    .unwrap();
++                assert_eq!(actual, expected, "board={board:?} alpha={alpha}");
++            }
++        }
++        assert!(pass_positions > 0);
++    }
++    #[test]
++    fn probe_snapshot_survives_replacement_and_rejects_other_quality() {
++        assert_eq!(std::mem::size_of::<EndProbe>(), 6);
++        assert_eq!(std::mem::size_of::<EndMove>(), 32);
++        let board = seven_empty_board();
++        let expected = brute(board);
++        let mut context = context();
++        context
++            .tail_score_entered(board, expected, expected + 1)
++            .unwrap();
++        let probe = context.local_end_probe(board, 0);
++        let layer = usize::from(board.empty_count() - TAIL_EMPTIES);
++        let slot = &mut context.end_cache[layer][usize::from(probe.index)];
++        *slot = EndEntry {
++            player: board.player_bits(),
++            opponent: board.opponent_bits(),
++            quality: 0,
++            lower: expected as i8,
++            upper: expected as i8,
++            best: 64,
++        };
++        let probe = context.local_end_probe(board, 0);
++        assert!(probe.matched);
++        assert!(!context.local_end_probe(board, 1).matched);
++        context.end_cache[layer][usize::from(probe.index)].quality = 255;
++        assert!(!context.local_end_probe(board, 0).matched);
++        assert_eq!(
++            context
++                .endgame_score_entered(board, expected, expected + 1, None, Some(probe))
++                .unwrap(),
++            expected
++        );
++    }
++    #[test]
++    fn child_tt_cut_saves_the_cutting_move() {
++        let board = seven_empty_board();
++        let expected = brute(board);
++        let mut context = context();
++        context
++            .tail_score_entered(board, expected, expected + 1)
++            .unwrap();
++        for layer in &mut context.end_cache {
++            for entry in layer {
++                entry.quality = 255;
++            }
++        }
++        let mut moves = board.get_moves();
++        let winning = loop {
++            assert_ne!(moves, 0);
++            let bit = moves & moves.wrapping_neg();
++            moves &= moves - 1;
++            if -brute(board.board_after_move(bit)) == expected {
++                break bit;
++            }
++        };
++        let child = board.board_after_move(winning);
++        let probe = context.local_end_probe(child, 0);
++        context.end_cache[0].resize(
++            LOCAL_SLOTS,
++            EndEntry {
++                player: 0,
++                opponent: 0,
++                lower: -64,
++                upper: 64,
++                best: 64,
++                quality: 255,
++            },
++        );
++        context.end_cache[0][usize::from(probe.index)] = EndEntry {
++            player: child.player_bits(),
++            opponent: child.opponent_bits(),
++            lower: -expected as i8,
++            upper: -expected as i8,
++            best: 64,
++            quality: 0,
++        };
++        let mut best = 64;
++        assert_eq!(
++            context
++                .ordered_endgame(board, expected - 1, expected, None, &mut best)
++                .unwrap(),
++            expected
++        );
++        assert!(best < 64);
++        assert_ne!(board.get_moves() & (1u64 << best), 0);
++        assert!(-brute(board.board_after_move(1u64 << best)) >= expected);
++    }
+     #[test]
+     fn score_tail_preserves_upper_and_lower_bounds() {
+         let mut context = context();
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index 9187665..cd56c38 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -26,6 +26,8 @@ impl Context {
+             ancestors,
+             cuts,
+             end_cache: Vec::new(),
++            #[cfg(feature = "endgame-pattern-ordering")]
++            end_ordering: [None; 3],
+         }
+     }
+     pub(super) fn aborted(&self) -> bool {
+@@ -57,6 +59,22 @@ impl Context {
+         self.stats.evaluations += 1;
+         self.runtime.model.evaluate_state(&board, state)
+     }
++    fn child_needs_eval(&self, board: Board, exact: bool, narrow: bool) -> bool {
++        if !exact {
++            return true;
++        }
++        let empties = board.empty_count();
++        if empties > super::tail::LOCAL_END_MAX + 1 {
++            return true;
++        }
++        let selective = self.runtime.sigma().is_some();
++        if empties == super::tail::LOCAL_END_MAX + 1 {
++            // A wide thirteen-empty child still orders moves using its state.
++            // The experimental narrow entry seeds its pattern cache from it too.
++            return !narrow || selective || cfg!(feature = "endgame-pattern-ordering");
++        }
++        selective
++    }
+     pub(super) fn node(
+         &mut self,
+         position: Position,
+@@ -72,6 +90,10 @@ impl Context {
+         } = spec;
+         self.enter()?;
+         if exact && beta - alpha == 1 && board.empty_count() <= super::tail::LOCAL_END_MAX {
++            #[cfg(feature = "endgame-pattern-ordering")]
++            if board.empty_count() == super::tail::LOCAL_END_MAX {
++                self.end_ordering[2] = Some((board, state));
++            }
+             return self.tail_score_entered(board, alpha, beta).map(Line::leaf);
+         }
+         if exact && board.empty_count() <= super::tail::TAIL_EMPTIES {
+@@ -180,7 +202,6 @@ impl Context {
+         let mut candidates = [placeholder; 64];
+         let mut count = 0;
+         let mut skipped_upper = -65;
+-        let odd_regions = if exact { odd_regions(board) } else { 0 };
+         while moves != 0 {
+             let bit = moves & moves.wrapping_neg();
+             moves &= moves - 1;
+@@ -211,7 +232,62 @@ impl Context {
+                 alpha = alpha.max(lower);
+                 known_lower = known_lower.max(lower);
+             }
+-            let mut ordering = if !exact {
++            candidates[count] = Candidate {
++                square,
++                flips,
++                ordering: 0,
++            };
++            count += 1;
++        }
++        if count == 0 {
++            self.stats.tt_cuts += 1;
++            return Ok(Line::leaf(skipped_upper));
++        }
++        // Complete cheap child-TT cutoffs before spending search effort on
++        // the TT move. Remaining moves are still unevaluated here.
++        let preferred = if let Some(index) =
++            (0..count).find(|&i| candidates[i].square.index() == tt_move)
++        {
++            let candidate = candidates[index];
++            candidates.copy_within(index + 1..count, index);
++            count -= 1;
++            let child = self.node(
++                candidate.child(
++                    Position { board, state },
++                    self.child_needs_eval(board, exact, beta - alpha == 1),
++                ),
++                -beta,
++                -alpha,
++                SearchSpec {
++                    depth: depth - 1,
++                    ..spec
++                },
++            )?;
++            let mut line = Line::prepend(candidate.action(), &child);
++            alpha = alpha.max(line.score);
++            if alpha >= beta {
++                self.stats.beta_cuts += 1;
++                if self.aborted() {
++                    return Err(());
++                }
++                line.score = line.score.max(known_lower);
++                self.store_node_line(board, &line, (original_alpha, original_beta), spec, quality);
++                return Ok(line);
++            }
++            Some(line)
++        } else {
++            None
++        };
++        let only_move = count <= 1;
++        let odd_regions = if exact { odd_regions(board) } else { 0 };
++        for candidate in &mut candidates[..count] {
++            let square = candidate.square;
++            let bit = square.bit();
++            let flips = candidate.flips;
++            let child = board.after_known_move(bit, flips);
++            let mut ordering = if only_move {
++                0
++            } else if !exact {
+                 self.midgame_ordering(position, child, bit, flips, alpha, depth)?
+             } else if board.empty_count() >= super::tail::LOCAL_END_MAX {
+                 self.endgame_ordering(position, child, bit, flips, alpha, beta)?
+@@ -226,46 +302,38 @@ impl Context {
+                 value
+             };
+             let tt_priority = if exact { ORDERING.tt } else { 1 << 8 };
+-            if square.index() == tt_move {
+-                ordering += tt_priority;
+-            } else if cached.is_some_and(|entry| entry.second == square.index()) {
++            if cached.is_some_and(|entry| entry.second == square.index()) {
+                 ordering += tt_priority / 2;
+             }
+-            candidates[count] = Candidate {
+-                square,
+-                flips,
+-                ordering,
+-            };
+-            count += 1;
+-        }
+-        if count == 0 {
+-            self.stats.tt_cuts += 1;
+-            return Ok(Line::leaf(skipped_upper));
++            candidate.ordering = ordering;
+         }
+-        pick_best(&mut candidates[..count], 0);
+-        let first = candidates[0];
+-        let first_position = first.child(
+-            position,
+-            !exact
+-                || board.empty_count() > super::tail::LOCAL_END_MAX
+-                || self.runtime.sigma().is_some(),
+-        );
+-        let child = self.node(
+-            Position {
+-                board: first_position.board,
+-                state: first_position.state,
+-            },
+-            -beta,
+-            -alpha,
+-            SearchSpec {
+-                depth: depth - 1,
+-                exact,
+-                probcut: allow_probcut,
+-            },
+-        )?;
+-        let mut best = Line::prepend(first.action(), &child);
++        let start = usize::from(preferred.is_none());
++        let mut best = if let Some(line) = preferred {
++            line
++        } else {
++            pick_best(&mut candidates[..count], 0);
++            let first = candidates[0];
++            let first_position = first.child(
++                position,
++                self.child_needs_eval(board, exact, beta - alpha == 1),
++            );
++            let child = self.node(
++                Position {
++                    board: first_position.board,
++                    state: first_position.state,
++                },
++                -beta,
++                -alpha,
++                SearchSpec {
++                    depth: depth - 1,
++                    exact,
++                    probcut: allow_probcut,
++                },
++            )?;
++            Line::prepend(first.action(), &child)
++        };
+         alpha = alpha.max(best.score);
+-        if alpha < beta && count > 1 {
++        if alpha < beta && count > start {
+             let can_split = self.runtime.parallel
+                 && allow_probcut
+                 && if exact {
+@@ -276,7 +344,7 @@ impl Context {
+             if can_split && count >= 3 && self.runtime.pool.can_offer(&self.ancestors) {
+                 best = self.split(
+                     position,
+-                    candidates[1..count].to_vec(),
++                    candidates[start..count].to_vec(),
+                     (alpha, beta),
+                     SearchSpec {
+                         depth: depth - 1,
+@@ -287,7 +355,7 @@ impl Context {
+                     None,
+                 )?;
+             } else {
+-                for index in 1..count {
++                for index in start..count {
+                     pick_best(&mut candidates[..count], index);
+                     if let Some(line) = self.sibling(
+                         position,
+@@ -321,32 +389,42 @@ impl Context {
+             best = Line::leaf(skipped_upper);
+         }
+         best.score = best.score.max(known_lower);
+-        let (lower, upper) = if best.score <= original_alpha {
+-            (-64, best.score as i8)
+-        } else if best.score >= original_beta {
+-            (best.score as i8, 64)
++        self.store_node_line(board, &best, (original_alpha, original_beta), spec, quality);
++        Ok(best)
++    }
++    fn store_node_line(
++        &mut self,
++        board: Board,
++        line: &Line,
++        (alpha, beta): (i32, i32),
++        spec: SearchSpec,
++        quality: u8,
++    ) {
++        let (lower, upper) = if line.score <= alpha {
++            (-64, line.score as i8)
++        } else if line.score >= beta {
++            (line.score as i8, 64)
+         } else {
+-            (best.score as i8, best.score as i8)
++            (line.score as i8, line.score as i8)
+         };
+-        let best_move = match best.actions[0] {
++        let best_move = match line.actions[0] {
+             Some(Action::Place(s)) => s.index(),
+             _ => 64,
+         };
+         let entry = Entry {
+             lower,
+             upper,
+-            depth,
++            depth: spec.depth,
+             quality,
+             best: best_move,
+             second: 64,
+             generation: self.runtime.generation,
+-            exact_mode: exact,
++            exact_mode: spec.exact,
+         };
+         self.runtime.table.store(board, entry);
+-        if exact && original_beta - original_alpha > 1 {
++        if spec.exact && beta - alpha > 1 {
+             self.runtime.pv_table.store(board, entry);
+         }
+-        Ok(best)
+     }
+     pub(super) fn sibling(
+         &mut self,
+@@ -361,12 +439,8 @@ impl Context {
+             exact,
+             probcut: allow_probcut,
+         } = spec;
+-        let next = candidate.child(
+-            position,
+-            !exact
+-                || position.board.empty_count() > super::tail::LOCAL_END_MAX
+-                || self.runtime.sigma().is_some(),
+-        );
++        let update_eval = self.child_needs_eval(position.board, exact, true);
++        let next = candidate.child(position, update_eval);
+         let child = self.node(
+             Position {
+                 board: next.board,
+@@ -382,6 +456,11 @@ impl Context {
+         )?;
+         let mut line = Line::prepend(candidate.action(), &child);
+         if line.score > alpha && line.score < beta {
++            let next = if !update_eval && self.child_needs_eval(position.board, exact, false) {
++                candidate.child(position, true)
++            } else {
++                next
++            };
+             let child = self.node(
+                 Position {
+                     board: next.board,
+@@ -527,6 +606,99 @@ pub(super) fn endgame_ordering(legal: u64, bit: u64, odd: u64) -> i32 {
+ mod tt_tests {
+     use super::super::session::test_context;
+     use super::*;
++    #[test]
++    fn thirteen_empty_research_matches_eager_evaluation_state() {
++        let model = Arc::new(PatternModel::nonzero_for_tests());
++        for seed in [17u64, 101] {
++            let mut board = Board::new();
++            let mut random = seed;
++            while board.empty_count() > 14 {
++                let mut moves = board.get_moves();
++                if moves == 0 {
++                    assert!(!board.is_terminal());
++                    board = board.board_after_pass();
++                    continue;
++                }
++                random ^= random << 13;
++                random ^= random >> 7;
++                random ^= random << 17;
++                for _ in 0..random % u64::from(moves.count_ones()) {
++                    moves &= moves - 1;
++                }
++                board = board.board_after_move(moves & moves.wrapping_neg());
++            }
++            let moves = board.get_moves();
++            assert_ne!(moves, 0);
++            let bit = moves & moves.wrapping_neg();
++            let candidate = Candidate {
++                square: Square::new(bit.trailing_zeros() as u8).unwrap(),
++                flips: board.flip_mask(bit),
++                ordering: 0,
++            };
++            let position = Position {
++                board,
++                state: EvalState::from_board(board),
++            };
++            let next = candidate.child(position, true);
++            let spec = SearchSpec {
++                depth: 13,
++                exact: true,
++                probcut: false,
++            };
++            let make_context = || {
++                let mut context = test_context();
++                Arc::get_mut(&mut context.runtime).unwrap().model = model.clone();
++                context
++            };
++            // Find an interior score so sibling must perform its wide re-search.
++            let expected = -make_context().node(next, -64, 64, spec).unwrap().score;
++            assert!((-64..64).contains(&expected));
++            let alpha = expected - 1;
++            let beta = 64;
++            let mut eager = make_context();
++            let narrow = eager.node(next, -alpha - 1, -alpha, spec).unwrap();
++            assert!(-narrow.score > alpha && -narrow.score < beta);
++            let reference = eager.node(next, -beta, -alpha, spec).unwrap();
++
++            let mut lazy = make_context();
++            let actual = lazy
++                .sibling(position, candidate, alpha, beta, spec)
++                .unwrap()
++                .unwrap();
++            assert_eq!(actual.score, -reference.score);
++            assert_eq!(
++                actual.moves(),
++                Line::prepend(candidate.action(), &reference).moves()
++            );
++            assert!(lazy.stats.evaluations > 0);
++            assert_eq!(lazy.stats.nodes, eager.stats.nodes);
++            assert_eq!(lazy.stats.evaluations, eager.stats.evaluations);
++        }
++    }
++    #[test]
++    fn forced_move_skips_ordering_evaluation() {
++        let board = Board::from_bits(1, 2).unwrap();
++        assert!(board.get_moves().is_power_of_two());
++        let mut context = test_context();
++        let line = context
++            .node(
++                Position {
++                    board,
++                    state: EvalState::from_board(board),
++                },
++                -64,
++                64,
++                SearchSpec {
++                    depth: 3,
++                    exact: false,
++                    probcut: false,
++                },
++            )
++            .unwrap();
++        assert_eq!(line.score, 64);
++        assert_eq!(context.stats.evaluations, 0);
++        assert_eq!(context.stats.nodes, 2);
++    }
+     fn entry(depth: u8, lower: i8, upper: i8) -> Entry {
+         Entry {
+             lower,
+@@ -539,6 +711,55 @@ mod tt_tests {
+             exact_mode: false,
+         }
+     }
++    #[test]
++    fn tt_move_cuts_before_other_moves_are_evaluated() {
++        let board = Board::new();
++        let bit = 1u64 << (63 - board.get_moves().leading_zeros());
++        let mut context = test_context();
++        let mut hint = entry(1, -64, 64);
++        hint.best = bit.trailing_zeros() as u8;
++        context.runtime.table.store(board, hint);
++        context
++            .runtime
++            .table
++            .store(board.board_after_move(bit), entry(2, -7, -7));
++        let line = context
++            .node(
++                Position {
++                    board,
++                    state: EvalState::from_board(board),
++                },
++                -1,
++                0,
++                SearchSpec {
++                    depth: 3,
++                    exact: false,
++                    probcut: false,
++                },
++            )
++            .unwrap();
++        assert_eq!(line.score, 7);
++        assert_eq!(context.stats.nodes, 2);
++        assert_eq!(context.stats.evaluations, 0);
++        let saved = context.runtime.table.get(board).unwrap();
++        assert_eq!(saved.best, hint.best);
++        assert_eq!(saved.lower, 7);
++        assert_eq!(saved.depth, 3);
++    }
++    #[test]
++    fn child_tt_cut_precedes_tt_move_search() {
++        let board = Board::new();
++        let bit = 1u64 << (63 - board.get_moves().leading_zeros());
++        let mut context = test_context();
++        context.runtime.table.store(board, entry(1, -64, 64));
++        context
++            .runtime
++            .table
++            .store(board.board_after_move(bit), entry(3, -7, -7));
++        assert_eq!(search(&mut context, -1, 0), 7);
++        assert_eq!(context.stats.nodes, 1);
++        assert_eq!(context.stats.evaluations, 0);
++    }
+     fn search(context: &mut Context, alpha: i32, beta: i32) -> i32 {
+         let board = Board::new();
+         context
+--- /dev/null
++++ b/deft-reversi-engine/src/evaluation/end_ordering.rs
+@@ -0,0 +1,49 @@
++//! Experimental endgame ordering using the existing 44 pattern tables.
++//! These weights have not been trained specifically for ordering.
++use super::*;
++
++impl PatternModel {
++    /// Pattern-only ordering score. Mobility is already available to the caller;
++    /// this deliberately avoids generating either side's legal moves again.
++    pub(crate) fn end_ordering_child_value(
++        &self,
++        board: Board,
++        parent: &EvalState,
++        bit: u64,
++        flips: u64,
++    ) -> i32 {
++        let indices = parent.ordering_child_indices(bit, flips);
++        let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
++        let weights = &self.phases[phase];
++        let mut raw = i32::from(weights.bias);
++        let mut offset = 0;
++        for (p, size) in PATTERN_TABLE_SIZES.iter().enumerate() {
++            for r in 0..4 {
++                raw += i32::from(weights.weights[offset + indices[p * 4 + r] as usize]);
++            }
++            offset += size;
++        }
++        ((raw + raw.signum() * 64) / 128).clamp(-64, 64)
++    }
++}
++
++impl EvalState {
++    // An ordering evaluation only needs the child's current viewpoint.
++    // Preserve the full two-viewpoint update for children actually searched.
++    pub(super) fn ordering_child_indices(&self, bit: u64, mut flips: u64) -> [u16; 44] {
++        let mut indices = self.swapped;
++        let features = &SQUARE_TO_FEATURES[bit.trailing_zeros() as usize];
++        for feature in &features.features[..features.len as usize] {
++            indices[feature.feature_idx as usize] += feature.base3_weight;
++        }
++        while flips != 0 {
++            let square = flips.trailing_zeros() as usize;
++            flips &= flips - 1;
++            let features = &SQUARE_TO_FEATURES[square];
++            for feature in &features.features[..features.len as usize] {
++                indices[feature.feature_idx as usize] -= feature.base3_weight;
++            }
++        }
++        indices
++    }
++}

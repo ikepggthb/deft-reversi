@@ -1,0 +1,51 @@
+round=1 before=21.719381s after=22.128416s
+round=2 before=21.997536s after=22.368071s
+round=3 before=22.102228s after=21.775167s
+round=4 before=22.218355s after=22.856522s
+round=5 before=23.838483s after=23.598288s
+round=6 before=21.621272s after=21.695369s
+{
+  "cpu": 0,
+  "rounds": 6,
+  "mode": "exact",
+  "repeat_in_process": 1,
+  "tt_mib": 256,
+  "legacy_main_mpc": true,
+  "seconds_median": {
+    "before": 22.049882368000002,
+    "after": 22.2482434255
+  },
+  "round_seconds": {
+    "before": [
+      21.71938067,
+      21.997536381000003,
+      22.102228355,
+      22.218355463,
+      23.83848268,
+      21.621272386
+    ],
+    "after": [
+      22.128415597,
+      22.368071254,
+      21.775167296,
+      22.856521619,
+      23.598288482,
+      21.695368529
+    ]
+  },
+  "paired_time_ratios": [
+    1.0188327159606803,
+    1.0168443805061753,
+    0.9852023491139972,
+    1.0287224748502528,
+    0.9899240987262367,
+    1.0034270019671911
+  ],
+  "paired_time_ratio_median": 1.0101356912366832,
+  "speedup": 0.9910841924143708,
+  "all_scores_match": true,
+  "before_sha256": "37c7921866885a22a7e8b407e253d3d85a4f54ea7977a9ca2ca8417fbbcc0ae8",
+  "after_sha256": "e02a54f3a660ac4f7eafdb6445cf329e0ffe99ff3c8f0d5530baf2fbd66afbde",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "05d2d5ee2e87d8865d2518f071f40cc9a9749e297c7b862609c115c8deeb4644"
+}

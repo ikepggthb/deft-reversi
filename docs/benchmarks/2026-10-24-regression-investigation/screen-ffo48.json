@@ -1,0 +1,50 @@
+[
+  {
+    "variant": "final_control",
+    "position": "1",
+    "score": "28",
+    "action": "F6",
+    "mode": "Exact",
+    "depth": "25",
+    "nodes": "166711445",
+    "leaves": "46259695",
+    "splits": "0",
+    "jobs": "0",
+    "handoffs": "0",
+    "join_seconds": "0.000000000",
+    "seconds": "2.702302052",
+    "stop": "Completed"
+  },
+  {
+    "variant": "no_pv_table",
+    "position": "1",
+    "score": "28",
+    "action": "F6",
+    "mode": "Exact",
+    "depth": "25",
+    "nodes": "166777066",
+    "leaves": "46276998",
+    "splits": "0",
+    "jobs": "0",
+    "handoffs": "0",
+    "join_seconds": "0.000000000",
+    "seconds": "2.673768088",
+    "stop": "Completed"
+  },
+  {
+    "variant": "final_pvs_stability",
+    "position": "1",
+    "score": "28",
+    "action": "F6",
+    "mode": "Exact",
+    "depth": "25",
+    "nodes": "166711445",
+    "leaves": "46259695",
+    "splits": "0",
+    "jobs": "0",
+    "handoffs": "0",
+    "join_seconds": "0.000000000",
+    "seconds": "2.674678642",
+    "stop": "Completed"
+  }
+]

@@ -1,0 +1,26 @@
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index afbb8a4..82e8601 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -14,7 +14,7 @@ use ordered::EndMove;
+ use parity::{PARITY_REGIONS, SQUARE_PARITY};
+ use parity::{odd_regions, tail_parity};
+ pub(in crate::search) const TAIL_EMPTIES: u8 = 6;
+-pub(in crate::search) const LOCAL_END_MAX: u8 = 13;
++pub(in crate::search) const LOCAL_END_MAX: u8 = 14;
+ 
+ impl Context {
+     pub(super) fn tail_entered(
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index a4ddb2c..6a4ee12 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -214,7 +214,7 @@ impl Context {
+             // Null-window children with thirteen or fewer empties live only in
+             // the local endgame cache, so the main table cannot cut them.
+             if (if exact {
+-                board.empty_count() > 12 + 2 * u8::from(beta - alpha == 1)
++                board.empty_count() > super::endgame::LOCAL_END_MAX - 1 + 2 * u8::from(beta - alpha == 1)
+             } else {
+                 depth >= 4
+             }) && let Some(entry) = self.runtime.table.get(child)

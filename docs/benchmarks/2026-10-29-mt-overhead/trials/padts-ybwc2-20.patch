@@ -1,0 +1,416 @@
+diff --git a/deft-reversi-engine/src/parallel.rs b/deft-reversi-engine/src/parallel.rs
+index 9e51469..a49063a 100644
+--- a/deft-reversi-engine/src/parallel.rs
++++ b/deft-reversi-engine/src/parallel.rs
+@@ -5,14 +5,44 @@ use std::{
+         atomic::{AtomicBool, Ordering},
+     },
+     thread::{self, JoinHandle},
+-    time::Duration,
++    time::{Duration, Instant},
+ };
++/// How long an idle thread polls for work before it blocks. Blocking and
++/// waking moves threads between cores, away from their cached data.
++const SPIN: Duration = Duration::from_micros(50);
++/// Polls `ready` without blocking until it holds or `SPIN` has passed.
++fn spin_until(ready: impl Fn() -> bool) -> bool {
++    let start = Instant::now();
++    loop {
++        for _ in 0..32 {
++            if ready() {
++                return true;
++            }
++            std::hint::spin_loop();
++        }
++        if start.elapsed() >= SPIN {
++            return ready();
++        }
++    }
++}
+ #[derive(Clone, Copy)]
+ pub(crate) enum Dispatch {
+     Ancestor,
+     Worker,
+ }
+ pub(crate) type Job = Box<dyn FnOnce() + Send + 'static>;
++/// Keeps a value on cache lines of its own (two lines, for the adjacent-line
++/// prefetcher), so that writes to it do not evict data other threads read
++/// on every node, and `Arc` reference counts stay off its line.
++#[repr(align(128))]
++#[derive(Default)]
++pub(crate) struct Padded<T>(pub T);
++impl<T> std::ops::Deref for Padded<T> {
++    type Target = T;
++    fn deref(&self) -> &T {
++        &self.0
++    }
++}
+ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+     mutex.lock().unwrap_or_else(|p| p.into_inner())
+ }
+@@ -55,6 +85,8 @@ impl Workers {
+                 .stack_size(8 * 1024 * 1024)
+                 .spawn(move || {
+                     loop {
++                        // `busy` is claimed by `offer` before it stores the job.
++                        spin_until(|| worker.busy.load(Ordering::Acquire));
+                         let mut state = lock(&worker.state);
+                         while state.job.is_none() && !state.shutdown {
+                             state = worker.ready.wait(state).unwrap_or_else(|p| p.into_inner());
+@@ -129,6 +161,7 @@ struct HelpState {
+     job: Option<Job>,
+     closed: bool,
+ }
++#[repr(align(128))]
+ pub(crate) struct Helper {
+     available: AtomicBool,
+     state: Mutex<HelpState>,
+@@ -182,10 +215,17 @@ impl Helper {
+             }
+             state.waiting = true;
+             self.available.store(true, Ordering::Release);
+-            let (mut state, _) = self
+-                .ready
+-                .wait_timeout(state, Duration::from_millis(5))
+-                .unwrap_or_else(|p| p.into_inner());
++            drop(state);
++            // `offer` clears `available` when it hands over a job.
++            spin_until(|| !self.available.load(Ordering::Acquire) || complete());
++            let mut state = lock(&self.state);
++            if state.job.is_none() && !complete() {
++                state = self
++                    .ready
++                    .wait_timeout(state, Duration::from_millis(5))
++                    .unwrap_or_else(|p| p.into_inner())
++                    .0;
++            }
+             state.waiting = false;
+             self.available.store(false, Ordering::Release);
+         }
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index 5464af2..5dee1c6 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -1,7 +1,7 @@
+ use crate::{
+     Action, Board, EngineModel, ModelMetadata, MpcConfig, PatternModel, Square,
+     evaluation::EvalState,
+-    parallel::{self, Helper, Pool, Workers},
++    parallel::{self, Helper, Padded, Pool, Workers},
+     transposition::{Entry, Table},
+ };
+ use std::{
+@@ -18,7 +18,7 @@ pub use api::*;
+ mod session;
+ use session::*;
+ mod endgame;
+-use endgame::EndgameCache;
++use endgame::{EndgameCache, new_cache_epoch};
+ mod level;
+ mod ordering;
+ mod pv;
+@@ -38,6 +38,8 @@ pub struct Engine {
+     calibration: Arc<[Option<ProbCutRule>]>,
+     cache_sigma: Option<u64>,
+     end_cache: EndgameCache,
++    /// Tags the local endgame caches that are valid for the current state.
++    cache_epoch: u64,
+ }
+ impl Engine {
+     pub fn new(model: PatternModel, options: EngineOptions) -> Result<Self, EngineError> {
+@@ -62,6 +64,7 @@ impl Engine {
+             calibration,
+             cache_sigma: None,
+             end_cache: EndgameCache::default(),
++            cache_epoch: new_cache_epoch(),
+         })
+     }
+     pub fn from_file(
+@@ -100,7 +103,7 @@ impl Engine {
+         self.calibration = indexed_rules(config.rules());
+         self.table = table;
+         self.pv_table = pv_table;
+-        self.end_cache.clear();
++        self.invalidate_end_caches();
+         self.cache_sigma = None;
+         self.mpc = Some(config);
+         Ok(())
+@@ -115,13 +118,19 @@ impl Engine {
+         self.cache_sigma = None;
+         Ok(())
+     }
++    /// Drops the main thread's local endgame cache and, through a new epoch,
++    /// every worker's.
++    fn invalidate_end_caches(&mut self) {
++        self.end_cache.clear();
++        self.cache_epoch = new_cache_epoch();
++    }
+     pub fn clear_tt(&mut self) -> Result<(), EngineError> {
+         let table = Arc::new(Table::new(self.options.tt_mib).map_err(EngineError::Memory)?);
+         let pv_table =
+             Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
+         self.table = table;
+         self.pv_table = pv_table;
+-        self.end_cache.clear();
++        self.invalidate_end_caches();
+         Ok(())
+     }
+     /// Replaces the model and invalidates all cached evaluations.
+@@ -135,7 +144,7 @@ impl Engine {
+         self.mpc = Some(MpcConfig::default());
+         self.metadata = None;
+         self.calibration = indexed_rules(self.mpc.as_ref().unwrap().rules());
+-        self.end_cache.clear();
++        self.invalidate_end_caches();
+         self.cache_sigma = None;
+         Ok(())
+     }
+@@ -171,7 +180,7 @@ impl Engine {
+             Arc::new(Table::new((self.options.tt_mib / 16).max(1)).map_err(EngineError::Memory)?);
+         self.calibration = indexed_rules(rules);
+         self.mpc = None;
+-        self.end_cache.clear();
++        self.invalidate_end_caches();
+         self.cache_sigma = None;
+         self.table = table;
+         self.pv_table = pv_table;
+@@ -241,19 +250,20 @@ impl Engine {
+                 stop: request.stop,
+                 deadline,
+                 node_limit: request.node_limit,
+-                issued: AtomicU64::new(0),
++                issued: Padded(AtomicU64::new(0)),
+             },
+             generation: self.generation,
+-            stats: Mutex::new(SearchStats::default()),
+-            pending: AtomicUsize::new(0),
++            stats: Padded(Mutex::new(SearchStats::default())),
++            pending: Padded(AtomicUsize::new(0)),
+             pending_lock: Mutex::new(()),
+-            pending_ready: std::sync::Condvar::new(),
++            pending_ready: Padded(std::sync::Condvar::new()),
+             parallel: self.options.threads > 1,
+             sigma: AtomicU64::new(target_sigma.map_or(0, f64::to_bits)),
+             quality: AtomicU8::new(if target_sigma.is_some() { 7 } else { 0 }),
+             rules: self.calibration.clone(),
+             // Exact requests use selective stages only to seed the tables;
+             // results below this bound are exact and reused by the final stage.
++            cache_epoch: self.cache_epoch,
+             endgame_probcut_min: if request.mode == SearchMode::Exact {
+                 endgame::EXACT_PREPARATION_PROBCUT_MIN
+             } else {
+diff --git a/deft-reversi-engine/src/search/endgame/local_tt.rs b/deft-reversi-engine/src/search/endgame/local_tt.rs
+index 3da09c0..31c724f 100644
+--- a/deft-reversi-engine/src/search/endgame/local_tt.rs
++++ b/deft-reversi-engine/src/search/endgame/local_tt.rs
+@@ -1,6 +1,8 @@
+ //! Context-owned endgame TT; probes are immutable snapshots, never slot pointers.
+ use super::{LOCAL_END_MAX, TAIL_EMPTIES};
+ use crate::Board;
++use std::cell::RefCell;
++use std::sync::atomic::{AtomicU64, Ordering};
+ const LOCAL_SLOTS: usize = 1024;
+ const LAYERS: usize = (LOCAL_END_MAX - TAIL_EMPTIES + 1) as usize;
+ 
+@@ -8,10 +10,37 @@ const LAYERS: usize = (LOCAL_END_MAX - TAIL_EMPTIES + 1) as usize;
+ pub(in crate::search) struct EndgameCache {
+     layers: [Vec<EndEntry>; LAYERS],
+ }
++static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
++thread_local! {
++    /// The thread's one cache while no context on this thread holds it: between
++    /// helper jobs, and while a master waits for its split (the jobs it runs
++    /// meanwhile use it), with the epoch it belongs to.
++    static THREAD_CACHE: RefCell<(u64, EndgameCache)> = RefCell::new((0, EndgameCache::default()));
++}
++/// A process-unique tag for one model/MPC/table state; a new one invalidates
++/// every cache made under the old one.
++pub(in crate::search) fn new_cache_epoch() -> u64 {
++    NEXT_EPOCH.fetch_add(1, Ordering::Relaxed)
++}
+ impl EndgameCache {
+     pub(in crate::search) fn clear(&mut self) {
+         *self = Self::default();
+     }
++    /// This thread's cache, if made under `epoch`; otherwise an empty one.
++    pub(in crate::search) fn take_thread(epoch: u64) -> Self {
++        THREAD_CACHE.with(|slot| {
++            let mut slot = slot.borrow_mut();
++            let cache = std::mem::take(&mut slot.1);
++            if slot.0 == epoch {
++                cache
++            } else {
++                Self::default()
++            }
++        })
++    }
++    pub(in crate::search) fn put_thread(self, epoch: u64) {
++        THREAD_CACHE.with(|slot| *slot.borrow_mut() = (epoch, self));
++    }
+     pub(super) fn prepare(&mut self, empties: u8) {
+         let layer = &mut self.layers[usize::from(empties - TAIL_EMPTIES)];
+         if layer.is_empty() {
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index 99d53f3..df8bd1f 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -7,7 +7,7 @@ pub(super) mod parity;
+ mod shallow;
+ mod small;
+ use local_tt::EndProbe;
+-pub(super) use local_tt::EndgameCache;
++pub(super) use local_tt::{EndgameCache, new_cache_epoch};
+ #[cfg(test)]
+ use ordered::EndMove;
+ #[cfg(test)]
+diff --git a/deft-reversi-engine/src/search/session.rs b/deft-reversi-engine/src/search/session.rs
+index 21bde59..de529eb 100644
+--- a/deft-reversi-engine/src/search/session.rs
++++ b/deft-reversi-engine/src/search/session.rs
+@@ -5,7 +5,7 @@ pub(super) struct Control {
+     pub(super) stop: StopHandle,
+     pub(super) deadline: Option<Instant>,
+     pub(super) node_limit: Option<u64>,
+-    pub(super) issued: AtomicU64,
++    pub(super) issued: Padded<AtomicU64>,
+ }
+ impl Control {
+     pub(super) fn set(&self, reason: u8) {
+@@ -35,6 +35,9 @@ impl Control {
+         }
+     }
+ }
++/// Read on every node by every thread; the fields written during a search
++/// are padded so that they do not share its cache lines.
++#[repr(align(128))]
+ pub(super) struct Runtime {
+     pub(super) model: Arc<PatternModel>,
+     pub(super) table: Arc<Table>,
+@@ -42,16 +45,18 @@ pub(super) struct Runtime {
+     pub(super) pool: Arc<Pool>,
+     pub(super) control: Control,
+     pub(super) generation: u8,
+-    pub(super) stats: Mutex<SearchStats>,
+-    pub(super) pending: AtomicUsize,
++    pub(super) stats: Padded<Mutex<SearchStats>>,
++    pub(super) pending: Padded<AtomicUsize>,
+     pub(super) pending_lock: Mutex<()>,
+-    pub(super) pending_ready: std::sync::Condvar,
++    pub(super) pending_ready: Padded<std::sync::Condvar>,
+     pub(super) parallel: bool,
+     pub(super) sigma: AtomicU64,
+     pub(super) quality: AtomicU8,
+     pub(super) rules: Arc<[Option<ProbCutRule>]>,
+     /// Fewest empties at which the local endgame tries ProbCut.
+     pub(super) endgame_probcut_min: u8,
++    /// Helper jobs reuse their thread's local endgame cache only within it.
++    pub(super) cache_epoch: u64,
+ }
+ impl Runtime {
+     pub(super) fn sigma(&self) -> Option<f64> {
+@@ -132,7 +137,7 @@ pub(super) struct Context {
+     pub(super) runtime: Arc<Runtime>,
+     pub(super) stats: SearchStats,
+     pub(super) ancestors: Vec<Arc<Helper>>,
+-    pub(super) cuts: Vec<Arc<AtomicBool>>,
++    pub(super) cuts: Vec<Arc<Padded<AtomicBool>>>,
+     pub(super) end_cache: EndgameCache,
+     #[cfg(feature = "endgame-pattern-ordering")]
+     pub(super) end_ordering: [Option<(Board, EvalState)>; 3],
+@@ -175,6 +180,7 @@ pub(super) fn test_context() -> Context {
+         quality: AtomicU8::new(0),
+         rules: Arc::from([]),
+         endgame_probcut_min: super::endgame::PROBCUT_MIN_EMPTIES,
++        cache_epoch: 0,
+     });
+     Context::new(runtime, Vec::new(), Vec::new())
+ }
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index e0d860d..6f3a944 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -19,7 +19,7 @@ impl Context {
+     pub(super) fn new(
+         runtime: Arc<Runtime>,
+         ancestors: Vec<Arc<Helper>>,
+-        cuts: Vec<Arc<AtomicBool>>,
++        cuts: Vec<Arc<Padded<AtomicBool>>>,
+     ) -> Self {
+         Self {
+             runtime,
+@@ -349,12 +349,19 @@ impl Context {
+                 exact,
+                 probcut: allow_probcut,
+             };
++            let nws_two = board.empty_count() <= 20;
+             let mut index = start;
+             while index < count {
+                 // Like the reference node_split, retry after every sibling:
+                 // a thread that became idle meanwhile can still take the
+                 // remaining moves instead of waiting for another split point.
+-                let enough = if index == start {
++                // A null-window node that has refuted only its eldest move
++                // still often cuts on the next one; search that one too
++                // before handing out the rest.
++                let eldest = start + usize::from(nws_two && original_beta - original_alpha == 1);
++                let enough = if index < eldest {
++                    false
++                } else if index == start {
+                     count >= 3
+                 } else {
+                     count - index >= 2
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index 0a7397e..287e1af 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -31,7 +31,7 @@ impl Context {
+             depth,
+             exact,
+             allow_probcut,
+-            cut: Arc::new(AtomicBool::new(false)),
++            cut: Arc::new(Padded(AtomicBool::new(false))),
+             helper: Arc::new(Helper::new()),
+             active: AtomicUsize::new(0),
+         });
+@@ -56,8 +56,10 @@ impl Context {
+             let job: parallel::Job = Box::new(move || {
+                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                     let mut context = Context::new(runtime.clone(), task_ancestors, task_cuts);
++                    context.end_cache = EndgameCache::take_thread(runtime.cache_epoch);
+                     context.stats.helper_jobs += 1;
+                     context.split_loop(&task_point);
++                    std::mem::take(&mut context.end_cache).put_thread(runtime.cache_epoch);
+                 }));
+                 if result.is_err() {
+                     runtime.control.reason.store(4, Ordering::Release);
+@@ -90,9 +92,13 @@ impl Context {
+         let old_cuts = std::mem::replace(&mut self.cuts, cuts);
+         self.split_loop(&point);
+         let join_start = Instant::now();
++        // Jobs this thread runs while joining share its cache.
++        let epoch = self.runtime.cache_epoch;
++        std::mem::take(&mut self.end_cache).put_thread(epoch);
+         point
+             .helper
+             .wait(|| point.active.load(Ordering::Acquire) == 0);
++        self.end_cache = EndgameCache::take_thread(epoch);
+         self.stats.join_time += join_start.elapsed();
+         self.ancestors = old_ancestors;
+         self.cuts = old_cuts;
+@@ -159,6 +165,7 @@ struct SplitState {
+     alpha: i32,
+     best: Line,
+ }
++#[repr(align(128))]
+ struct Split {
+     position: Position,
+     root_bounds: Option<Arc<Mutex<[root::RootBound; 64]>>>,
+@@ -167,7 +174,7 @@ struct Split {
+     depth: u8,
+     exact: bool,
+     allow_probcut: bool,
+-    cut: Arc<AtomicBool>,
++    cut: Arc<Padded<AtomicBool>>,
+     helper: Arc<Helper>,
+     active: AtomicUsize,
+ }

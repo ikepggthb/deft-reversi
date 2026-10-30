@@ -1,0 +1,37 @@
+diff --git a/deft-reversi-engine/src/parallel.rs b/deft-reversi-engine/src/parallel.rs
+index af1d395..70cd75f 100644
+--- a/deft-reversi-engine/src/parallel.rs
++++ b/deft-reversi-engine/src/parallel.rs
+@@ -176,6 +176,9 @@ impl Helper {
+         }
+     }
+     pub(crate) fn wake(&self) {
++        // Under the lock: `wait` checks completion and starts waiting while
++        // holding it, so the notification cannot fall between the two.
++        let _state = lock(&self.state);
+         self.ready.notify_all();
+     }
+     pub(crate) fn wait(&self, complete: impl Fn() -> bool) {
+diff --git a/deft-reversi-engine/src/search/ybwc.rs b/deft-reversi-engine/src/search/ybwc.rs
+index 1fe5723..d00e365 100644
+--- a/deft-reversi-engine/src/search/ybwc.rs
++++ b/deft-reversi-engine/src/search/ybwc.rs
+@@ -1,6 +1,5 @@
+ use super::tree::pick_best;
+ use super::*;
+-const MAX_HELPERS: usize = 3;
+ 
+ impl Context {
+     pub(super) fn split(
+@@ -46,7 +45,10 @@ impl Context {
+         let mut cuts = self.cuts.clone();
+         cuts.push(point.cut.clone());
+         let mut spawned = 0;
+-        for _ in 0..MAX_HELPERS {
++        // Offer every remaining move but the master's own; only idle threads
++        // accept, so a split takes as many helpers as are free and useful.
++        let wanted = parallel::lock(&point.state).candidates.len() - 1;
++        for _ in 0..wanted {
+             let runtime = self.runtime.clone();
+             let task_point = point.clone();
+             let task_ancestors = ancestors.clone();

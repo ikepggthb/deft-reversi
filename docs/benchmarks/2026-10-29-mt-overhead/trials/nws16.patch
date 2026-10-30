@@ -1,0 +1,29 @@
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index e0d860d..15585ea 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -2,6 +2,10 @@ use super::endgame::parity::odd_regions;
+ use super::*;
+ const SPLIT_DEPTH: u8 = 8;
+ const SPLIT_EMPTIES: u8 = 10;
++/// Null-window splits stop above this many empties, as in the reference
++/// solver: below it each child is a short local-endgame search whose
++/// thread-local cache loses its transpositions when moved to another thread.
++const SPLIT_NWS_EMPTIES: u8 = 16;
+ struct OrderingWeights {
+     mobility: i32,
+     corner: i32,
+@@ -340,7 +344,12 @@ impl Context {
+             let can_split = self.runtime.parallel
+                 && allow_probcut
+                 && if exact {
+-                    board.empty_count() >= SPLIT_EMPTIES
++                    board.empty_count()
++                        >= if original_beta - original_alpha == 1 {
++                            SPLIT_NWS_EMPTIES
++                        } else {
++                            SPLIT_EMPTIES
++                        }
+                 } else {
+                     depth >= SPLIT_DEPTH
+                 };

@@ -1,0 +1,113 @@
+{
+  "rounds": 6,
+  "round_offset": 0,
+  "all_six_orders_per_position": true,
+  "cpu": 0,
+  "mode": "exact",
+  "threads": 1,
+  "tt_mib": 256,
+  "legacy_main_mpc": true,
+  "execution_orders": [
+    [
+      "base",
+      "provided",
+      "returned"
+    ],
+    [
+      "base",
+      "returned",
+      "provided"
+    ],
+    [
+      "provided",
+      "base",
+      "returned"
+    ],
+    [
+      "provided",
+      "returned",
+      "base"
+    ],
+    [
+      "returned",
+      "base",
+      "provided"
+    ],
+    [
+      "returned",
+      "provided",
+      "base"
+    ]
+  ],
+  "round_seconds": {
+    "base": [
+      21.877795205,
+      21.572658056999998,
+      22.37763828,
+      23.546723497,
+      22.93263854,
+      22.823504617999998
+    ],
+    "provided": [
+      21.901661147,
+      21.396309201,
+      22.175451702,
+      22.915244585,
+      24.51436507,
+      23.037823761
+    ],
+    "returned": [
+      21.92699196,
+      21.945612782,
+      22.163187427,
+      22.427888207,
+      22.021920559999998,
+      22.477660817
+    ]
+  },
+  "seconds_median": {
+    "base": 22.600571449,
+    "provided": 22.5453481435,
+    "returned": 22.092553993499997
+  },
+  "paired_time_ratios_vs_base": {
+    "provided": [
+      1.0010908750985357,
+      0.9918253533925193,
+      0.9909647937163815,
+      0.9731818776365869,
+      1.0689727231884414,
+      1.0093902819302771
+    ],
+    "returned": [
+      1.002248707172684,
+      1.0172883065227554,
+      0.9904167343167906,
+      0.9524844596683464,
+      0.9602872570283837,
+      0.9848470334951432
+    ]
+  },
+  "paired_time_ratio_median_vs_base": {
+    "provided": 0.9964581142455275,
+    "returned": 0.9876318839059669
+  },
+  "paired_time_ratios_returned_vs_provided": [
+    1.0011565704002992,
+    1.0256728193558882,
+    0.9994469436219469,
+    0.9787322201082236,
+    0.8983271847799074,
+    0.9756850755604668
+  ],
+  "paired_time_ratio_median_returned_vs_provided": 0.9890895818650852,
+  "all_scores_match": true,
+  "all_nodes_match": true,
+  "binary_sha256": {
+    "base": "d75409b3fd8300f0688e0e9f336808c48f6c0db87c660431ac93a3c1a064dc55",
+    "provided": "53f71e40250347908a7454c5105681599d5b89422a6a8f84ee5684cea17eba82",
+    "returned": "37c7921866885a22a7e8b407e253d3d85a4f54ea7977a9ca2ca8417fbbcc0ae8"
+  },
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "positions_sha256": "f855c6181c11b539faed53125be1aff85b8c16b77817a036313533a43e2f1d16"
+}

@@ -1,0 +1,56 @@
+{
+  "cpu": "Intel Core Ultra 7 265K",
+  "cpu_affinity": [
+    1
+  ],
+  "threads": 1,
+  "rounds": 5,
+  "rustflags": "-Ctarget-cpu=native",
+  "profile": {
+    "opt_level": 3,
+    "lto": "fat",
+    "codegen_units": 1,
+    "panic": "unwind"
+  },
+  "reference_commit": "f4192a0bfe62f456d6ffe5716fb797d697f6c6d3",
+  "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)\nbinary: rustc\ncommit-hash: ded5c06cf21d2b93bffd5d884aa6e96934ee4234\ncommit-date: 2025-12-08\nhost: x86_64-unknown-linux-gnu\nrelease: 1.92.0\nLLVM version: 21.1.3\n",
+  "hashes": {
+    "tools/engine-compare/target/release/deft-engine-compare": "4eeeff778c7f818771fb9997ef36c421e75619b2593734c17596164f0230d799",
+    "../deft-reversi-feature/data/eval/eval-v4.bin": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+    "/tmp/deft-pattern.dpr2": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+    "deft_reversi_engine_v2/tests/fixtures/ffo40-44.obf": "d474590c49afc7e73243f489dfe3d726743950a28d0d792eb79ae1449f65ff21",
+    "../deft-reversi-feature/deft-reversi-cli/problem/fforum-1-19.obf": "4cf624e94984dcbaa8e0eb6be60f71ef3f1837bfb84004bacc5ccf312b919af1"
+  },
+  "source_hashes": {
+    "deft_reversi_engine_v2/src/board/bitboard.rs": "9e9af20b0113108318fc12393bd09f75683e050893abb00446e7a9f461eda071",
+    "deft_reversi_engine_v2/src/board/edge_stability.rs": "0ee50a2885cb92c450cf535be7533a39d23a64c56d814b1337994d12e627cdc1",
+    "deft_reversi_engine_v2/src/board/flip.rs": "6f53b00502285617bf6f11a8549f2a2dbd37459bf4aecd3b551a0f7b3adeb013",
+    "deft_reversi_engine_v2/src/board/last.rs": "5339a79b6480c7fa6e8ae40bb9c137498f99e1a23822e219eaa4227fe8e7ed58",
+    "deft_reversi_engine_v2/src/board/mod.rs": "cad1bf36d0ca6e91e25f6d453e62de32d801d844f83761baf39b73b40c1f0368",
+    "deft_reversi_engine_v2/src/board/moves.rs": "1ec145ec5744b6d562b238fefe445b61e658fdacbbeb3430554adf07b3bea4f5",
+    "deft_reversi_engine_v2/src/board/pos.rs": "e07aa628d15c5649d865f0f01c51758e3eccf2363f867a37c439d92e693bc391",
+    "deft_reversi_engine_v2/src/board/stability.rs": "b64e35318e37a12800add566a3f73838e7932d39ba495eebfff8b03245b2adde",
+    "deft_reversi_engine_v2/src/diagnostics.rs": "5e03b0ce8e6ff88e3878795a2c0f04b52ba364ad740d7cd049537ea339a877e6",
+    "deft_reversi_engine_v2/src/evaluation/mod.rs": "9fa89efc8eddd3e33799222bc7ca086c2da0f04e82163c5b8bbb5ce4905b592f",
+    "deft_reversi_engine_v2/src/evaluation/pattern/definition.rs": "0326d61f77ea29b4972021be61fb107836ab8df42028dd7a00399bec36f15deb",
+    "deft_reversi_engine_v2/src/evaluation/pattern/mod.rs": "c55b4d92a84e3be82b75affb69e809a987c4df57572eff44b3df49385a491c2e",
+    "deft_reversi_engine_v2/src/lib.rs": "b7c57de2ca6b45fb03b644ec36d8e67e7c2bab359e05a789254c67cd3374af1f",
+    "deft_reversi_engine_v2/src/parallel.rs": "faaba93cab37ecb8ab52b432ffeb6a14eb912d52a9f28474fdd963677d1c12af",
+    "deft_reversi_engine_v2/src/search/api.rs": "2a643c84ae1a73b6de63bdecbdcb77b9f352a3a901aec12e277467e8ac4da110",
+    "deft_reversi_engine_v2/src/search/last_four.rs": "8be8510dc792a0ed6073d59aa619dec31599287bacb09af249cc1b0a89383784",
+    "deft_reversi_engine_v2/src/search/ordering.rs": "c9edb50096226ca660ff3911ee089fb1c8bfd4e98103886422b5c21bb089ec04",
+    "deft_reversi_engine_v2/src/search/session.rs": "5789245c23d20b8a49bc9b2d8147cb61971e89f273acd69af07eb4d5a6d38894",
+    "deft_reversi_engine_v2/src/search/small.rs": "5446e6294a5e83da68f800ca7d55b01e72d330707915be5b4dae73933e9bd456",
+    "deft_reversi_engine_v2/src/search/tail.rs": "7d1883d269ddab011ef75407af8bd7c664438fa916bdb4049fa678dee78399a8",
+    "deft_reversi_engine_v2/src/search/tree.rs": "8cd286c7d9301f273481cc89699f8847e793b16d37c6612357b86970b09a0a4f",
+    "deft_reversi_engine_v2/src/search/ybwc.rs": "432b5d8bef64ad574aac0040b480fb3a179d4293d79291ce71c85100047ed78e",
+    "deft_reversi_engine_v2/src/search.rs": "70ffe2691d89e2ede9047bdf4605fe70d062760ace81bde53e5eb9c711281dc8",
+    "deft_reversi_engine_v2/src/transposition.rs": "6f52bb64cd6e01fb38944882e3f167d4dc0ad671c4dd35c5e06ce46d11dc374e",
+    "deft_reversi_engine_v2/src/types.rs": "fbbe342b8b8b7032efb9cab0dc20982229dac4aba5533744544dd1d0b37610f3",
+    "tools/engine-compare/src/main.rs": "60e8c86fcf5a0be9a23eb33ac81f72fb7c1b935c8ca965c155507569bb114c00"
+  },
+  "tests": {
+    "native_release_including_stress": 42
+  },
+  "mpc": "same reference model calibration, selective preparation followed by no-MPC final search"
+}

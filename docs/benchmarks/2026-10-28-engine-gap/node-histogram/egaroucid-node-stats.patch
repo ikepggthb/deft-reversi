@@ -1,0 +1,67 @@
+diff --git a/src/engine/ai.hpp b/src/engine/ai.hpp
+index 6b5e16b91..5178ee9c6 100644
+--- a/src/engine/ai.hpp
++++ b/src/engine/ai.hpp
+@@ -235,6 +235,9 @@ void iterative_deepening_search(Board board, int alpha, int beta, int depth, uin
+         }
+ #endif
+         result->nodes += main_search.n_nodes;
++        std::cerr << "STATS depth " << main_depth << " mpc " << (int)main_mpc_level << " last " << is_last_search;
++        for (int i = 0; i < HW2; ++i) std::cerr << " " << main_search.n_nodes_discs[i];
++        std::cerr << std::endl;
+         if (*searching) {
+             if (result->value != SCORE_UNDEFINED && !main_is_end_search) {
+                 double n_value = (0.9 * result->value + 1.1 * id_result.first) / 2.0;
+diff --git a/src/engine/search.hpp b/src/engine/search.hpp
+index eed4771da..573114b04 100644
+--- a/src/engine/search.hpp
++++ b/src/engine/search.hpp
+@@ -275,7 +275,7 @@ class Search {
+             parity |= (1 & pop_count_ull(empty & 0x00000000F0F0F0F0ULL)) << 1;
+             parity |= (1 & pop_count_ull(empty & 0x0F0F0F0F00000000ULL)) << 2;
+             parity |= (1 & pop_count_ull(empty & 0xF0F0F0F000000000ULL)) << 3;
+-            calc_eval_features(&board, &eval);
++            calc_eval_features(&board, &eval); for (int _i = 0; _i < HW2; ++_i) n_nodes_discs[_i] = 0;
+ #if USE_KILLER_MOVE_MO
+             clear_killers();
+ #endif
+@@ -288,7 +288,7 @@ class Search {
+             parity |= (1 & pop_count_ull(empty & 0x00000000F0F0F0F0ULL)) << 1;
+             parity |= (1 & pop_count_ull(empty & 0x0F0F0F0F00000000ULL)) << 2;
+             parity |= (1 & pop_count_ull(empty & 0xF0F0F0F000000000ULL)) << 3;
+-            calc_eval_features(&board, &eval);
++            calc_eval_features(&board, &eval); for (int _i = 0; _i < HW2; ++_i) n_nodes_discs[_i] = 0;
+ #if USE_KILLER_MOVE_MO
+             clear_killers();
+             clear_history();
+@@ -299,7 +299,7 @@ class Search {
+ 
+         Search(uint64_t board_player, uint64_t board_opponent, int_fast8_t n_discs_, uint_fast8_t parity_, uint_fast8_t mpc_level_, bool use_multi_thread_, bool is_presearch_, thread_id_t thread_id_)
+             : board(Board(board_player, board_opponent)), n_discs(n_discs_), parity(parity_), mpc_level(mpc_level_), use_multi_thread(use_multi_thread_), n_nodes(0), is_presearch(is_presearch_), thread_id(thread_id_) {
+-            calc_eval_features(&board, &eval);
++            calc_eval_features(&board, &eval); for (int _i = 0; _i < HW2; ++_i) n_nodes_discs[_i] = 0;
+ #if USE_KILLER_MOVE_MO
+             clear_killers();
+             clear_history();
+@@ -320,7 +320,7 @@ class Search {
+             parity |= (1 & pop_count_ull(empty & 0x00000000F0F0F0F0ULL)) << 1;
+             parity |= (1 & pop_count_ull(empty & 0x0F0F0F0F00000000ULL)) << 2;
+             parity |= (1 & pop_count_ull(empty & 0xF0F0F0F000000000ULL)) << 3;
+-            calc_eval_features(&board, &eval);
++            calc_eval_features(&board, &eval); for (int _i = 0; _i < HW2; ++_i) n_nodes_discs[_i] = 0;
+ #if USE_KILLER_MOVE_MO
+             clear_killers();
+ #endif
+diff --git a/src/engine/setting.hpp b/src/engine/setting.hpp
+index 0e5d59ff0..cefcc3199 100755
+--- a/src/engine/setting.hpp
++++ b/src/engine/setting.hpp
+@@ -180,7 +180,7 @@
+ */
+ 
+ // search statistics
+-#define USE_SEARCH_STATISTICS false
++#define USE_SEARCH_STATISTICS true
+ 
+ // thread monitor
+ #define USE_THREAD_MONITOR false

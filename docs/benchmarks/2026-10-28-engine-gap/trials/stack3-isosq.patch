@@ -1,0 +1,323 @@
+diff --git a/deft-reversi-engine/src/search/endgame/last_four.rs b/deft-reversi-engine/src/search/endgame/last_four.rs
+index 431affb..5fee5b8 100644
+--- a/deft-reversi-engine/src/search/endgame/last_four.rs
++++ b/deft-reversi-engine/src/search/endgame/last_four.rs
+@@ -18,13 +18,16 @@ impl LeafSearch<'_> {
+ }
+ impl Context {
+     pub(super) fn last_four_score(&mut self, board: Board, alpha: i32) -> Result<i32, ()> {
+-        self.last_four_score_with_parity(board, alpha, UNKNOWN_PARITY)
++        let squares = super::parity::sorted_empties(!(board.player_bits() | board.opponent_bits()));
++        self.last_four_score_ordered(board, alpha, UNKNOWN_PARITY, squares)
+     }
+-    pub(super) fn last_four_score_with_parity(
++    /// `squares` lists the four empties in the shallow kernels' preferred order.
++    pub(super) fn last_four_score_ordered(
+         &mut self,
+         board: Board,
+         alpha: i32,
+         parity: u8,
++        squares: [u8; 4],
+     ) -> Result<i32, ()> {
+         debug_assert!(parity <= UNKNOWN_PARITY);
+         let mut search = LeafSearch {
+@@ -36,6 +39,7 @@ impl Context {
+             board.opponent_bits(),
+             alpha,
+             parity,
++            squares.map(usize::from),
+             &mut search,
+         );
+         if search.failed { Err(()) } else { Ok(score) }
+@@ -357,6 +361,7 @@ fn solve_score_4_empties(
+     opponent: u64,
+     alpha: i32,
+     known_parity: u8,
++    [mut x1, mut x2, mut x3, mut x4]: [usize; 4],
+     search: &mut LeafSearch<'_>,
+ ) -> i32 {
+     // The caller has already entered this four-empty node.
+@@ -366,14 +371,6 @@ fn solve_score_4_empties(
+         return score;
+     }
+ 
+-    let mut empties = !(player | opponent);
+-    let mut x1 = empties.trailing_zeros() as usize;
+-    empties &= empties - 1;
+-    let mut x2 = empties.trailing_zeros() as usize;
+-    empties &= empties - 1;
+-    let mut x3 = empties.trailing_zeros() as usize;
+-    empties &= empties - 1;
+-    let mut x4 = empties.trailing_zeros() as usize;
+     let parity = if known_parity < UNKNOWN_PARITY {
+         i32::from(known_parity)
+     } else {
+diff --git a/deft-reversi-engine/src/search/endgame/local_tt.rs b/deft-reversi-engine/src/search/endgame/local_tt.rs
+index f1b0083..3da09c0 100644
+--- a/deft-reversi-engine/src/search/endgame/local_tt.rs
++++ b/deft-reversi-engine/src/search/endgame/local_tt.rs
+@@ -1,7 +1,7 @@
+ //! Context-owned endgame TT; probes are immutable snapshots, never slot pointers.
+ use super::{LOCAL_END_MAX, TAIL_EMPTIES};
+ use crate::Board;
+-const LOCAL_SLOTS: usize = 2048;
++const LOCAL_SLOTS: usize = 1024;
+ const LAYERS: usize = (LOCAL_END_MAX - TAIL_EMPTIES + 1) as usize;
+ 
+ #[derive(Default)]
+@@ -36,7 +36,7 @@ impl EndgameCache {
+         // separated by 32 squares, creating systematic aliases.
+         let hash = board.player_bits().wrapping_mul(0x9dda1c54cfe6b6e9)
+             ^ board.opponent_bits().wrapping_mul(0xa2e6c0300831e05a);
+-        let index = (hash >> 53) as u16;
++        let index = (hash >> 54) as u16;
+         let mut probe = EndProbe {
+             index,
+             ..EndProbe::EMPTY
+diff --git a/deft-reversi-engine/src/search/endgame/mod.rs b/deft-reversi-engine/src/search/endgame/mod.rs
+index afbb8a4..47c109e 100644
+--- a/deft-reversi-engine/src/search/endgame/mod.rs
++++ b/deft-reversi-engine/src/search/endgame/mod.rs
+@@ -149,7 +149,7 @@ impl Context {
+         }
+         debug_assert_eq!(count, 5);
+         debug_assert_eq!(beta, alpha + 1);
+-        self.five_empty_score(board, alpha, tail_parity(board))
++        self.five_empty_score(board, alpha, tail_parity(board), parity::sorted_empties(empty))
+     }
+ }
+ 
+@@ -284,7 +284,12 @@ mod tests {
+             for alpha in [expected - 1, expected] {
+                 let mut context = context();
+                 let actual = context
+-                    .five_empty_score(board, alpha, tail_parity(board))
++                    .five_empty_score(
++                        board,
++                        alpha,
++                        tail_parity(board),
++                        parity::sorted_empties(!(board.player_bits() | board.opponent_bits())),
++                    )
+                     .unwrap();
+                 assert_eq!(actual, expected, "board={board:?} alpha={alpha}");
+             }
+diff --git a/deft-reversi-engine/src/search/endgame/parity.rs b/deft-reversi-engine/src/search/endgame/parity.rs
+index cbd1731..0304907 100644
+--- a/deft-reversi-engine/src/search/endgame/parity.rs
++++ b/deft-reversi-engine/src/search/endgame/parity.rs
+@@ -58,3 +58,46 @@ pub(super) const QUADRANT_ID: [i32; 64] = {
+     }
+     ids
+ };
++
++/// Reference presorted empty-square order: corners first, X-squares and the
++/// centre last. Shallow kernels search odd quadrants first in this order.
++#[rustfmt::skip]
++const SQUARE_RANK: [u8; 64] = [
++     0, 50, 18, 26, 28, 20, 52,  2,
++    48, 56, 42, 34, 36, 44, 58, 54,
++    16, 40, 12,  6,  8, 14, 46, 22,
++    24, 32,  4, 60, 61, 10, 38, 30,
++    25, 33,  5, 62, 63, 11, 39, 31,
++    17, 41, 13,  7,  9, 15, 47, 23,
++    49, 57, 43, 35, 37, 45, 59, 55,
++     1, 51, 19, 27, 29, 21, 53,  3,
++];
++
++/// Empty squares sorted by `SQUARE_RANK`; `N` must equal the empty count.
++#[inline(always)]
++pub(super) fn sorted_empties<const N: usize>(mut empty: u64) -> [u8; N] {
++    debug_assert_eq!(empty.count_ones() as usize, N);
++    let mut squares = [0u8; N];
++    for filled in 0..N {
++        let square = empty.trailing_zeros() as u8;
++        empty &= empty - 1;
++        let mut i = filled;
++        while i > 0 && SQUARE_RANK[usize::from(squares[i - 1])] > SQUARE_RANK[usize::from(square)] {
++            squares[i] = squares[i - 1];
++            i -= 1;
++        }
++        squares[i] = square;
++    }
++    squares
++}
++
++/// The ordered list without its `index`-th square.
++#[inline(always)]
++pub(super) fn without<const N: usize, const M: usize>(squares: [u8; N], index: usize) -> [u8; M] {
++    debug_assert_eq!(N, M + 1);
++    let mut rest = [0u8; M];
++    for i in 0..M {
++        rest[i] = squares[i + usize::from(i >= index)];
++    }
++    rest
++}
+diff --git a/deft-reversi-engine/src/search/endgame/shallow.rs b/deft-reversi-engine/src/search/endgame/shallow.rs
+index dddb740..c9e9fc3 100644
+--- a/deft-reversi-engine/src/search/endgame/shallow.rs
++++ b/deft-reversi-engine/src/search/endgame/shallow.rs
+@@ -1,5 +1,5 @@
+ //! Dedicated five- and six-empty null-window kernels.
+-use super::parity::{PARITY_REGIONS, SQUARE_PARITY};
++use super::parity::{SQUARE_PARITY, sorted_empties, without};
+ use super::{Board, Context};
+ 
+ impl Context {
+@@ -7,7 +7,7 @@ impl Context {
+         &mut self,
+         board: Board,
+         alpha: i32,
+-        mut moves: u64,
++        moves: u64,
+         parity: u8,
+     ) -> Result<i32, ()> {
+         debug_assert_eq!(board.empty_count(), 6);
+@@ -29,21 +29,33 @@ impl Context {
+                 )
+                 .map(|score| -score);
+         }
+-        let mut preferred = moves & PARITY_REGIONS[usize::from(parity)];
++        if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
++            self.stats.stability_cuts += 1;
++            return Ok(score);
++        }
++        let squares: [u8; 6] = sorted_empties(!(board.player_bits() | board.opponent_bits()));
++        let odd = isolated_empties(board);
+         let mut best = -65;
+-        while moves != 0 {
+-            let options = if preferred != 0 { preferred } else { moves };
+-            let bit = options.isolate_lowest_one();
+-            preferred &= !bit;
+-            moves &= !bit;
+-            let child = board.after_known_move(bit, board.flip_mask(bit));
+-            let child_parity = parity ^ SQUARE_PARITY[bit.trailing_zeros() as usize];
+-            self.enter()?;
+-            let score = -self.five_empty_score(child, child_alpha, child_parity)?;
+-            best = best.max(score);
+-            if score > alpha {
+-                self.stats.beta_cuts += 1;
+-                break;
++        for want_odd in [true, false] {
++            for (index, &square) in squares.iter().enumerate() {
++                let bit = 1u64 << square;
++                if moves & bit == 0 || (odd & bit != 0) != want_odd {
++                    continue;
++                }
++                let child = board.after_known_move(bit, board.flip_mask(bit));
++                let child_parity = parity ^ SQUARE_PARITY[usize::from(square)];
++                self.enter()?;
++                let score = -self.five_empty_score(
++                    child,
++                    child_alpha,
++                    child_parity,
++                    without(squares, index),
++                )?;
++                best = best.max(score);
++                if score > alpha {
++                    self.stats.beta_cuts += 1;
++                    return Ok(best);
++                }
+             }
+         }
+         Ok(best)
+@@ -53,33 +65,42 @@ impl Context {
+         board: Board,
+         alpha: i32,
+         parity: u8,
++        squares: [u8; 5],
+     ) -> Result<i32, ()> {
+         debug_assert_eq!(board.empty_count(), 5);
+-        let mut empty = !(board.player_bits() | board.opponent_bits());
+-        let mut preferred = empty & PARITY_REGIONS[usize::from(parity)];
++        if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
++            self.stats.stability_cuts += 1;
++            return Ok(score);
++        }
++        let odd = isolated_empties(board);
+         let child_alpha = -alpha - 1;
+         let mut best = -65;
+-        while empty != 0 {
+-            let options = if preferred != 0 { preferred } else { empty };
+-            let bit = options.isolate_lowest_one();
+-            preferred &= !bit;
+-            empty &= !bit;
+-            let square = bit.trailing_zeros() as usize;
+-            if board.opponent_bits() & super::last_four::NEIGHBOUR[square] == 0 {
+-                continue;
+-            }
+-            let flips = board.flip_mask(bit);
+-            if flips == 0 {
+-                continue;
+-            }
+-            let child = board.after_known_move(bit, flips);
+-            let child_parity = parity ^ SQUARE_PARITY[square];
+-            self.enter()?;
+-            let score = -self.last_four_score_with_parity(child, child_alpha, child_parity)?;
+-            best = best.max(score);
+-            if score > alpha {
+-                self.stats.beta_cuts += 1;
+-                return Ok(best);
++        for want_odd in [true, false] {
++            for (index, &square) in squares.iter().enumerate() {
++                let bit = 1u64 << square;
++                if (odd & bit != 0) != want_odd
++                    || board.opponent_bits() & super::last_four::NEIGHBOUR[usize::from(square)] == 0
++                {
++                    continue;
++                }
++                let flips = board.flip_mask(bit);
++                if flips == 0 {
++                    continue;
++                }
++                let child = board.after_known_move(bit, flips);
++                let child_parity = parity ^ SQUARE_PARITY[usize::from(square)];
++                self.enter()?;
++                let score = -self.last_four_score_ordered(
++                    child,
++                    child_alpha,
++                    child_parity,
++                    without(squares, index),
++                )?;
++                best = best.max(score);
++                if score > alpha {
++                    self.stats.beta_cuts += 1;
++                    return Ok(best);
++                }
+             }
+         }
+         // Kernel scores/bounds are in -64..=64; -65 means no legal move.
+@@ -91,7 +112,17 @@ impl Context {
+             return Ok(board.final_score());
+         }
+         self.enter()?;
+-        self.five_empty_score(board.board_after_pass(), child_alpha, parity)
++        self.five_empty_score(board.board_after_pass(), child_alpha, parity, squares)
+             .map(|score| -score)
+     }
+ }
++
++/// Empty squares without an empty king-move neighbour.
++#[inline(always)]
++fn isolated_empties(board: Board) -> u64 {
++    let empty = !(board.player_bits() | board.opponent_bits());
++    let horizontal = ((empty >> 1) & 0x7f7f7f7f7f7f7f7f) | ((empty << 1) & 0xfefefefefefefefe);
++    let row = horizontal | empty;
++    let around = horizontal | (row >> 8) | (row << 8);
++    empty & !around
++}
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index 5165d86..2a97c9b 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -211,8 +211,10 @@ impl Context {
+             let child = board.after_known_move(bit, flips);
+             // Reference ETC uses the original alpha to skip moves. Preserve
+             // their largest upper bound so a fail-low remains a sound bound.
++            // Null-window children with thirteen or fewer empties live only in
++            // the local endgame cache, so the main table cannot cut them.
+             if (if exact {
+-                board.empty_count() > 12
++                board.empty_count() > super::endgame::LOCAL_END_MAX + u8::from(beta - alpha == 1)
+             } else {
+                 depth >= 4
+             }) && let Some(entry) = self.runtime.table.get(child)

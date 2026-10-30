@@ -1,0 +1,44 @@
+{
+  "control": {
+    "median_seconds": 4.870933488,
+    "nodes": [
+      280670334
+    ],
+    "sha256": "a6b5d7f7ec70e82cbbeebaa45c583475c49b2a45960a9d75e1b14834fd3a4c46"
+  },
+  "no_pv": {
+    "median_seconds": 4.872018647,
+    "nodes": [
+      280647984
+    ],
+    "sha256": "463a5aee087dec9708d943cbb4cc6b843ce2d1aae76a6300b7f681c59d3b70aa"
+  },
+  "no_stabilize": {
+    "median_seconds": 4.829445711,
+    "nodes": [
+      280658901
+    ],
+    "sha256": "94ab8c78563464733c32365e2ddd6cd8acb26ef36b5c47efb60f1a1c7ed88f81"
+  },
+  "narrow_mpc": {
+    "median_seconds": 4.85122885,
+    "nodes": [
+      280462211
+    ],
+    "sha256": "829e8a0774757418f0e15657cfc4636a4d18ce7523e7ec69864f2ee48e9bd795"
+  },
+  "window4": {
+    "median_seconds": 4.858911033,
+    "nodes": [
+      280545074
+    ],
+    "sha256": "4a4e00f93e1f15b3592af60e5573eb9dcc68a8f6f38e33a5f7f5668e27852939"
+  },
+  "window8": {
+    "median_seconds": 4.865270171,
+    "nodes": [
+      280619109
+    ],
+    "sha256": "6e7bba9e733a36e247885dc55cb92f2bd78445248e2bbf70797e48993eb555c6"
+  }
+}

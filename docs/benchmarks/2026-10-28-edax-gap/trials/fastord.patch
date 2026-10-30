@@ -1,0 +1,56 @@
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 7dc5cb6..cfaaacc 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -117,7 +117,7 @@ impl Context {
+                 }
+                 continue;
+             }
+-            let ordering = endgame_ordering(legal, bit, odd);
++            let ordering = endgame_ordering(child, legal, bit, odd);
+             #[cfg(feature = "endgame-pattern-ordering")]
+             let ordering = if board.empty_count() >= 11 {
+                 let state = ordering_state.get_or_insert_with(|| self.end_ordering_state(board));
+@@ -185,9 +185,39 @@ impl Context {
+     }
+ }
+ 
+-fn endgame_ordering(legal: u64, bit: u64, odd: u64) -> i32 {
+-    let mobility = legal.count_ones() + (legal & 0x8100000000000081).count_ones();
+-    -(mobility as i32) * 18 + if bit & odd != 0 { 17 } else { 0 }
++/// Reference fast endgame ordering: the opponent's corner-weighted mobility
++/// dominates, then our corner stability, the opponent's potential mobility,
++/// and square value plus quadrant parity only to break ties.
++fn endgame_ordering(child: Board, legal: u64, bit: u64, odd: u64) -> i32 {
++    const SQUARE_VALUE: [i32; 64] = [
++        18, 4, 16, 12, 12, 16, 4, 18, 4, 2, 6, 8, 8, 6, 2, 4, 16, 6, 14, 10, 10, 14, 6, 16, 12, 8,
++        10, 0, 0, 10, 8, 12, 12, 8, 10, 0, 0, 10, 8, 12, 16, 6, 14, 10, 10, 14, 6, 16, 4, 2, 6, 8,
++        8, 6, 2, 4, 18, 4, 16, 12, 12, 16, 4, 18,
++    ];
++    let weighted = |bits: u64| (bits.count_ones() + (bits & 0x8100000000000081).count_ones()) as i32;
++    let (player, opponent) = (child.player_bits(), child.opponent_bits());
++    let potential = (shift_both(opponent & 0x7e7e7e7e7e7e7e7e, 1)
++        | shift_both(opponent & 0x00ffffffffffff00, 8)
++        | shift_both(opponent & 0x007e7e7e7e7e7e00, 7)
++        | shift_both(opponent & 0x007e7e7e7e7e7e00, 9))
++        & !(player | opponent);
++    let corner = opponent
++        & (((opponent & 0x0100000000000001) << 1)
++            | ((opponent & 0x8000000000000080) >> 1)
++            | ((opponent & 0x0000000000000081) << 8)
++            | ((opponent & 0x8100000000000000) >> 8)
++            | 0x8100000000000081);
++    let parity = if child.empty_count() < 11 { 8 } else { 4 };
++    (36 - weighted(legal)) * (1 << 15)
++        + corner.count_ones() as i32 * (1 << 11)
++        + (36 - weighted(potential)) * (1 << 5)
++        + SQUARE_VALUE[bit.trailing_zeros() as usize]
++        + if bit & odd != 0 { parity } else { 0 }
++}
++
++#[inline(always)]
++fn shift_both(bits: u64, shift: u32) -> u64 {
++    bits << shift | bits >> shift
+ }
+ 
+ #[derive(Clone, Copy)]

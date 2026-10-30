@@ -1,0 +1,26 @@
+diff --git a/deft-reversi-engine/src/search/endgame/shallow.rs b/deft-reversi-engine/src/search/endgame/shallow.rs
+index dddb740..2ef952f 100644
+--- a/deft-reversi-engine/src/search/endgame/shallow.rs
++++ b/deft-reversi-engine/src/search/endgame/shallow.rs
+@@ -29,6 +29,10 @@ impl Context {
+                 )
+                 .map(|score| -score);
+         }
++        if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
++            self.stats.stability_cuts += 1;
++            return Ok(score);
++        }
+         let mut preferred = moves & PARITY_REGIONS[usize::from(parity)];
+         let mut best = -65;
+         while moves != 0 {
+@@ -55,6 +59,10 @@ impl Context {
+         parity: u8,
+     ) -> Result<i32, ()> {
+         debug_assert_eq!(board.empty_count(), 5);
++        if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
++            self.stats.stability_cuts += 1;
++            return Ok(score);
++        }
+         let mut empty = !(board.player_bits() | board.opponent_bits());
+         let mut preferred = empty & PARITY_REGIONS[usize::from(parity)];
+         let child_alpha = -alpha - 1;

@@ -1,0 +1,13 @@
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index fbc6801..060df15 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -345,7 +345,7 @@ impl Engine {
+             })
+             .collect();
+         if calibrated && exact && request.probcut_sigma.is_none() {
+-            let mut stage = target_stage.min(2);
++            let mut stage = target_stage.min(0);
+             while stage < target_stage {
+                 iterations.push((
+                     target,

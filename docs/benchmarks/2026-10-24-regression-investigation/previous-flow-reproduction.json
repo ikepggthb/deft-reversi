@@ -1,0 +1,72 @@
+[
+  {
+    "ffo": 40,
+    "previous_binary_nodes": 8370602,
+    "diagnostic_total_nodes": 8406746,
+    "pv_verification_nodes": 36144,
+    "diagnostic_search_nodes": 8370602
+  },
+  {
+    "ffo": 41,
+    "previous_binary_nodes": 16061855,
+    "diagnostic_total_nodes": 16079577,
+    "pv_verification_nodes": 17722,
+    "diagnostic_search_nodes": 16061855
+  },
+  {
+    "ffo": 42,
+    "previous_binary_nodes": 26229962,
+    "diagnostic_total_nodes": 26243071,
+    "pv_verification_nodes": 13109,
+    "diagnostic_search_nodes": 26229962
+  },
+  {
+    "ffo": 43,
+    "previous_binary_nodes": 50966046,
+    "diagnostic_total_nodes": 50971944,
+    "pv_verification_nodes": 5898,
+    "diagnostic_search_nodes": 50966046
+  },
+  {
+    "ffo": 44,
+    "previous_binary_nodes": 10220433,
+    "diagnostic_total_nodes": 10235861,
+    "pv_verification_nodes": 15428,
+    "diagnostic_search_nodes": 10220433
+  },
+  {
+    "ffo": 45,
+    "previous_binary_nodes": 170616734,
+    "diagnostic_total_nodes": 170637335,
+    "pv_verification_nodes": 20601,
+    "diagnostic_search_nodes": 170616734
+  },
+  {
+    "ffo": 46,
+    "previous_binary_nodes": 79626688,
+    "diagnostic_total_nodes": 79641097,
+    "pv_verification_nodes": 14409,
+    "diagnostic_search_nodes": 79626688
+  },
+  {
+    "ffo": 47,
+    "previous_binary_nodes": 19777036,
+    "diagnostic_total_nodes": 19781273,
+    "pv_verification_nodes": 4237,
+    "diagnostic_search_nodes": 19777036
+  },
+  {
+    "ffo": 48,
+    "previous_binary_nodes": 146856471,
+    "diagnostic_total_nodes": 146877186,
+    "pv_verification_nodes": 20715,
+    "diagnostic_search_nodes": 146856471
+  },
+  {
+    "ffo": 49,
+    "previous_binary_nodes": 192342786,
+    "diagnostic_total_nodes": 192348817,
+    "pv_verification_nodes": 6031,
+    "diagnostic_search_nodes": 192342786
+  }
+]

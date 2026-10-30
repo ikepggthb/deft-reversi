@@ -1,0 +1,132 @@
+{
+  "base": {
+    "sha256": "d75409b3fd8300f0688e0e9f336808c48f6c0db87c660431ac93a3c1a064dc55",
+    "symbols": {
+      "node": {
+        "size_bytes": 10804,
+        "address": "0x00000000000574c0",
+        "assembly": "base-node.asm.txt"
+      },
+      "ordering_search": {
+        "size_bytes": 1453,
+        "address": "0x000000000005de00",
+        "assembly": "base-ordering_search.asm.txt"
+      },
+      "evaluate": {
+        "size_bytes": 2547,
+        "address": "0x0000000000055810",
+        "assembly": "base-evaluate.asm.txt"
+      }
+    },
+    "source_sha256": {
+      "evaluation/mod.rs": "8af811c39951ba801feb9d269f83713a9c22b2d51943b8137ef91e03a8f36dc9",
+      "search/ordering.rs": "39b1b8e7054fc7b86bcee691bb46836b35d931991224c0937ae15e0be27d0686",
+      "search/tree.rs": "c6fa8156f0da1b4c1b63963ece41a7811581427d08de6b3aaabf67ce70e0300f",
+      "search/tail.rs": "8a9af040657e1f2931236ffebf72d360a2a8e6a89709c59763a816d2d3fe8f27"
+    }
+  },
+  "provided": {
+    "sha256": "7910342b09516144ad97ce99e05ac9840021c0b8c427d79ba810de788cdc4237",
+    "symbols": {
+      "node": {
+        "size_bytes": 11433,
+        "address": "0x0000000000057430",
+        "assembly": "provided-node.asm.txt"
+      },
+      "ordering_search": {
+        "size_bytes": 1645,
+        "address": "0x000000000005dfe0",
+        "assembly": "provided-ordering_search.asm.txt"
+      },
+      "evaluate": {
+        "size_bytes": 2407,
+        "address": "0x0000000000055810",
+        "assembly": "provided-evaluate.asm.txt"
+      }
+    },
+    "source_sha256": {
+      "evaluation/mod.rs": "42dc06534c9eddc2fd9125a4bbb510d12244603edf2ffe39f866c46e93d8b278",
+      "search/ordering.rs": "c5519187e82c44430e369abad01b1b7cf8ad90962c30a1022772db8dbd095bcf",
+      "search/tree.rs": "c6fa8156f0da1b4c1b63963ece41a7811581427d08de6b3aaabf67ce70e0300f",
+      "search/tail.rs": "8a9af040657e1f2931236ffebf72d360a2a8e6a89709c59763a816d2d3fe8f27"
+    }
+  },
+  "provided-boundary": {
+    "sha256": "53f71e40250347908a7454c5105681599d5b89422a6a8f84ee5684cea17eba82",
+    "symbols": {
+      "node": {
+        "size_bytes": 11448,
+        "address": "0x0000000000057430",
+        "assembly": "provided-boundary-node.asm.txt"
+      },
+      "ordering_search": {
+        "size_bytes": 1645,
+        "address": "0x000000000005dff0",
+        "assembly": "provided-boundary-ordering_search.asm.txt"
+      },
+      "evaluate": {
+        "size_bytes": 2407,
+        "address": "0x0000000000055810",
+        "assembly": "provided-boundary-evaluate.asm.txt"
+      }
+    },
+    "source_sha256": {
+      "evaluation/mod.rs": "219f37d24ca5a6c138d70787ae855e0f84ad29b769ab478b3fa4b953fcc07488",
+      "search/ordering.rs": "4dfec1a998b826b4b9c5368ea50f5578b17b44db4a7fbbe2fef737d39cc5a90d",
+      "search/tree.rs": "5c954bac71ecbff002a035d644c575b62f712346c35d7c74b5950816d4af6e1b",
+      "search/tail.rs": "8a9af040657e1f2931236ffebf72d360a2a8e6a89709c59763a816d2d3fe8f27"
+    }
+  },
+  "returned-only": {
+    "sha256": "128955cbc8cdef98484c5a19e65c50cb9cb3bdd6a678f97432695b891f253efa",
+    "symbols": {
+      "node": {
+        "size_bytes": 11497,
+        "address": "0x00000000000574b0",
+        "assembly": "returned-only-node.asm.txt"
+      },
+      "ordering_search": {
+        "size_bytes": 1453,
+        "address": "0x000000000005e0a0",
+        "assembly": "returned-only-ordering_search.asm.txt"
+      },
+      "evaluate": {
+        "size_bytes": 2536,
+        "address": "0x0000000000055810",
+        "assembly": "returned-only-evaluate.asm.txt"
+      }
+    },
+    "source_sha256": {
+      "evaluation/mod.rs": "693a979481688f957cc333276e631c43925efc1e926c67b2818b0a57c64b11df",
+      "search/ordering.rs": "73f4a64da7b3784b7997e58c7895cc70ae64c38940884ba32591a52529d544d4",
+      "search/tree.rs": "c6fa8156f0da1b4c1b63963ece41a7811581427d08de6b3aaabf67ce70e0300f",
+      "search/tail.rs": "8a9af040657e1f2931236ffebf72d360a2a8e6a89709c59763a816d2d3fe8f27"
+    }
+  },
+  "returned-boundary": {
+    "sha256": "37c7921866885a22a7e8b407e253d3d85a4f54ea7977a9ca2ca8417fbbcc0ae8",
+    "symbols": {
+      "node": {
+        "size_bytes": 11561,
+        "address": "0x00000000000574b0",
+        "assembly": "returned-boundary-node.asm.txt"
+      },
+      "ordering_search": {
+        "size_bytes": 1453,
+        "address": "0x000000000005e0e0",
+        "assembly": "returned-boundary-ordering_search.asm.txt"
+      },
+      "evaluate": {
+        "size_bytes": 2536,
+        "address": "0x0000000000055810",
+        "assembly": "returned-boundary-evaluate.asm.txt"
+      }
+    },
+    "source_sha256": {
+      "evaluation/mod.rs": "693a979481688f957cc333276e631c43925efc1e926c67b2818b0a57c64b11df",
+      "search/ordering.rs": "73f4a64da7b3784b7997e58c7895cc70ae64c38940884ba32591a52529d544d4",
+      "search/tree.rs": "5c954bac71ecbff002a035d644c575b62f712346c35d7c74b5950816d4af6e1b",
+      "search/tail.rs": "8a9af040657e1f2931236ffebf72d360a2a8e6a89709c59763a816d2d3fe8f27"
+    }
+  }
+}

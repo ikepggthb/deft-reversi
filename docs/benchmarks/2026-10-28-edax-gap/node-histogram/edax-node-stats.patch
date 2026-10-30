@@ -1,0 +1,103 @@
+diff --git a/src/endgame.c b/src/endgame.c
+index 2d342c6..596f06a 100644
+--- a/src/endgame.c
++++ b/src/endgame.c
+@@ -323,6 +323,7 @@ static int search_solve_4(Search *search, const int alpha)
+ 
+ 	SEARCH_STATS(++statistics.n_search_solve_4);
+ 	SEARCH_UPDATE_INTERNAL_NODES(search->n_nodes);
++	++HIST_EMPTIES[search->n_empties];
+ 
+ 	// stability cutoff
+ 	if (search_SC_NWS_4(search, alpha, &score)) return score;
+@@ -418,6 +419,7 @@ static int NWS_shallow_endgame(Search *search, const int alpha)
+ 
+ 	SEARCH_STATS(++statistics.n_NWS_shallow_endgame);
+ 	SEARCH_UPDATE_INTERNAL_NODES(search->n_nodes);
++	++HIST_EMPTIES[search->n_empties];
+ 
+ 	// stability cutoff
+ 	if (search_SC_NWS(search, alpha, &score)) return score;
+@@ -495,6 +497,7 @@ int NWS_local_endgame(Search *search, const int alpha)
+ 
+ 	SEARCH_STATS(++statistics.n_NWS_local_endgame);
+ 	SEARCH_UPDATE_INTERNAL_NODES(search->n_nodes);
++	++HIST_EMPTIES[search->n_empties];
+ 
+ 	hash_code = board_get_hash_code(board);
+ 	hash_prefetch(hash_table, hash_code);
+@@ -587,6 +590,7 @@ int NWS_endgame(Search *search, const int alpha)
+ 
+ 	SEARCH_STATS(++statistics.n_NWS_endgame);
+ 	SEARCH_UPDATE_INTERNAL_NODES(search->n_nodes);
++	++HIST_EMPTIES[search->n_empties];
+ 
+ #if USE_SOLID
+ 	// discs on all lines full do not participate to the game anymore,
+diff --git a/src/midgame.c b/src/midgame.c
+index ddd21d6..71b28dc 100644
+--- a/src/midgame.c
++++ b/src/midgame.c
+@@ -468,6 +468,7 @@ int NWS_midgame(Search *search, const int alpha, int depth, Node *parent)
+ 
+ 	SEARCH_STATS(++statistics.n_NWS_midgame);
+ 	SEARCH_UPDATE_INTERNAL_NODES(search->n_nodes);
++	++HIST_EMPTIES[search->n_empties];
+ 
+ 	// transposition prefetch
+ 	hash_code = board_get_hash_code(board);
+@@ -593,6 +594,7 @@ int PVS_midgame(Search *search, const int alpha, const int beta, int depth, Node
+ 
+ 	cost = -search_count_nodes(search);
+ 	SEARCH_UPDATE_INTERNAL_NODES(search->n_nodes);
++	++HIST_EMPTIES[search->n_empties];
+ 
+ 	// transposition prefetch
+ 	hash_code = board_get_hash_code(board);
+diff --git a/src/root.c b/src/root.c
+index 2666073..27f829b 100644
+--- a/src/root.c
++++ b/src/root.c
+@@ -1,3 +1,4 @@
++#include <stdio.h>
+ /**
+  * @file root.c
+  *
+@@ -793,6 +794,7 @@ void iterative_deepening(Search *search, int alpha, int beta)
+ 		}
+ 		search->depth_pv_extension = get_pv_extension(search->depth, search->n_empties);
+ 		score = aspiration_search(search, alpha, beta, search->depth, score);
++		fprintf(stderr, "HISTE depth %d sel %d nodes", search->depth, search->selectivity); for (int _i = 0; _i < 65; ++_i) { fprintf(stderr, " %llu", HIST_EMPTIES[_i]); HIST_EMPTIES[_i] = 0; } fprintf(stderr, "\n");
+ 		if (!search_continue(search)) return;
+ 		if (abs(score) >= SCORE_MAX - 1 && search->depth > end - ITERATIVE_MIN_EMPTIES && search->options.depth >= search->n_empties) break;
+ 	}
+@@ -815,6 +817,7 @@ void iterative_deepening(Search *search, int alpha, int beta)
+ 		}
+ 		if (search->selectivity == search->options.selectivity) search_adjust_time(search, true);
+ 		score = aspiration_search(search, alpha, beta, search->depth, score);
++		fprintf(stderr, "HISTE depth %d sel %d nodes", search->depth, search->selectivity); for (int _i = 0; _i < 65; ++_i) { fprintf(stderr, " %llu", HIST_EMPTIES[_i]); HIST_EMPTIES[_i] = 0; } fprintf(stderr, "\n");
+ 		if (!search_continue(search)) return;
+ 	}
+ 	if (search->selectivity > search->options.selectivity) search->selectivity = search->options.selectivity;
+diff --git a/src/search.c b/src/search.c
+index 9f87afd..734db20 100644
+--- a/src/search.c
++++ b/src/search.c
+@@ -59,6 +59,7 @@
+  */
+ 
+ #include "search.h"
++unsigned long long HIST_EMPTIES[65];
+ 
+ #include "bit.h"
+ #include "options.h"
+diff --git a/src/search.h b/src/search.h
+index bb20a8a..61f6c50 100644
+--- a/src/search.h
++++ b/src/search.h
+@@ -244,3 +244,5 @@ static inline Stop search_get_state(Search *search)
+ 
+ 
+ #endif
++
++extern unsigned long long HIST_EMPTIES[65];

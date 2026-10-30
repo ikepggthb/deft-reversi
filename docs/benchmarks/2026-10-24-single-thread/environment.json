@@ -1,0 +1,37 @@
+{
+  "tests": {
+    "debug": {
+      "passed": 39,
+      "failed": 0,
+      "ignored": 1
+    },
+    "native_release": {
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "cpu": "Intel Core Ultra 7 265K",
+  "cpu_affinity": [
+    1
+  ],
+  "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)\nbinary: rustc\ncommit-hash: ded5c06cf21d2b93bffd5d884aa6e96934ee4234\ncommit-date: 2025-12-08\nhost: x86_64-unknown-linux-gnu\nrelease: 1.92.0\nLLVM version: 21.1.3\n",
+  "rustflags": "-Ctarget-cpu=native",
+  "reference_commit": "f4192a0bfe62f456d6ffe5716fb797d697f6c6d3",
+  "model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "baseline_binary_sha256": "b10673274943f6bd0a300f6cc16dcfc1adf450fad23b567db6018b06faa45b70",
+  "after_binary_sha256": "60bfa673c3c1a7f14192f725c9df5c2a2c3706ddbd9b4448a18a013238c5f1de",
+  "comparison_binary_sha256": "c7cf91525177a06489c24a0657f865847cb2d6ec583cab9a7dd5481107442cf4",
+  "source_snapshot_sha256": "339296858918978cf0dd7285871f12524756567c9befa6878584693f28623fe9",
+  "clippy_debug_warnings": 0,
+  "clippy_native_warnings": 0,
+  "perf_access": "OS rejected perf_event_open; no kernel settings were changed",
+  "sampling": "ITIMER_PROF 1ms, Linux x86_64, single-thread, instruction-pointer samples only",
+  "main_tt_mib": 256,
+  "profile": {
+    "opt_level": 3,
+    "lto": "fat",
+    "codegen_units": 1,
+    "panic": "unwind"
+  }
+}

@@ -1,0 +1,811 @@
+
+/workspace/edax-reversi/bin/lEdax-native:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+000000000000f320 <solve_2>:
+    f320:	push   %rbp
+    f321:	movslq %ecx,%r11
+    f324:	mov    %rsi,%rax
+    f327:	mov    %edx,%r10d
+    f32a:	mov    %rsp,%rbp
+    f32d:	push   %r15
+    f32f:	push   %r14
+    f331:	push   %r13
+    f333:	push   %r12
+    f335:	push   %rbx
+    f336:	lea    0x6bf83(%rip),%r14        # 7b2c0 <NEIGHBOUR>
+    f33d:	and    $0xffffffffffffffe0,%rsp
+    f341:	mov    (%r14,%r11,8),%r13
+    f345:	test   %rsi,%r13
+    f348:	je     f6e0 <solve_2+0x3c0>
+    f34e:	mov    %r11,%rdx
+    f351:	lea    0x6c8a8(%rip),%rbx        # 7bc00 <LR_MASK>
+    f358:	vmovdqa 0x6dbc0(%rip),%ymm6        # 7cf20 <__func__.58+0x28>
+    f360:	vmovdqa 0x6dbd8(%rip),%ymm5        # 7cf40 <__func__.58+0x48>
+    f368:	shl    $0x6,%rdx
+    f36c:	mov    %rbx,-0x8(%rsp)
+    f371:	vpbroadcastq %rdi,%ymm8
+    f377:	vpbroadcastq %rsi,%ymm9
+    f37d:	add    %rbx,%rdx
+    f380:	vmovdqa 0x6dbd8(%rip),%ymm7        # 7cf60 <__func__.58+0x68>
+    f388:	vmovdqa 0x20(%rdx),%ymm4
+    f38d:	vpandq %ymm8,%ymm4,%ymm0
+    f393:	vmovdqa %ymm4,%ymm10
+    f397:	vpsrlvq %ymm6,%ymm0,%ymm2
+    f39c:	vporq  %ymm0,%ymm2,%ymm2
+    f3a2:	vpsrlvq %ymm5,%ymm2,%ymm1
+    f3a7:	vporq  %ymm2,%ymm1,%ymm1
+    f3ad:	vpsrlvq %ymm7,%ymm1,%ymm2
+    f3b2:	vpternlogq $0x10,%ymm2,%ymm1,%ymm10
+    f3b9:	vmovdqa (%rdx),%ymm1
+    f3bd:	vmovdqa %ymm0,%ymm2
+    f3c1:	vpternlogq $0xb4,%ymm9,%ymm4,%ymm2
+    f3c8:	vpcmpgtq %ymm2,%ymm0,%ymm2
+    f3cd:	vpcmpeqd %ymm0,%ymm0,%ymm0
+    f3d1:	vpandnq %ymm1,%ymm9,%ymm4
+    f3d7:	vpaddq %ymm0,%ymm4,%ymm0
+    f3db:	vpternlogq $0x60,%ymm0,%ymm4,%ymm1
+    f3e2:	vpandnq %ymm1,%ymm8,%ymm4
+    f3e8:	vpcmpeqq %ymm4,%ymm1,%ymm0
+    f3ed:	vpandnq %ymm4,%ymm0,%ymm0
+    f3f3:	vpternlogq $0xf8,%ymm2,%ymm10,%ymm0
+    f3fa:	vextracti64x2 $0x1,%ymm0,%xmm1
+    f401:	vporq  %xmm0,%xmm1,%xmm0
+    f407:	vpshufd $0x4e,%xmm0,%xmm1
+    f40c:	vporq  %xmm1,%xmm0,%xmm0
+    f412:	vmovq  %xmm0,%rdx
+    f417:	test   %rdx,%rdx
+    f41a:	je     f6e0 <solve_2+0x3c0>
+    f420:	xor    %rsi,%rdx
+    f423:	mov    %r8d,%esi
+    f426:	lea    0x6b693(%rip),%rbx        # 7aac0 <COUNT_FLIP>
+    f42d:	and    $0x7,%esi
+    f430:	mov    %rbx,-0x38(%rsp)
+    f435:	shl    $0x8,%rsi
+    f439:	lea    (%rbx,%rsi,1),%rdi
+    f43d:	lea    0x6ae3c(%rip),%rsi        # 7a280 <MASK_X>
+    f444:	mov    %rdi,-0x10(%rsp)
+    f449:	mov    %r8d,%edi
+    f44c:	mov    %rsi,-0x40(%rsp)
+    f451:	sar    $0x3,%edi
+    f454:	movslq %edi,%rdi
+    f457:	shl    $0x8,%rdi
+    f45b:	add    %rbx,%rdi
+    f45e:	movslq %r8d,%rbx
+    f461:	and    $0x38,%r8d
+    f465:	mov    %rbx,%r15
+    f468:	mov    %r8d,%r12d
+    f46b:	shl    $0x5,%r15
+    f46f:	mov    %r12d,-0x14(%rsp)
+    f474:	add    %rsi,%r15
+    f477:	mov    %rdx,%rsi
+    f47a:	mov    0x18(%r15),%r13
+    f47e:	mov    (%r15),%r8
+    f481:	and    %r13,%rsi
+    f484:	mov    %r8,-0x20(%rsp)
+    f489:	pext   %r8,%rsi,%r8
+    f48e:	vmovq  %r8,%xmm0
+    f493:	mov    0x8(%r15),%r8
+    f497:	mov    0x10(%r15),%r15
+    f49b:	mov    %r8,-0x28(%rsp)
+    f4a0:	mov    %r15,-0x30(%rsp)
+    f4a5:	pext   %r8,%rsi,%r8
+    f4aa:	vmovq  %r8,%xmm1
+    f4af:	pext   %r15,%rsi,%r8
+    f4b4:	movzbl -0x14(%rsp),%r15d
+    f4ba:	movzbl (%rdi,%r8,1),%r8d
+    f4bf:	shrx   %r15,%rsi,%rsi
+    f4c4:	mov    -0x10(%rsp),%r15
+    f4c9:	movzbl %sil,%esi
+    f4cd:	add    (%r15,%rsi,1),%r8b
+    f4d1:	vmovq  %xmm1,%rsi
+    f4d6:	vmovq  %xmm0,%r15
+    f4db:	movzbl (%rdi,%rsi,1),%esi
+    f4df:	add    (%rdi,%r15,1),%sil
+    f4e3:	add    %r8d,%esi
+    f4e6:	movzbl %sil,%r15d
+    f4ea:	popcnt %rdx,%rsi
+    f4ef:	lea    -0x3e(%rsi,%rsi,1),%r8d
+    f4f4:	lea    (%r8,%r15,1),%esi
+    f4f8:	test   %r15d,%r15d
+    f4fb:	je     fe90 <solve_2+0xb70>
+    f501:	mov    $0x2,%r8d
+    f507:	cmp    %esi,%r10d
+    f50a:	jge    f6bd <solve_2+0x39d>
+    f510:	mov    %rax,%rdx
+    f513:	and    (%r14,%rbx,8),%rdx
+    f517:	mov    $0x2,%r8d
+    f51d:	je     f6bd <solve_2+0x39d>
+    f523:	mov    -0x8(%rsp),%rdi
+    f528:	shl    $0x6,%rbx
+    f52c:	add    %rdi,%rbx
+    f52f:	vmovdqa 0x20(%rbx),%ymm1
+    f534:	vpandq %ymm8,%ymm1,%ymm0
+    f53a:	vmovdqa %ymm1,%ymm3
+    f53e:	vmovdqa %ymm0,%ymm2
+    f542:	vpsrlvq %ymm6,%ymm0,%ymm6
+    f547:	vporq  %ymm0,%ymm6,%ymm6
+    f54d:	vpternlogq $0xb4,%ymm9,%ymm1,%ymm2
+    f554:	vpsrlvq %ymm5,%ymm6,%ymm5
+    f559:	vporq  %ymm6,%ymm5,%ymm5
+    f55f:	vpcmpgtq %ymm2,%ymm0,%ymm1
+    f564:	vmovdqa (%rbx),%ymm0
+    f568:	vpcmpeqd %ymm2,%ymm2,%ymm2
+    f56c:	vpsrlvq %ymm7,%ymm5,%ymm7
+    f571:	vpternlogq $0x10,%ymm7,%ymm5,%ymm3
+    f578:	vpandnq %ymm0,%ymm9,%ymm9
+    f57e:	vpaddq %ymm2,%ymm9,%ymm2
+    f582:	vpternlogq $0x60,%ymm2,%ymm9,%ymm0
+    f589:	vpandnq %ymm0,%ymm8,%ymm8
+    f58f:	vpcmpeqq %ymm8,%ymm0,%ymm0
+    f594:	vpandnq %ymm8,%ymm0,%ymm0
+    f59a:	vpternlogq $0xf8,%ymm1,%ymm3,%ymm0
+    f5a1:	vextracti64x2 $0x1,%ymm0,%xmm1
+    f5a8:	vporq  %xmm0,%xmm1,%xmm0
+    f5ae:	vpshufd $0x4e,%xmm0,%xmm1
+    f5b3:	vporq  %xmm1,%xmm0,%xmm0
+    f5b9:	vmovq  %xmm0,%rdx
+    f5be:	test   %rdx,%rdx
+    f5c1:	je     f6bd <solve_2+0x39d>
+    f5c7:	xor    %rax,%rdx
+    f5ca:	mov    %ecx,%eax
+    f5cc:	mov    -0x38(%rsp),%rbx
+    f5d1:	mov    %ecx,%r8d
+    f5d4:	and    $0x7,%r8d
+    f5d8:	mov    %rdx,%rdi
+    f5db:	and    $0x38,%ecx
+    f5de:	sar    $0x3,%eax
+    f5e1:	cltq
+    f5e3:	shl    $0x8,%r8
+    f5e7:	shl    $0x8,%rax
+    f5eb:	add    %rbx,%r8
+    f5ee:	add    %rbx,%rax
+    f5f1:	mov    -0x40(%rsp),%rbx
+    f5f6:	shl    $0x5,%r11
+    f5fa:	add    %r11,%rbx
+    f5fd:	mov    %rbx,%r11
+    f600:	mov    0x18(%rbx),%rbx
+    f604:	mov    (%r11),%r12
+    f607:	mov    0x8(%r11),%r13
+    f60b:	mov    0x10(%r11),%r11
+    f60f:	and    %rbx,%rdi
+    f612:	pext   %r12,%rdi,%r15
+    f617:	pext   %r13,%rdi,%r14
+    f61c:	vmovq  %r14,%xmm0
+    f621:	pext   %r11,%rdi,%r14
+    f626:	shrx   %rcx,%rdi,%rdi
+    f62b:	movzbl (%rax,%r14,1),%r14d
+    f630:	movzbl %dil,%edi
+    f634:	add    (%r8,%rdi,1),%r14b
+    f638:	vmovq  %xmm0,%rdi
+    f63d:	movzbl (%rax,%rdi,1),%edi
+    f641:	add    (%rax,%r15,1),%dil
+    f645:	add    %r14d,%edi
+    f648:	popcnt %rdx,%r14
+    f64d:	lea    -0x3e(%r14,%r14,1),%r15d
+    f652:	movzbl %dil,%edi
+    f656:	lea    (%r15,%rdi,1),%r14d
+    f65a:	test   %edi,%edi
+    f65c:	jne    f6b0 <solve_2+0x390>
+    f65e:	test   %r14d,%r14d
+    f661:	jle    10068 <solve_2+0xd48>
+    f667:	cmp    %r14d,%r10d
+    f66a:	jge    f6b0 <solve_2+0x390>
+    f66c:	andn   %rbx,%rdx,%rdx
+    f671:	pext   %r12,%rdx,%r12
+    f676:	pext   %r13,%rdx,%r13
+    f67b:	pext   %r11,%rdx,%r11
+    f680:	shrx   %rcx,%rdx,%rdx
+    f685:	movzbl (%rax,%r11,1),%ecx
+    f68a:	movzbl %dl,%edx
+    f68d:	add    (%r8,%rdx,1),%cl
+    f691:	movzbl (%rax,%r13,1),%edx
+    f696:	add    (%rax,%r12,1),%dl
+    f69a:	mov    %edx,%eax
+    f69c:	mov    %r14d,%edx
+    f69f:	add    %ecx,%eax
+    f6a1:	movzbl %al,%eax
+    f6a4:	lea    0x2(%rax),%ecx
+    f6a7:	sub    %ecx,%edx
+    f6a9:	test   %eax,%eax
+    f6ab:	cmovne %edx,%r14d
+    f6af:	nop
+    f6b0:	cmp    %r14d,%esi
+    f6b3:	mov    $0x3,%r8d
+    f6b9:	cmovg  %r14d,%esi
+    f6bd:	add    %r8,(%r9)
+    f6c0:	vzeroupper
+    f6c3:	lea    -0x28(%rbp),%rsp
+    f6c7:	mov    %esi,%eax
+    f6c9:	pop    %rbx
+    f6ca:	pop    %r12
+    f6cc:	pop    %r13
+    f6ce:	pop    %r14
+    f6d0:	pop    %r15
+    f6d2:	pop    %rbp
+    f6d3:	ret
+    f6d4:	data16 cs nopw 0x0(%rax,%rax,1)
+    f6df:	nop
+    f6e0:	movslq %r8d,%rbx
+    f6e3:	mov    (%r14,%rbx,8),%rdx
+    f6e7:	test   %rax,%rdx
+    f6ea:	je     f8a0 <solve_2+0x580>
+    f6f0:	mov    %rbx,%r12
+    f6f3:	lea    0x6c506(%rip),%rsi        # 7bc00 <LR_MASK>
+    f6fa:	vpbroadcastq %rdi,%ymm2
+    f700:	vpbroadcastq %rax,%ymm0
+    f706:	shl    $0x6,%r12
+    f70a:	add    %r12,%rsi
+    f70d:	vmovdqa 0x20(%rsi),%ymm5
+    f712:	vpandq %ymm5,%ymm2,%ymm1
+    f718:	vpsrlvq 0x6d7ff(%rip),%ymm1,%ymm4        # 7cf20 <__func__.58+0x28>
+    f721:	vmovdqa %ymm5,%ymm6
+    f725:	vporq  %ymm1,%ymm4,%ymm4
+    f72b:	vpsrlvq 0x6d80c(%rip),%ymm4,%ymm3        # 7cf40 <__func__.58+0x48>
+    f734:	vporq  %ymm4,%ymm3,%ymm3
+    f73a:	vpsrlvq 0x6d81d(%rip),%ymm3,%ymm4        # 7cf60 <__func__.58+0x68>
+    f743:	vpternlogq $0x10,%ymm4,%ymm3,%ymm6
+    f74a:	vmovdqa %ymm1,%ymm3
+    f74e:	vpcmpeqd %ymm4,%ymm4,%ymm4
+    f752:	vpternlogq $0xb4,%ymm0,%ymm5,%ymm3
+    f759:	vpcmpgtq %ymm3,%ymm1,%ymm3
+    f75e:	vmovdqa (%rsi),%ymm1
+    f762:	vpandnq %ymm1,%ymm0,%ymm0
+    f768:	vpaddq %ymm4,%ymm0,%ymm4
+    f76c:	vpternlogq $0x60,%ymm4,%ymm0,%ymm1
+    f773:	vpandnq %ymm1,%ymm2,%ymm2
+    f779:	vpcmpeqq %ymm2,%ymm1,%ymm0
+    f77e:	vpandnq %ymm2,%ymm0,%ymm0
+    f784:	vpternlogq $0xf8,%ymm3,%ymm6,%ymm0
+    f78b:	vextracti64x2 $0x1,%ymm0,%xmm1
+    f792:	vporq  %xmm0,%xmm1,%xmm0
+    f798:	vpshufd $0x4e,%xmm0,%xmm1
+    f79d:	vporq  %xmm1,%xmm0,%xmm0
+    f7a3:	vmovq  %xmm0,%rsi
+    f7a8:	test   %rsi,%rsi
+    f7ab:	je     f8a0 <solve_2+0x580>
+    f7b1:	mov    %ecx,%edx
+    f7b3:	mov    %ecx,%ebx
+    f7b5:	xor    %rsi,%rax
+    f7b8:	lea    0x6b301(%rip),%rsi        # 7aac0 <COUNT_FLIP>
+    f7bf:	sar    $0x3,%edx
+    f7c2:	and    $0x7,%ebx
+    f7c5:	movslq %edx,%rdx
+    f7c8:	and    $0x38,%ecx
+    f7cb:	shl    $0x8,%rbx
+    f7cf:	shl    $0x8,%rdx
+    f7d3:	shl    $0x5,%r11
+    f7d7:	add    %rsi,%rdx
+    f7da:	add    %rsi,%rbx
+    f7dd:	lea    0x6aa9c(%rip),%rsi        # 7a280 <MASK_X>
+    f7e4:	add    %rsi,%r11
+    f7e7:	mov    %rax,%rsi
+    f7ea:	mov    0x18(%r11),%r12
+    f7ee:	mov    (%r11),%r13
+    f7f1:	mov    0x8(%r11),%r14
+    f7f5:	mov    0x10(%r11),%r11
+    f7f9:	and    %r12,%rsi
+    f7fc:	pext   %r13,%rsi,%r8
+    f801:	pext   %r14,%rsi,%rdi
+    f806:	pext   %r11,%rsi,%r15
+    f80b:	shrx   %rcx,%rsi,%rsi
+    f810:	movzbl (%rdx,%r15,1),%r15d
+    f815:	movzbl %sil,%esi
+    f819:	movzbl (%rdx,%rdi,1),%edi
+    f81d:	add    (%rbx,%rsi,1),%r15b
+    f821:	add    (%rdx,%r8,1),%dil
+    f825:	mov    $0x2,%r8d
+    f82b:	mov    %r15d,%esi
+    f82e:	add    %esi,%edi
+    f830:	popcnt %rax,%rsi
+    f835:	lea    -0x3e(%rsi,%rsi,1),%r15d
+    f83a:	movzbl %dil,%edi
+    f83e:	lea    (%r15,%rdi,1),%esi
+    f842:	test   %edi,%edi
+    f844:	jne    f6bd <solve_2+0x39d>
+    f84a:	test   %esi,%esi
+    f84c:	jle    10020 <solve_2+0xd00>
+    f852:	cmp    %esi,%r10d
+    f855:	jge    f6bd <solve_2+0x39d>
+    f85b:	andn   %r12,%rax,%rax
+    f860:	pext   %r13,%rax,%r13
+    f865:	pext   %r14,%rax,%r14
+    f86a:	pext   %r11,%rax,%r11
+    f86f:	shrx   %rcx,%rax,%rax
+    f874:	movzbl (%rdx,%r11,1),%ecx
+    f879:	movzbl %al,%eax
+    f87c:	add    (%rbx,%rax,1),%cl
+    f87f:	movzbl (%rdx,%r14,1),%eax
+    f884:	add    (%rdx,%r13,1),%al
+    f888:	mov    %esi,%edx
+    f88a:	add    %ecx,%eax
+    f88c:	movzbl %al,%eax
+    f88f:	lea    0x2(%rax),%ecx
+    f892:	sub    %ecx,%esi
+    f894:	test   %eax,%eax
+    f896:	cmove  %edx,%esi
+    f899:	jmp    f6bd <solve_2+0x39d>
+    f89e:	xchg   %ax,%ax
+    f8a0:	test   %rdi,%r13
+    f8a3:	jne    fa60 <solve_2+0x740>
+    f8a9:	test   %rdi,%rdx
+    f8ac:	je     fe60 <solve_2+0xb40>
+    f8b2:	shl    $0x6,%rbx
+    f8b6:	vpbroadcastq %rax,%ymm2
+    f8bc:	vpbroadcastq %rdi,%ymm0
+    f8c2:	lea    0x6c337(%rip),%rdx        # 7bc00 <LR_MASK>
+    f8c9:	add    %rbx,%rdx
+    f8cc:	vmovdqa 0x20(%rdx),%ymm5
+    f8d1:	vpandq %ymm5,%ymm2,%ymm1
+    f8d7:	vpsrlvq 0x6d640(%rip),%ymm1,%ymm4        # 7cf20 <__func__.58+0x28>
+    f8e0:	vmovdqa %ymm5,%ymm6
+    f8e4:	vporq  %ymm1,%ymm4,%ymm4
+    f8ea:	vpsrlvq 0x6d64d(%rip),%ymm4,%ymm3        # 7cf40 <__func__.58+0x48>
+    f8f3:	vporq  %ymm4,%ymm3,%ymm3
+    f8f9:	vpsrlvq 0x6d65e(%rip),%ymm3,%ymm4        # 7cf60 <__func__.58+0x68>
+    f902:	vpternlogq $0x10,%ymm4,%ymm3,%ymm6
+    f909:	vmovdqa %ymm1,%ymm3
+    f90d:	vpcmpeqd %ymm4,%ymm4,%ymm4
+    f911:	vpternlogq $0xb4,%ymm0,%ymm5,%ymm3
+    f918:	vpcmpgtq %ymm3,%ymm1,%ymm3
+    f91d:	vmovdqa (%rdx),%ymm1
+    f921:	vpandnq %ymm1,%ymm0,%ymm0
+    f927:	vpaddq %ymm4,%ymm0,%ymm4
+    f92b:	vpternlogq $0x60,%ymm4,%ymm0,%ymm1
+    f932:	vpandnq %ymm1,%ymm2,%ymm2
+    f938:	vpcmpeqq %ymm2,%ymm1,%ymm0
+    f93d:	vpandnq %ymm2,%ymm0,%ymm0
+    f943:	vpternlogq $0xf8,%ymm3,%ymm6,%ymm0
+    f94a:	vextracti64x2 $0x1,%ymm0,%xmm1
+    f951:	vporq  %xmm0,%xmm1,%xmm0
+    f957:	vpshufd $0x4e,%xmm0,%xmm1
+    f95c:	vporq  %xmm1,%xmm0,%xmm0
+    f962:	vmovq  %xmm0,%rdx
+    f967:	test   %rdx,%rdx
+    f96a:	je     fe60 <solve_2+0xb40>
+    f970:	shl    $0x5,%r11
+    f974:	xor    %rdi,%rdx
+    f977:	mov    %ecx,%eax
+    f979:	lea    0x6a900(%rip),%rdi        # 7a280 <MASK_X>
+    f980:	mov    %ecx,%r8d
+    f983:	add    %r11,%rdi
+    f986:	and    $0x7,%r8d
+    f98a:	lea    0x6b12f(%rip),%rsi        # 7aac0 <COUNT_FLIP>
+    f991:	and    $0x38,%ecx
+    f994:	sar    $0x3,%eax
+    f997:	mov    0x18(%rdi),%r11
+    f99b:	mov    (%rdi),%rbx
+    f99e:	mov    0x8(%rdi),%r12
+    f9a2:	cltq
+    f9a4:	mov    0x10(%rdi),%r13
+    f9a8:	shl    $0x8,%r8
+    f9ac:	shl    $0x8,%rax
+    f9b0:	add    %rsi,%r8
+    f9b3:	add    %rsi,%rax
+    f9b6:	mov    %rdx,%rsi
+    f9b9:	and    %r11,%rsi
+    f9bc:	pext   %rbx,%rsi,%r14
+    f9c1:	pext   %r12,%rsi,%r15
+    f9c6:	pext   %r13,%rsi,%rdi
+    f9cb:	shrx   %rcx,%rsi,%rsi
+    f9d0:	movzbl (%rax,%rdi,1),%edi
+    f9d4:	movzbl %sil,%esi
+    f9d8:	add    (%r8,%rsi,1),%dil
+    f9dc:	mov    %edi,%esi
+    f9de:	movzbl (%rax,%r15,1),%edi
+    f9e3:	add    (%rax,%r14,1),%dil
+    f9e7:	add    %esi,%edi
+    f9e9:	popcnt %rdx,%rsi
+    f9ee:	lea    -0x3e(%rsi,%rsi,1),%r14d
+    f9f3:	movzbl %dil,%edi
+    f9f7:	lea    (%r14,%rdi,1),%esi
+    f9fb:	test   %edi,%edi
+    f9fd:	jne    fa50 <solve_2+0x730>
+    f9ff:	not    %r10d
+    fa02:	test   %esi,%esi
+    fa04:	jle    ffd0 <solve_2+0xcb0>
+    fa0a:	cmp    %esi,%r10d
+    fa0d:	jge    fa50 <solve_2+0x730>
+    fa0f:	andn   %r11,%rdx,%rdx
+    fa14:	pext   %rbx,%rdx,%rbx
+    fa19:	pext   %r12,%rdx,%r12
+    fa1e:	pext   %r13,%rdx,%r13
+    fa23:	shrx   %rcx,%rdx,%rdx
+    fa28:	movzbl (%rax,%r13,1),%ecx
+    fa2d:	movzbl %dl,%edx
+    fa30:	add    (%r8,%rdx,1),%cl
+    fa34:	movzbl (%rax,%r12,1),%edx
+    fa39:	add    (%rax,%rbx,1),%dl
+    fa3c:	mov    %edx,%eax
+    fa3e:	mov    %esi,%edx
+    fa40:	add    %ecx,%eax
+    fa42:	movzbl %al,%eax
+    fa45:	lea    0x2(%rax),%ecx
+    fa48:	sub    %ecx,%edx
+    fa4a:	test   %eax,%eax
+    fa4c:	cmovne %edx,%esi
+    fa4f:	nop
+    fa50:	neg    %esi
+    fa52:	mov    $0x2,%r8d
+    fa58:	jmp    f6bd <solve_2+0x39d>
+    fa5d:	nopl   (%rax)
+    fa60:	mov    %r11,%rsi
+    fa63:	lea    0x6c196(%rip),%r14        # 7bc00 <LR_MASK>
+    fa6a:	vmovdqa 0x6d4ae(%rip),%ymm6        # 7cf20 <__func__.58+0x28>
+    fa72:	vmovdqa 0x6d4c6(%rip),%ymm5        # 7cf40 <__func__.58+0x48>
+    fa7a:	shl    $0x6,%rsi
+    fa7e:	mov    %r14,-0x8(%rsp)
+    fa83:	vpbroadcastq %rax,%ymm4
+    fa89:	vpbroadcastq %rdi,%ymm8
+    fa8f:	add    %r14,%rsi
+    fa92:	vmovdqa 0x6d4c6(%rip),%ymm7        # 7cf60 <__func__.58+0x68>
+    fa9a:	vmovdqa 0x20(%rsi),%ymm3
+    fa9f:	vpandq %ymm4,%ymm3,%ymm0
+    faa5:	vmovdqa %ymm3,%ymm9
+    faa9:	vpsrlvq %ymm6,%ymm0,%ymm2
+    faae:	vporq  %ymm0,%ymm2,%ymm2
+    fab4:	vpsrlvq %ymm5,%ymm2,%ymm1
+    fab9:	vporq  %ymm2,%ymm1,%ymm1
+    fabf:	vpsrlvq %ymm7,%ymm1,%ymm2
+    fac4:	vpternlogq $0x10,%ymm2,%ymm1,%ymm9
+    facb:	vmovdqa (%rsi),%ymm1
+    facf:	vmovdqa %ymm0,%ymm2
+    fad3:	vpternlogq $0xb4,%ymm8,%ymm3,%ymm2
+    fada:	vpcmpgtq %ymm2,%ymm0,%ymm2
+    fadf:	vpcmpeqd %ymm0,%ymm0,%ymm0
+    fae3:	vpandnq %ymm1,%ymm8,%ymm3
+    fae9:	vpaddq %ymm0,%ymm3,%ymm0
+    faed:	vpternlogq $0x60,%ymm0,%ymm3,%ymm1
+    faf4:	vpandnq %ymm1,%ymm4,%ymm3
+    fafa:	vpcmpeqq %ymm3,%ymm1,%ymm0
+    faff:	vpandnq %ymm3,%ymm0,%ymm0
+    fb05:	vpternlogq $0xf8,%ymm2,%ymm9,%ymm0
+    fb0c:	vextracti64x2 $0x1,%ymm0,%xmm1
+    fb13:	vporq  %xmm0,%xmm1,%xmm0
+    fb19:	vpshufd $0x4e,%xmm0,%xmm1
+    fb1e:	vporq  %xmm1,%xmm0,%xmm0
+    fb24:	vmovq  %xmm0,%rsi
+    fb29:	test   %rsi,%rsi
+    fb2c:	je     f8a9 <solve_2+0x589>
+    fb32:	mov    %r10d,%eax
+    fb35:	xor    %rdi,%rsi
+    fb38:	lea    0x6af81(%rip),%r14        # 7aac0 <COUNT_FLIP>
+    fb3f:	lea    0x6a73a(%rip),%r15        # 7a280 <MASK_X>
+    fb46:	not    %eax
+    fb48:	mov    %r14,-0x38(%rsp)
+    fb4d:	mov    %r15,-0x40(%rsp)
+    fb52:	mov    %eax,-0x30(%rsp)
+    fb56:	mov    %rsi,%rax
+    fb59:	mov    %r8d,%esi
+    fb5c:	and    $0x7,%esi
+    fb5f:	mov    %rax,%r13
+    fb62:	shl    $0x8,%rsi
+    fb66:	add    %r14,%rsi
+    fb69:	mov    %rsi,-0x10(%rsp)
+    fb6e:	mov    %r8d,%esi
+    fb71:	and    $0x38,%r8d
+    fb75:	sar    $0x3,%esi
+    fb78:	mov    %r8d,-0x14(%rsp)
+    fb7d:	movslq %esi,%rsi
+    fb80:	shl    $0x8,%rsi
+    fb84:	add    %r14,%rsi
+    fb87:	mov    %rbx,%r14
+    fb8a:	shl    $0x5,%r14
+    fb8e:	add    %r15,%r14
+    fb91:	mov    0x18(%r14),%r15
+    fb95:	mov    (%r14),%r12
+    fb98:	and    %r15,%r13
+    fb9b:	pext   %r12,%r13,%r8
+    fba0:	vmovq  %r8,%xmm0
+    fba5:	mov    0x8(%r14),%r8
+    fba9:	mov    %r8,-0x20(%rsp)
+    fbae:	pext   %r8,%r13,%r8
+    fbb3:	vmovq  %r8,%xmm1
+    fbb8:	mov    0x10(%r14),%r8
+    fbbc:	movzbl -0x14(%rsp),%r14d
+    fbc2:	mov    %r8,-0x28(%rsp)
+    fbc7:	pext   %r8,%r13,%r8
+    fbcc:	movzbl (%rsi,%r8,1),%r8d
+    fbd1:	shrx   %r14,%r13,%r13
+    fbd6:	mov    -0x10(%rsp),%r14
+    fbdb:	movzbl %r13b,%r13d
+    fbdf:	add    (%r14,%r13,1),%r8b
+    fbe3:	vmovq  %xmm0,%r14
+    fbe8:	mov    %r8d,%r13d
+    fbeb:	vmovq  %xmm1,%r8
+    fbf0:	movzbl (%rsi,%r8,1),%r8d
+    fbf5:	add    (%rsi,%r14,1),%r8b
+    fbf9:	add    %r13d,%r8d
+    fbfc:	popcnt %rax,%r13
+    fc01:	lea    -0x3e(%r13,%r13,1),%r14d
+    fc06:	movzbl %r8b,%r8d
+    fc0a:	lea    (%r14,%r8,1),%r13d
+    fc0e:	test   %r8d,%r8d
+    fc11:	jne    fc80 <solve_2+0x960>
+    fc13:	test   %r13d,%r13d
+    fc16:	jle    ff70 <solve_2+0xc50>
+    fc1c:	cmp    %r13d,-0x30(%rsp)
+    fc21:	jge    fc80 <solve_2+0x960>
+    fc23:	andn   %r15,%rax,%rax
+    fc28:	pext   %r12,%rax,%r14
+    fc2d:	movzbl -0x14(%rsp),%r12d
+    fc33:	pext   -0x20(%rsp),%rax,%r15
+    fc3a:	pext   -0x28(%rsp),%rax,%r8
+    fc41:	movzbl (%rsi,%r8,1),%r8d
+    fc46:	shrx   %r12,%rax,%rax
+    fc4b:	mov    -0x10(%rsp),%r12
+    fc50:	movzbl %al,%eax
+    fc53:	add    (%r12,%rax,1),%r8b
+    fc57:	movzbl (%rsi,%r15,1),%eax
+    fc5c:	add    (%rsi,%r14,1),%al
+    fc60:	mov    %r13d,%esi
+    fc63:	add    %r8d,%eax
+    fc66:	movzbl %al,%eax
+    fc69:	lea    0x2(%rax),%r8d
+    fc6d:	sub    %r8d,%esi
+    fc70:	test   %eax,%eax
+    fc72:	cmovne %esi,%r13d
+    fc76:	cs nopw 0x0(%rax,%rax,1)
+    fc80:	mov    %r13d,%esi
+    fc83:	inc    %r10d
+    fc86:	mov    $0x2,%r8d
+    fc8c:	neg    %esi
+    fc8e:	cmp    %esi,%r10d
+    fc91:	jle    f6bd <solve_2+0x39d>
+    fc97:	test   %rdi,%rdx
+    fc9a:	je     f6bd <solve_2+0x39d>
+    fca0:	mov    -0x8(%rsp),%r12
+    fca5:	shl    $0x6,%rbx
+    fca9:	add    %rbx,%r12
+    fcac:	vmovdqa 0x20(%r12),%ymm1
+    fcb3:	vpandq %ymm4,%ymm1,%ymm0
+    fcb9:	vmovdqa %ymm1,%ymm3
+    fcbd:	vmovdqa %ymm0,%ymm2
+    fcc1:	vpsrlvq %ymm6,%ymm0,%ymm6
+    fcc6:	vporq  %ymm0,%ymm6,%ymm6
+    fccc:	vpternlogq $0xb4,%ymm8,%ymm1,%ymm2
+    fcd3:	vpsrlvq %ymm5,%ymm6,%ymm5
+    fcd8:	vporq  %ymm6,%ymm5,%ymm5
+    fcde:	vpcmpgtq %ymm2,%ymm0,%ymm1
+    fce3:	vmovdqa (%r12),%ymm0
+    fce9:	vpcmpeqd %ymm2,%ymm2,%ymm2
+    fced:	vpsrlvq %ymm7,%ymm5,%ymm7
+    fcf2:	vpternlogq $0x10,%ymm7,%ymm5,%ymm3
+    fcf9:	vpandnq %ymm0,%ymm8,%ymm8
+    fcff:	vpaddq %ymm2,%ymm8,%ymm2
+    fd03:	vpternlogq $0x60,%ymm2,%ymm8,%ymm0
+    fd0a:	vpandnq %ymm0,%ymm4,%ymm4
+    fd10:	vpcmpeqq %ymm4,%ymm0,%ymm0
+    fd15:	vpandnq %ymm4,%ymm0,%ymm0
+    fd1b:	vpternlogq $0xf8,%ymm1,%ymm3,%ymm0
+    fd22:	vextracti64x2 $0x1,%ymm0,%xmm1
+    fd29:	vporq  %xmm0,%xmm1,%xmm0
+    fd2f:	vpshufd $0x4e,%xmm0,%xmm1
+    fd34:	vporq  %xmm1,%xmm0,%xmm0
+    fd3a:	vmovq  %xmm0,%rax
+    fd3f:	test   %rax,%rax
+    fd42:	je     f6bd <solve_2+0x39d>
+    fd48:	mov    %ecx,%edx
+    fd4a:	mov    -0x38(%rsp),%rbx
+    fd4f:	xor    %rdi,%rax
+    fd52:	mov    %ecx,%edi
+    fd54:	and    $0x7,%edi
+    fd57:	mov    %rax,%r10
+    fd5a:	and    $0x38,%ecx
+    fd5d:	sar    $0x3,%edx
+    fd60:	movslq %edx,%rdx
+    fd63:	shl    $0x8,%rdi
+    fd67:	shl    $0x8,%rdx
+    fd6b:	add    %rbx,%rdi
+    fd6e:	add    %rbx,%rdx
+    fd71:	mov    -0x40(%rsp),%rbx
+    fd76:	shl    $0x5,%r11
+    fd7a:	add    %r11,%rbx
+    fd7d:	mov    %rbx,%r11
+    fd80:	mov    0x18(%rbx),%r8
+    fd84:	mov    (%rbx),%rbx
+    fd87:	mov    0x8(%r11),%r12
+    fd8b:	mov    0x10(%r11),%r11
+    fd8f:	and    %r8,%r10
+    fd92:	pext   %rbx,%r10,%r14
+    fd97:	pext   %r12,%r10,%r15
+    fd9c:	vmovq  %r14,%xmm0
+    fda1:	pext   %r11,%r10,%r14
+    fda6:	shrx   %rcx,%r10,%r10
+    fdab:	movzbl (%rdx,%r14,1),%r14d
+    fdb0:	movzbl %r10b,%r10d
+    fdb4:	movzbl (%rdx,%r15,1),%r15d
+    fdb9:	add    (%rdi,%r10,1),%r14b
+    fdbd:	mov    %r14d,%r10d
+    fdc0:	vmovq  %xmm0,%r14
+    fdc5:	add    (%rdx,%r14,1),%r15b
+    fdc9:	add    %r10d,%r15d
+    fdcc:	popcnt %rax,%r10
+    fdd1:	lea    -0x3e(%r10,%r10,1),%r14d
+    fdd6:	movzbl %r15b,%r15d
+    fdda:	lea    (%r14,%r15,1),%r10d
+    fdde:	test   %r15d,%r15d
+    fde1:	jne    fe40 <solve_2+0xb20>
+    fde3:	test   %r10d,%r10d
+    fde6:	jle    100b2 <solve_2+0xd92>
+    fdec:	cmp    %r10d,-0x30(%rsp)
+    fdf1:	jge    fe40 <solve_2+0xb20>
+    fdf3:	andn   %r8,%rax,%rax
+    fdf8:	pext   %rbx,%rax,%rbx
+    fdfd:	pext   %r12,%rax,%r12
+    fe02:	pext   %r11,%rax,%r11
+    fe07:	shrx   %rcx,%rax,%rax
+    fe0c:	movzbl (%rdx,%r11,1),%ecx
+    fe11:	movzbl %al,%eax
+    fe14:	add    (%rdi,%rax,1),%cl
+    fe17:	movzbl (%rdx,%r12,1),%eax
+    fe1c:	add    (%rdx,%rbx,1),%al
+    fe1f:	mov    %r10d,%edx
+    fe22:	add    %ecx,%eax
+    fe24:	movzbl %al,%eax
+    fe27:	lea    0x2(%rax),%ecx
+    fe2a:	sub    %ecx,%edx
+    fe2c:	test   %eax,%eax
+    fe2e:	cmovne %edx,%r10d
+    fe32:	data16 cs nopw 0x0(%rax,%rax,1)
+    fe3d:	nopl   (%rax)
+    fe40:	mov    %r10d,%eax
+    fe43:	mov    $0x3,%r8d
+    fe49:	neg    %eax
+    fe4b:	cmp    %r10d,%r13d
+    fe4e:	cmovg  %eax,%esi
+    fe51:	jmp    f6bd <solve_2+0x39d>
+    fe56:	cs nopw 0x0(%rax,%rax,1)
+    fe60:	popcnt %rax,%rax
+    fe65:	lea    -0x40(%rax,%rax,1),%eax
+    fe69:	mov    $0x1,%r8d
+    fe6f:	lea    0x2(%rax),%esi
+    fe72:	test   %esi,%esi
+    fe74:	je     f6bd <solve_2+0x39d>
+    fe7a:	mov    %eax,%esi
+    fe7c:	jle    f6bd <solve_2+0x39d>
+    fe82:	lea    0x4(%rax),%esi
+    fe85:	jmp    f6bd <solve_2+0x39d>
+    fe8a:	nopw   0x0(%rax,%rax,1)
+    fe90:	test   %esi,%esi
+    fe92:	jle    ff10 <solve_2+0xbf0>
+    fe94:	mov    $0x2,%r8d
+    fe9a:	cmp    %esi,%r10d
+    fe9d:	jge    f6bd <solve_2+0x39d>
+    fea3:	movzbl -0x14(%rsp),%r8d
+    fea9:	andn   %r13,%rdx,%rdx
+    feae:	pext   -0x28(%rsp),%rdx,%r15
+    feb5:	pext   -0x20(%rsp),%rdx,%r13
+    febc:	vmovq  %r15,%xmm0
+    fec1:	pext   -0x30(%rsp),%rdx,%r15
+    fec8:	shrx   %r8,%rdx,%rdx
+    fecd:	movzbl (%rdi,%r15,1),%r8d
+    fed2:	mov    -0x10(%rsp),%r15
+    fed7:	movzbl %dl,%edx
+    feda:	add    (%r15,%rdx,1),%r8b
+    fede:	vmovq  %xmm0,%rdx
+    fee3:	movzbl (%rdi,%rdx,1),%edx
+    fee7:	add    (%rdi,%r13,1),%dl
+    feeb:	add    %r8d,%edx
+    feee:	movzbl %dl,%edx
+    fef1:	test   %edx,%edx
+    fef3:	je     f510 <solve_2+0x1f0>
+    fef9:	add    $0x2,%edx
+    fefc:	sub    %edx,%esi
+    fefe:	jmp    f501 <solve_2+0x1e1>
+    ff03:	data16 cs nopw 0x0(%rax,%rax,1)
+    ff0e:	xchg   %ax,%ax
+    ff10:	lea    -0x2(%r8),%esi
+    ff14:	mov    $0x2,%r8d
+    ff1a:	cmp    %esi,%r10d
+    ff1d:	jge    f6bd <solve_2+0x39d>
+    ff23:	movzbl -0x14(%rsp),%r8d
+    ff29:	andn   %r13,%rdx,%rdx
+    ff2e:	pext   -0x30(%rsp),%rdx,%r15
+    ff35:	pext   -0x20(%rsp),%rdx,%r13
+    ff3c:	pext   -0x28(%rsp),%rdx,%r12
+    ff43:	shrx   %r8,%rdx,%rdx
+    ff48:	movzbl (%rdi,%r15,1),%r8d
+    ff4d:	mov    -0x10(%rsp),%r15
+    ff52:	movzbl %dl,%edx
+    ff55:	add    (%r15,%rdx,1),%r8b
+    ff59:	movzbl (%rdi,%r12,1),%edx
+    ff5e:	add    (%rdi,%r13,1),%dl
+    ff62:	add    %r8d,%edx
+    ff65:	movzbl %dl,%edx
+    ff68:	sub    %edx,%esi
+    ff6a:	jmp    f501 <solve_2+0x1e1>
+    ff6f:	nop
+    ff70:	lea    -0x2(%r14),%r13d
+    ff74:	cmp    %r13d,-0x30(%rsp)
+    ff79:	jge    fc80 <solve_2+0x960>
+    ff7f:	andn   %r15,%rax,%rax
+    ff84:	pext   %r12,%rax,%r14
+    ff89:	movzbl -0x14(%rsp),%r12d
+    ff8f:	pext   -0x20(%rsp),%rax,%r15
+    ff96:	pext   -0x28(%rsp),%rax,%r8
+    ff9d:	movzbl (%rsi,%r8,1),%r8d
+    ffa2:	shrx   %r12,%rax,%rax
+    ffa7:	mov    -0x10(%rsp),%r12
+    ffac:	movzbl %al,%eax
+    ffaf:	add    (%r12,%rax,1),%r8b
+    ffb3:	movzbl (%rsi,%r15,1),%eax
+    ffb8:	add    (%rsi,%r14,1),%al
+    ffbc:	add    %r8d,%eax
+    ffbf:	movzbl %al,%eax
+    ffc2:	sub    %eax,%r13d
+    ffc5:	jmp    fc80 <solve_2+0x960>
+    ffca:	nopw   0x0(%rax,%rax,1)
+    ffd0:	lea    -0x2(%r14),%esi
+    ffd4:	cmp    %esi,%r10d
+    ffd7:	jge    fa50 <solve_2+0x730>
+    ffdd:	andn   %r11,%rdx,%r11
+    ffe2:	pext   %r12,%r11,%r12
+    ffe7:	movzbl (%rax,%r12,1),%edx
+    ffec:	pext   %rbx,%r11,%rbx
+    fff1:	pext   %r13,%r11,%r13
+    fff6:	add    (%rax,%rbx,1),%dl
+    fff9:	shrx   %rcx,%r11,%r11
+    fffe:	movzbl (%rax,%r13,1),%ecx
+   10003:	movzbl %r11b,%r11d
+   10007:	add    (%r8,%r11,1),%cl
+   1000b:	mov    %edx,%eax
+   1000d:	add    %ecx,%eax
+   1000f:	movzbl %al,%eax
+   10012:	sub    %eax,%esi
+   10014:	jmp    fa50 <solve_2+0x730>
+   10019:	nopl   0x0(%rax)
+   10020:	lea    -0x2(%r15),%esi
+   10024:	cmp    %esi,%r10d
+   10027:	jge    f6bd <solve_2+0x39d>
+   1002d:	andn   %r12,%rax,%r12
+   10032:	pext   %r13,%r12,%r13
+   10037:	pext   %r14,%r12,%r14
+   1003c:	pext   %r11,%r12,%r11
+   10041:	movzbl (%rdx,%r14,1),%eax
+   10046:	shrx   %rcx,%r12,%r12
+   1004b:	movzbl (%rdx,%r11,1),%ecx
+   10050:	movzbl %r12b,%r12d
+   10054:	add    (%rbx,%r12,1),%cl
+   10058:	add    (%rdx,%r13,1),%al
+   1005c:	add    %ecx,%eax
+   1005e:	movzbl %al,%eax
+   10061:	sub    %eax,%esi
+   10063:	jmp    f6bd <solve_2+0x39d>
+   10068:	lea    -0x2(%r15),%r14d
+   1006c:	cmp    %r14d,%r10d
+   1006f:	jge    f6b0 <solve_2+0x390>
+   10075:	andn   %rbx,%rdx,%rbx
+   1007a:	pext   %r13,%rbx,%r13
+   1007f:	movzbl (%rax,%r13,1),%edx
+   10084:	pext   %r12,%rbx,%r12
+   10089:	pext   %r11,%rbx,%r11
+   1008e:	add    (%rax,%r12,1),%dl
+   10092:	shrx   %rcx,%rbx,%rbx
+   10097:	movzbl (%rax,%r11,1),%ecx
+   1009c:	movzbl %bl,%ebx
+   1009f:	add    (%r8,%rbx,1),%cl
+   100a3:	mov    %edx,%eax
+   100a5:	add    %ecx,%eax
+   100a7:	movzbl %al,%eax
+   100aa:	sub    %eax,%r14d
+   100ad:	jmp    f6b0 <solve_2+0x390>
+   100b2:	lea    -0x2(%r14),%r10d
+   100b6:	cmp    %r10d,-0x30(%rsp)
+   100bb:	jge    fe40 <solve_2+0xb20>
+   100c1:	andn   %r8,%rax,%r8
+   100c6:	pext   %rbx,%r8,%rbx
+   100cb:	pext   %r12,%r8,%r12
+   100d0:	pext   %r11,%r8,%r11
+   100d5:	movzbl (%rdx,%r12,1),%eax
+   100da:	shrx   %rcx,%r8,%r8
+   100df:	movzbl (%rdx,%r11,1),%ecx
+   100e4:	movzbl %r8b,%r8d
+   100e8:	add    (%rdi,%r8,1),%cl
+   100ec:	add    (%rdx,%rbx,1),%al
+   100ef:	add    %ecx,%eax
+   100f1:	movzbl %al,%eax
+   100f4:	sub    %eax,%r10d
+   100f7:	jmp    fe40 <solve_2+0xb20>

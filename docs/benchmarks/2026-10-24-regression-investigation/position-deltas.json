@@ -1,0 +1,62 @@
+[
+  {
+    "ffo": 40,
+    "before_seconds": 0.112965747,
+    "after_seconds": 0.114539855,
+    "delta_seconds": 0.0015741079999999907
+  },
+  {
+    "ffo": 41,
+    "before_seconds": 0.234619897,
+    "after_seconds": 0.243699265,
+    "delta_seconds": 0.009079368000000004
+  },
+  {
+    "ffo": 42,
+    "before_seconds": 0.341833901,
+    "after_seconds": 0.304101226,
+    "delta_seconds": -0.03773267499999999
+  },
+  {
+    "ffo": 43,
+    "before_seconds": 0.901645058,
+    "after_seconds": 0.894006464,
+    "delta_seconds": -0.00763859400000011
+  },
+  {
+    "ffo": 44,
+    "before_seconds": 0.216325029,
+    "after_seconds": 0.23851811,
+    "delta_seconds": 0.022193081000000003
+  },
+  {
+    "ffo": 45,
+    "before_seconds": 2.77653469,
+    "after_seconds": 2.660918905,
+    "delta_seconds": -0.11561578500000014
+  },
+  {
+    "ffo": 46,
+    "before_seconds": 1.080206074,
+    "after_seconds": 0.901955666,
+    "delta_seconds": -0.17825040799999992
+  },
+  {
+    "ffo": 47,
+    "before_seconds": 0.301161076,
+    "after_seconds": 0.290072461,
+    "delta_seconds": -0.011088615000000024
+  },
+  {
+    "ffo": 48,
+    "before_seconds": 2.364573406,
+    "after_seconds": 2.580673713,
+    "delta_seconds": 0.21610030700000005
+  },
+  {
+    "ffo": 49,
+    "before_seconds": 3.316434574,
+    "after_seconds": 4.644553392,
+    "delta_seconds": 1.3281188179999996
+  }
+]

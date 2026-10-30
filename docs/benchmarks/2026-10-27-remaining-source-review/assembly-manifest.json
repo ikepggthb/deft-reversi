@@ -1,0 +1,36 @@
+{
+  "binary": "/workspace/deft-tail-target/release/examples/solve",
+  "sha256": "ff17c4b535fed25e8955c73c207ad85ebef4d8e1e2cdd131d6b702f6cbf4e207",
+  "build": "Rust 1.99.1, release, -C target-cpu=native, default features, AMD EPYC 9V74",
+  "symbols": {
+    "solve_score_1_empties": {
+      "address": "0x652b0",
+      "size_bytes": 612,
+      "assembly": "solve_score_1_empties.asm.txt"
+    },
+    "solve_score_2_empties": {
+      "address": "0x64750",
+      "size_bytes": 2897,
+      "assembly": "solve_score_2_empties.asm.txt"
+    },
+    "solve_score_3_empties": {
+      "address": "0x63da0",
+      "size_bytes": 2465,
+      "assembly": "solve_score_3_empties.asm.txt"
+    },
+    "stability::null_window_upper": {
+      "address": "0x5d810",
+      "size_bytes": 1482,
+      "assembly": "stability_null_window_upper.asm.txt"
+    }
+  },
+  "edax_reference": {
+    "binary": "/workspace/edax-reversi/bin/lEdax-native",
+    "sha256": "a9b8c64891781832aadf89df938f2a377b9abfc62f9b2b740607bc03274d0ad9",
+    "symbol": "solve_2",
+    "address": "0xf320",
+    "size_bytes": 3548,
+    "assembly": "edax_solve_2.asm.txt",
+    "note": "Existing native binary; compiler/control settings are not identical to deft."
+  }
+}

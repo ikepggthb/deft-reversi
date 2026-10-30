@@ -1,0 +1,83 @@
+--- a/deft-reversi-engine/src/search/tail.rs
++++ b/deft-reversi-engine/src/search/tail.rs
+@@ -127,7 +127,11 @@
+         let score = if empties > TAIL_EMPTIES {
+             self.ordered_endgame(board, alpha, beta, known_moves, &mut best_move)?
+         } else {
+-            self.tail_score_impl(board, alpha, beta)?
++            self.shallow_moves_score::<6>(
++                board,
++                alpha,
++                known_moves.unwrap_or_else(|| board.get_moves()),
++            )?
+         };
+         let (lower, upper) = if score >= beta {
+             (score as i8, probe.upper)
+@@ -349,7 +353,7 @@
+         }
+         probe
+     }
+-    fn tail_score_impl(&mut self, board: Board, mut alpha: i32, beta: i32) -> Result<i32, ()> {
++    fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, ()> {
+         let empty = !(board.player_bits() | board.opponent_bits());
+         let count = empty.count_ones() as u8;
+         if count == 4 {
+@@ -368,16 +372,36 @@
+                 false,
+             );
+         }
+-        let mut moves = board.get_moves();
++        debug_assert_eq!(count, 5);
++        debug_assert_eq!(beta, alpha + 1);
++        self.shallow_moves_score::<5>(board, alpha, board.get_moves())
++    }
++    // The two shallow layers have fixed children. Do not redispatch their
++    // empties count through the general/local-TT entry at every visited node.
++    fn shallow_moves_score<const EMPTIES: u8>(
++        &mut self,
++        board: Board,
++        alpha: i32,
++        mut moves: u64,
++    ) -> Result<i32, ()> {
++        debug_assert!(EMPTIES == 5 || EMPTIES == 6);
++        debug_assert_eq!(board.empty_count(), EMPTIES);
++        let child_alpha = -alpha - 1;
+         if moves == 0 {
+-            if board.get_opponent_moves() == 0 {
++            let legal = board.get_opponent_moves();
++            if legal == 0 {
+                 self.stats.leaves += 1;
+                 return Ok(board.final_score());
+             }
+             self.enter()?;
+-            return self
+-                .tail_score_entered(board.board_after_pass(), -beta, -alpha)
+-                .map(|score| -score);
++            let passed = board.board_after_pass();
++            let score = if EMPTIES == 6 {
++                // A pass preserves the six-empty TT layer and quality tag.
++                self.endgame_score_entered(passed, child_alpha, -alpha, Some(legal), None)?
++            } else {
++                self.shallow_moves_score::<5>(passed, child_alpha, legal)?
++            };
++            return Ok(-score);
+         }
+         let mut preferred = moves & odd_regions(board);
+         let mut best = -65;
+@@ -388,10 +412,13 @@
+             moves &= !bit;
+             let child = board.after_known_move(bit, board.flip_mask(bit));
+             self.enter()?;
+-            let score = -self.tail_score_entered(child, -beta, -alpha)?;
++            let score = if EMPTIES == 5 {
++                -self.last_four_score(child, child_alpha)?
++            } else {
++                -self.shallow_moves_score::<5>(child, child_alpha, child.get_moves())?
++            };
+             best = best.max(score);
+-            alpha = alpha.max(score);
+-            if alpha >= beta {
++            if score > alpha {
+                 self.stats.beta_cuts += 1;
+                 break;
+             }

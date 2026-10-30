@@ -1,0 +1,293 @@
+--- a/deft-reversi-engine/src/evaluation/mod.rs
++++ b/deft-reversi-engine/src/evaluation/mod.rs
+@@ -70,7 +70,34 @@
+     pub fn evaluate(&self, board: &Board) -> i32 {
+         self.evaluate_state(board, &EvalState::from_board(*board))
+     }
++    #[cfg(test)]
++    pub(crate) fn nonzero_for_tests() -> Self {
++        let mut model = Self::zero();
++        for (phase, values) in Arc::get_mut(&mut model.phases)
++            .unwrap()
++            .iter_mut()
++            .enumerate()
++        {
++            for (i, weight) in values.weights.iter_mut().enumerate() {
++                *weight = ((i * 37 + phase * 19) % 257) as i16 - 128;
++            }
++            for (i, weight) in values.mobility.iter_mut().enumerate() {
++                *weight = (i as i16 - 64) * 3;
++            }
++            values.bias = phase as i16 - 30;
++        }
++        model
++    }
+     pub(crate) fn evaluate_state(&self, board: &Board, state: &EvalState) -> i32 {
++        self.evaluate_state_with_moves(board, state, board.get_moves())
++    }
++    /// Reuse the current player's legal moves already needed for move ordering.
++    pub(crate) fn evaluate_state_with_moves(
++        &self,
++        board: &Board,
++        state: &EvalState,
++        moves: u64,
++    ) -> i32 {
+         let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
+         let weights = &self.phases[phase];
+         let mut raw = i32::from(weights.bias);
+@@ -81,8 +108,8 @@
+             }
+             offset += size;
+         }
+-        let mobility = 64 + board.get_moves().count_ones() as i32
+-            - board.get_opponent_moves().count_ones() as i32;
++        let mobility =
++            64 + moves.count_ones() as i32 - board.get_opponent_moves().count_ones() as i32;
+         raw += i32::from(weights.mobility[mobility as usize]);
+         ((raw + raw.signum() * 64) / 128).clamp(-64, 64)
+     }
+--- a/deft-reversi-engine/src/search/ordering.rs
++++ b/deft-reversi-engine/src/search/ordering.rs
+@@ -34,8 +34,16 @@
+             )
+         };
+         let state = parent.state.played(bit, flips);
+-        let value = if depth == 0 {
+-            self.evaluate(child, &state)
++        let moves = child.get_moves();
++        let value = if depth <= 1 {
++            if depth == 1 {
++                // Preserve the depth-zero ordering_search visit and hard budget.
++                self.enter()?;
++            }
++            self.stats.evaluations += 1;
++            self.runtime
++                .model
++                .evaluate_state_with_moves(&child, &state, moves)
+         } else {
+             self.ordering_search(
+                 Position {
+@@ -47,7 +55,6 @@
+                 depth - 1,
+             )?
+         };
+-        let moves = child.get_moves();
+         let mobility =
+             -2 * moves.count_ones() as i32 - (moves & 0x8100000000000081).count_ones() as i32;
+         let presence = if depth > 2 && self.runtime.table.get(child).is_some() {
+@@ -75,8 +82,15 @@
+             _ => 3,
+         };
+         let state = parent.state.played(bit, flips);
+-        let value = if ordering_depth == 0 {
+-            self.evaluate(child, &state)
++        let legal = child.get_moves();
++        let value = if ordering_depth <= 1 {
++            if ordering_depth == 1 {
++                self.enter()?;
++            }
++            self.stats.evaluations += 1;
++            self.runtime
++                .model
++                .evaluate_state_with_moves(&child, &state, legal)
+         } else {
+             self.ordering_search(
+                 Position {
+@@ -88,7 +102,6 @@
+                 ordering_depth - 1,
+             )?
+         };
+-        let legal = child.get_moves();
+         Ok(-value
+             - 2 * legal.count_ones() as i32
+             - (legal & 0x8100000000000081).count_ones() as i32)
+@@ -143,3 +156,39 @@
+         Ok(best)
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::super::session::test_context;
++    use super::*;
++
++    #[test]
++    fn static_ordering_preserves_visits_and_hard_budget() {
++        let board = Board::new();
++        let bit = board.get_moves() & board.get_moves().wrapping_neg();
++        let flips = board.flip_mask(bit);
++        let child = board.after_known_move(bit, flips);
++        let parent = Position {
++            board,
++            state: EvalState::from_board(board),
++        };
++        for (depth, visits) in [(4, 0), (7, 1)] {
++            let mut context = test_context();
++            context
++                .midgame_ordering(parent, child, bit, flips, 0, depth)
++                .unwrap();
++            assert_eq!(context.stats.nodes, visits);
++            assert_eq!(context.stats.evaluations, 1);
++
++            let mut limited = test_context();
++            Arc::get_mut(&mut limited.runtime)
++                .unwrap()
++                .control
++                .node_limit = Some(0);
++            let result = limited.midgame_ordering(parent, child, bit, flips, 0, depth);
++            assert_eq!(result.is_err(), visits != 0);
++            assert_eq!(limited.stats.nodes, 0);
++            assert_eq!(limited.stats.evaluations, u64::from(visits == 0));
++        }
++    }
++}
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -58,6 +58,22 @@
+     pub(super) fn evaluate(&mut self, board: Board, state: &EvalState) -> i32 {
+         self.stats.evaluations += 1;
+         self.runtime.model.evaluate_state(&board, state)
++    }
++    fn child_needs_eval(&self, board: Board, exact: bool, narrow: bool) -> bool {
++        if !exact {
++            return true;
++        }
++        let empties = board.empty_count();
++        if empties > super::tail::LOCAL_END_MAX + 1 {
++            return true;
++        }
++        let selective = self.runtime.sigma().is_some();
++        if empties == super::tail::LOCAL_END_MAX + 1 {
++            // A wide thirteen-empty child still orders moves using its state.
++            // The experimental narrow entry seeds its pattern cache from it too.
++            return !narrow || selective || cfg!(feature = "endgame-pattern-ordering");
++        }
++        selective
+     }
+     pub(super) fn node(
+         &mut self,
+@@ -238,9 +254,7 @@
+             let child = self.node(
+                 candidate.child(
+                     Position { board, state },
+-                    !exact
+-                        || board.empty_count() > super::tail::LOCAL_END_MAX
+-                        || self.runtime.sigma().is_some(),
++                    self.child_needs_eval(board, exact, beta - alpha == 1),
+                 ),
+                 -beta,
+                 -alpha,
+@@ -301,9 +315,7 @@
+             let first = candidates[0];
+             let first_position = first.child(
+                 position,
+-                !exact
+-                    || board.empty_count() > super::tail::LOCAL_END_MAX
+-                    || self.runtime.sigma().is_some(),
++                self.child_needs_eval(board, exact, beta - alpha == 1),
+             );
+             let child = self.node(
+                 Position {
+@@ -427,12 +439,8 @@
+             exact,
+             probcut: allow_probcut,
+         } = spec;
+-        let next = candidate.child(
+-            position,
+-            !exact
+-                || position.board.empty_count() > super::tail::LOCAL_END_MAX
+-                || self.runtime.sigma().is_some(),
+-        );
++        let update_eval = self.child_needs_eval(position.board, exact, true);
++        let next = candidate.child(position, update_eval);
+         let child = self.node(
+             Position {
+                 board: next.board,
+@@ -448,6 +456,11 @@
+         )?;
+         let mut line = Line::prepend(candidate.action(), &child);
+         if line.score > alpha && line.score < beta {
++            let next = if !update_eval && self.child_needs_eval(position.board, exact, false) {
++                candidate.child(position, true)
++            } else {
++                next
++            };
+             let child = self.node(
+                 Position {
+                     board: next.board,
+@@ -594,6 +607,75 @@
+     use super::super::session::test_context;
+     use super::*;
+     #[test]
++    fn thirteen_empty_research_matches_eager_evaluation_state() {
++        let model = Arc::new(PatternModel::nonzero_for_tests());
++        for seed in [17u64, 101] {
++            let mut board = Board::new();
++            let mut random = seed;
++            while board.empty_count() > 14 {
++                let mut moves = board.get_moves();
++                if moves == 0 {
++                    assert!(!board.is_terminal());
++                    board = board.board_after_pass();
++                    continue;
++                }
++                random ^= random << 13;
++                random ^= random >> 7;
++                random ^= random << 17;
++                for _ in 0..random % u64::from(moves.count_ones()) {
++                    moves &= moves - 1;
++                }
++                board = board.board_after_move(moves & moves.wrapping_neg());
++            }
++            let moves = board.get_moves();
++            assert_ne!(moves, 0);
++            let bit = moves & moves.wrapping_neg();
++            let candidate = Candidate {
++                square: Square::new(bit.trailing_zeros() as u8).unwrap(),
++                flips: board.flip_mask(bit),
++                ordering: 0,
++            };
++            let position = Position {
++                board,
++                state: EvalState::from_board(board),
++            };
++            let next = candidate.child(position, true);
++            let spec = SearchSpec {
++                depth: 13,
++                exact: true,
++                probcut: false,
++            };
++            let make_context = || {
++                let mut context = test_context();
++                Arc::get_mut(&mut context.runtime).unwrap().model = model.clone();
++                context
++            };
++            // Find an interior score so sibling must perform its wide re-search.
++            let expected = -make_context().node(next, -64, 64, spec).unwrap().score;
++            assert!((-64..64).contains(&expected));
++            let alpha = expected - 1;
++            let beta = 64;
++            let mut eager = make_context();
++            let narrow = eager.node(next, -alpha - 1, -alpha, spec).unwrap();
++            assert!(-narrow.score > alpha && -narrow.score < beta);
++            let reference = eager.node(next, -beta, -alpha, spec).unwrap();
++
++            let mut lazy = make_context();
++            let actual = lazy
++                .sibling(position, candidate, alpha, beta, spec)
++                .unwrap()
++                .unwrap();
++            assert_eq!(actual.score, -reference.score);
++            assert_eq!(
++                actual.moves(),
++                Line::prepend(candidate.action(), &reference).moves()
++            );
++            assert!(lazy.stats.evaluations > 0);
++            assert_eq!(lazy.stats.nodes, eager.stats.nodes);
++            assert_eq!(lazy.stats.evaluations, eager.stats.evaluations);
++        }
++    }
++    #[test]
+     fn forced_move_skips_ordering_evaluation() {
+         let board = Board::from_bits(1, 2).unwrap();
+         assert!(board.get_moves().is_power_of_two());

@@ -1,0 +1,272 @@
+{
+  "final_mpc_tree": {
+    "stages": [
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 6,
+        "exact": false,
+        "nodes": 4876,
+        "score": 10,
+        "seconds": 0.00081798,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 8,
+        "exact": false,
+        "nodes": 5512,
+        "score": 10,
+        "seconds": 0.000943349,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 10,
+        "exact": false,
+        "nodes": 24413,
+        "score": 10,
+        "seconds": 0.003478134,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 12,
+        "exact": false,
+        "nodes": 38753,
+        "score": 10,
+        "seconds": 0.004707701,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 14,
+        "exact": false,
+        "nodes": 129784,
+        "score": 11,
+        "seconds": 0.015601539,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 16,
+        "exact": false,
+        "nodes": 365364,
+        "score": 11,
+        "seconds": 0.042284927,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 18,
+        "exact": false,
+        "nodes": 706113,
+        "score": 12,
+        "seconds": 0.080899719,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 26,
+        "exact": true,
+        "nodes": 6885871,
+        "score": 14,
+        "seconds": 0.318391917,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 26,
+        "exact": true,
+        "nodes": 215323947,
+        "score": 16,
+        "seconds": 3.708066243,
+        "sigma": null
+      }
+    ],
+    "pv": {
+      "length": 26,
+      "nodes": 18152,
+      "seconds": 0.000262525
+    }
+  },
+  "final_no_probe_write": {
+    "stages": [
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 6,
+        "exact": false,
+        "nodes": 4876,
+        "score": 10,
+        "seconds": 0.000852272,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 8,
+        "exact": false,
+        "nodes": 5485,
+        "score": 10,
+        "seconds": 0.000868692,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 10,
+        "exact": false,
+        "nodes": 24489,
+        "score": 10,
+        "seconds": 0.003411233,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 12,
+        "exact": false,
+        "nodes": 40015,
+        "score": 10,
+        "seconds": 0.004739916,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 14,
+        "exact": false,
+        "nodes": 126586,
+        "score": 11,
+        "seconds": 0.015138926,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 16,
+        "exact": false,
+        "nodes": 214945,
+        "score": 11,
+        "seconds": 0.024552522,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 18,
+        "exact": false,
+        "nodes": 704361,
+        "score": 12,
+        "seconds": 0.083373364,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 26,
+        "exact": true,
+        "nodes": 4361539,
+        "score": 14,
+        "seconds": 0.252302097,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 26,
+        "exact": true,
+        "nodes": 273691567,
+        "score": 16,
+        "seconds": 4.524801175,
+        "sigma": null
+      }
+    ],
+    "pv": {
+      "length": 27,
+      "nodes": 22350,
+      "seconds": 0.000283441
+    }
+  },
+  "final_root_tree": {
+    "stages": [
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 6,
+        "exact": false,
+        "nodes": 2757,
+        "score": 10,
+        "seconds": 0.0004995,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 8,
+        "exact": false,
+        "nodes": 5636,
+        "score": 10,
+        "seconds": 0.000901263,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 10,
+        "exact": false,
+        "nodes": 24537,
+        "score": 10,
+        "seconds": 0.003357376,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 12,
+        "exact": false,
+        "nodes": 47870,
+        "score": 10,
+        "seconds": 0.005765324,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 14,
+        "exact": false,
+        "nodes": 129945,
+        "score": 11,
+        "seconds": 0.015778679,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 16,
+        "exact": false,
+        "nodes": 372972,
+        "score": 11,
+        "seconds": 0.042576607,
+        "sigma": 1.43953
+      },
+      {
+        "action": "Some(Place(Square(4)))",
+        "depth": 18,
+        "exact": false,
+        "nodes": 912535,
+        "score": 12,
+        "seconds": 0.103815878,
+        "sigma": 1.43953
+      },
+      {
+        "action": "None",
+        "depth": 26,
+        "exact": true,
+        "nodes": 9724596,
+        "score": 14,
+        "seconds": 0.406938968,
+        "sigma": 1.43953
+      },
+      {
+        "action": "None",
+        "depth": 26,
+        "exact": true,
+        "nodes": 168394269,
+        "score": 16,
+        "seconds": 2.808385821,
+        "sigma": null
+      }
+    ],
+    "pv": {
+      "length": 26,
+      "nodes": 18152,
+      "seconds": 0.00025824
+    }
+  }
+}

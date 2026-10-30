@@ -1,0 +1,95 @@
+   Compiling deft_reversi_engine v2.0.0 (/workspace/deft-reversi/deft-reversi-engine)
+    Finished `release` profile [optimized] target(s) in 31.29s
+     Running unittests src/lib.rs (/workspace/deft-tail-target/release/deps/deft_reversi_engine-e9b8be611b1d76d9)
+
+running 45 tests
+test board::bitboard::tests::canonical_is_idempotent ... ok
+test board::bitboard::tests::canonical_matches_independent_reference_implementation ... ok
+test board::bitboard::tests::canonical_uses_player_then_opponent_for_ordering ... ok
+test board::bitboard::tests::default_returns_the_same_position_as_new ... ok
+test board::bitboard::tests::each_initial_move_flips_the_expected_stone ... ok
+test board::bitboard::tests::empty_and_full_positions_have_no_moves ... ok
+test board::bitboard::tests::every_symmetry_has_the_same_canonical_board ... ok
+test board::bitboard::tests::initial_position_has_four_expected_moves ... ok
+test board::bitboard::tests::move_generation_does_not_wrap_across_board_edges ... ok
+test board::bitboard::tests::new_returns_the_initial_position ... ok
+test board::bitboard::tests::pass_flips_no_stones ... ok
+test board::bitboard::tests::test_horizontal_mirror ... ok
+test board::bitboard::tests::test_transpose ... ok
+test board::bitboard::tests::test_vertical_mirror ... ok
+test board::last::tests::matches_full_flip_for_each_last_square ... ok
+test evaluation::pattern::definition::tests::builds_all_patterns_with_the_expected_number_of_squares ... ok
+test evaluation::pattern::definition::tests::generated_coordinates_match_the_previous_hand_written_table ... ok
+test evaluation::pattern::definition::tests::unused_coordinate_slots_contain_the_sentinel ... ok
+test evaluation::score_tests::phase_mobility_and_signed_rounding ... ok
+test evaluation::tests::differential_matches_refresh_through_games ... ok
+test evaluation::tests::schema_tables_fit_u16 ... ok
+test model::tests::mpc_settings_reject_invalid_depth_tables_and_preserve_signed_regression ... ok
+test board::stability::tests::stability_bounds_contain_exhaustive_result ... ok
+test mpc::legacy_tests::main_final_table_boundaries_and_reused_coefficients ... ok
+test parallel::tests::waiting_ancestor_executes_descendant_job ... ok
+test search::endgame::last_four::tests::last_one_bounds_match_full_board_rules ... ok
+test search::endgame::local_tt::tests::separated_color_swaps_do_not_systematically_alias ... ok
+test search::endgame::tests::carried_parity_matches_board_regions_through_moves_and_passes ... ok
+test search::endgame::tests::child_tt_cut_saves_the_cutting_move ... ok
+test search::endgame::tests::five_empty_kernel_matches_exhaustive_for_both_turns_and_boundary_windows ... ok
+test search::endgame::tests::probe_snapshot_survives_replacement_and_rejects_other_quality ... ok
+test search::endgame::tests::score_tail_preserves_upper_and_lower_bounds ... ok
+test search::level::tests::reference_level_boundaries_and_opening_correction ... ok
+test search::ordering::tests::static_ordering_preserves_visits_and_hard_budget ... ok
+test search::root::tests::root_bounds_combine_research_and_reset_between_iterations ... ok
+test search::tree::tt_tests::child_tt_cut_precedes_tt_move_search ... ok
+test search::tree::tt_tests::forced_move_skips_ordering_evaluation ... ok
+test search::tree::tt_tests::thirteen_empty_research_matches_eager_evaluation_state ... ok
+test search::tree::tt_tests::tt_move_cuts_before_other_moves_are_evaluated ... ok
+test search::tree::tt_tests::wide_etc_retains_the_largest_skipped_upper_bound ... ok
+test search::tree::tt_tests::wide_window_narrowing_combines_complementary_bounds ... ok
+test search::tree::tt_tests::wide_window_tt_cuts_require_matching_depth_mode_and_selectivity ... ok
+test transposition::concurrent_tests::concurrent_snapshots_match_their_board ... ok
+test transposition::tests::layout_and_bound_merge ... ok
+test model::tests::reference_binary_v3_v4_and_json_load_weights_metadata_and_mpc_together ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+     Running tests/model.rs (/workspace/deft-tail-target/release/deps/model-899fae191746ba3d)
+
+running 2 tests
+test mpc_confirmation_must_be_shallower_and_rejection_is_atomic ... ok
+test model_roundtrip_and_input_validation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/rules.rs (/workspace/deft-tail-target/release/deps/rules-7ce72f5796b958b5)
+
+running 3 tests
+test initial_position_perft ... ok
+test rejected_actions_preserve_position ... ok
+test reachable_positions_match_coordinate_reference ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/search.rs (/workspace/deft-tail-target/release/deps/search-5d169c928a2f3d84)
+
+running 13 tests
+test configuration_is_validated ... ok
+test budget_is_shared_across_workers_and_iterations ... ok
+test exact_matches_exhaustive_and_pv_is_legal ... ok
+test exact_endgame_cache_is_consistent_when_warm_cleared_or_model_changes ... ok
+test external_stop_joins_workers_and_engine_can_be_reused ... ok
+test interrupted_search_never_claims_an_exact_solution ... ok
+test level_midgame_iterations_keep_the_requested_selectivity ... ok
+test parallel_matches_serial_at_fixed_depth ... ok
+test pass_and_terminal_are_distinct ... ok
+test selective_cache_does_not_leak_into_full_search ... ok
+test stopping_after_selective_preparation_does_not_report_exact ... ok
+test ybwc_exact_repetition_and_thread_counts ... ok
+test selective_preparation_cannot_supply_the_exact_final_score ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.11s
+
+   Doc-tests deft_reversi_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

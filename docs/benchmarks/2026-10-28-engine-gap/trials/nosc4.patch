@@ -1,0 +1,15 @@
+diff --git a/deft-reversi-engine/src/search/endgame/last_four.rs b/deft-reversi-engine/src/search/endgame/last_four.rs
+index 431affb..f9cf7f7 100644
+--- a/deft-reversi-engine/src/search/endgame/last_four.rs
++++ b/deft-reversi-engine/src/search/endgame/last_four.rs
+@@ -361,10 +361,6 @@ fn solve_score_4_empties(
+ ) -> i32 {
+     // The caller has already entered this four-empty node.
+ 
+-    let board = Board { player, opponent };
+-    if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
+-        return score;
+-    }
+ 
+     let mut empties = !(player | opponent);
+     let mut x1 = empties.trailing_zeros() as usize;

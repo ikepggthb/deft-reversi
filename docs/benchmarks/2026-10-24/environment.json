@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-24",
+  "cpu": "Intel Core Ultra 7 265K",
+  "system": "Linux-7.2.11-zen1-1-zen-x86_64-with-glibc2.44",
+  "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)\nbinary: rustc\ncommit-hash: ded5c06cf21d2b93bffd5d884aa6e96934ee4234\ncommit-date: 2025-12-08\nhost: x86_64-unknown-linux-gnu\nrelease: 1.92.0\nLLVM version: 21.1.3\n",
+  "rustflags": "-Ctarget-cpu=native",
+  "profile": {
+    "opt_level": 3,
+    "lto": "fat",
+    "codegen_units": 1,
+    "panic": "unwind"
+  },
+  "main_tt_mib": 256,
+  "single_thread_cpu_affinity": [
+    1
+  ],
+  "reference_commit": "f4192a0bfe62f456d6ffe5716fb797d697f6c6d3",
+  "reference_tracked_files_clean": true,
+  "reference_model_sha256": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+  "converted_model_sha256": "3a07488cc364975eed03fe01c1806a6ff2737e99f5879f70f21dc023d64a6069",
+  "comparison_binary_sha256": "22db1567a2a1a766b89767c3975475646dd7275f9249cfcb5818a50d111ad582",
+  "solve_binary_sha256": "b10673274943f6bd0a300f6cc16dcfc1adf450fad23b567db6018b06faa45b70",
+  "source_snapshot_sha256": "57bb502ce6b2c1a5b3504d89352aceb2196ebf6f597f4965cf9a94b5868e7404",
+  "fixture_sha256": {
+    "deft_reversi_engine_v2/tests/fixtures/endgame.obf": "4c21163e192a9e5cb473241dfe3ef117c862abe98a5848672c14a3b939e58198",
+    "deft_reversi_engine_v2/tests/fixtures/ffo40-44.obf": "d474590c49afc7e73243f489dfe3d726743950a28d0d792eb79ae1449f65ff21",
+    "deft_reversi_engine_v2/tests/fixtures/midgame.obf": "59bdb48ee0558073824de339e27801bf4b55e7c0a40bd3e20bbe8046cd01e044"
+  },
+  "tests": {
+    "debug": {
+      "passed": 38,
+      "failed": 0,
+      "ignored": 1
+    },
+    "native_release": {
+      "passed": 39,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "clippy_debug_warnings": 0,
+  "clippy_native_warnings": 0
+}

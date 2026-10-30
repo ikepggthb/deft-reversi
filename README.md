@@ -1,56 +1,45 @@
 # Deft Reversi
-![image](https://github.com/user-attachments/assets/269bb110-41af-43a3-bac4-d9ad281f163b)
 
-Deft Reversi is a strong Othello program.
+オセロの探索エンジン。現在の開発対象はネイティブ向けのRustライブラリです。
 
-- [Deft Reversi Web](https://az.recazbowl.net/deft-reversi-web/index.html)
+- [エンジンのAPI・設計・実行方法](deft-reversi-engine/README.md)
+- [対局用bookの参照・生成・更新](deft-reversi-book/README.md)
+- [リライト計画と移行範囲](docs/rewrite-plan.md)
+- [レビュー後の修正と性能確認](docs/benchmarks/2026-10-27-review-fixes/README.md)
+- [終盤探索の比較と差分調査](docs/benchmarks/2026-10-24-regression-investigation/README.md)
+- [旧評価関数の説明](docs/old-evaluation-function.md)
 
-  This is the implementation of the Othello UI part.
+## ビルドと検証
 
-- Deft Reversi Engine
+```sh
+cargo build --locked --release
+cargo test --locked
+RUSTFLAGS="-Ctarget-cpu=native" cargo test --locked --release -- --include-ignored
+cargo clippy --locked --all-targets -- -D warnings
+```
 
-  This is the AI part of the Othello program.
+Rust 1.99.1を `rust-toolchain.toml` で固定し、依存関係はルートの `Cargo.lock` で固定しています。rustfmtとClippyも同じツールチェーンの構成要素として指定しています。
 
-## Deft Reversi Web
+モデルは呼び出し元が指定します。元のv3/v4パターンモデル（JSON・bincode）をMPC設定とともに直接読み込めます。NNUEは対象外です。
 
-- Playing with AI
+```sh
+cargo run --locked --release --example solve -- MODEL.bin POSITIONS.obf exact 1 256
+```
 
-  [Deft Reversi Web](https://az.recazbowl.net/deft-reversi-web/index.html)
+## 旧アプリケーション
 
-- About the Levels
+`deft-reversi-cli` は新エンジンと定石を使う端末アプリです（対局・solve・自己対戦・perft）。`deft-reversi-web`、`deft-reversi-learn` は移植前のソースとして保存し、ワークスペースから除外しています。旧エンジンは削除済みです。Webは旧APIに依存するため、新エンジンへの移植前にはビルドできません。学習処理も今回の検証対象には含めていません。
 
-  There are levels from 0 to 24. It is thought that most people cannot win even around level 3. Levels above 20 are not recommended because they are heavy.
+公開済みの[Web版](https://az.recazbowl.net/deft-reversi-web/index.html)は、ここで保存している旧アプリケーションに対応します。新エンジンへの移行は未実施です。
 
-- Build
-  - Rust and wasm-pack are required.
+現在の比較ツールは [tools/bench](tools/bench/README.md) にあります。旧版とのAPI比較では `--old-engine` で旧クレートの場所を指定し、通常API同士の比較には `level:60` を指定します。Edax・Egaroucidとの比較も、評価データとバイナリの場所を引数で指定できます。
 
-    ```
-    git clone https://github.com/ikepggthb/deft-reversi.git
-    cd deft_reversi/deft-reversi-web
-    wasm-pack build --target web
-    ```
+## 測定記録
 
-The Human opening list is based on the one used on the following website.
-[オセロ定石一覧(250種以上) : レコちゃんも頑張ってるのに](https://uenon1.com/archives/11101657.html)
+直近のFFO40–49・1コア比較は [Edax・Egaroucidとの測定記録](docs/benchmarks/2026-10-27-three-engines/README.md) を参照してください。過去の時間は、異なる実装・モデル・測定条件の結果を含むため、直接つなげて改善率を計算しません。
 
-## Deft Reversi Engine
+過去のレポート中の `deft_reversi_engine_v2` は移動前の名称です。測定時のハッシュ、コマンド、再現用ソースは当時の記録として保持しています。現在のディレクトリは `deft-reversi-engine`、クレート名は `deft_reversi_engine` です。
 
-- Features
-  - bitboard
-  - negascout search (PVS)
-  - Transposition table
-  - Multi Prob Cut
-  - Move ordering
-    - Shallow searches using evaluation functions for move ordering
-    - Fastest-First heuristic
-      - Searching from moves that limit the opponent's legal moves
-      - Used in the endgame
-    - Iterative deepening
-      - Storing best move in the transposition table for use in the next search
-  - Evaluation function using machine learning (linear regression)
-    - Used board patterns and the difference in the number of legal moves as features.
+## ライセンス
 
-## License
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
-
-For more details, please refer to the [LICENSE](LICENSE) file.
+[GNU General Public License v3.0](LICENSE)。

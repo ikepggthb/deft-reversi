@@ -1,0 +1,11 @@
+{
+  "recorded_at_utc": "2026-10-27T23:10:20.615434+00:00",
+  "base_commit": "f6179414cb483dc1ec8c7ed4536ef889e1c73b11",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "benchmark_cpu": 0,
+  "threads": 1,
+  "rustflags": "-C target-cpu=native",
+  "build": "cargo build --locked --offline --release --example solve",
+  "adopted_binary_sha256": "d2eeaae3bfe3ef9fde5d905b1dd929394fdf405c791e5c6965a2abebf7a33d72"
+}
