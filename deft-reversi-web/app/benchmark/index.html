@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#edf3f1">
+  <meta name="description" content="ブラウザでFFO局面の探索速度を測定するベンチマーク">
+  <title>FFO ベンチマーク | Deft Reversi</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;color:#182b2b;background:#f4f8f6;font-synthesis:none}
+    *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}button,input,select{font:inherit}button,select{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}
+    .shell{max-width:1100px;margin:auto;padding:28px 24px 64px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px}
+    .brand{font-size:13px;font-weight:800;letter-spacing:.09em;color:#276b5c;text-transform:uppercase}.back{color:#315f56;text-decoration:none;font-size:14px;font-weight:700}.back:hover{text-decoration:underline}
+    header{margin:52px 0 30px}.eyebrow{color:#187962;text-transform:uppercase;letter-spacing:.13em;font-size:12px;font-weight:800;margin:0 0 10px}h1{font-size:clamp(30px,5vw,48px);letter-spacing:-.05em;margin:0;line-height:1.12}header p{max-width:620px;color:#5a7070;line-height:1.75;margin:14px 0 0;font-size:14px}
+    .layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:24px;align-items:start}.panel{min-width:0;background:white;border:1px solid #dce9e3;border-radius:18px;padding:22px;box-shadow:0 8px 32px #284b3b08}.panel h2{font-size:16px;letter-spacing:-.02em;margin:0 0 20px}.field{display:grid;gap:7px;margin-bottom:16px}label,.field-label{font-size:12px;color:#526b65;font-weight:750}.field-note{font-size:11px;color:#73847f;line-height:1.55}.pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    input,select{width:100%;min-width:0;height:42px;border:1px solid #d5e3dc;border-radius:10px;background:#f9fcfa;padding:0 10px;color:#18382f}.buttons{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:20px}.primary,.secondary,.download{border-radius:10px;min-height:44px;padding:0 18px;font-weight:750}.primary{background:#156d58;color:white;border:1px solid #156d58}.primary:hover:not(:disabled){background:#0d5947}.secondary,.download{background:white;color:#315f56;border:1px solid #cadfd5}.status{font-size:12px;line-height:1.6;color:#607870;margin:15px 0 0;min-height:20px}.status.error{color:#ac3d33}
+    .results-head{display:flex;justify-content:space-between;align-items:start;gap:12px}.results-head h2{margin-bottom:4px}.muted{color:#7a8e86;font-size:12px;line-height:1.6}.download{font-size:12px;min-height:36px;padding:0 12px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:22px 0}.metric{padding:14px;background:#f2f8f4;border-radius:12px;min-width:0}.metric-label{font-size:11px;color:#6a8278;font-weight:700}.metric-value{font-size:clamp(16px,2.4vw,22px);font-weight:800;margin-top:6px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.progress{height:5px;background:#e9f0ec;border-radius:10px;overflow:hidden}.progress-fill{height:100%;width:0;background:#20a581;transition:width .2s}.table-wrap{overflow-x:auto;margin-top:20px}table{border-collapse:collapse;width:100%;min-width:610px;font-size:12px;text-align:right;font-variant-numeric:tabular-nums}th{font-size:11px;color:#7a8d84;font-weight:700;padding:10px 8px;border-bottom:1px solid #e1ebe5;white-space:nowrap}td{padding:13px 8px;border-bottom:1px solid #edf3ef;white-space:nowrap}th:first-child,td:first-child{text-align:left}th:nth-child(2),td:nth-child(2){text-align:left}td:first-child{font-weight:800;color:#214d40}.good{color:#147b5b;font-weight:750}.bad{color:#b43c31;font-weight:750}.empty{padding:35px 8px;text-align:center;color:#83968d}.footnote{color:#71857c;font-size:11px;line-height:1.7;margin:16px 0 0}
+    @media(max-width:700px){.shell{padding:20px 16px 48px}header{margin:34px 0 24px}.layout{grid-template-columns:minmax(0,1fr);gap:16px}.panel{padding:18px;border-radius:16px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.metric{padding:11px 8px}.metric-value{font-size:16px}h1{font-size:32px}.table-wrap{margin-left:-4px;margin-right:-4px}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <div class="top"><a href="../" class="back">← 対局に戻る</a><span class="brand">Deft Reversi</span></div>
+  <header><p class="eyebrow">Browser benchmark</p><h1>FFO ベンチマーク</h1><p>FFOの終盤局面をブラウザ内で探索します。端末ごとの探索時間とノード数を確認できます。</p></header>
+  <div class="layout">
+    <section class="panel" aria-labelledby="config-title">
+      <h2 id="config-title">測定条件</h2>
+      <div class="field"><span class="field-label">問題番号</span><div class="pair"><label>開始<input id="first" type="number" min="1" max="79" value="40"></label><label>終了<input id="last" type="number" min="1" max="79" value="49"></label></div><span class="field-note">FFO 1〜79。正解データは1〜49に収録。</span></div>
+      <div class="field"><label for="goal">探索方法</label><select id="goal"><option value="endgame">完全読み（終局まで）</option><option value="depth">深さ指定</option><option value="level">レベル指定</option></select><span class="field-note">正解照合は完全読みが完了した局面のみ。</span></div>
+      <div class="field" id="value-field" hidden><label for="goal-value" id="value-label">探索の深さ</label><input id="goal-value" type="number" min="1" max="60" value="10"></div>
+      <div class="field"><label for="limit">1局面の時間上限（秒）</label><input id="limit" type="number" min="0" max="4294967" step="1" value="10"><span class="field-note">0は無制限。難しい局面では長時間かかります。</span></div>
+      <div class="field"><label for="tt">置換表（MiB）</label><select id="tt"><option>16</option><option selected>32</option><option>64</option><option>128</option><option>256</option></select></div>
+      <div class="buttons"><button id="start" class="primary">ベンチマーク開始</button><button id="stop" class="secondary" disabled>停止</button></div>
+      <p id="status" class="status" role="status" aria-live="polite">準備できています</p>
+    </section>
+    <section class="panel" aria-labelledby="results-title">
+      <div class="results-head"><div><h2 id="results-title">測定結果</h2><span id="count" class="muted">まだ実行されていません</span></div><button id="download" class="download" disabled>CSV保存</button></div>
+      <div class="metrics"><div class="metric"><div class="metric-label">完了 / 対象</div><div class="metric-value" id="metric-count">—</div></div><div class="metric"><div class="metric-label">探索時間 合計</div><div class="metric-value" id="metric-time">—</div></div><div class="metric"><div class="metric-label">総ノード数</div><div class="metric-value" id="metric-nodes">—</div></div><div class="metric"><div class="metric-label">平均ノード / 秒</div><div class="metric-value" id="metric-nps">—</div></div></div>
+      <div class="progress" role="progressbar" aria-label="進行状況" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="progress"></div></div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="測定結果の表。横にスクロールできます"><table><thead><tr><th>問題</th><th>状態</th><th>最善手</th><th>評価値</th><th>探索時間</th><th>ノード数</th><th>ノード / 秒</th><th>正解照合</th></tr></thead><tbody id="rows"><tr><td class="empty" colspan="8">条件を選び、ベンチマークを開始してください。</td></tr></tbody></table></div>
+      <p class="footnote">表は横にスクロールできます。評価値は手番側から見た石差です。時間はエンジンの探索時間で、モデルの読み込みと置換表の初期化は含みません。局面ごとに置換表を初期化します。ブラウザ・端末・電源状態によって結果は変わります。時間上限で停止した結果は途中経過です。</p>
+    </section>
+  </div>
+</main>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
