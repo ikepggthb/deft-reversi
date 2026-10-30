@@ -1,9 +1,15 @@
 [package]
 name = "deft-reversi-cli"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 
 [dependencies]
-clap = { version = "4.5.23", features = ["derive"] }
-deft_reversi_engine = { path = "../deft-reversi-engine" } 
+clap = { version = "4.5.23", features = ["derive", "env"] }
+ctrlc = "3.4"
+deft_reversi_book = { path = "../deft-reversi-book" }
+deft_reversi_engine = { path = "../deft-reversi-engine" }
 rand = "0.8.5"
+
+[dev-dependencies]
+# The tests build a zero model instead of reading one from disk.
+deft_reversi_engine = { path = "../deft-reversi-engine", features = ["tuning"] }
