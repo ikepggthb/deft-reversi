@@ -112,7 +112,14 @@ const SQUARE_VALUE: [i32; 64] = [
 
 #[inline(always)]
 fn flip_at(player: u64, opponent: u64, pos: usize) -> u64 {
-    Board { player, opponent }.flip_mask(1u64 << pos)
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        crate::board::last::ray_last::near_full_flips(pos, player, opponent)
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        Board { player, opponent }.flip_mask(1u64 << pos)
+    }
 }
 
 #[inline(always)]

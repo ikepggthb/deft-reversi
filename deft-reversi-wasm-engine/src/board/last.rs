@@ -34,7 +34,7 @@ pub(crate) fn doubled_flips(square: usize, player: u64) -> i32 {
 }
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-mod ray_last {
+pub(crate) mod ray_last {
     const fn rays() -> [[u64; 8]; 64] {
         let dirs: [(i32, i32); 8] = [
             (1, 0),
@@ -64,10 +64,30 @@ mod ray_last {
         }
         result
     }
-    // When only one square is empty, every other square is occupied. The
-    // nearest friendly stone brackets all squares between it and the move.
     // The first four rays increase in bit index; the other four decrease.
     static RAYS: [[u64; 8]; 64] = rays();
+    // The first square that is not an opponent disc stops the run: it
+    // brackets the run only when it contains a friendly disc, not an empty.
+    #[inline(always)]
+    pub(crate) fn near_full_flips(square: usize, player: u64, opponent: u64) -> u64 {
+        let rays = &RAYS[square];
+        let mut flips = 0u64;
+        for &ray in &rays[..4] {
+            let first = (ray & !opponent).isolate_lowest_one();
+            flips |=
+                first.wrapping_sub(1) & ray & 0u64.wrapping_sub(((first & player) != 0) as u64);
+        }
+        for &ray in &rays[4..] {
+            let blockers = ray & !opponent;
+            let last = 1u64 << (63 - (blockers | 1).leading_zeros());
+            flips |= !(last | last.wrapping_sub(1))
+                & ray
+                & 0u64.wrapping_sub(((last & player & blockers) != 0) as u64);
+        }
+        flips
+    }
+    // With one empty, all other squares are occupied, so the nearest
+    // friendly disc brackets the run without checking for another empty.
     #[inline(always)]
     pub(super) fn doubled_flips(square: usize, player: u64) -> i32 {
         let rays = &RAYS[square];
@@ -89,6 +109,31 @@ mod ray_last {
 #[cfg(all(test, target_arch = "wasm32", target_feature = "simd128"))]
 mod ray_last_tests {
     use wasm_bindgen_test::wasm_bindgen_test;
+    #[wasm_bindgen_test]
+    fn rays_match_generic_multi_empty() {
+        let mut seed = 0xabc3_1739_b4c5_d697u64;
+        for _ in 0..100_000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let player = seed;
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let opponent = seed & !player;
+            let mut empties = !(player | opponent);
+            while empties != 0 {
+                let square = empties.trailing_zeros() as usize;
+                let bit = 1u64 << square;
+                empties &= !bit;
+                let board = crate::Board::from_bits(player, opponent).unwrap();
+                assert_eq!(
+                    super::ray_last::near_full_flips(square, player, opponent),
+                    board.flip_mask(bit)
+                );
+            }
+        }
+    }
     #[wasm_bindgen_test]
     fn rays_match_generic_last_square() {
         let mut seed = 0xabc3_1739_b4c5_d697u64;
