@@ -1,7 +1,12 @@
 #[cfg(target_feature = "avx2")]
 pub use avx2::get_moves;
-#[cfg(not(target_feature = "avx2"))]
+#[cfg(all(
+    not(target_feature = "avx2"),
+    not(all(target_arch = "wasm32", target_feature = "simd128"))
+))]
 pub use generic::get_moves;
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub use wasm_simd::get_moves;
 
 // Using AVX2
 // Optimization ideas :
@@ -74,7 +79,10 @@ mod avx2 {
     }
 }
 
-#[cfg(not(target_feature = "avx2"))]
+#[cfg(all(
+    not(target_feature = "avx2"),
+    any(test, not(all(target_arch = "wasm32", target_feature = "simd128")))
+))]
 mod generic {
     #[inline(always)]
     pub fn get_moves(p: u64, o: u64) -> u64 {
@@ -152,5 +160,76 @@ mod generic {
 
         // 空きマスでマスク
         moves & !(p | o)
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+mod wasm_simd {
+    use std::arch::wasm32::*;
+    // Reverse bits in each 64-bit lane via a nibble lookup and byte shuffle.
+    // WASM SIMD has uniform shifts, so reversal lets the two lanes process
+    // opposite directions with the same shift count.
+    #[inline(always)]
+    fn reverse(v: v128) -> v128 {
+        let table = u8x16(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+        let lo = v128_and(v, u8x16_splat(15));
+        let hi = v128_and(u8x16_shr(v, 4), u8x16_splat(15));
+        let bits = v128_or(
+            i8x16_shl(i8x16_swizzle(table, lo), 4),
+            i8x16_swizzle(table, hi),
+        );
+        i8x16_shuffle::<7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8>(bits, bits)
+    }
+    #[inline(always)]
+    pub fn get_moves(p: u64, o: u64) -> u64 {
+        // Reversal turns all right shifts into left shifts; each SIMD lane
+        // computes one direction. Horizontal propagation retains the carry trick.
+        let pp0 = u64x2_splat(p);
+        let oo0 = u64x2_splat(o);
+        let pp = i64x2_shuffle::<0, 2>(pp0, reverse(pp0));
+        let oo = i64x2_shuffle::<0, 2>(oo0, reverse(oo0));
+        let mm = v128_and(oo, u64x2_splat(0x7e7e7e7e7e7e7e7e));
+        let one = v128_and(mm, i64x2_shl(pp, 1));
+        let mut result = i64x2_add(mm, one);
+        macro_rules! ray {
+            ($opp:expr, $shift:expr) => {{
+                let m = $opp;
+                let mut f = v128_and(m, i64x2_shl(pp, $shift));
+                f = v128_or(f, v128_and(m, i64x2_shl(f, $shift)));
+                let pre = v128_and(m, i64x2_shl(m, $shift));
+                f = v128_or(f, v128_and(pre, i64x2_shl(f, $shift * 2)));
+                f = v128_or(f, v128_and(pre, i64x2_shl(f, $shift * 2)));
+                i64x2_shl(f, $shift)
+            }};
+        }
+        result = v128_or(result, ray!(mm, 7));
+        result = v128_or(result, ray!(oo, 8));
+        result = v128_or(result, ray!(mm, 9));
+        let left = u64x2_extract_lane::<0>(result);
+        let right = u64x2_extract_lane::<1>(reverse(result));
+        (left | right) & !(p | o)
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32", target_feature = "simd128"))]
+mod wasm_simd_tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
+    #[wasm_bindgen_test]
+    fn moves_match_generic_for_disjoint_boards() {
+        let mut seed = 0xfedc_ba98_7654_3210u64;
+        for _ in 0..100_000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let player = seed;
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let opponent = seed & !player;
+            assert_eq!(
+                super::wasm_simd::get_moves(player, opponent),
+                super::generic::get_moves(player, opponent)
+            );
+        }
     }
 }

@@ -1,0 +1,11 @@
+{"number":40,"bestMove":"A2","score":38,"nodes":"6376560","elapsedMs":324.769405}
+{"number":41,"bestMove":"H4","score":0,"nodes":"15090470","elapsedMs":713.319968}
+{"number":42,"bestMove":"G2","score":6,"nodes":"20547418","elapsedMs":919.874931}
+{"number":43,"bestMove":"G3","score":-12,"nodes":"43120720","elapsedMs":2496.30194}
+{"number":44,"bestMove":"D2","score":-14,"nodes":"10736834","elapsedMs":606.615279}
+{"number":45,"bestMove":"B2","score":6,"nodes":"145418312","elapsedMs":7589.99034}
+{"number":46,"bestMove":"B3","score":-8,"nodes":"52257802","elapsedMs":2357.0799230000002}
+{"number":47,"bestMove":"G2","score":4,"nodes":"17012091","elapsedMs":823.800972}
+{"number":48,"bestMove":"F6","score":28,"nodes":"87321694","elapsedMs":5116.477363999999}
+{"number":49,"bestMove":"E1","score":16,"nodes":"229331833","elapsedMs":12814.767254999999}
+{"totalMs":33762.997377,"totalNodes":"627213734"}

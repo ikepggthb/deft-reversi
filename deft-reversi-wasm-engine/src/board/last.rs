@@ -1,5 +1,11 @@
 //! Last-empty flip counts. Line tables are generated from the rules at compile time.
-#[cfg(any(test, not(target_feature = "bmi2")))]
+#[cfg(any(
+    test,
+    all(
+        not(target_feature = "bmi2"),
+        not(all(target_arch = "wasm32", target_feature = "simd128"))
+    )
+))]
 use crate::Board;
 
 #[inline(always)]
@@ -8,7 +14,14 @@ pub(crate) fn doubled_flips(square: usize, player: u64) -> i32 {
     {
         bmi2::doubled_flips(square, player)
     }
-    #[cfg(not(target_feature = "bmi2"))]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        ray_last::doubled_flips(square, player)
+    }
+    #[cfg(all(
+        not(target_feature = "bmi2"),
+        not(all(target_arch = "wasm32", target_feature = "simd128"))
+    ))]
     {
         let empty = 1u64 << square;
         2 * Board {
@@ -17,6 +30,83 @@ pub(crate) fn doubled_flips(square: usize, player: u64) -> i32 {
         }
         .flip_mask(empty)
         .count_ones() as i32
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+mod ray_last {
+    const fn rays() -> [[u64; 8]; 64] {
+        let dirs: [(i32, i32); 8] = [
+            (1, 0),
+            (0, 1),
+            (1, 1),
+            (-1, 1),
+            (-1, 0),
+            (0, -1),
+            (-1, -1),
+            (1, -1),
+        ];
+        let mut result = [[0u64; 8]; 64];
+        let mut sq = 0;
+        while sq < 64 {
+            let mut d = 0;
+            while d < 8 {
+                let mut x = (sq % 8) as i32 + dirs[d].0;
+                let mut y = (sq / 8) as i32 + dirs[d].1;
+                while x >= 0 && x < 8 && y >= 0 && y < 8 {
+                    result[sq][d] |= 1u64 << (y * 8 + x);
+                    x += dirs[d].0;
+                    y += dirs[d].1;
+                }
+                d += 1;
+            }
+            sq += 1;
+        }
+        result
+    }
+    // When only one square is empty, every other square is occupied. The
+    // nearest friendly stone brackets all squares between it and the move.
+    // The first four rays increase in bit index; the other four decrease.
+    static RAYS: [[u64; 8]; 64] = rays();
+    #[inline(always)]
+    pub(super) fn doubled_flips(square: usize, player: u64) -> i32 {
+        let rays = &RAYS[square];
+        let mut flips = 0u64;
+        for &ray in &rays[..4] {
+            let own = player & ray;
+            let first = own.isolate_lowest_one();
+            flips |= first.wrapping_sub(1) & ray & 0u64.wrapping_sub((first != 0) as u64);
+        }
+        for &ray in &rays[4..] {
+            let own = player & ray;
+            let last = 1u64 << (63 - (own | 1).leading_zeros());
+            flips |= !(last | last.wrapping_sub(1)) & ray & 0u64.wrapping_sub((own != 0) as u64);
+        }
+        2 * flips.count_ones() as i32
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32", target_feature = "simd128"))]
+mod ray_last_tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
+    #[wasm_bindgen_test]
+    fn rays_match_generic_last_square() {
+        let mut seed = 0xabc3_1739_b4c5_d697u64;
+        for _ in 0..20_000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            for square in 0..64 {
+                let empty = 1u64 << square;
+                for player in [seed & !empty, seed | empty] {
+                    let board = crate::Board::from_bits(player, !player & !empty).unwrap();
+                    assert_eq!(
+                        super::ray_last::doubled_flips(square, player),
+                        2 * board.flip_mask(empty).count_ones() as i32
+                    );
+                }
+            }
+        }
     }
 }
 
