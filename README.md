@@ -28,7 +28,7 @@ cargo run --locked --release --example solve -- MODEL.dpr2 POSITIONS.obf exact 1
 
 ## 旧アプリケーション
 
-`deft-reversi-train` はパターン評価の学習器です（[使い方](deft-reversi-train/README.md)）。`deft-reversi-cli`、`deft-reversi-web` は移植前のソースとして保存し、ワークスペースから除外しています。旧エンジンは削除済みです。CLI・Webは旧APIに依存するため、新エンジンへの移植前にはビルドできません。
+`deft-reversi-train` はパターン評価の学習器です（[使い方](deft-reversi-train/README.md)）。`deft-reversi-cli` は新エンジンと定石を使う端末アプリです（[対局・solve・自己対戦・perft](deft-reversi-cli/README.md)）。`deft-reversi-web` は旧APIに依存する移植前のソースとして保存し、ワークスペースから除外しています。
 
 公開済みの[Web版](https://az.recazbowl.net/deft-reversi-web/index.html)は、ここで保存している旧アプリケーションに対応します。新エンジンへの移行は未実施です。
 
