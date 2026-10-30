@@ -198,6 +198,7 @@ export class UI {
           <div class="app-shell">
             <header class="topbar">
               <h1>Deft Reversi</h1>
+              <a class="benchmark-link" href="./benchmark/">FFOベンチ</a>
             </header>
             <main class="content" id="content"></main>
             <nav class="dock">
