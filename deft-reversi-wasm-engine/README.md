@@ -11,7 +11,7 @@ cargo install wasm-pack --locked
 wasm-pack build deft-reversi-wasm-engine --target web --release
 ```
 
-生成物は `deft-reversi-wasm-engine/pkg` に出力され、JavaScript と TypeScript の宣言を含みます。
+生成物は `deft-reversi-wasm-engine/pkg` に出力され、JavaScript と TypeScript の宣言を含みます。ワークスペースの `.cargo/config.toml` で WebAssembly SIMD を有効にしているため、SIMD に対応したブラウザが必要です。
 評価モデルはバンドルしません。v3/v4 JSON・bincode または DPR2 のモデルを別途配信してください。
 
 ## 利用例（module Web Worker 内）

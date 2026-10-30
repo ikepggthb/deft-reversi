@@ -1,0 +1,4 @@
+# Enable WebAssembly SIMD for the browser engine. Supported by current major
+# browsers; native builds and WASI targets are unaffected.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
