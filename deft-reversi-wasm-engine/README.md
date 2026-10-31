@@ -54,3 +54,5 @@ cargo test --workspace --release
 wasm-pack test --node deft-reversi-wasm-engine
 wasm-pack test --headless --chrome deft-reversi-wasm-engine
 ```
+
+WASMの盤面処理を高速化した仕組みとFFO 40〜49の計測結果は、[最適化の記録](OPTIMIZATION.md)を参照してください。
