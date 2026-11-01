@@ -1,0 +1,104 @@
+train engine pairs 229000 (all pairs 1032000), test 229000
+
+Stages 68 77 85 95 98 99%; wanted beyond rates 0.320 0.230 0.150 0.050 0.020 0.010
+
+## Held-out: Gaussian NLL (mid, exact)
+
+A today (cells + linear + table)    2.7013  2.9667
+B Edax form (quadratic)             2.7014  2.9693
+C Egaroucid form (cubic, exact x10)  2.7014  2.9673
+D log-linear                        2.7012  2.9645
+E G model (engine pairs)            2.7005  2.9646
+E' G model (all pairs)              2.7038  2.9654
+
+## Held-out: beyond measured t (mid)
+
+A today (cells + linear + table)    0.316 0.227 0.148 0.048 0.019 0.009
+B Edax form (quadratic)             0.316 0.227 0.148 0.048 0.019 0.009
+C Egaroucid form (cubic, exact x10)  0.316 0.227 0.148 0.048 0.019 0.009
+D log-linear                        0.316 0.227 0.149 0.048 0.019 0.009
+E G model (engine pairs)            0.316 0.227 0.148 0.048 0.019 0.009
+E' G model (all pairs)              0.316 0.227 0.149 0.048 0.019 0.009
+
+## Held-out: beyond measured t (exact)
+
+A today (cells + linear + table)    0.337 0.241 0.154 0.052 0.019 0.010
+B Edax form (quadratic)             0.334 0.241 0.152 0.053 0.020 0.009
+C Egaroucid form (cubic, exact x10)  0.333 0.242 0.153 0.054 0.019 0.009
+D log-linear                        0.334 0.241 0.154 0.052 0.019 0.009
+E G model (engine pairs)            0.332 0.241 0.151 0.050 0.017 0.009
+E' G model (all pairs)              0.328 0.242 0.148 0.051 0.018 0.009
+
+## Held-out: per-cell RMS relative error of the rate at 85%, 98% (mid | exact)
+
+A today (cells + linear + table)    0.182 0.358  0.182 0.439
+B Edax form (quadratic)             0.178 0.360  0.224 0.576
+C Egaroucid form (cubic, exact x10)  0.176 0.354  0.196 0.454
+D log-linear                        0.174 0.355  0.159 0.342
+E G model (engine pairs)            0.150 0.341  0.155 0.329
+E' G model (all pairs)              0.204 0.400  0.116 0.276
+
+## Extrapolation: exact fitted on 12..20, tested on 21..24 (beyond t, exact)
+
+A today (cells + linear + table)    0.340 0.251 0.167 0.056 0.025 0.012  2.9005
+B Edax form (quadratic)             0.272 0.180 0.110 0.038 0.012 0.004  2.9229
+C Egaroucid form (cubic, exact x10)  0.275 0.184 0.113 0.038 0.012 0.005  2.9207
+D log-linear                        0.340 0.244 0.156 0.057 0.025 0.012  2.9114
+E G model (engine pairs)            0.364 0.276 0.178 0.073 0.032 0.018  2.9199
+E' G model (all pairs)              0.353 0.263 0.164 0.065 0.025 0.016  2.9108
+
+## Extrapolation: midgame fitted on depth <= 11, tested on 12..14 (beyond t, mid)
+
+A today (cells + linear + table)    0.310 0.223 0.145 0.049 0.020 0.010  2.6574
+B Edax form (quadratic)             0.312 0.226 0.148 0.050 0.020 0.010  2.6575
+C Egaroucid form (cubic, exact x10)  0.314 0.228 0.149 0.050 0.020 0.010  2.6561
+D log-linear                        0.302 0.213 0.140 0.046 0.018 0.009  2.6583
+E G model (engine pairs)            0.326 0.237 0.157 0.053 0.022 0.010  2.6547
+E' G model (all pairs)              0.297 0.211 0.136 0.044 0.017 0.008  2.6571
+
+## Beyond the data: exact at 25..28 empties (480 positions), beyond t, mean error, RMS(z)
+
+A today (cells + linear + table)    0.290 0.202 0.125 0.040 0.017 0.008  1.0312  0.9571
+B Edax form (quadratic)             0.227 0.158 0.087 0.029 0.010 0.004  1.3591  0.8339
+C Egaroucid form (cubic, exact x10)  0.254 0.177 0.104 0.035 0.010 0.004  1.3591  0.8797
+D log-linear                        0.323 0.217 0.142 0.040 0.019 0.010  1.3591  0.9901
+E G model (engine pairs)            0.402 0.300 0.206 0.069 0.031 0.021  1.3591  1.1817
+E' G model (all pairs)              0.381 0.281 0.190 0.065 0.031 0.015  1.3591  1.0320
+
+## exact 25: model deviation, measured sd of the error, mean error
+
+A today (cells + linear + table)    4.7751  5.0207  1.5329
+B Edax form (quadratic)             5.5094  4.9637  1.6189
+C Egaroucid form (cubic, exact x10)  5.2472  4.9637  1.6189
+D log-linear                        4.7699  4.9637  1.6189
+E G model (engine pairs)            4.1085  4.9637  1.6189
+E' G model (all pairs)              4.5760  4.9637  1.6189
+
+## exact 26: model deviation, measured sd of the error, mean error
+
+A today (cells + linear + table)    4.4967  3.8532  0.4018
+B Edax form (quadratic)             5.0478  3.8699  0.7150
+C Egaroucid form (cubic, exact x10)  4.7908  3.8699  0.7150
+D log-linear                        4.3336  3.8699  0.7150
+E G model (engine pairs)            3.6704  3.8699  0.7150
+E' G model (all pairs)              4.2892  3.8699  0.7150
+
+## exact 27: model deviation, measured sd of the error, mean error
+
+A today (cells + linear + table)    4.7751  4.3335  1.4620
+B Edax form (quadratic)             5.7876  4.3724  1.7538
+C Egaroucid form (cubic, exact x10)  5.4808  4.3724  1.7538
+D log-linear                        4.7707  4.3724  1.7538
+E G model (engine pairs)            3.9520  4.3724  1.7538
+E' G model (all pairs)              4.4527  4.3724  1.7538
+
+## exact 28: model deviation, measured sd of the error, mean error
+
+A today (cells + linear + table)    4.4967  3.9460  0.7283
+B Edax form (quadratic)             5.3178  3.9386  1.3485
+C Egaroucid form (cubic, exact x10)  5.0046  3.9386  1.3485
+D log-linear                        4.3325  3.9386  1.3485
+E G model (engine pairs)            3.5186  3.9386  1.3485
+E' G model (all pairs)              4.1683  3.9386  1.3485
+
+G model (all pairs) parameters: [4.162, -1.1315, -0.7094, -0.9797, -0.2914, -0.0231, 1.5537, -0.5494]

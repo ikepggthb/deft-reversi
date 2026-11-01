@@ -1,0 +1,23 @@
+round 1: deft-1000 13.61s  deft-legacy 11.49s  edax-4.5.5 13.29s  egaroucid-7.8.1 12.97s
+round 2: deft-1000 13.58s  deft-legacy 11.47s  edax-4.5.5 13.27s  egaroucid-7.8.1 12.90s
+round 3: deft-1000 13.58s  deft-legacy 11.47s  edax-4.5.5 13.27s  egaroucid-7.8.1 12.92s
+round 4: deft-1000 13.59s  deft-legacy 11.48s  edax-4.5.5 13.26s  egaroucid-7.8.1 12.93s
+round 5: deft-1000 13.58s  deft-legacy 11.47s  edax-4.5.5 13.26s  egaroucid-7.8.1 12.93s
+round 6: deft-1000 13.58s  deft-legacy 11.47s  edax-4.5.5 13.34s  egaroucid-7.8.1 12.91s
+round 7: deft-1000 13.59s  deft-legacy 11.47s  edax-4.5.5 13.26s  egaroucid-7.8.1 12.92s
+round 8: deft-1000 13.60s  deft-legacy 11.48s  edax-4.5.5 13.27s  egaroucid-7.8.1 12.91s
+Median seconds per problem (nodes in parentheses), 1 thread, CPU 2, 8 rounds
+
+FFO  empties                 deft-1000               deft-legacy                edax-4.5.5           egaroucid-7.8.1
+ 40       20        0.115 (      6.4M)        0.115 (      6.4M)        0.134 (     10.0M)        0.125 (      9.4M)
+ 41       22        0.215 (     12.5M)        0.219 (     12.7M)        0.269 (     22.5M)        0.182 (     10.7M)
+ 42       22        0.323 (     19.9M)        0.324 (     19.9M)        0.341 (     25.3M)        0.230 (     15.4M)
+ 43       23        1.043 (     43.0M)        1.045 (     43.1M)        1.045 (     68.1M)        0.984 (     49.0M)
+ 44       23        0.197 (      8.5M)        0.205 (      8.8M)        0.308 (     19.7M)        0.154 (      6.9M)
+ 45       24        2.755 (    138.5M)        2.590 (    123.2M)        3.619 (    264.0M)        2.710 (    173.9M)
+ 46       24        0.848 (     44.3M)        0.884 (     44.7M)        0.750 (     57.1M)        0.565 (     31.8M)
+ 47       25        0.342 (     17.9M)        0.246 (     13.0M)        0.197 (     15.0M)        0.175 (      9.3M)
+ 48       25        2.186 (     88.7M)        2.404 (     98.5M)        2.059 (    139.9M)        2.258 (     82.5M)
+ 49       26        5.562 (    242.3M)        3.440 (    162.4M)        4.540 (    311.0M)        5.530 (    287.0M)
+total              13.584 (    622.1M)       11.472 (    532.7M)       13.269 (    932.6M)       12.917 (    675.9M)
+
