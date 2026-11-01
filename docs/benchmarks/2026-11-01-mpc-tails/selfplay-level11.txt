@@ -1,0 +1,4 @@
+A: 6.028e10 nodes 2410.5 s   B: 5.436e10 nodes 2226.2 s   A/B nodes 1.109 time 1.083
+A: mean midgame depth (>30 empties) 11.00  solved at 20-30 empties 18.2%  time-limited searches 0
+B: mean midgame depth (>30 empties) 11.00  solved at 20-30 empties 18.2%  time-limited searches 0
+games 2000  A wins 936 draws 116 losses 948  score 49.7%  elo -2 [-17, +13]  mean disc diff -0.07 ± 0.23

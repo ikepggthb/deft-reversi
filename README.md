@@ -28,7 +28,7 @@ cargo run --locked --release --example solve -- MODEL.bin POSITIONS.obf exact 1 
 
 ## 旧アプリケーション
 
-`deft-reversi-cli`、`deft-reversi-web`、`deft-reversi-learn` は移植前のソースとして保存し、ワークスペースから除外しています。旧エンジンは削除済みです。CLI・Webは旧APIに依存するため、新エンジンへの移植前にはビルドできません。学習処理も今回の検証対象には含めていません。
+`deft-reversi-train` はパターン評価の学習器です（[使い方](deft-reversi-train/README.md)）。`deft-reversi-cli`、`deft-reversi-web` は移植前のソースとして保存し、ワークスペースから除外しています。旧エンジンは削除済みです。CLI・Webは旧APIに依存するため、新エンジンへの移植前にはビルドできません。
 
 公開済みの[Web版](https://az.recazbowl.net/deft-reversi-web/index.html)は、ここで保存している旧アプリケーションに対応します。新エンジンへの移行は未実施です。
 

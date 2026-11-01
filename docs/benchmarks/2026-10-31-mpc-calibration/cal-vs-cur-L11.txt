@@ -1,0 +1,2 @@
+A: 5.473e10 nodes 1262.9 s   B: 7.087e10 nodes 1540.4 s   A/B nodes 0.772 time 0.820
+games 2000  A wins 980 draws 101 losses 919  score 51.5%  elo +11 [-5, +26]  mean disc diff +0.22 ± 0.38

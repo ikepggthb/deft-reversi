@@ -1,0 +1,1 @@
+games 1000  A wins 463 draws 64 losses 473  score 49.5%  elo -3 [-25, +18]  mean disc diff -0.06 ± 0.33

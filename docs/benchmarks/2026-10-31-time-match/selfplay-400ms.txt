@@ -1,0 +1,4 @@
+A: 6.901e10 nodes 4961.0 s   B: 7.279e10 nodes 5544.7 s   A/B nodes 0.948 time 0.895
+A: mean midgame depth (>30 empties) 17.64  solved at 20-30 empties 25.8%  time-limited searches 8764
+B: mean midgame depth (>30 empties) 16.95  solved at 20-30 empties 24.0%  time-limited searches 11305
+games 1000  A wins 474 draws 57 losses 469  score 50.2%  elo +2 [-20, +23]  mean disc diff -0.13 ± 0.36
