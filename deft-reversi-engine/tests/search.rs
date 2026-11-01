@@ -460,3 +460,67 @@ fn worker_runs_searches_in_the_background() {
         .unwrap();
     assert_eq!(result.score, Some(expected));
 }
+
+#[test]
+fn probcut_sigmas_set_the_cut_distance() {
+    // The zero model scores every position 0; the intercept predicts +2, so
+    // a near cut distance cuts at low windows and a far one never does.
+    let board = Board::new();
+    let rules: Vec<ProbCutRule> = (2..=8)
+        .flat_map(|depth| {
+            (depth..=60).map(move |empties| ProbCutRule {
+                exact: false,
+                depth,
+                empties,
+                shallow_depth: 1,
+                slope: 1.0,
+                intercept: 2.0,
+                deviation: 1.0,
+            })
+        })
+        .collect();
+    let request = depth(5).selectivity(Selectivity::Percent95);
+    let cuts = |sigmas: ProbCutSigmas| {
+        let mut engine = engine(1);
+        engine
+            .set_probcut_calibration(rules.clone(), sigmas)
+            .unwrap();
+        let mut settings = Vec::new();
+        engine.write_analysis_settings(&mut settings).unwrap();
+        (engine.search(board, &request).unwrap().stats, settings)
+    };
+    let near = ProbCutSigmas {
+        midgame: [0.001; 6],
+        exact: [100.0; 6],
+    };
+    let far = ProbCutSigmas {
+        midgame: [100.0; 6],
+        exact: [0.001; 6],
+    };
+    let (near_stats, near_settings) = cuts(near);
+    let (far_stats, _) = cuts(far);
+    assert!(near_stats.probcut_cuts > 0);
+    assert!(far_stats.probcut_tries > 0);
+    assert_eq!(far_stats.probcut_cuts, 0);
+
+    // The normal multiples are the default and leave the settings unchanged.
+    let (_, normal_settings) = cuts(ProbCutSigmas::NORMAL);
+    let mut engine = engine(1);
+    engine.set_probcut_rules(rules.clone()).unwrap();
+    let mut settings = Vec::new();
+    engine.write_analysis_settings(&mut settings).unwrap();
+    assert_eq!(settings, normal_settings);
+    assert_ne!(settings, near_settings);
+    assert_eq!(ProbCutSigmas::default(), ProbCutSigmas::NORMAL);
+
+    let mut decreasing = ProbCutSigmas::NORMAL;
+    decreasing.exact[5] = 1.0;
+    let mut nan = ProbCutSigmas::NORMAL;
+    nan.midgame[0] = f64::NAN;
+    for bad in [decreasing, nan] {
+        assert!(matches!(
+            engine.set_probcut_calibration(rules.clone(), bad),
+            Err(EngineError::InvalidCalibration(_))
+        ));
+    }
+}

@@ -59,7 +59,10 @@ pub use worker::{EngineWorker, SearchHandle};
 /// Model construction and search calibration, for evaluation and MPC tuning.
 #[cfg(feature = "tuning")]
 pub use {
-    evaluation::{PATTERN_COUNT, PHASE_COUNT, PatternModel, PatternPhase},
+    evaluation::{
+        FEATURE_COUNT, Features, MOBILITY_WEIGHT_COUNT, PATTERN_COUNT, PATTERN_WEIGHT_COUNT,
+        PHASE_COUNT, PatternModel, PatternPhase,
+    },
     mpc::{EvalSearchMpcConfig, FinalSearchMpcConfig, MpcConfig, MpcParams, MpcRegression},
-    search::ProbCutRule,
+    search::{ProbCutRule, ProbCutSigmas},
 };

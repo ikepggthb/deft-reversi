@@ -113,8 +113,10 @@ worker.with(|engine| engine.clear_tt())?;           // 探索中なら終わる�
 評価関数やMPCの調整に使う API。通常の利用では不要。
 
 - `PatternModel`・`PatternPhase`・`PATTERN_COUNT`・`PHASE_COUNT`、`Model::from_pattern`
+- 学習用の `Features::of(&board)`（段階・44個のパターン重みの位置・合法手数差の位置）と `PatternPhase::from_flat`。`Features` が指す重みの和を128で割って丸めると `PatternModel::evaluate` と一致する
 - `MpcConfig` とその構成要素、`Engine::mpc_config`・`set_mpc_config`
 - `ProbCutRule`・`Engine::set_probcut_rules`、旧 main の MPC を使う `Engine::set_legacy_main_mpc`
+- `ProbCutSigmas`・`Engine::set_probcut_calibration(rules, sigmas)`：選択率の段（68%〜99%）ごとに、deviation の何倍で刈るかを、中盤の規則と完全読みの規則で別々に与える。既定の `ProbCutSigmas::NORMAL` は正規分布の値（1.0・1.2・1.44・1.96・2.326・2.576）で、`set_probcut_rules` などはこれを使う。実際の誤差は正規分布より裾が重いので、`deft-reversi-train mpc` が測った値を渡すと、各段が名前どおりの確率で刈る。正規分布の値以外を使うと `write_analysis_settings` の出力に加わる
 
 ## 呼び出し側に任せるもの
 

@@ -535,9 +535,12 @@ impl Context {
         beta: i32,
         exact: bool,
     ) -> Result<Option<i32>, Aborted> {
-        let Some(sigma) = self.runtime.sigma() else {
+        if self.runtime.sigma().is_none() {
             return Ok(None);
-        };
+        }
+        // Selective iterations tag their quality with the stage plus one.
+        let stage = usize::from(self.runtime.quality.load(Ordering::Relaxed)).saturating_sub(1);
+        let sigma = self.runtime.sigmas.get(exact, stage.min(5));
         let Some(rule) = self
             .runtime
             .rules

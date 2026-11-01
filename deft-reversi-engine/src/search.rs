@@ -39,6 +39,7 @@ pub struct Engine {
     options: EngineOptions,
     generation: u8,
     calibration: Arc<[Option<ProbCutRule>]>,
+    sigmas: ProbCutSigmas,
     cache_sigma: Option<u64>,
     end_cache: EndgameCache,
     /// Tags the local endgame caches that are valid for the current state.
@@ -59,6 +60,7 @@ impl Engine {
         Ok(Self {
             model: Arc::new(pattern),
             calibration: indexed_rules(mpc.rules()),
+            sigmas: ProbCutSigmas::NORMAL,
             mpc: Some(mpc),
             metadata,
             table,
@@ -84,7 +86,7 @@ impl Engine {
             pattern,
             mpc,
         } = model;
-        self.set_rules(mpc.rules(), Some(mpc))?;
+        self.set_rules(mpc.rules(), ProbCutSigmas::NORMAL, Some(mpc))?;
         self.model = Arc::new(pattern);
         self.metadata = metadata;
         Ok(())
@@ -121,16 +123,31 @@ impl Engine {
     #[cfg(feature = "tuning")]
     pub fn set_mpc_config(&mut self, config: MpcConfig) -> Result<(), EngineError> {
         config.validate().map_err(EngineError::Model)?;
-        self.set_rules(config.rules(), Some(config))
+        self.set_rules(config.rules(), ProbCutSigmas::NORMAL, Some(config))
     }
     /// Use the MPC table from the legacy main-branch evaluator. This is an
     /// explicit opt-in for models converted from main's `data/eval/eval.json`.
     #[cfg(feature = "tuning")]
     pub fn set_legacy_main_mpc(&mut self) -> Result<(), EngineError> {
-        self.set_rules(crate::mpc::legacy_main_rules(), None)
+        self.set_rules(crate::mpc::legacy_main_rules(), ProbCutSigmas::NORMAL, None)
     }
+    /// Installs ProbCut rules with the normal deviation multiples.
     #[cfg(feature = "tuning")]
     pub fn set_probcut_rules(&mut self, rules: Vec<ProbCutRule>) -> Result<(), EngineError> {
+        self.set_probcut_calibration(rules, ProbCutSigmas::NORMAL)
+    }
+    /// Installs ProbCut rules with measured deviation multiples per stage.
+    #[cfg(feature = "tuning")]
+    pub fn set_probcut_calibration(
+        &mut self,
+        rules: Vec<ProbCutRule>,
+        sigmas: ProbCutSigmas,
+    ) -> Result<(), EngineError> {
+        if !sigmas.is_valid() {
+            return Err(EngineError::InvalidCalibration(
+                "ProbCut multiples must be positive, finite and non-decreasing",
+            ));
+        }
         for (i, r) in rules.iter().enumerate() {
             if r.empties > 60
                 || r.depth > r.empties
@@ -157,17 +174,19 @@ impl Engine {
                 ));
             }
         }
-        self.set_rules(rules, None)
+        self.set_rules(rules, sigmas, None)
     }
     /// Installs new ProbCut rules. Every cached result depends on them, so
     /// the tables are replaced first; on failure nothing changes.
     fn set_rules(
         &mut self,
         rules: Vec<ProbCutRule>,
+        sigmas: ProbCutSigmas,
         mpc: Option<MpcConfig>,
     ) -> Result<(), EngineError> {
         self.clear_tt()?;
         self.calibration = indexed_rules(rules);
+        self.sigmas = sigmas;
         self.mpc = mpc;
         self.cache_sigma = None;
         Ok(())
@@ -388,6 +407,7 @@ impl Engine {
             sigma: AtomicU64::new(target_sigma.map_or(0, f64::to_bits)),
             quality: AtomicU8::new(0),
             rules: self.calibration.clone(),
+            sigmas: self.sigmas,
             // Exact requests use selective stages only to seed the tables;
             // results below this bound are exact and reused by the final stage.
             cache_epoch: self.cache_epoch,
@@ -626,6 +646,13 @@ impl Engine {
                 rule.shallow_depth,
             ])?;
             for value in [rule.slope, rule.intercept, rule.deviation] {
+                out.write_all(&value.to_bits().to_le_bytes())?;
+            }
+        }
+        // Normal multiples write nothing, so earlier settings stay the same.
+        if self.sigmas != ProbCutSigmas::NORMAL {
+            out.write_all(b"sigmas")?;
+            for value in self.sigmas.midgame.iter().chain(&self.sigmas.exact) {
                 out.write_all(&value.to_bits().to_le_bytes())?;
             }
         }
