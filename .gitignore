@@ -4,5 +4,8 @@ __pycache__/
 
 todo_list.md
 
+# Models come from GitHub releases (model-*), not from git.
+data/eval/*.dpr2
+
 deft-reversi-cli/self-play*
 deft-reversi-cli/problem/test.obf
