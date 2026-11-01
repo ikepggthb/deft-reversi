@@ -70,7 +70,7 @@ ProbCut の係数は評価の精度で変わるので、採用するモデルご
 $T mpc -m runs/NAME/model.dpr2 --data $D --out runs/NAME/mpc --positions 1000 -t 8
 ```
 
-`rules.json` を `Engine::set_probcut_calibration` に渡して使う（段ごとの倍率も入っている）。止めても同じコマンドで続きから測る。比べるときは、同じ規則どうし、または校正後と main の規則（`set_legacy_main_mpc`）を並べる。lr 0.3 のモデルでは、固定レベルの探索が約6%速くなり、強さと完全読みの速さは変わらなかった（[記録](benchmarks/2026-10-31-mpc-calibration/README.md)）。
+できた `runs/NAME/mpc/model.dpr2`（重みと校正の1ファイル）を、そのままエンジンに渡して使う。止めても同じコマンドで続きから測る。比べるときは、同じ規則どうし、または校正後と main の規則（`set_legacy_main_mpc`）を並べる。lr 0.3 のモデルでは、固定レベルの探索が約6%速くなり、強さと完全読みの速さは変わらなかった（[記録](benchmarks/2026-10-31-mpc-calibration/README.md)）。
 
 ## 6. 探索の強さを確かめる
 

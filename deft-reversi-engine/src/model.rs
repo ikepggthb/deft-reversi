@@ -1,273 +1,249 @@
-//! Reference engine-file v3/v4 pattern models, with their MPC configuration.
+//! Model files: DPR2 pattern weights and, from version 2, their ProbCut
+//! calibration.
+//!
+//! Layout, little endian:
+//! - `DPR2`, then the version as u32 (1 or 2)
+//! - 60 phases of i16 weights: every pattern table back to back, 128
+//!   mobility weights, the bias
+//! - version 2 only: `MPC1`, the 12 deviation multiples as f64 (six midgame
+//!   stages, then six exact ones), the rule count as u32, and every rule as
+//!   exact (u8), depth (u8), empties (u8), shallow depth (u8), slope,
+//!   intercept and deviation (f64)
 use crate::{
-    evaluation::{PatternModel, PatternPhase},
-    mpc::MpcConfig,
+    evaluation::PatternModel,
+    search::{ProbCutRule, ProbCutSigmas, validate_calibration},
 };
-use bincode::Options;
-use serde::{Deserialize, Serialize};
-use std::{io, path::Path};
+use std::{
+    io::{self, Read, Write},
+    path::Path,
+};
 
 pub(crate) fn invalid_data(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModelMetadata {
-    pub eval_name: String,
-    pub eval_version: String,
-    pub trained_at: String,
-    pub engine_version: String,
-    pub git_commit: String,
-    pub n_data_set: u64,
-    pub n_iteration: u64,
-    pub score_scale: i32,
-    pub n_phases: usize,
-    pub n_patterns: usize,
-    pub pattern_schema_version: u32,
+/// The ProbCut rules of a model and the deviation multiple of each stage.
+#[derive(Clone, Debug)]
+pub(crate) struct Calibration {
+    pub rules: Vec<ProbCutRule>,
+    pub sigmas: ProbCutSigmas,
 }
 
-#[derive(Serialize, Deserialize)]
-pub(crate) struct PatternData {
-    pub phases: Vec<PhaseData>,
-}
-#[derive(Serialize, Deserialize)]
-pub(crate) struct PhaseData {
-    pub pattern_weights: Vec<Vec<i16>>,
-    pub mobility_weights: Vec<i16>,
-    pub bias: i16,
-}
-#[derive(Serialize, Deserialize)]
-enum BinaryEvaluator {
-    Pattern(PatternData),
-}
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
-enum HumanEvaluator {
-    Pattern(PatternData),
-}
-#[derive(Serialize, Deserialize)]
-struct BinaryFile {
-    format_version: u32,
-    metadata: ModelMetadata,
-    evaluator: BinaryEvaluator,
-    mpc: MpcConfig,
-}
-#[derive(Serialize, Deserialize)]
-struct HumanFile {
-    format_version: u32,
-    metadata: ModelMetadata,
-    evaluator: HumanEvaluator,
-    mpc: MpcConfig,
-}
-
-/// Evaluation weights with their MPC calibration, as loaded from a model file.
+/// Evaluation weights with their ProbCut calibration, if the file has one.
+/// Without a calibration the engine searches selectively only after rules
+/// are installed (`tuning`); full-width searches work either way.
 #[derive(Clone)]
 pub struct Model {
-    pub(crate) metadata: Option<ModelMetadata>,
     pub(crate) pattern: PatternModel,
-    pub(crate) mpc: MpcConfig,
+    pub(crate) calibration: Option<Calibration>,
 }
 impl Model {
-    /// Reads reference v3/v4 engine files (JSON or bincode), the legacy JSON
-    /// pattern wrapper, and weight-only DPR2. Files without an MPC
-    /// configuration get the reference default.
     pub fn from_file(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::from_bytes(&std::fs::read(path)?)
     }
-    pub fn metadata(&self) -> Option<&ModelMetadata> {
-        self.metadata.as_ref()
+    pub fn from_bytes(mut bytes: &[u8]) -> io::Result<Self> {
+        let mut header = [0; 8];
+        bytes.read_exact(&mut header)?;
+        if &header[..4] != b"DPR2" {
+            return Err(invalid_data("not a DPR2 model"));
+        }
+        let version = u32::from_le_bytes(header[4..].try_into().unwrap());
+        if !matches!(version, 1 | 2) {
+            return Err(invalid_data(format!("unsupported DPR2 version {version}")));
+        }
+        let pattern = PatternModel::read_phases(&mut bytes)?;
+        let calibration = if version == 2 {
+            Some(read_calibration(&mut bytes)?)
+        } else {
+            None
+        };
+        if !bytes.is_empty() {
+            return Err(invalid_data("trailing model data"));
+        }
+        Ok(Self {
+            pattern,
+            calibration,
+        })
     }
-    /// Weights alone, with the reference default MPC configuration.
+    /// Whether the file carried a ProbCut calibration.
+    pub fn has_calibration(&self) -> bool {
+        self.calibration.is_some()
+    }
+    /// Writes the model: version 2 with its calibration, version 1 without.
+    pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
+        let version: u32 = if self.calibration.is_some() { 2 } else { 1 };
+        out.write_all(b"DPR2")?;
+        out.write_all(&version.to_le_bytes())?;
+        self.pattern.write_phases(&mut out)?;
+        if let Some(c) = &self.calibration {
+            out.write_all(b"MPC1")?;
+            for v in c.sigmas.midgame.iter().chain(&c.sigmas.exact) {
+                out.write_all(&v.to_le_bytes())?;
+            }
+            out.write_all(&(c.rules.len() as u32).to_le_bytes())?;
+            for r in &c.rules {
+                out.write_all(&[u8::from(r.exact), r.depth, r.empties, r.shallow_depth])?;
+                for v in [r.slope, r.intercept, r.deviation] {
+                    out.write_all(&v.to_le_bytes())?;
+                }
+            }
+        }
+        Ok(())
+    }
+    /// Weights alone, without a calibration.
     #[cfg(feature = "tuning")]
     pub fn from_pattern(pattern: PatternModel) -> Self {
         Self {
-            metadata: None,
             pattern,
-            mpc: MpcConfig::default(),
+            calibration: None,
         }
     }
     #[cfg(feature = "tuning")]
     pub fn pattern(&self) -> &PatternModel {
         &self.pattern
     }
+    /// The model with this calibration, checked as `Engine` checks rules.
     #[cfg(feature = "tuning")]
-    pub fn mpc(&self) -> &MpcConfig {
-        &self.mpc
+    pub fn with_calibration(
+        mut self,
+        rules: Vec<ProbCutRule>,
+        sigmas: ProbCutSigmas,
+    ) -> Result<Self, crate::EngineError> {
+        validate_calibration(&rules, &sigmas)?;
+        self.calibration = Some(Calibration { rules, sigmas });
+        Ok(self)
     }
-    pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
-        if bytes.starts_with(b"DPR2") {
-            return Ok(Self {
-                metadata: None,
-                pattern: PatternModel::read_from(bytes)?,
-                mpc: MpcConfig::default(),
-            });
-        }
-        let (version, metadata, data, mpc) =
-            if bytes.iter().copied().find(|b| !b.is_ascii_whitespace()) == Some(b'{') {
-                let file: HumanFile = match serde_json::from_slice(bytes) {
-                    Ok(file) => file,
-                    Err(modern_error) => {
-                        #[derive(Deserialize)]
-                        struct Legacy {
-                            #[serde(default)]
-                            format_version: Option<u32>,
-                            evaluator: PatternData,
-                        }
-                        let legacy: Legacy = serde_json::from_slice(bytes)
-                            .map_err(|_| invalid_data(modern_error))?;
-                        if legacy.format_version.is_some() {
-                            return Err(invalid_data("invalid modern engine file"));
-                        }
-                        return Ok(Self {
-                            metadata: None,
-                            pattern: legacy.evaluator.into_model()?,
-                            mpc: MpcConfig::default(),
-                        });
-                    }
-                };
-                let HumanEvaluator::Pattern(data) = file.evaluator;
-                (file.format_version, file.metadata, data, file.mpc)
-            } else {
-                let file: BinaryFile = bincode::DefaultOptions::new()
-                    .with_fixint_encoding()
-                    .with_limit(bytes.len() as u64)
-                    .reject_trailing_bytes()
-                    .deserialize(bytes)
-                    .map_err(invalid_data)?;
-                let BinaryEvaluator::Pattern(data) = file.evaluator;
-                (file.format_version, file.metadata, data, file.mpc)
-            };
-        if !matches!(version, 3 | 4)
-            || metadata.score_scale != 128
-            || metadata.n_phases != 60
-            || metadata.n_patterns != 11
-            || metadata.pattern_schema_version != 1
-            || metadata.eval_name.is_empty()
-            || metadata.eval_version.is_empty()
-        {
-            return Err(invalid_data("unsupported pattern engine metadata/schema"));
-        }
-        mpc.validate()?;
-        Ok(Self {
-            metadata: Some(metadata),
-            pattern: data.into_model()?,
-            mpc,
-        })
+    /// The calibration's rules and multiples, if the model has one.
+    #[cfg(feature = "tuning")]
+    pub fn calibration(&self) -> Option<(&[ProbCutRule], ProbCutSigmas)> {
+        self.calibration.as_ref().map(|c| (&c.rules[..], c.sigmas))
     }
 }
-impl PatternData {
-    fn into_model(self) -> io::Result<PatternModel> {
-        let phases = self
-            .phases
-            .into_iter()
-            .map(|phase| {
-                let mobility = phase
-                    .mobility_weights
-                    .try_into()
-                    .map_err(|_| invalid_data("requires 128 mobility weights"))?;
-                PatternPhase::new(phase.pattern_weights, mobility, phase.bias).map_err(invalid_data)
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        PatternModel::new(phases).map_err(invalid_data)
+
+fn read_calibration(input: &mut &[u8]) -> io::Result<Calibration> {
+    let mut tag = [0; 4];
+    input.read_exact(&mut tag)?;
+    if &tag != b"MPC1" {
+        return Err(invalid_data("missing ProbCut calibration"));
     }
+    let mut f64s = |n: usize| -> io::Result<Vec<f64>> {
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let mut b = [0; 8];
+            input.read_exact(&mut b)?;
+            out.push(f64::from_le_bytes(b));
+        }
+        Ok(out)
+    };
+    let s = f64s(12)?;
+    let sigmas = ProbCutSigmas {
+        midgame: s[..6].try_into().unwrap(),
+        exact: s[6..].try_into().unwrap(),
+    };
+    let mut count = [0; 4];
+    input.read_exact(&mut count)?;
+    let count = u32::from_le_bytes(count) as usize;
+    // Every (exact, depth, empties) triple at most once.
+    if count > 2 * 61 * 61 {
+        return Err(invalid_data("too many ProbCut rules"));
+    }
+    let mut rules = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut head = [0; 4];
+        input.read_exact(&mut head)?;
+        if head[0] > 1 {
+            return Err(invalid_data("invalid ProbCut rule"));
+        }
+        let mut v = [0.0; 3];
+        for x in &mut v {
+            let mut b = [0; 8];
+            input.read_exact(&mut b)?;
+            *x = f64::from_le_bytes(b);
+        }
+        rules.push(ProbCutRule {
+            exact: head[0] == 1,
+            depth: head[1],
+            empties: head[2],
+            shallow_depth: head[3],
+            slope: v[0],
+            intercept: v[1],
+            deviation: v[2],
+        });
+    }
+    validate_calibration(&rules, &sigmas).map_err(invalid_data)?;
+    Ok(Calibration { rules, sigmas })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Board, Engine, EngineOptions};
-    #[test]
-    fn reference_binary_v3_v4_and_json_load_weights_metadata_and_mpc_together() {
-        let metadata = ModelMetadata {
-            eval_name: "test".into(),
-            eval_version: "1".into(),
-            trained_at: String::new(),
-            engine_version: String::new(),
-            git_commit: String::new(),
-            n_data_set: 5,
-            n_iteration: 7,
-            score_scale: 128,
-            n_phases: 60,
-            n_patterns: 11,
-            pattern_schema_version: 1,
-        };
-        let mut mpc = MpcConfig::default();
-        mpc.eval_search.b.constant = 4.25;
-        mpc.final_search.a.constant = 1.125;
-        let sizes = [10u32, 10, 10, 8, 8, 9, 10, 9, 6, 7, 8].map(|n| 3usize.pow(n));
-        let data = PatternData {
-            phases: (0..60)
-                .map(|phase| PhaseData {
-                    pattern_weights: sizes.iter().map(|&n| vec![0; n]).collect(),
-                    mobility_weights: vec![0; 128],
-                    bias: (phase + 1) * 128,
-                })
-                .collect(),
-        };
-        let mut file = BinaryFile {
-            format_version: 4,
-            metadata: metadata.clone(),
-            evaluator: BinaryEvaluator::Pattern(data),
-            mpc: mpc.clone(),
-        };
-        let mut bytes = bincode::serialize(&file).unwrap();
-        for version in [3u32, 4] {
-            bytes[..4].copy_from_slice(&version.to_le_bytes());
-            let engine = Engine::new(
-                Model::from_bytes(&bytes).unwrap(),
-                EngineOptions::default().tt_mib(1),
-            )
-            .unwrap();
-            assert_eq!(engine.metadata(), Some(&metadata));
-            assert_eq!(engine.mpc_config(), Some(&mpc));
-            let model = Model::from_bytes(&bytes).unwrap();
-            let board = Board::new();
-            assert_eq!(model.pattern.evaluate(&board), 1);
-            assert_eq!(model.pattern.evaluate(&board.board_after_move(1 << 19)), 2);
+    use crate::Board;
+
+    fn model_with_bias() -> PatternModel {
+        let mut bytes = b"DPR2\x01\x00\x00\x00".to_vec();
+        for phase in 0..60i16 {
+            let n = crate::evaluation::PATTERN_WEIGHT_COUNT + 128;
+            bytes.extend(std::iter::repeat_n(0u8, n * 2));
+            bytes.extend(((phase + 1) * 128).to_le_bytes());
         }
-        file.mpc.eval_search.search_lv_by_depth[4] = 4;
-        assert!(Model::from_bytes(&bincode::serialize(&file).unwrap()).is_err());
-        file.mpc = mpc.clone();
-        bytes.push(0);
-        assert!(Model::from_bytes(&bytes).is_err());
-        drop(bytes);
-        let BinaryEvaluator::Pattern(data) = file.evaluator;
-        let mut file = HumanFile {
-            format_version: 4,
-            metadata,
-            evaluator: HumanEvaluator::Pattern(data),
-            mpc: mpc.clone(),
-        };
-        let json = serde_json::to_vec(&file).unwrap();
-        let decoded = Model::from_bytes(&json).unwrap();
-        assert_eq!(decoded.mpc.eval_search.b.constant, 4.25);
-        assert_eq!(decoded.mpc.final_search.a.constant, 1.125);
-        // JSON's parser follows the reference serde_json configuration; allow
-        // its decimal-to-f64 rounding while requiring the same regression.
-        for empties in 12..=60 {
-            let actual = decoded.mpc.final_search.params(empties);
-            let expected = mpc.final_search.params(empties);
-            assert_eq!(actual.lv, expected.lv);
-            assert!((actual.a - expected.a).abs() < 1e-12);
-            assert!((actual.b - expected.b).abs() < 1e-12);
-            assert!((actual.e_std - expected.e_std).abs() < 1e-12);
-        }
-        assert_eq!(decoded.pattern.evaluate(&Board::new()), 1);
-        file.mpc.final_search.search_lv_by_empties[12] = 12;
-        assert!(Model::from_bytes(&serde_json::to_vec(&file).unwrap()).is_err());
+        Model::from_bytes(&bytes).unwrap().pattern
     }
+
     #[test]
-    fn mpc_settings_reject_invalid_depth_tables_and_preserve_signed_regression() {
-        let mut config = MpcConfig::default();
-        config.eval_search.search_lv_by_depth.pop();
-        assert!(config.validate().is_err());
-        let mut config = MpcConfig::default();
-        config.final_search.e_std.constant = -100.0;
-        assert!(
-            config
-                .rules()
-                .iter()
-                .any(|rule| rule.exact && rule.deviation < 0.0)
-        );
+    fn version_one_and_two_round_trip_with_and_without_calibration() {
+        let pattern = model_with_bias();
+        let plain = Model {
+            pattern: pattern.clone(),
+            calibration: None,
+        };
+        let mut v1 = Vec::new();
+        plain.write_to(&mut v1).unwrap();
+        assert_eq!(&v1[..8], b"DPR2\x01\x00\x00\x00");
+        let read = Model::from_bytes(&v1).unwrap();
+        assert!(!read.has_calibration());
+        let board = Board::new();
+        assert_eq!(read.pattern.evaluate(&board), 1);
+        assert_eq!(read.pattern.evaluate(&board.board_after_move(1 << 19)), 2);
+
+        let mut sigmas = ProbCutSigmas::NORMAL;
+        sigmas.exact[5] = 3.0;
+        let rules = crate::mpc::legacy_main_rules();
+        let calibrated = Model {
+            pattern,
+            calibration: Some(Calibration {
+                rules: rules.clone(),
+                sigmas,
+            }),
+        };
+        let mut v2 = Vec::new();
+        calibrated.write_to(&mut v2).unwrap();
+        assert_eq!(&v2[..8], b"DPR2\x02\x00\x00\x00");
+        assert_eq!(&v2[..v1.len()][8..], &v1[8..]);
+        let read = Model::from_bytes(&v2).unwrap();
+        let c = read.calibration.unwrap();
+        assert_eq!(c.sigmas, sigmas);
+        assert_eq!(c.rules.len(), rules.len());
+        assert!(c.rules.iter().zip(&rules).all(|(a, b)| a.exact == b.exact
+            && (a.depth, a.empties, a.shallow_depth) == (b.depth, b.empties, b.shallow_depth)
+            && a.slope.to_bits() == b.slope.to_bits()
+            && a.intercept.to_bits() == b.intercept.to_bits()
+            && a.deviation.to_bits() == b.deviation.to_bits()));
+
+        // Truncated, trailing, unknown and inconsistent files are rejected.
+        assert!(Model::from_bytes(&v2[..v2.len() - 1]).is_err());
+        let mut longer = v2.clone();
+        longer.push(0);
+        assert!(Model::from_bytes(&longer).is_err());
+        let mut v3 = v2.clone();
+        v3[4] = 3;
+        assert!(Model::from_bytes(&v3).is_err());
+        assert!(Model::from_bytes(b"{\"format_version\":4}").is_err());
+        let mut bad_sigma = v2.clone();
+        let at = v1.len() + 4;
+        bad_sigma[at..at + 8].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(Model::from_bytes(&bad_sigma).is_err());
+        let mut v2_without = v1.clone();
+        v2_without[4] = 2;
+        assert!(Model::from_bytes(&v2_without).is_err());
     }
 }

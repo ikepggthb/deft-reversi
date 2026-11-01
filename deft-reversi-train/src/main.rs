@@ -28,6 +28,8 @@ enum Command {
     Eval(eval::EvalArgs),
     /// Calibrate ProbCut (MPC) for a model.
     Mpc(mpc::MpcArgs),
+    /// Write a model with a ProbCut calibration in one file.
+    Pack(mpc::PackArgs),
 }
 
 fn main() {
@@ -36,6 +38,7 @@ fn main() {
         Command::Export(args) => train::export(&args),
         Command::Eval(args) => eval::run(args),
         Command::Mpc(args) => mpc::run(args),
+        Command::Pack(args) => mpc::pack(args),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

@@ -29,12 +29,12 @@ impl Drop for Temp {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+/// The zero model with the legacy main rules, so selective analyses run.
 fn engine() -> Engine {
-    Engine::new(
-        Model::from_pattern(PatternModel::zero()),
-        EngineOptions::default().tt_mib(1),
-    )
-    .unwrap()
+    let model = Model::from_pattern(PatternModel::zero())
+        .with_calibration(legacy_main_rules(), ProbCutSigmas::NORMAL)
+        .unwrap();
+    Engine::new(model, EngineOptions::default().tt_mib(1)).unwrap()
 }
 fn actions(b: Board) -> Vec<Action> {
     let mut a: Vec<_> = b.legal_moves().map(Action::Place).collect();

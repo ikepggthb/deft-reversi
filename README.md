@@ -20,10 +20,10 @@ cargo clippy --locked --all-targets -- -D warnings
 
 Rust 1.99.1を `rust-toolchain.toml` で固定し、依存関係はルートの `Cargo.lock` で固定しています。rustfmtとClippyも同じツールチェーンの構成要素として指定しています。
 
-モデルは呼び出し元が指定します。元のv3/v4パターンモデル（JSON・bincode）をMPC設定とともに直接読み込めます。NNUEは対象外です。
+モデルは呼び出し元が指定します。形式は DPR2 の1ファイルで、重みと ProbCut の校正を持ちます（[エンジンの README](deft-reversi-engine/README.md#モデルとmpc)）。NNUEは対象外です。
 
 ```sh
-cargo run --locked --release --example solve -- MODEL.bin POSITIONS.obf exact 1 256
+cargo run --locked --release --example solve -- MODEL.dpr2 POSITIONS.obf exact 1 256
 ```
 
 ## 旧アプリケーション

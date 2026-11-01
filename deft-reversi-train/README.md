@@ -18,7 +18,7 @@ $T export --work runs/p1 --out runs/p1/model-k64.dpr2 --shrink 64
 # test 分割で、エンジンの評価値と最終石差の平均絶対誤差を比べる
 $T eval -m old.dpr2 -m runs/p1/model.dpr2 --data egaroucid_rd_data_set
 
-# モデルの MPC（ProbCut）を校正し、runs/p1/mpc/rules.json に書く
+# モデルの MPC（ProbCut）を校正し、校正入りのモデル runs/p1/mpc/model.dpr2 を書く
 $T mpc -m runs/p1/model.dpr2 --data egaroucid_rd_data_set --out runs/p1/mpc --positions 1000
 ```
 
@@ -52,10 +52,10 @@ ProbCut は、浅い探索の値 v から深い探索の値を `slope × v + int
 - 中盤の規則（深さ d の探索）：`--split` の局面を、空きマス数（`--empties`、既定 12〜52）ごとに `--positions` 局面（既定64）選ぶ。中盤と終盤で同じ局面を使う。それぞれ深さ0〜`--max-depth`（既定14）を完全な幅で探索し、d = 4〜14 の値をその浅い深さ（参照実装の表）の値と組にする。(空きマス数, d) ごとに最小二乗で直線を引いて、残差の標準偏差を求める。それらを参照実装と同じ回帰式（空きマス数・d・浅い深さの1次式）にまとめ、すべての深さの規則にする。外挿した deviation は、測った値の範囲に収める。
 - 終盤の規則（完全読み）：`--exact-empties`（既定 12〜24）の空きマス数の局面は完全読みもし、浅い探索（main の表の深さ）の値と組にする。空きマス数ごとの値をそのまま使い、それより多い空きマス数は、最後に測った同じ偶奇の値を使う（main の表と同じ）。
 - 段ごとの倍率：ProbCut は、予測の誤差が deviation の t 倍を超えると読み違えるとして、段（68%〜99%）ごとに t を決める。エンジンの既定の t は正規分布の値だが、実際の誤差は裾が重く、99% の段で想定の約2倍を超える。そこで、すべての組の |深い値 − 予測| / deviation を並べ、各段の確率の分位点を t とする（中盤と完全読みで別々）。
-- 出力：`positions.tsv`（局面ごとの深さ0〜`--max-depth` の値と完全読みの値）、`cells.tsv`（空きマス数・深さごとの直線と回帰式の値）、`tails.tsv`（段ごとの t と、正規分布の t・測った t をそれぞれ超えた割合。空きマス数の帯ごと）、`rules.json`（`{"sigmas": {"midgame": [...], "exact": [...]}, "rules": [...]}`。`Engine::set_probcut_calibration` に渡す）。`--fit-only` で、`positions.tsv` から当てはめだけをやり直す。
+- 出力：`positions.tsv`（局面ごとの深さ0〜`--max-depth` の値と完全読みの値）、`cells.tsv`（空きマス数・深さごとの直線と回帰式の値）、`tails.tsv`（段ごとの t と、正規分布の t・測った t をそれぞれ超えた割合。空きマス数の帯ごと）、`rules.json`（`{"sigmas": {"midgame": [...], "exact": [...]}, "rules": [...]}`）、`model.dpr2`（校正入りのモデル）。`--fit-only` で、`positions.tsv` から当てはめだけをやり直す。
 - 測った局面は、ジョブが終わるたびに `positions.tsv` に書き足す。止まっても、同じコマンドで続きから測る。`--positions` を増やすと、同じ並びの続きの局面を足す。測った条件（split・seed・深さ・完全読みの範囲・モデルの大きさ）が違うとエラーにする。
 
-モデルのファイル形式（DPR2、v3/v4）は `rules.json` の形の規則を持てない。いまは呼び出し側が読み込んで渡す。
+`model.dpr2` は、元のモデルの重みに校正を付けたもの（DPR2 版2）で、エンジンはこれだけで校正を使う。別に作った `rules.json` を付けるには `pack --model M --rules rules.json --out M2` を使う。旧 main から変換したモデルには `pack --legacy-main` で旧 main の規則を付ける。
 
 ## 作業ディレクトリ
 
@@ -76,4 +76,4 @@ ProbCut は、浅い探索の値 v から深い探索の値を `slope × v + int
 - 以前の「バッチ」は1局面ずつの更新で、勾配を 1/バッチサイズ 倍していただけだった（AdaGrad では学習率がほぼ変わらない）。いまはバッチを持たず、1局面ずつの更新であることをそのまま書いている。
 - 以前の検証は valid を石数の小さい順に先頭20万件だけ読み、実際には石数12前後しか検証していなかった。いまは段階ごとに valid 全体で検証する。
 - `--limit` のために全件の番号の配列を作っていた処理を、段階ごとのシャッフルと切り詰めにした。
-- 出力は v3/v4 の代わりに DPR2（重みだけ）。MPC の校正は `mpc` サブコマンドで別に行う。
+- 出力は v3/v4 の代わりに DPR2。`train` は重みだけ（版1）を書き、`mpc` が校正を付けた版2を書く。

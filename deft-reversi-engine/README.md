@@ -12,7 +12,8 @@
 - `worker`: 探索を別スレッドで動かす `EngineWorker`。
 - `search/api`: 要求・結果・進捗・停止・統計・エラー。
 - `search.rs`: モデルと資源の所有、反復深化、最大24手の終盤準備探索と選択性の段階移行、アスピレーション窓。
-- `model` / `mpc`: 元のv3/v4パターンモデルとMPC設定の同時読込、回帰係数・深さ表、元の既定設定。
+- `model`: DPR2 形式のモデル（重みと、版2では ProbCut の校正）の読み書き。
+- `mpc`: 旧 main の ProbCut 規則（旧 main から変換したモデル用）。
 - `search/root`: ルート候補ごとの境界、アスピレーションの安定化、最善手順の継承。
 - `search/level`: 元のレベルからの深さ・選択率・終盤への移行と序盤補正。
 - `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。
@@ -38,7 +39,7 @@ UI、対局履歴、定石、持ち時間の配分、ファイルパスの決定
 use deft_reversi_engine::{Engine, EngineOptions, Goal, Model, Position, SearchRequest};
 use std::time::Duration;
 
-let mut engine = Engine::new(Model::from_file("eval-v4.bin")?, EngineOptions::default().threads(4))?;
+let mut engine = Engine::new(Model::from_file("model.dpr2")?, EngineOptions::default().threads(4))?;
 let position: Position = "---------------------------OX------XO--------------------------- X".parse()?;
 let request = SearchRequest::new(Goal::Level(16)).time_limit(Duration::from_secs(1));
 let result = engine.search(&position, &request)?;
@@ -52,7 +53,7 @@ let result = engine.search(&position, &request)?;
 - `Goal::Level(n)` は元の1〜60のレベルの探索方式、選択率、序盤補正を適用する。範囲外はエラー。
 - `selectivity` は元の68/77/85/95/98/99/100%の7段階。`result.kind` は最後に完了した反復の深さと選択率を表す。
 - `Goal::Depth(n)` は着手数基準。パスでは深さを減らさない。
-- `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。元の既定MPC設定または読込モデルのMPC設定で、その前に元実装と同じ選択性の段階で準備探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
+- `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。モデルに校正があれば、その前に元実装と同じ選択性の段階で準備探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
 - 選択率を下げた `Goal::Endgame` はMPCを使う終盤探索で、完全読みの保証を持たない。
 - 中断した完全読み要求の結果は、準備段階の `Depth` や選択的な `Endgame` になることがある。完全読みかどうかは `result.is_solved()` で判定する。
 - `score == None` は完了反復がない状態。合法な代替手は返す。深さ0の着手は探索で選んだ最善手ではない。
@@ -61,22 +62,27 @@ let result = engine.search(&position, &request)?;
 - 停止要求と並列カットは別状態。配布した仕事を回収してから戻る。停止・時刻の確認は最大256ノード間隔。ノード上限は各ノードで予約し、超過しない。
 - StopHandleは一方向。再要求には新しいSearchRequestを使う。
 - 局所TTは要求中のContextが所有し、主スレッド分をEngineで再利用する。各層は必要時に確保し、最大約384 KiB。メインTTのMiB指定とは別の作業領域。
-- `clear_tt` は主表・PV表・局所表を無効化する。`set_model` は全表を無効化し、新しいモデルのMPC設定に切り替える。
+- `clear_tt` は主表・PV表・局所表を無効化する。`set_model` は全表を無効化し、新しいモデルの校正に切り替える。
 - 通常窓のTTカット後もPVを返せるよう、PV表・主表の候補を使って確定値に到達する手を検証する。この復元も探索時間とノード予算に含む。スコア確定後、PV復元中に上限へ達した場合は、確定スコアを保持したまま停止理由と取得済みPVを返す。
 - `all_moves()` は最後に完了した反復と同じ深さ・選択率で、ルートの全手を窓 [-64, 64] で探索し直す。途中で止まった場合は `moves` を空にする。
 
 ## モデルとMPC
 
-`Model::from_file` / `Model::from_bytes` は元のv3/v4パターンモデル（JSON・bincode）から、重み・メタデータ・MPC設定をまとめて読み込む。変換やsidecarの手動設定は不要。パターンの構成、位相、スケール、評価の丸め方は維持する。NNUEは対象外。
+モデルは DPR2 形式の1ファイルで、`Model::from_file` / `Model::from_bytes` で読む。形式の詳細は `src/model.rs` の先頭にある。
 
-旧JSONパターンラッパーと重みだけのDPR2は、元の既定MPC設定で読む。モデル固有の設定を持つ場合は、元の統合モデルファイルを直接読む。DPR2の `.mpc.tsv` は自動では読まない。DPR2は重みだけの互換形式として引き続き使用できる。変換ツール `tools/convert_pattern_v2.py` も残すが、通常の利用・性能比較では元のモデルファイルを使う。
+- 版1：重みだけ。60段階の i16 の重み（パターン表・合法手数差・バイアス）。
+- 版2：重みのあとに ProbCut の校正（`MPC1`、段ごとの倍率12個、規則の表）を持つ。`deft-reversi-train mpc` と `pack` が書き出す。
+
+校正のあるモデルは、`Engine::new` するだけで、その規則と倍率で選択的に探索する。校正のないモデル（版1）は、枝刈りなしの探索だけができる。選択的な探索（レベル、選択率を下げた要求）は、校正不足のエラーになる。NNUE は対象外。
+
+旧エンジンの v3/v4 形式（JSON・bincode）は読まない。必要なら `tools/convert_pattern_v2.py` で DPR2 の重みに変換し、`deft-reversi-train pack` で校正を付ける。
 
 以下は `tuning` feature を有効にしたときだけ使える。
 
-- `Engine::mpc_config()` で読込設定を取得し、`set_mpc_config` で元と同じ回帰係数・深さ表を変更できる。確認探索の深さは、実際に使う各表の範囲で本探索より浅い必要がある。不正な設定は読込時と設定時に拒否する。MPCは通常窓にも適用し、浅い確認探索にはTTや再帰的なMPCを使わない。係数は元の式で展開し、実行時は直接参照する。回帰式を外挿した結果の負の偏差も、元設定と同じ符号のまま保持する。
-- `Model::from_pattern(PatternModel)` は重みだけのモデルを元の既定MPC設定で作る。
-- `set_probcut_rules` は個別ルールを明示する。この場合、回帰係数形式の設定がないため `mpc_config()` はNone。`set_probcut_rules(Vec::new())` は校正を空にする。完全読みでは全段階MPCなしとなり、選択的探索を要求した場合は校正不足のエラーになる。
-- 旧 `main` の `data/eval/eval.json` は `tools/convert_legacy_eval.py` で変換できる。変換済みの旧モデルには `engine.set_legacy_main_mpc()?` を明示して `main` のMPC係数表を使える。表はモデルに埋め込まれていないため、別のモデルには自動適用しない。切替時にはTTを無効化し、`mpc_config()` は `None` を返す。例のsolveでは `--legacy-main-mpc` を指定する。
+- `Model::from_pattern(PatternModel)` は校正のないモデルを作る。`Model::with_calibration(rules, sigmas)` で校正を付け、`Model::write_to` で書き出す。`Model::calibration()` で中身を読む。
+- `set_probcut_rules`・`set_probcut_calibration` は、エンジンの規則を差し替える（比較・診断用）。`set_probcut_rules(Vec::new())` は校正を空にする。
+- `set_legacy_main_mpc` は、旧 main の規則に差し替える。旧 main から変換したモデルは、`deft-reversi-train pack --legacy-main` で規則を埋め込んでおけば、指定しなくてよい。例の solve では `--legacy-main-mpc` で指定できる。
+- `legacy_main_rules()` は旧 main の規則を返す。
 
 ## 検証
 

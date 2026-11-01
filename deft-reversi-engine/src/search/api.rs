@@ -324,7 +324,6 @@ impl ProbCutSigmas {
             self.midgame[stage]
         }
     }
-    #[cfg(feature = "tuning")]
     pub(crate) fn is_valid(&self) -> bool {
         [self.midgame, self.exact].iter().all(|s| {
             s.iter().all(|v| v.is_finite() && *v > 0.0) && s.windows(2).all(|w| w[0] <= w[1])

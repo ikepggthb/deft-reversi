@@ -37,7 +37,8 @@ pub struct MpcArgs {
     data: PathBuf,
     #[arg(long, default_value = "valid")]
     split: String,
-    /// Writes `positions.tsv`, `cells.tsv` and `rules.json` here.
+    /// Writes `positions.tsv`, `cells.tsv`, `tails.tsv`, `rules.json` and
+    /// `model.dpr2` (the model with this calibration) here.
     #[arg(long)]
     out: PathBuf,
     /// Positions per empties count.
@@ -171,6 +172,46 @@ impl From<Rule> for ProbCutRule {
     }
 }
 
+#[derive(Args, Debug)]
+pub struct PackArgs {
+    /// The model whose weights to keep (any DPR2 version).
+    #[arg(short, long)]
+    model: PathBuf,
+    /// The calibration written by `mpc` (`rules.json`).
+    #[arg(long, conflicts_with = "legacy_main")]
+    rules: Option<PathBuf>,
+    /// The legacy main-branch rules, for models converted from main.
+    #[arg(long)]
+    legacy_main: bool,
+    /// The model with the calibration (DPR2 version 2).
+    #[arg(short, long)]
+    out: PathBuf,
+}
+
+/// Writes a model with its ProbCut calibration in one file.
+pub fn pack(args: PackArgs) -> Result<()> {
+    let model = Model::from_file(&args.model)?;
+    let model = match (&args.rules, args.legacy_main) {
+        (Some(path), false) => {
+            let c: Calibration = serde_json::from_slice(&fs::read(path)?)?;
+            model.with_calibration(
+                c.rules.into_iter().map(Into::into).collect(),
+                c.sigmas.into(),
+            )?
+        }
+        (None, true) => model.with_calibration(
+            deft_reversi_engine::legacy_main_rules(),
+            ProbCutSigmas::NORMAL,
+        )?,
+        _ => return Err("give --rules or --legacy-main".into()),
+    };
+    let mut bytes = Vec::new();
+    model.write_to(&mut bytes)?;
+    fs::write(&args.out, bytes)?;
+    println!("{} written with its calibration", args.out.display());
+    Ok(())
+}
+
 pub fn run(args: MpcArgs) -> Result<()> {
     fs::create_dir_all(&args.out)?;
     if args.max_depth < 4 || args.max_depth > 60 {
@@ -184,15 +225,14 @@ pub fn run(args: MpcArgs) -> Result<()> {
     let samples = pairs(&positions);
     let (rules, report) = fit(&samples)?;
     let (sigmas, tails) = tail_sigmas(&samples, &rules)?;
-    // The engine checks the calibration the same way when it is installed.
-    let mut engine = Engine::new(
-        Model::from_file(&args.model)?,
-        EngineOptions::default().tt_mib(1),
-    )?;
-    engine.set_probcut_calibration(
+    // The model checks the calibration as the engine does.
+    let model = Model::from_file(&args.model)?.with_calibration(
         rules.iter().copied().map(Into::into).collect(),
         sigmas.into(),
     )?;
+    let mut packed = Vec::new();
+    model.write_to(&mut packed)?;
+    fs::write(args.out.join("model.dpr2"), packed)?;
     fs::write(args.out.join("cells.tsv"), report)?;
     fs::write(args.out.join("tails.tsv"), tails)?;
     fs::write(

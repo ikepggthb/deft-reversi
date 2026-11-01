@@ -1,7 +1,10 @@
 use deft_reversi_engine::*;
 use std::time::Duration;
+/// The zero model with the legacy main rules, so selective searches run.
 fn model() -> Model {
     Model::from_pattern(PatternModel::zero())
+        .with_calibration(legacy_main_rules(), ProbCutSigmas::NORMAL)
+        .unwrap()
 }
 fn engine(threads: usize) -> Engine {
     Engine::new(model(), EngineOptions::default().threads(threads).tt_mib(1)).unwrap()

@@ -165,9 +165,34 @@ impl PatternModel {
         raw += i32::from(weights.mobility[mobility_index(moves, board)]);
         (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
     }
-    /// DPR2 version 1: LE i16, 60 phases, 11 fixed-schema tables, mobility, bias.
+    /// DPR2 version 1, weights only. `Model::write_to` also writes the
+    /// calibration (version 2); see `model.rs` for the layout.
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
         out.write_all(b"DPR2\x01\x00\x00\x00")?;
+        self.write_phases(&mut out)
+    }
+    /// Reads DPR2 version 1. `Model::from_file` reads both versions.
+    pub fn read_from(mut input: impl Read) -> io::Result<Self> {
+        let mut magic = [0; 8];
+        input.read_exact(&mut magic)?;
+        if &magic != b"DPR2\x01\x00\x00\x00" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported pattern model/schema",
+            ));
+        }
+        let model = Self::read_phases(&mut input)?;
+        let mut extra = [0];
+        if input.read(&mut extra)? != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "trailing model data",
+            ));
+        }
+        Ok(model)
+    }
+    /// The 60 phases: LE i16 pattern tables, mobility, bias.
+    pub(crate) fn write_phases(&self, mut out: impl Write) -> io::Result<()> {
         let mut bytes = Vec::with_capacity((TOTAL_PATTERN_WEIGHTS + 129) * 2);
         for phase in self.phases.iter() {
             bytes.clear();
@@ -183,15 +208,7 @@ impl PatternModel {
         }
         Ok(())
     }
-    pub fn read_from(mut input: impl Read) -> io::Result<Self> {
-        let mut magic = [0; 8];
-        input.read_exact(&mut magic)?;
-        if &magic != b"DPR2\x01\x00\x00\x00" {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unsupported pattern model/schema",
-            ));
-        }
+    pub(crate) fn read_phases(mut input: impl Read) -> io::Result<Self> {
         let mut phases = Vec::with_capacity(PHASE_COUNT);
         let mut bytes = vec![0; (TOTAL_PATTERN_WEIGHTS + 129) * 2];
         for _ in 0..PHASE_COUNT {
@@ -209,13 +226,6 @@ impl PatternModel {
                 mobility,
                 bias,
             });
-        }
-        let mut extra = [0];
-        if input.read(&mut extra)? != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "trailing model data",
-            ));
         }
         Ok(Self::new(phases).unwrap())
     }
