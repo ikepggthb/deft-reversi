@@ -30,6 +30,20 @@ pub(super) fn level_plan(empties: u8, level: u8) -> (SearchMode, Selectivity) {
         ),
     }
 }
+/// What `Goal::Level(level)` reads from a position with `empties` empty
+/// squares, as its final iteration would report it; for showing a level's
+/// plan without searching. `level` must be 1..=60.
+pub fn level_reading(level: u8, empties: u8) -> ResultKind {
+    match level_plan(empties, level) {
+        (SearchMode::Depth(depth), selectivity) => ResultKind::Depth {
+            depth: depth.min(empties),
+            selectivity,
+        },
+        (SearchMode::Exact | SearchMode::SelectiveEndgame, selectivity) => {
+            ResultKind::Endgame { selectivity }
+        }
+    }
+}
 fn level_to_config(n_empties: i32, level: i32) -> Config {
     // レベルが上がるほど、より空きマスの多い局面から終盤探索へ移る。
     // Final の引数が小さい段階は、MPC を強く使う選択的な終盤探索である。
@@ -199,5 +213,16 @@ mod tests {
             (SearchMode::Depth(12), Selectivity::Percent95)
         );
         assert_eq!(level_plan(60, 60).0, SearchMode::Exact);
+    }
+    #[test]
+    fn level_reading_matches_the_plan() {
+        let depth = |depth, selectivity| ResultKind::Depth { depth, selectivity };
+        let endgame = |selectivity| ResultKind::Endgame { selectivity };
+        assert_eq!(level_reading(24, 60), depth(20, Selectivity::Percent95));
+        assert_eq!(level_reading(24, 40), depth(24, Selectivity::Percent85));
+        assert_eq!(level_reading(24, 33), endgame(Selectivity::Percent77));
+        assert_eq!(level_reading(24, 24), endgame(Selectivity::Full));
+        assert_eq!(level_reading(1, 50), depth(1, Selectivity::Full));
+        assert_eq!(level_reading(1, 2), endgame(Selectivity::Full));
     }
 }

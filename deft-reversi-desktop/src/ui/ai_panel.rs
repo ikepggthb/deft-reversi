@@ -1,0 +1,136 @@
+//! The right column. Until analysis (P4) it holds one line at the bottom:
+//! what the AI is doing and the controls for it.
+use super::{root::RootView, theme, widgets};
+use crate::{
+    app::{Command, EngineStatus, Status},
+    i18n::Strings,
+    services::engine::{Reading, Report},
+};
+use gpui::{Context, Div, SharedString, div, prelude::*, px};
+
+fn reading_text(s: &Strings, reading: Reading) -> String {
+    match reading {
+        Reading::Depth {
+            depth,
+            percent: 100,
+        } => s.depth(depth),
+        Reading::Depth { depth, percent } => format!("{} @ {percent}%", s.depth(depth)),
+        Reading::Endgame { percent: 100 } => s.exact.into(),
+        Reading::Endgame { percent } => format!("{} @ {percent}%", s.selective_endgame),
+    }
+}
+
+fn nodes_text(nodes: u64) -> String {
+    match nodes {
+        n if n >= 1_000_000_000 => format!("{:.1} G", n as f64 / 1e9),
+        n if n >= 1_000_000 => format!("{:.1} M", n as f64 / 1e6),
+        n if n >= 1_000 => format!("{:.0} K", n as f64 / 1e3),
+        n => n.to_string(),
+    }
+}
+
+fn report_text(s: &Strings, report: &Report) -> String {
+    let mut parts = Vec::new();
+    if let Some(reading) = report.reading {
+        parts.push(reading_text(s, reading));
+    }
+    parts.push(format!("{:.1} s", report.elapsed.as_secs_f64()));
+    parts.push(nodes_text(report.nodes));
+    parts.join(" · ")
+}
+
+impl RootView {
+    pub(super) fn render_ai(&self, cx: &mut Context<Self>) -> Div {
+        let s = self.settings.lang.strings();
+        let c = &self.controller;
+        let muted =
+            |text: SharedString| div().text_xs().text_color(theme::text_muted()).child(text);
+
+        let mut lines: Vec<gpui::AnyElement> = Vec::new();
+        if !self.has_engine() {
+            lines.push(muted(s.model_missing.into()).into_any_element());
+        } else {
+            match c.engine() {
+                EngineStatus::Loading => lines.push(muted(s.ai_loading.into()).into_any_element()),
+                EngineStatus::Unavailable(error) => {
+                    lines.push(muted(format!("{}: {error}", s.ai_failed).into()).into_any_element())
+                }
+                EngineStatus::Ready => {}
+            }
+        }
+        if let Some(notice) = c.notice() {
+            lines.push(
+                div()
+                    .text_xs()
+                    .text_color(theme::danger())
+                    .child(notice.to_string())
+                    .into_any_element(),
+            );
+        }
+        if let Some(thinking) = c.thinking() {
+            let detail = thinking.report.as_ref().map(|r| report_text(s, r));
+            lines.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(div().size(px(6.)).rounded_full().bg(theme::thinking_dot()))
+                            .child(format!("{} {}", s.color(thinking.color), s.thinking))
+                            .child(div().flex_1())
+                            .child(widgets::link(
+                                "move-now",
+                                s.move_now,
+                                widgets::handler(|this, cx| this.run(Command::MoveNow, cx)),
+                                cx,
+                            )),
+                    )
+                    .children(detail.map(|d| muted(d.into())))
+                    .into_any_element(),
+            );
+        }
+        if c.has_ai() && !c.history().current().is_terminal() {
+            let controls = match c.status() {
+                Status::Playing => div().flex().flex_row().child(widgets::link(
+                    "pause",
+                    s.pause,
+                    widgets::handler(|this, cx| this.run(Command::Pause, cx)),
+                    cx,
+                )),
+                Status::Paused => div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(div().text_color(theme::text_muted()).child(s.paused))
+                    .child(div().flex_1())
+                    .when(c.ai_to_move().is_some(), |el| {
+                        el.child(widgets::link(
+                            "step-ai",
+                            s.step_ai,
+                            widgets::handler(|this, cx| this.run(Command::StepAi, cx)),
+                            cx,
+                        ))
+                    })
+                    .child(widgets::link(
+                        "resume",
+                        s.resume,
+                        widgets::handler(|this, cx| this.run(Command::Resume, cx)),
+                        cx,
+                    )),
+            };
+            lines.push(controls.into_any_element());
+        }
+        div()
+            .flex()
+            .flex_col()
+            .justify_end()
+            .gap(px(8.))
+            .children(lines)
+    }
+}

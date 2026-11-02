@@ -6,9 +6,11 @@ mod app;
 mod domain;
 mod engine_loader;
 mod i18n;
+mod services;
 mod ui;
 
 use gpui::{App, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
+use services::engine::EngineService;
 use std::time::Instant;
 use ui::RootView;
 
@@ -22,7 +24,12 @@ fn main() {
             engine_loader::MODEL_FILE
         );
     }
-    let loading = model_path.map(engine_loader::spawn);
+    let engine = model_path.map(|path| {
+        let resources = engine_loader::default_resources();
+        EngineService::spawn(move || {
+            engine_loader::backend(path, resources).map(|backend| (backend, resources))
+        })
+    });
 
     gpui_platform::application().run(move |cx: &mut App| {
         ui::bind_keys(cx);
@@ -33,7 +40,7 @@ fn main() {
             ..Default::default()
         };
         cx.open_window(options, |window, cx| {
-            cx.new(|cx| RootView::new(launched, loading, window, cx))
+            cx.new(|cx| RootView::new(launched, engine, window, cx))
         })
         .expect("failed to open the main window");
         cx.on_window_closed(|cx, _| {

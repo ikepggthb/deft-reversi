@@ -1,19 +1,11 @@
-//! Loads the model and builds the engine off the UI thread.
-use deft_reversi_engine::{Engine, EngineOptions, EngineWorker, Model};
+//! Finds the model and builds engines from it on the `engine-ctl` thread.
+use crate::services::engine::{EngineBackend, Resources};
+use deft_reversi_engine::{Engine, EngineOptions, Model};
 use std::{
     path::{Path, PathBuf},
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
-
-pub struct Loaded {
-    pub worker: EngineWorker,
-    pub model_path: PathBuf,
-    pub model_time: Duration,
-    pub engine_time: Duration,
-    pub threads: usize,
-    pub tt_mib: usize,
-}
 
 /// Leaves one logical CPU for the UI, and caps the default at 8 threads.
 pub fn default_threads() -> usize {
@@ -22,6 +14,13 @@ pub fn default_threads() -> usize {
 }
 
 pub const DEFAULT_TT_MIB: usize = 128;
+
+pub fn default_resources() -> Resources {
+    Resources {
+        threads: default_threads(),
+        tt_mib: DEFAULT_TT_MIB,
+    }
+}
 
 /// The release asset of the GitHub release `model-v2-pattern-lr0.3`.
 pub const MODEL_FILE: &str = "deft-eval-v2-pattern-lr0.3.dpr2";
@@ -44,40 +43,27 @@ pub fn find_model() -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// Starts loading at once; the result arrives on the returned channel.
-pub fn spawn(model_path: PathBuf) -> async_channel::Receiver<Result<Loaded, String>> {
-    let (sender, receiver) = async_channel::bounded(1);
-    let spawned = thread::Builder::new()
-        .name("engine-load".into())
-        .spawn(move || {
-            let _ = sender.send_blocking(load(model_path));
-        });
-    if let Err(error) = spawned {
-        eprintln!("engine-load thread: {error}");
-    }
-    receiver
-}
-
-fn load(model_path: PathBuf) -> Result<Loaded, String> {
-    let start = Instant::now();
-    let model = Model::from_file(&model_path)
-        .map_err(|error| format!("{}: {error}", model_path.display()))?;
-    let model_time = start.elapsed();
-
-    let threads = default_threads();
-    let start = Instant::now();
-    let options = EngineOptions::default()
-        .threads(threads)
-        .tt_mib(DEFAULT_TT_MIB);
-    let engine = Engine::new(model, options).map_err(|error| error.to_string())?;
-    let engine_time = start.elapsed();
-
-    Ok(Loaded {
-        worker: EngineWorker::new(engine),
-        model_path,
-        model_time,
-        engine_time,
-        threads,
-        tt_mib: DEFAULT_TT_MIB,
+/// Reads the model again for each engine, so a resource change does not keep
+/// a second copy of it in memory meanwhile.
+pub fn backend(model_path: PathBuf, resources: Resources) -> Result<EngineBackend, String> {
+    EngineBackend::new(resources, move |resources| {
+        let start = Instant::now();
+        let model = Model::from_file(&model_path)
+            .map_err(|error| format!("{}: {error}", model_path.display()))?;
+        let model_time = start.elapsed();
+        let start = Instant::now();
+        let options = EngineOptions::default()
+            .threads(resources.threads)
+            .tt_mib(resources.tt_mib);
+        let engine = Engine::new(model, options).map_err(|error| error.to_string())?;
+        eprintln!(
+            "[engine] model {} ms, engine {} ms ({} threads, TT {} MiB) from {}",
+            model_time.as_millis(),
+            start.elapsed().as_millis(),
+            resources.threads,
+            resources.tt_mib,
+            model_path.display(),
+        );
+        Ok(engine)
     })
 }

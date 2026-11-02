@@ -1,28 +1,34 @@
 //! The left column: disc counts with the side to move, the move number or
 //! the result, and the record.
-use super::{root::RootView, theme};
-use crate::app::Command;
+use super::{new_game::strength_label, root::RootView, theme};
+use crate::{app::Command, domain::Player};
 use deft_reversi_engine::{Action, Color, Position};
 use gpui::{ClickEvent, Context, Div, FontWeight, SharedString, div, prelude::*, px};
 
 /// The number of the move that leads to `position`'s next disc; it counts
 /// discs, so it also works from an edited start.
-fn move_number(position: Position) -> usize {
+pub(super) fn move_number(position: Position) -> usize {
     let discs = position.disc_count(Color::Black) + position.disc_count(Color::White);
     discs as usize - 3
 }
 
 impl RootView {
     pub(super) fn render_record(&self, cx: &mut Context<Self>) -> Div {
-        let s = self.lang.strings();
+        let s = self.settings.lang.strings();
         let history = self.controller.history();
         let position = history.current();
         let finished = position.is_terminal();
 
+        let players = self.controller.players();
         let count = |color: Color, disc| {
             // The side to move is underlined instead of being named.
             let to_move = !finished && position.side_to_move() == color;
-            div()
+            // Only an AI is labelled; a person needs no name here.
+            let label = match players[if color == Color::Black { 0 } else { 1 }] {
+                Player::Ai(strength) => Some(format!("{} · {}", s.ai, strength_label(s, strength))),
+                Player::Human => None,
+            };
+            let count = div()
                 .flex()
                 .flex_row()
                 .items_center()
@@ -51,7 +57,18 @@ impl RootView {
                         .text_2xl()
                         .font_weight(FontWeight::MEDIUM)
                         .child(position.disc_count(color).to_string()),
-                )
+                );
+            div()
+                .flex()
+                .flex_col()
+                .child(count)
+                .children(label.map(|l| {
+                    div()
+                        .mt(px(3.))
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(l)
+                }))
         };
         let state: SharedString = if finished {
             match position.final_score(Color::Black) {

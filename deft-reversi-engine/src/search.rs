@@ -20,6 +20,7 @@ use session::*;
 mod endgame;
 use endgame::{EndgameCache, new_cache_epoch};
 mod level;
+pub use level::level_reading;
 mod ordering;
 mod pv;
 mod root;

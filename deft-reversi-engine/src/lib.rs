@@ -51,7 +51,7 @@ pub use model::Model;
 pub use position::{Color, ParsePositionError, Position};
 pub use search::{
     Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, SearchRequest,
-    SearchResult, SearchStats, Selectivity, StopHandle, StopReason,
+    SearchResult, SearchStats, Selectivity, StopHandle, StopReason, level_reading,
 };
 pub use types::{Action, Moves, Square};
 pub use worker::{EngineWorker, SearchHandle};

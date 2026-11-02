@@ -1,6 +1,6 @@
 //! The board with its coordinates, and the record navigation below it.
 use super::{root::RootView, theme};
-use crate::app::Command;
+use crate::app::{Command, Status};
 use deft_reversi_engine::Square;
 use gpui::{ClickEvent, Context, MouseButton, Pixels, Rgba, Window, div, prelude::*, px};
 
@@ -17,6 +17,10 @@ impl RootView {
         let position = history.current();
         let legal = position.legal_moves();
         let last_move = history.last_move();
+        // While an AI plays this side the board takes no clicks; paused, the
+        // user may play either side.
+        let playable =
+            self.controller.ai_to_move().is_none() || self.controller.status() == Status::Paused;
         let cursor = self
             .board_focus
             .is_focused(window)
@@ -74,11 +78,13 @@ impl RootView {
                                 .bg(theme::last_move_dot()),
                         );
                     }
-                } else if legal.contains(square) {
+                } else if playable && legal.contains(square) {
                     el = el
                         .cursor_pointer()
                         .hover(|style| style.bg(theme::board_hover()))
-                        .child(div().size(cell * 0.2).rounded_full().bg(theme::legal_dot()))
+                        .when(self.settings.show_legal_moves, |el| {
+                            el.child(div().size(cell * 0.2).rounded_full().bg(theme::legal_dot()))
+                        })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.run(Command::Play(square), cx)
                         }));

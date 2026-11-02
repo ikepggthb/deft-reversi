@@ -1,11 +1,34 @@
 //! The controller: commands in, state changes and effects out. It does not
-//! touch GPUI, so it is tested without a window.
-use crate::domain::{Grouping, History};
-use deft_reversi_engine::{Action, Position, Square};
+//! touch GPUI or threads, so it is tested without a window or an engine.
+use crate::{
+    domain::{Grouping, History, Player, Strength},
+    services::engine::{EngineEvent, Report, Resources, SearchId, SearchJob},
+};
+use deft_reversi_engine::{Action, Color, Position, Square};
+use std::time::Duration;
+
+/// Between two AI moves when both colours are AI, so the game can be followed.
+const AI_VS_AI_PAUSE: Duration = Duration::from_millis(250);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NewGame {
+    /// Black, then White.
+    pub players: [Player; 2],
+    pub start: Position,
+}
+
+impl Default for NewGame {
+    fn default() -> Self {
+        Self {
+            players: [Player::Human, Player::Ai(Strength::default())],
+            start: Position::initial(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    NewGame,
+    NewGame(NewGame),
     Play(Square),
     Undo,
     Redo,
@@ -15,6 +38,13 @@ pub enum Command {
     Last,
     /// Shows the position after that many actions.
     GoTo(usize),
+    Resume,
+    Pause,
+    /// One AI move while paused.
+    StepAi,
+    /// Plays the AI's best move so far.
+    MoveNow,
+    SetResources(Resources),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,20 +55,84 @@ pub enum Sound {
 }
 
 /// Work for the services; sounds are played from P6.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
+    /// Sent to the engine after `delay`.
+    StartSearch {
+        job: SearchJob,
+        delay: Duration,
+    },
+    CancelSearch,
+    MoveNow,
+    ClearTt,
+    Reconfigure(Resources),
     Sound(Sound),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// AI players move by themselves.
+    Playing,
+    /// Nothing moves until the user resumes or plays.
+    Paused,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EngineStatus {
+    Loading,
+    Ready,
+    Unavailable(String),
+}
+
+#[derive(Clone, Debug)]
+pub struct Thinking {
+    id: SearchId,
+    revision: u64,
+    /// Stays paused after the move.
+    single_step: bool,
+    pub color: Color,
+    pub report: Option<Report>,
 }
 
 pub struct Controller {
     history: History,
+    players: [Player; 2],
+    status: Status,
+    engine: EngineStatus,
+    /// Grows with every change of the record or the players, so a search
+    /// result can be checked against the state it was asked for.
+    revision: u64,
+    next_search: u64,
+    thinking: Option<Thinking>,
+    notice: Option<String>,
 }
 
 impl Default for Controller {
     fn default() -> Self {
+        let new_game = NewGame::default();
         Self {
-            history: History::new(Position::initial()),
+            history: History::new(new_game.start),
+            players: new_game.players,
+            status: Status::Playing,
+            engine: EngineStatus::Loading,
+            revision: 0,
+            next_search: 1,
+            thinking: None,
+            notice: None,
         }
+    }
+}
+
+fn index(color: Color) -> usize {
+    match color {
+        Color::Black => 0,
+        Color::White => 1,
+    }
+}
+
+impl Thinking {
+    pub fn id(&self) -> SearchId {
+        self.id
     }
 }
 
@@ -47,61 +141,307 @@ impl Controller {
         &self.history
     }
 
-    /// Returns no effects when the command changes nothing.
+    pub fn players(&self) -> [Player; 2] {
+        self.players
+    }
+
+    pub fn status(&self) -> Status {
+        self.status
+    }
+
+    pub fn engine(&self) -> &EngineStatus {
+        &self.engine
+    }
+
+    pub fn thinking(&self) -> Option<&Thinking> {
+        self.thinking.as_ref()
+    }
+
+    /// The last search error, until the next command.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    pub fn has_ai(&self) -> bool {
+        self.players.iter().any(|p| p.is_ai())
+    }
+
+    /// The AI's strength when an AI is to move in the shown position.
+    pub fn ai_to_move(&self) -> Option<Strength> {
+        let position = self.history.current();
+        if position.is_terminal() {
+            return None;
+        }
+        match self.players[index(position.side_to_move())] {
+            Player::Ai(strength) => Some(strength),
+            Player::Human => None,
+        }
+    }
+
     pub fn apply(&mut self, command: Command) -> Vec<Effect> {
-        let history = &mut self.history;
+        self.notice = None;
+        let mut effects = Vec::new();
         match command {
-            Command::NewGame => *history = History::new(Position::initial()),
-            Command::Play(square) => {
-                if history
-                    .play(Action::Place(square), Grouping::NewGroup)
-                    .is_err()
+            Command::NewGame(new_game) => {
+                self.cancel(&mut effects);
+                self.history = History::new(new_game.start);
+                self.players = new_game.players;
+                self.status = Status::Playing;
+                self.revision += 1;
+                effects.push(Effect::ClearTt);
+            }
+            Command::Play(square) => self.play_human(square, &mut effects),
+            Command::Undo => self.navigate(History::undo, &mut effects),
+            Command::Redo => self.navigate(History::redo, &mut effects),
+            Command::Step(steps) => self.navigate(|h| h.step(steps), &mut effects),
+            Command::First => self.navigate(|h| h.go_to(0), &mut effects),
+            Command::Last => self.navigate(|h| h.go_to(usize::MAX), &mut effects),
+            Command::GoTo(index) => self.navigate(|h| h.go_to(index), &mut effects),
+            Command::Resume => self.status = Status::Playing,
+            Command::Pause => {
+                self.cancel(&mut effects);
+                self.status = Status::Paused;
+            }
+            Command::StepAi => {
+                if self.status == Status::Paused
+                    && self.thinking.is_none()
+                    && self.engine == EngineStatus::Ready
+                    && let Some(strength) = self.ai_to_move()
                 {
-                    return Vec::new();
+                    self.start_search(strength, true, &mut effects);
                 }
-                // The move is the last action unless it forced a pass.
-                return vec![Effect::Sound(if history.current().is_terminal() {
-                    Sound::GameOver
-                } else if history.actions().last() == Some(&Action::Pass) {
-                    Sound::Pass
-                } else {
-                    Sound::Place
-                })];
             }
-            Command::Undo => {
-                history.undo();
+            Command::MoveNow => {
+                if self.thinking.is_some() {
+                    effects.push(Effect::MoveNow);
+                }
             }
-            Command::Redo => {
-                history.redo();
-            }
-            Command::Step(steps) => {
-                history.step(steps);
-            }
-            Command::First => {
-                history.go_to(0);
-            }
-            Command::Last => {
-                history.go_to(usize::MAX);
-            }
-            Command::GoTo(index) => {
-                history.go_to(index);
+            Command::SetResources(resources) => {
+                self.cancel(&mut effects);
+                self.engine = EngineStatus::Loading;
+                effects.push(Effect::Reconfigure(resources));
             }
         }
-        Vec::new()
+        self.autoplay(&mut effects);
+        effects
+    }
+
+    pub fn on_engine(&mut self, event: EngineEvent) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        match event {
+            EngineEvent::Ready { .. } => self.engine = EngineStatus::Ready,
+            EngineEvent::LoadFailed(error) => {
+                self.thinking = None;
+                self.engine = EngineStatus::Unavailable(error);
+            }
+            EngineEvent::ReconfigureFailed(error) => {
+                self.engine = EngineStatus::Ready;
+                self.notice = Some(error);
+            }
+            EngineEvent::Progress { id, report } => {
+                if let Some(thinking) = self.thinking.as_mut().filter(|t| t.id == id) {
+                    thinking.report = Some(report);
+                }
+            }
+            EngineEvent::Finished { id, report } => {
+                if let Some(thinking) = self.take_thinking(id) {
+                    self.play_ai(thinking, report.best_move, &mut effects);
+                }
+            }
+            EngineEvent::Failed { id, error } => {
+                if self.take_thinking(id).is_some() {
+                    self.status = Status::Paused;
+                    self.notice = Some(error);
+                }
+            }
+        }
+        self.autoplay(&mut effects);
+        effects
+    }
+
+    /// The running search if `id` is it and nothing changed since it began.
+    fn take_thinking(&mut self, id: SearchId) -> Option<Thinking> {
+        let current = self.thinking.as_ref()?;
+        if current.id != id {
+            return None;
+        }
+        let thinking = self.thinking.take()?;
+        (thinking.revision == self.revision).then_some(thinking)
+    }
+
+    fn play_human(&mut self, square: Square, effects: &mut Vec<Effect>) {
+        let human_turn = !self.history.current().is_terminal() && self.ai_to_move().is_none();
+        // While paused, the user may also play the AI's side to explore.
+        if !human_turn && self.status != Status::Paused {
+            return;
+        }
+        if !self.history.current().legal_moves().contains(square) {
+            return;
+        }
+        self.cancel(effects);
+        self.record(Action::Place(square), Grouping::NewGroup, effects);
+        if human_turn {
+            self.status = Status::Playing;
+        }
+    }
+
+    fn play_ai(
+        &mut self,
+        thinking: Thinking,
+        best_move: Option<Action>,
+        effects: &mut Vec<Effect>,
+    ) {
+        let position = self.history.current();
+        let legal = match best_move {
+            Some(Action::Place(square)) => position.legal_moves().contains(square),
+            _ => false,
+        };
+        if !legal || position.side_to_move() != thinking.color {
+            self.status = Status::Paused;
+            return;
+        }
+        // An AI reply undoes together with the human move before it.
+        let grouping = if self.players.iter().all(|p| p.is_ai()) {
+            Grouping::NewGroup
+        } else {
+            Grouping::Join
+        };
+        self.record(best_move.expect("checked legal"), grouping, effects);
+        if thinking.single_step {
+            self.status = Status::Paused;
+        }
+    }
+
+    fn record(&mut self, action: Action, grouping: Grouping, effects: &mut Vec<Effect>) {
+        self.history
+            .play(action, grouping)
+            .expect("the caller checked the move");
+        self.revision += 1;
+        effects.push(Effect::Sound(if self.history.current().is_terminal() {
+            Sound::GameOver
+        } else if self.history.actions().last() == Some(&Action::Pass) {
+            Sound::Pass
+        } else {
+            Sound::Place
+        }));
+    }
+
+    /// Moving through the record stops the AI; play resumes on request.
+    fn navigate(&mut self, step: impl FnOnce(&mut History) -> bool, effects: &mut Vec<Effect>) {
+        if !step(&mut self.history) {
+            return;
+        }
+        self.cancel(effects);
+        self.revision += 1;
+        if self.has_ai() {
+            self.status = Status::Paused;
+        }
+    }
+
+    fn cancel(&mut self, effects: &mut Vec<Effect>) {
+        if self.thinking.take().is_some() {
+            effects.push(Effect::CancelSearch);
+        }
+    }
+
+    /// The only place a move search starts by itself.
+    fn autoplay(&mut self, effects: &mut Vec<Effect>) {
+        if self.status != Status::Playing
+            || self.thinking.is_some()
+            || self.engine != EngineStatus::Ready
+        {
+            return;
+        }
+        if let Some(strength) = self.ai_to_move() {
+            self.start_search(strength, false, effects);
+        }
+    }
+
+    fn start_search(&mut self, strength: Strength, single_step: bool, effects: &mut Vec<Effect>) {
+        let id = SearchId(self.next_search);
+        self.next_search += 1;
+        let position = self.history.current();
+        self.thinking = Some(Thinking {
+            id,
+            revision: self.revision,
+            single_step,
+            color: position.side_to_move(),
+            report: None,
+        });
+        let both_ai = self.players.iter().all(|p| p.is_ai());
+        effects.push(Effect::StartSearch {
+            job: SearchJob {
+                id,
+                position,
+                spec: strength.spec(),
+            },
+            delay: if both_ai && !single_step {
+                AI_VS_AI_PAUSE
+            } else {
+                Duration::ZERO
+            },
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Preset;
 
-    fn play(controller: &mut Controller, name: &str) -> Vec<Effect> {
-        controller.apply(Command::Play(name.parse().unwrap()))
+    const AI: Player = Player::Ai(Strength::Preset(Preset::Beginner));
+
+    fn ready(players: [Player; 2]) -> Controller {
+        let mut c = Controller::default();
+        c.on_engine(EngineEvent::Ready {
+            resources: Resources {
+                threads: 1,
+                tt_mib: 1,
+            },
+            load_time: Duration::ZERO,
+        });
+        c.apply(Command::NewGame(NewGame {
+            players,
+            start: Position::initial(),
+        }));
+        c
+    }
+
+    fn play(c: &mut Controller, name: &str) -> Vec<Effect> {
+        c.apply(Command::Play(name.parse().unwrap()))
+    }
+
+    fn started(effects: &[Effect]) -> Option<SearchId> {
+        effects.iter().find_map(|e| match e {
+            Effect::StartSearch { job, .. } => Some(job.id),
+            _ => None,
+        })
+    }
+
+    /// The engine answers `id` with the first legal move.
+    fn finish(c: &mut Controller, id: SearchId) -> Vec<Effect> {
+        let best = c
+            .history()
+            .current()
+            .legal_moves()
+            .next()
+            .map(Action::Place);
+        c.on_engine(EngineEvent::Finished {
+            id,
+            report: Report {
+                best_move: best,
+                score: Some(0),
+                reading: None,
+                pv: Vec::new(),
+                nodes: 0,
+                elapsed: Duration::ZERO,
+            },
+        })
     }
 
     #[test]
     fn local_game_with_undo_and_navigation() {
-        let mut c = Controller::default();
+        let mut c = ready([Player::Human, Player::Human]);
         assert_eq!(play(&mut c, "f5"), vec![Effect::Sound(Sound::Place)]);
         assert!(play(&mut c, "a1").is_empty());
         play(&mut c, "d6");
@@ -109,7 +449,6 @@ mod tests {
         c.apply(Command::Undo);
         assert_eq!(c.history().cursor(), 2);
         c.apply(Command::First);
-        assert_eq!(c.history().cursor(), 0);
         c.apply(Command::Step(2));
         assert_eq!(c.history().cursor(), 2);
         c.apply(Command::Last);
@@ -117,7 +456,89 @@ mod tests {
         c.apply(Command::GoTo(1));
         play(&mut c, "f4");
         assert_eq!(c.history().actions().len(), 2);
-        c.apply(Command::NewGame);
-        assert_eq!(c.history().actions().len(), 0);
+        assert_eq!(c.status(), Status::Playing);
+    }
+
+    #[test]
+    fn the_ai_answers_and_undo_takes_back_both_moves() {
+        let mut c = ready([Player::Human, AI]);
+        let id = started(&play(&mut c, "f5")).expect("the AI starts");
+        // The human cannot move for the AI.
+        assert!(play(&mut c, "f6").is_empty());
+        finish(&mut c, id);
+        assert_eq!(c.history().actions().len(), 2);
+        assert!(c.thinking().is_none());
+        c.apply(Command::Undo);
+        assert_eq!(c.history().cursor(), 0);
+        assert_eq!(c.status(), Status::Paused);
+        // A new human move resumes the game.
+        assert!(started(&play(&mut c, "d3")).is_some());
+        assert_eq!(c.status(), Status::Playing);
+    }
+
+    #[test]
+    fn stale_results_are_dropped() {
+        let mut c = ready([Player::Human, AI]);
+        let id = started(&play(&mut c, "f5")).unwrap();
+        assert!(c.apply(Command::Undo).contains(&Effect::CancelSearch));
+        finish(&mut c, id);
+        assert_eq!(c.history().actions().len(), 1);
+        assert_eq!(c.history().cursor(), 0);
+
+        let mut c = ready([Player::Human, AI]);
+        let id = started(&play(&mut c, "f5")).unwrap();
+        let effects = c.apply(Command::NewGame(NewGame::default()));
+        assert_eq!(effects[..2], [Effect::CancelSearch, Effect::ClearTt]);
+        finish(&mut c, id);
+        assert!(c.history().actions().is_empty());
+    }
+
+    #[test]
+    fn ai_against_ai_pauses_and_steps() {
+        let mut c = ready([AI, AI]);
+        let effects = c.apply(Command::Resume);
+        assert!(effects.is_empty(), "the search started with the game");
+        let id = c.thinking().map(|t| t.id).unwrap();
+        let effects = finish(&mut c, id);
+        let next = started(&effects).expect("the other side starts");
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::StartSearch { delay, .. } if *delay == AI_VS_AI_PAUSE
+        )));
+        assert_eq!(c.apply(Command::Pause), vec![Effect::CancelSearch]);
+        finish(&mut c, next);
+        assert_eq!(c.history().actions().len(), 1);
+
+        let step = started(&c.apply(Command::StepAi)).unwrap();
+        assert!(c.apply(Command::StepAi).is_empty(), "one search at a time");
+        assert!(started(&finish(&mut c, step)).is_none(), "stays paused");
+        assert_eq!(c.history().actions().len(), 2);
+        assert_eq!(c.status(), Status::Paused);
+        assert!(started(&c.apply(Command::Resume)).is_some());
+    }
+
+    #[test]
+    fn nothing_starts_before_the_engine_and_failures_pause() {
+        let mut c = Controller::default();
+        c.apply(Command::NewGame(NewGame {
+            players: [AI, Player::Human],
+            start: Position::initial(),
+        }));
+        assert!(c.thinking().is_none());
+        let effects = c.on_engine(EngineEvent::Ready {
+            resources: Resources {
+                threads: 1,
+                tt_mib: 1,
+            },
+            load_time: Duration::ZERO,
+        });
+        let id = started(&effects).unwrap();
+        c.on_engine(EngineEvent::Failed {
+            id,
+            error: "boom".into(),
+        });
+        assert_eq!(c.status(), Status::Paused);
+        assert_eq!(c.notice(), Some("boom"));
+        assert!(c.apply(Command::MoveNow).is_empty());
     }
 }

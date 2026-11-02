@@ -1,15 +1,13 @@
 //! The window: toolbar, the record on the left, the board in the middle and
-//! the AI on the right (§9.2 of the plan).
-use super::theme;
+//! the AI on the right (§9.2 of the plan), and the dialogs over them.
+use super::{new_game::NewGameForm, theme, widgets};
 use crate::{
-    app::{Command, Controller, Effect},
-    engine_loader::Loaded,
-    i18n::Lang,
+    app::{Command, Controller, Effect, Status},
+    domain::Settings,
+    services::engine::{EngineCommand, EngineEvent, EngineService},
 };
-use deft_reversi_engine::{EngineWorker, Square};
-use gpui::{
-    App, ClickEvent, Context, FocusHandle, KeyBinding, Pixels, Window, actions, div, prelude::*, px,
-};
+use deft_reversi_engine::Square;
+use gpui::{App, Context, FocusHandle, KeyBinding, Pixels, Window, actions, div, prelude::*, px};
 use std::time::{Duration, Instant};
 
 actions!(
@@ -22,6 +20,8 @@ actions!(
         StepForward,
         First,
         Last,
+        TogglePause,
+        MoveNow,
         FocusBoard,
         BoardLeft,
         BoardRight,
@@ -29,11 +29,13 @@ actions!(
         BoardDown,
         BoardPlay,
         LeaveBoard,
+        CloseDialog,
     ]
 );
 
 /// "Board" sits inside "Workspace", so its arrow keys win while the board
-/// has focus and the record's keys work everywhere else.
+/// has focus and the record's keys work everywhere else. A dialog has its
+/// own context, outside the workspace.
 pub fn bind_keys(cx: &mut App) {
     let workspace = Some("Workspace");
     let board = Some("Board");
@@ -46,6 +48,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("right", StepForward, workspace),
         KeyBinding::new("home", First, workspace),
         KeyBinding::new("end", Last, workspace),
+        KeyBinding::new("space", TogglePause, workspace),
+        KeyBinding::new("ctrl-enter", MoveNow, workspace),
         KeyBinding::new("tab", FocusBoard, workspace),
         KeyBinding::new("left", BoardLeft, board),
         KeyBinding::new("right", BoardRight, board),
@@ -55,17 +59,13 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("space", BoardPlay, board),
         KeyBinding::new("escape", LeaveBoard, board),
         KeyBinding::new("tab", LeaveBoard, board),
+        KeyBinding::new("escape", CloseDialog, Some("Dialog")),
     ]);
 }
 
-pub(super) enum EngineState {
-    Missing,
-    Loading,
-    /// Searches start from P2.
-    Ready {
-        _worker: EngineWorker,
-    },
-    Failed,
+pub(super) enum Dialog {
+    NewGame,
+    Settings,
 }
 
 const LEFT_WIDTH: f32 = 150.;
@@ -75,9 +75,14 @@ const TOOLBAR_HEIGHT: f32 = 36.;
 
 pub struct RootView {
     pub(super) controller: Controller,
-    pub(super) engine: EngineState,
-    pub(super) lang: Lang,
+    /// None when the model was not found.
+    engine: Option<EngineService>,
+    pub(super) settings: Settings,
+    pub(super) dialog: Option<Dialog>,
+    /// Kept between games, so the dialog opens with the last choices.
+    pub(super) new_game_form: NewGameForm,
     focus: FocusHandle,
+    dialog_focus: FocusHandle,
     pub(super) board_focus: FocusHandle,
     pub(super) board_cursor: Square,
     launched: Instant,
@@ -87,31 +92,49 @@ pub struct RootView {
 impl RootView {
     pub fn new(
         launched: Instant,
-        loading: Option<async_channel::Receiver<Result<Loaded, String>>>,
+        engine: Option<(EngineService, async_channel::Receiver<EngineEvent>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let engine = match loading {
-            None => EngineState::Missing,
-            Some(receiver) => {
-                cx.spawn(async move |this, cx| {
-                    let loaded = receiver
-                        .recv()
-                        .await
-                        .unwrap_or_else(|_| Err("engine-load thread ended".into()));
-                    this.update(cx, |this, cx| this.on_loaded(loaded, cx)).ok();
-                })
-                .detach();
-                EngineState::Loading
-            }
-        };
+        let engine = engine.map(|(service, events)| {
+            cx.spawn(async move |this, cx| {
+                while let Ok(event) = events.recv().await {
+                    let delivered = this.update(cx, |this, cx| {
+                        if let EngineEvent::Ready {
+                            resources,
+                            load_time,
+                        } = &event
+                        {
+                            eprintln!(
+                                "[startup] engine ready ({} threads, TT {} MiB) in {} ms, at {} ms",
+                                resources.threads,
+                                resources.tt_mib,
+                                load_time.as_millis(),
+                                this.launched.elapsed().as_millis()
+                            );
+                        }
+                        let effects = this.controller.on_engine(event);
+                        this.dispatch(effects, cx);
+                        cx.notify();
+                    });
+                    if delivered.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+            service
+        });
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         Self {
             controller: Controller::default(),
             engine,
-            lang: Lang::from_env(),
+            settings: Settings::default(),
+            dialog: None,
+            new_game_form: NewGameForm::default(),
             focus,
+            dialog_focus: cx.focus_handle(),
             board_focus: cx.focus_handle(),
             board_cursor: "d3".parse().expect("a square name"),
             launched,
@@ -119,38 +142,58 @@ impl RootView {
         }
     }
 
-    fn on_loaded(&mut self, loaded: Result<Loaded, String>, cx: &mut Context<Self>) {
-        let ready_at = self.launched.elapsed();
-        self.engine = match loaded {
-            Ok(loaded) => {
-                eprintln!(
-                    "[startup] model {} ms, engine {} ms ({} threads, TT {} MiB), ready at {} ms from {}",
-                    loaded.model_time.as_millis(),
-                    loaded.engine_time.as_millis(),
-                    loaded.threads,
-                    loaded.tt_mib,
-                    ready_at.as_millis(),
-                    loaded.model_path.display(),
-                );
-                EngineState::Ready {
-                    _worker: loaded.worker,
-                }
-            }
-            Err(error) => {
-                eprintln!("[startup] engine failed: {error}");
-                EngineState::Failed
-            }
-        };
-        cx.notify();
+    pub(super) fn has_engine(&self) -> bool {
+        self.engine.is_some()
     }
 
     pub(super) fn run(&mut self, command: Command, cx: &mut Context<Self>) {
-        for effect in self.controller.apply(command) {
-            match effect {
+        let effects = self.controller.apply(command);
+        self.dispatch(effects, cx);
+        cx.notify();
+    }
+
+    fn dispatch(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
+        for effect in effects {
+            let command = match effect {
+                Effect::StartSearch { job, delay } if !delay.is_zero() => {
+                    // Sent later only if the controller still waits for it.
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(delay).await;
+                        this.update(cx, |this, _| {
+                            let waiting = this.controller.thinking().map(|t| t.id());
+                            if waiting == Some(job.id)
+                                && let Some(engine) = &this.engine
+                            {
+                                engine.send(EngineCommand::Start(job));
+                            }
+                        })
+                        .ok();
+                    })
+                    .detach();
+                    continue;
+                }
+                Effect::StartSearch { job, .. } => EngineCommand::Start(job),
+                Effect::CancelSearch => EngineCommand::Cancel,
+                Effect::MoveNow => EngineCommand::MoveNow,
+                Effect::ClearTt => EngineCommand::ClearTt,
+                Effect::Reconfigure(resources) => EngineCommand::Reconfigure(resources),
                 // The audio service arrives in P6.
-                Effect::Sound(_) => {}
+                Effect::Sound(_) => continue,
+            };
+            if let Some(engine) = &self.engine {
+                engine.send(command);
             }
         }
+    }
+
+    /// Focus follows on the next render.
+    pub(super) fn open_dialog(&mut self, dialog: Dialog, cx: &mut Context<Self>) {
+        self.dialog = Some(dialog);
+        cx.notify();
+    }
+
+    pub(super) fn close_dialog(&mut self, cx: &mut Context<Self>) {
+        self.dialog = None;
         cx.notify();
     }
 
@@ -173,48 +216,32 @@ impl RootView {
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let s = self.lang.strings();
+        let s = self.settings.lang.strings();
+        let open = |dialog: fn() -> Dialog| {
+            widgets::handler(move |this, cx| this.open_dialog(dialog(), cx))
+        };
         div()
             .h(px(TOOLBAR_HEIGHT))
             .flex()
             .flex_row()
             .items_center()
+            .gap(px(4.))
             .px(px(12.))
             .border_b_1()
             .border_color(theme::hairline())
-            .child(
-                div()
-                    .id("new-game")
-                    .px(px(8.))
-                    .py(px(3.))
-                    .rounded(px(4.))
-                    .text_color(theme::text_secondary())
-                    .cursor_pointer()
-                    .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
-                    .on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| this.run(Command::NewGame, cx)),
-                    )
-                    .child(s.new_game),
-            )
-    }
-
-    fn render_ai(&self) -> impl IntoElement {
-        let s = self.lang.strings();
-        // Nothing is shown while the AI is ready and idle.
-        let status = match self.engine {
-            EngineState::Missing => Some(s.model_missing),
-            EngineState::Loading => Some(s.ai_loading),
-            EngineState::Failed => Some(s.ai_failed),
-            EngineState::Ready { .. } => None,
-        };
-        div()
-            .w(px(RIGHT_WIDTH))
-            .flex()
-            .flex_col()
-            .justify_end()
-            .text_xs()
-            .text_color(theme::text_muted())
-            .children(status)
+            .child(widgets::link(
+                "new-game",
+                s.new_game,
+                open(|| Dialog::NewGame),
+                cx,
+            ))
+            .child(div().flex_1())
+            .child(widgets::link(
+                "settings",
+                s.settings,
+                open(|| Dialog::Settings),
+                cx,
+            ))
     }
 }
 
@@ -225,17 +252,35 @@ impl Render for RootView {
             eprintln!("[startup] first frame at {} ms", t.as_millis());
             self.first_frame = Some(t);
         }
+        // Handlers have no window, so focus follows the dialog here.
+        if self.dialog.is_some() {
+            if !self.dialog_focus.contains_focused(window, cx) {
+                window.focus(&self.dialog_focus, cx);
+            }
+        } else if !self.focus.contains_focused(window, cx) {
+            window.focus(&self.focus, cx);
+        }
         let cell = Self::cell_size(window);
-        div()
+        let workspace = div()
             .key_context("Workspace")
             .track_focus(&self.focus)
-            .on_action(cx.listener(|this, _: &NewGame, _, cx| this.run(Command::NewGame, cx)))
+            .on_action(
+                cx.listener(|this, _: &NewGame, _, cx| this.open_dialog(Dialog::NewGame, cx)),
+            )
             .on_action(cx.listener(|this, _: &Undo, _, cx| this.run(Command::Undo, cx)))
             .on_action(cx.listener(|this, _: &Redo, _, cx| this.run(Command::Redo, cx)))
             .on_action(cx.listener(|this, _: &StepBack, _, cx| this.run(Command::Step(-1), cx)))
             .on_action(cx.listener(|this, _: &StepForward, _, cx| this.run(Command::Step(1), cx)))
             .on_action(cx.listener(|this, _: &First, _, cx| this.run(Command::First, cx)))
             .on_action(cx.listener(|this, _: &Last, _, cx| this.run(Command::Last, cx)))
+            .on_action(cx.listener(|this, _: &TogglePause, _, cx| {
+                let command = match this.controller.status() {
+                    Status::Playing => Command::Pause,
+                    Status::Paused => Command::Resume,
+                };
+                this.run(command, cx)
+            }))
+            .on_action(cx.listener(|this, _: &MoveNow, _, cx| this.run(Command::MoveNow, cx)))
             .on_action(cx.listener(|this, _: &FocusBoard, window, cx| {
                 window.focus(&this.board_focus, cx);
                 cx.notify();
@@ -243,13 +288,11 @@ impl Render for RootView {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme::background())
-            .text_color(theme::text())
-            .text_sm()
             .child(self.render_toolbar(cx))
             .child(
                 div()
                     .flex_1()
+                    .min_h_0()
                     .flex()
                     .flex_row()
                     .gap(px(GAP))
@@ -289,7 +332,40 @@ impl Render for RootView {
                             )
                             .child(self.render_navigation(cell, cx)),
                     )
-                    .child(self.render_ai()),
-            )
+                    .child(self.render_ai(cx).w(px(RIGHT_WIDTH))),
+            );
+        let dialog = self.dialog.as_ref().map(|dialog| {
+            let panel = match dialog {
+                Dialog::NewGame => self.render_new_game(cx).into_any_element(),
+                Dialog::Settings => self.render_settings(cx).into_any_element(),
+            };
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .occlude()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().opacity(0.45))
+                .child(
+                    div()
+                        .key_context("Dialog")
+                        .track_focus(&self.dialog_focus)
+                        .on_action(
+                            cx.listener(|this, _: &CloseDialog, _, cx| this.close_dialog(cx)),
+                        )
+                        .child(panel),
+                )
+        });
+        div()
+            .relative()
+            .size_full()
+            .bg(theme::background())
+            .text_color(theme::text())
+            .text_sm()
+            .child(workspace)
+            .children(dialog)
     }
 }
