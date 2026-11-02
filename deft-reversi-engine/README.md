@@ -16,7 +16,7 @@
 - `mpc`: 旧 main の ProbCut 規則（旧 main から変換したモデル用）。
 - `search/root`: ルート候補ごとの境界、アスピレーションの安定化、最善手順の継承。
 - `search/level`: 元のレベルからの深さ・選択率・終盤への移行と序盤補正。
-- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。
+- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。中盤のヌルウィンドウ探索は、残り6手未満で TT を使わず（評価値と着手可能数で手順付け）、残り3手未満で手順付けもしない（旧 main の `SWITCH_SIMPLE_SEARCH_LEVEL`・`SWITCH_NEGAALPHA_SEARCH_LEVEL` と同じ）。MPC の浅い探索は、MPC を使わない中盤探索である。
 - `board/stability`: 元実装の辺の全パターン表・満杯のライン・接触による確定石判定。
 - `search/endgame/mod`: 終盤探索の入口と通常窓の処理。
 - `search/endgame/local_tt`: 空き6〜13ごとの局所TT。境界・候補手・選択率を保持し、照会結果は値として再帰へ渡す。

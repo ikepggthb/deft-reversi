@@ -18,12 +18,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             true
         }
     });
-    let model = args
-        .next()
-        .ok_or("usage: solve MODEL POSITIONS [exact|DEPTH] [THREADS] [TT_MiB] [MILLISECONDS]")?;
+    let model = args.next().ok_or(
+        "usage: solve MODEL POSITIONS [exact|DEPTH|levelN] [THREADS] [TT_MiB] [MILLISECONDS]",
+    )?;
     let positions = args.next().ok_or("positions file required")?;
     let goal = match args.next().as_deref() {
         None | Some("exact") => Goal::Endgame,
+        Some(level) if level.starts_with("level") => Goal::Level(level[5..].parse()?),
         Some(depth) => Goal::Depth(depth.parse()?),
     };
     let options = EngineOptions::default()
