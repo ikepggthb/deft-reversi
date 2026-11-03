@@ -8,6 +8,9 @@ use crate::{
 use deft_reversi_engine::{Action, Color, Position, Square};
 use std::time::Duration;
 
+mod analysis;
+pub use analysis::{AnalysisSettings, Analyzer};
+
 /// Between two AI moves when both colours are AI, so the game can be followed.
 const AI_VS_AI_PAUSE: Duration = Duration::from_millis(250);
 
@@ -48,6 +51,14 @@ pub enum Command {
     SetResources(Resources),
     /// A checked record replaces the game; it opens paused.
     Load(Box<LoadedGame>),
+    /// Analysis mode pauses the game and searches the shown position.
+    SetAnalysis(bool),
+    AnalyzeExact,
+    /// Searches every position of the record, from the end.
+    AnalyzeRecord,
+    /// Stops the analysis search, keeping what it found, and the batch.
+    StopAnalysis,
+    SetAnalysisSettings(AnalysisSettings),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +119,8 @@ pub struct Controller {
     revision: u64,
     next_search: u64,
     thinking: Option<Thinking>,
+    analyzing: bool,
+    analyzer: Analyzer,
     notice: Option<String>,
 }
 
@@ -123,6 +136,8 @@ impl Default for Controller {
             revision: 0,
             next_search: 1,
             thinking: None,
+            analyzing: false,
+            analyzer: Analyzer::default(),
             notice: None,
         }
     }
@@ -171,6 +186,14 @@ impl Controller {
         self.thinking.as_ref()
     }
 
+    pub fn analyzing(&self) -> bool {
+        self.analyzing
+    }
+
+    pub fn analyzer(&self) -> &Analyzer {
+        &self.analyzer
+    }
+
     /// The last search error, until the next command.
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
@@ -198,6 +221,8 @@ impl Controller {
         match command {
             Command::NewGame(new_game) => {
                 self.cancel(&mut effects);
+                self.analyzer.cancel(&mut effects);
+                self.analyzing = false;
                 self.game = GameInfo::new();
                 self.history = History::new(new_game.start);
                 self.players = new_game.players;
@@ -212,13 +237,15 @@ impl Controller {
             Command::First => self.navigate(|h| h.go_to(0), &mut effects),
             Command::Last => self.navigate(|h| h.go_to(usize::MAX), &mut effects),
             Command::GoTo(index) => self.navigate(|h| h.go_to(index), &mut effects),
-            Command::Resume => self.status = Status::Playing,
+            Command::Resume if !self.analyzing => self.status = Status::Playing,
+            Command::Resume => {}
             Command::Pause => {
                 self.cancel(&mut effects);
                 self.status = Status::Paused;
             }
             Command::StepAi => {
-                if self.status == Status::Paused
+                if !self.analyzing
+                    && self.status == Status::Paused
                     && self.thinking.is_none()
                     && self.engine == EngineStatus::Ready
                     && let Some(strength) = self.ai_to_move()
@@ -233,6 +260,7 @@ impl Controller {
             }
             Command::SetResources(resources) => {
                 self.cancel(&mut effects);
+                self.analyzer.cancel(&mut effects);
                 self.engine = EngineStatus::Loading;
                 effects.push(Effect::Reconfigure(resources));
             }
@@ -251,8 +279,32 @@ impl Controller {
                 self.revision += 1;
                 effects.push(Effect::ClearTt);
             }
+            Command::SetAnalysis(on) => {
+                if on {
+                    self.cancel(&mut effects);
+                    self.status = Status::Paused;
+                } else {
+                    self.analyzer.cancel(&mut effects);
+                }
+                self.analyzing = on;
+            }
+            Command::AnalyzeExact => {
+                if self.analyzing && self.engine == EngineStatus::Ready {
+                    let position = self.history.current();
+                    self.analyzer
+                        .exact(position, &mut self.next_search, &mut effects);
+                }
+            }
+            Command::AnalyzeRecord => {
+                if self.analyzing {
+                    self.analyzer.start_batch(&self.history);
+                }
+            }
+            Command::StopAnalysis => self.analyzer.stop(&mut effects),
+            Command::SetAnalysisSettings(settings) => self.analyzer.settings_changed(settings),
         }
         self.autoplay(&mut effects);
+        self.pump_analysis(&mut effects);
         effects
     }
 
@@ -262,6 +314,7 @@ impl Controller {
             EngineEvent::Ready { .. } => self.engine = EngineStatus::Ready,
             EngineEvent::LoadFailed(error) => {
                 self.thinking = None;
+                self.analyzer.cancel(&mut Vec::new());
                 self.engine = EngineStatus::Unavailable(error);
             }
             EngineEvent::ReconfigureFailed(error) => {
@@ -271,21 +324,30 @@ impl Controller {
             EngineEvent::Progress { id, report } => {
                 if let Some(thinking) = self.thinking.as_mut().filter(|t| t.id == id) {
                     thinking.report = Some(report);
+                } else {
+                    self.analyzer.on_progress(id, &report);
                 }
             }
             EngineEvent::Finished { id, report } => {
-                if let Some(thinking) = self.take_thinking(id) {
-                    self.play_ai(thinking, report.best_move, &mut effects);
+                if self.thinking.as_ref().is_some_and(|t| t.id == id) {
+                    if let Some(thinking) = self.take_thinking(id) {
+                        self.play_ai(thinking, report.best_move, &mut effects);
+                    }
+                } else {
+                    self.analyzer.on_finished(id, report);
                 }
             }
             EngineEvent::Failed { id, error } => {
                 if self.take_thinking(id).is_some() {
                     self.status = Status::Paused;
                     self.notice = Some(error);
+                } else if self.analyzer.on_failed(id) {
+                    self.notice = Some(error);
                 }
             }
         }
         self.autoplay(&mut effects);
+        self.pump_analysis(&mut effects);
         effects
     }
 
@@ -374,9 +436,18 @@ impl Controller {
         }
     }
 
+    /// The only place an analysis search starts.
+    fn pump_analysis(&mut self, effects: &mut Vec<Effect>) {
+        if self.analyzing && self.engine == EngineStatus::Ready {
+            let shown = self.history.current();
+            self.analyzer.pump(shown, &mut self.next_search, effects);
+        }
+    }
+
     /// The only place a move search starts by itself.
     fn autoplay(&mut self, effects: &mut Vec<Effect>) {
         if self.status != Status::Playing
+            || self.analyzing
             || self.thinking.is_some()
             || self.engine != EngineStatus::Ready
         {
@@ -463,6 +534,7 @@ mod tests {
                 score: Some(0),
                 reading: None,
                 pv: Vec::new(),
+                moves: Vec::new(),
                 nodes: 0,
                 elapsed: Duration::ZERO,
             },
@@ -545,6 +617,30 @@ mod tests {
         assert_eq!(c.history().actions().len(), 2);
         assert_eq!(c.status(), Status::Paused);
         assert!(started(&c.apply(Command::Resume)).is_some());
+    }
+
+    #[test]
+    fn analysis_mode_pauses_play_and_follows_the_shown_position() {
+        let mut c = ready([Player::Human, AI]);
+        let id = started(&play(&mut c, "f5")).unwrap();
+        let effects = c.apply(Command::SetAnalysis(true));
+        assert_eq!(effects[0], Effect::CancelSearch);
+        let analysis = started(&effects).expect("the shown position is analysed");
+        assert_ne!(analysis, id);
+        // The move search from before is dropped, and the AI waits.
+        finish(&mut c, id);
+        assert_eq!(c.history().actions().len(), 1);
+        assert!(c.apply(Command::Resume).is_empty());
+        // Moving back stops that search and starts one for the new position.
+        let effects = c.apply(Command::First);
+        assert!(effects.contains(&Effect::CancelSearch));
+        assert!(started(&effects).is_some());
+        // Leaving stops the analysis; the game stays paused.
+        assert!(
+            c.apply(Command::SetAnalysis(false))
+                .contains(&Effect::CancelSearch)
+        );
+        assert_eq!(c.status(), Status::Paused);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! defaults, so older and newer versions read each other's files.
 use super::atomic_file;
 use crate::{
+    app::AnalysisSettings,
     domain::{
         Preset, Settings,
         player::MOVE_TIMES,
@@ -11,10 +12,14 @@ use crate::{
     services::engine::Resources,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_BYTES: u64 = 64 * 1024;
+
+/// The choices of the settings screen, in milliseconds.
+pub const ANALYSIS_TIMES: [u64; 5] = [1_000, 2_000, 5_000, 10_000, 30_000];
+pub const BATCH_TIMES: [u64; 4] = [500, 1_000, 2_000, 5_000];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -24,6 +29,11 @@ pub struct SettingsV1 {
     pub show_legal_moves: bool,
     pub threads: usize,
     pub tt_mib: usize,
+    pub analysis_level: u8,
+    pub analysis_time_ms: u64,
+    pub batch_time_ms: u64,
+    pub loss_threshold: i32,
+    pub candidate_values: bool,
     pub new_game: NewGameV1,
 }
 
@@ -131,6 +141,11 @@ impl From<Settings> for SettingsV1 {
             show_legal_moves: s.show_legal_moves,
             threads: s.resources.threads,
             tt_mib: s.resources.tt_mib,
+            analysis_level: s.analysis.level,
+            analysis_time_ms: s.analysis.time_limit.as_millis() as u64,
+            batch_time_ms: s.analysis.batch_time.as_millis() as u64,
+            loss_threshold: s.analysis.loss_threshold,
+            candidate_values: s.candidate_values,
             new_game: s.new_game.into(),
         }
     }
@@ -160,6 +175,25 @@ impl SettingsV1 {
                     default.resources.tt_mib
                 },
             },
+            analysis: AnalysisSettings {
+                level: if (1..=60).contains(&self.analysis_level) {
+                    self.analysis_level
+                } else {
+                    default.analysis.level
+                },
+                time_limit: if ANALYSIS_TIMES.contains(&self.analysis_time_ms) {
+                    Duration::from_millis(self.analysis_time_ms)
+                } else {
+                    default.analysis.time_limit
+                },
+                batch_time: if BATCH_TIMES.contains(&self.batch_time_ms) {
+                    Duration::from_millis(self.batch_time_ms)
+                } else {
+                    default.analysis.batch_time
+                },
+                loss_threshold: self.loss_threshold.clamp(1, 64),
+            },
+            candidate_values: self.candidate_values,
             new_game: NewGameForm {
                 sides: [
                     self.new_game.black.to_form(default.new_game.sides[0]),

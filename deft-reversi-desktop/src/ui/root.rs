@@ -31,6 +31,7 @@ actions!(
         Last,
         TogglePause,
         MoveNow,
+        ToggleAnalysis,
         FocusBoard,
         BoardLeft,
         BoardRight,
@@ -61,6 +62,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("end", Last, workspace),
         KeyBinding::new("space", TogglePause, workspace),
         KeyBinding::new("ctrl-enter", MoveNow, workspace),
+        KeyBinding::new("f2", ToggleAnalysis, workspace),
         KeyBinding::new("tab", FocusBoard, workspace),
         KeyBinding::new("left", BoardLeft, board),
         KeyBinding::new("right", BoardRight, board),
@@ -179,7 +181,11 @@ impl RootView {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         Self {
-            controller: Controller::default(),
+            controller: {
+                let mut controller = Controller::default();
+                controller.apply(Command::SetAnalysisSettings(settings.analysis));
+                controller
+            },
             engine,
             settings,
             dialog: None,
@@ -246,6 +252,11 @@ impl RootView {
         }
     }
 
+    pub(super) fn toggle_analysis(&mut self, cx: &mut Context<Self>) {
+        let on = !self.controller.analyzing();
+        self.run(Command::SetAnalysis(on), cx);
+    }
+
     /// Focus follows on the next render.
     pub(super) fn open_dialog(&mut self, dialog: Dialog, cx: &mut Context<Self>) {
         if matches!(dialog, Dialog::Games) {
@@ -307,6 +318,17 @@ impl RootView {
                 open(|| Dialog::NewGame),
                 cx,
             ))
+            .child(
+                widgets::link(
+                    "analysis",
+                    s.analysis,
+                    widgets::handler(|this, cx| this.toggle_analysis(cx)),
+                    cx,
+                )
+                .when(self.controller.analyzing(), |el| {
+                    el.bg(theme::selected()).text_color(theme::accent())
+                }),
+            )
             .child(div().flex_1())
             .child(widgets::link(
                 "settings",
@@ -356,6 +378,7 @@ impl Render for RootView {
                 this.run(command, cx)
             }))
             .on_action(cx.listener(|this, _: &MoveNow, _, cx| this.run(Command::MoveNow, cx)))
+            .on_action(cx.listener(|this, _: &ToggleAnalysis, _, cx| this.toggle_analysis(cx)))
             .on_action(cx.listener(|this, _: &FocusBoard, window, cx| {
                 window.focus(&this.board_focus, cx);
                 cx.notify();

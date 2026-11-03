@@ -1,5 +1,6 @@
 //! GPUI views. They read the controller's state and send it commands.
 mod ai_panel;
+mod analysis_panel;
 mod board;
 mod files;
 mod new_game;

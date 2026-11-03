@@ -1,5 +1,5 @@
-//! The right column. Until analysis (P4) it holds one line at the bottom:
-//! what the AI is doing and the controls for it.
+//! The right column: the analysis in analysis mode, and at the bottom a
+//! line on what the engine is doing with the controls for it.
 use super::{root::RootView, theme, widgets};
 use crate::{
     app::{Command, EngineStatus, Status},
@@ -8,7 +8,7 @@ use crate::{
 };
 use gpui::{Context, Div, SharedString, div, prelude::*, px};
 
-fn reading_text(s: &Strings, reading: Reading) -> String {
+pub(super) fn reading_text(s: &Strings, reading: Reading) -> String {
     match reading {
         Reading::Depth {
             depth,
@@ -36,6 +36,13 @@ fn report_text(s: &Strings, report: &Report) -> String {
     }
     parts.push(format!("{:.1} s", report.elapsed.as_secs_f64()));
     parts.push(nodes_text(report.nodes));
+    let seconds = report.elapsed.as_secs_f64();
+    if seconds > 0.05 {
+        parts.push(format!(
+            "{}/s",
+            nodes_text((report.nodes as f64 / seconds) as u64)
+        ));
+    }
     parts.join(" · ")
 }
 
@@ -99,7 +106,35 @@ impl RootView {
                     .into_any_element(),
             );
         }
-        if c.has_ai() && !c.history().current().is_terminal() {
+        let position = c.history().current();
+        if c.analyzing() && c.analyzer().is_searching(position) {
+            let detail = c.analyzer().live(position).map(|r| report_text(s, r));
+            lines.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(div().size(px(6.)).rounded_full().bg(theme::thinking_dot()))
+                            .child(s.analyzing)
+                            .child(div().flex_1())
+                            .child(widgets::link(
+                                "stop-analysis",
+                                s.stop,
+                                widgets::handler(|this, cx| this.run(Command::StopAnalysis, cx)),
+                                cx,
+                            )),
+                    )
+                    .children(detail.map(|d| muted(d.into())))
+                    .into_any_element(),
+            );
+        }
+        if !c.analyzing() && c.has_ai() && !position.is_terminal() {
             let controls = match c.status() {
                 Status::Playing => div().flex().flex_row().child(widgets::link(
                     "pause",
@@ -134,8 +169,9 @@ impl RootView {
         div()
             .flex()
             .flex_col()
-            .justify_end()
             .gap(px(8.))
+            .children(c.analyzing().then(|| self.render_analysis(cx)))
+            .child(div().flex_1())
             .children(lines)
     }
 }

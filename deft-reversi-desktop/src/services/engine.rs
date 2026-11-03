@@ -1,8 +1,8 @@
 //! The `engine-ctl` thread: it owns the engine, runs one search at a time,
 //! and reports to the UI over a channel the UI awaits.
 use deft_reversi_engine::{
-    Action, Engine, EngineWorker, Goal, Position, Progress, ResultKind, SearchHandle,
-    SearchRequest, SearchResult,
+    Action, Engine, EngineWorker, Goal, MoveScore, Position, Progress, ResultKind, SearchHandle,
+    SearchRequest, SearchResult, Selectivity,
 };
 use std::{
     collections::VecDeque,
@@ -23,6 +23,21 @@ pub struct SearchId(pub u64);
 pub struct SearchSpec {
     pub goal: Goal,
     pub time_limit: Option<Duration>,
+    /// Also scores every legal move, for the analysis panel.
+    pub all_moves: bool,
+    /// For `Goal::Endgame`; a level chooses its own.
+    pub selectivity: Option<Selectivity>,
+}
+
+impl SearchSpec {
+    pub fn new(goal: Goal) -> Self {
+        Self {
+            goal,
+            time_limit: None,
+            all_moves: false,
+            selectivity: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,6 +97,8 @@ pub struct Report {
     pub score: Option<i32>,
     pub reading: Option<Reading>,
     pub pv: Vec<Action>,
+    /// Every legal move, best first, when asked for and completed.
+    pub moves: Vec<MoveScore>,
     pub nodes: u64,
     pub elapsed: Duration,
 }
@@ -93,6 +110,7 @@ impl From<Progress> for Report {
             score: Some(p.score),
             reading: Some(p.kind.into()),
             pv: p.pv,
+            moves: Vec::new(),
             nodes: p.nodes,
             elapsed: p.elapsed,
         }
@@ -106,6 +124,7 @@ impl From<SearchResult> for Report {
             score: r.score,
             reading: r.kind.map(Reading::from),
             pv: r.pv,
+            moves: r.moves,
             nodes: r.stats.nodes,
             elapsed: r.elapsed,
         }
@@ -356,6 +375,12 @@ impl Backend for EngineBackend {
         if let Some(limit) = spec.time_limit {
             request = request.time_limit(limit);
         }
+        if spec.all_moves {
+            request = request.all_moves();
+        }
+        if let Some(selectivity) = spec.selectivity {
+            request = request.selectivity(selectivity);
+        }
         self.worker
             .start(position, request)
             .map_err(|error| error.to_string())
@@ -463,6 +488,7 @@ mod tests {
                 percent: 100,
             }),
             pv: Vec::new(),
+            moves: Vec::new(),
             nodes: 1,
             elapsed: Duration::ZERO,
         }
@@ -500,10 +526,7 @@ mod tests {
         EngineCommand::Start(SearchJob {
             id: SearchId(id),
             position: Position::initial(),
-            spec: SearchSpec {
-                goal: Goal::Depth(depth),
-                time_limit: None,
-            },
+            spec: SearchSpec::new(Goal::Depth(depth)),
         })
     }
 
@@ -665,10 +688,7 @@ mod engine_tests {
         service.send(EngineCommand::Start(SearchJob {
             id: SearchId(id),
             position: Position::initial(),
-            spec: SearchSpec {
-                goal,
-                time_limit: None,
-            },
+            spec: SearchSpec::new(goal),
         }));
     }
 

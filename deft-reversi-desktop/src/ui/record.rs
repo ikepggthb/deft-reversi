@@ -1,7 +1,10 @@
 //! The left column: disc counts with the side to move, the move number or
 //! the result, and the record.
 use super::{new_game::strength_label, root::RootView, theme};
-use crate::{app::Command, domain::Player};
+use crate::{
+    app::Command,
+    domain::{Player, openings},
+};
 use deft_reversi_engine::{Action, Color, Position};
 use gpui::{ClickEvent, Context, Div, FontWeight, SharedString, div, prelude::*, px};
 
@@ -81,6 +84,14 @@ impl RootView {
         };
 
         let cursor = history.cursor();
+        // Only a game from the standard start can follow a named opening.
+        let opening = (history.position(0) == Position::initial())
+            .then(|| openings::name(&history.actions()[..cursor]))
+            .flatten();
+        // In analysis mode, moves that lost enough are marked with the loss.
+        let analyzer = self.controller.analyzer();
+        let threshold = self.settings.analysis.loss_threshold;
+        let analyzing = self.controller.analyzing();
         let entries = history.actions().iter().enumerate().map(|(i, action)| {
             let current = i + 1 == cursor;
             let (number, name): (SharedString, SharedString) = match action {
@@ -117,6 +128,18 @@ impl RootView {
                     (false, Action::Pass) => div().text_color(theme::text_muted()).child(name),
                     (false, _) => div().child(name),
                 })
+                .children(
+                    analyzing
+                        .then(|| analyzer.loss(history, i))
+                        .flatten()
+                        .filter(|&loss| loss >= threshold)
+                        .map(|loss| {
+                            div()
+                                .text_xs()
+                                .text_color(theme::danger())
+                                .child(format!("−{loss}"))
+                        }),
+                )
         });
 
         div()
@@ -137,6 +160,9 @@ impl RootView {
                     .mb(px(18.))
                     .text_color(theme::text_secondary())
                     .child(state),
+            )
+            .children(
+                opening.map(|name| div().mb(px(6.)).font_weight(FontWeight::MEDIUM).child(name)),
             )
             .child(
                 div()

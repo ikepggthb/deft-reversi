@@ -1,12 +1,15 @@
 //! What the settings screen changes, and the new game dialog's last choices.
 use super::{Player, Preset, Strength, player::MOVE_TIMES};
-use crate::{engine_loader, i18n::Lang, services::engine::Resources};
+use crate::{app::AnalysisSettings, engine_loader, i18n::Lang, services::engine::Resources};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub lang: Lang,
     pub show_legal_moves: bool,
     pub resources: Resources,
+    pub analysis: AnalysisSettings,
+    /// In analysis mode, the candidate moves show their values or dots.
+    pub candidate_values: bool,
     /// Kept between games, so the dialog opens with the last choices.
     pub new_game: NewGameForm,
 }
@@ -17,6 +20,8 @@ impl Default for Settings {
             lang: Lang::Ja,
             show_legal_moves: true,
             resources: engine_loader::default_resources(),
+            analysis: AnalysisSettings::default(),
+            candidate_values: true,
             new_game: NewGameForm::default(),
         }
     }

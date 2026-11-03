@@ -89,17 +89,11 @@ pub const MOVE_TIMES: [Duration; 5] = [
 impl Strength {
     pub fn spec(self) -> SearchSpec {
         match self {
-            Self::Preset(preset) => SearchSpec {
-                goal: Goal::Level(preset.level()),
-                time_limit: None,
-            },
-            Self::Level(level) => SearchSpec {
-                goal: Goal::Level(level.clamp(1, 60)),
-                time_limit: None,
-            },
+            Self::Preset(preset) => SearchSpec::new(Goal::Level(preset.level())),
+            Self::Level(level) => SearchSpec::new(Goal::Level(level.clamp(1, 60))),
             Self::TimePerMove(limit) => SearchSpec {
-                goal: Goal::Level(TIMED_LEVEL),
                 time_limit: Some(limit),
+                ..SearchSpec::new(Goal::Level(TIMED_LEVEL))
             },
         }
     }

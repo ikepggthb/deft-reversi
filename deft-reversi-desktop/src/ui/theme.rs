@@ -71,3 +71,6 @@ pub fn reading_selective() -> Rgba {
 pub fn reading_exact() -> Rgba {
     rgb(0x1d9e75)
 }
+pub fn candidate_text() -> Rgba {
+    rgb(0xd8e8de)
+}

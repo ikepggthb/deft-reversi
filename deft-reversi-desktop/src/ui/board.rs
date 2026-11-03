@@ -1,8 +1,10 @@
 //! The board with its coordinates, and the record navigation below it.
 use super::{root::RootView, theme};
 use crate::app::{Command, Status};
-use deft_reversi_engine::Square;
-use gpui::{ClickEvent, Context, MouseButton, Pixels, Rgba, Window, div, prelude::*, px};
+use deft_reversi_engine::{Action, Square};
+use gpui::{
+    ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, Window, div, prelude::*, px,
+};
 
 const LABEL: f32 = 18.;
 
@@ -21,6 +23,26 @@ impl RootView {
         // user may play either side.
         let playable =
             self.controller.ai_to_move().is_none() || self.controller.status() == Status::Paused;
+        // In analysis mode the candidate moves carry their values, for the
+        // side to move; the best ones are highlighted.
+        let analysis = self.controller.analyzing().then(|| {
+            let analyzer = self.controller.analyzer();
+            analyzer
+                .live(position)
+                .filter(|r| !r.moves.is_empty())
+                .or_else(|| analyzer.get(position).map(|a| &a.report))
+                .map(|r| r.moves.clone())
+                .unwrap_or_default()
+        });
+        let best = analysis
+            .as_ref()
+            .and_then(|moves| moves.iter().map(|m| m.score).max());
+        let value_of = |square: Square| {
+            analysis.as_ref()?.iter().find_map(|m| match m.action {
+                Action::Place(s) if s == square => Some(m.score),
+                _ => None,
+            })
+        };
         let cursor = self
             .board_focus
             .is_focused(window)
@@ -82,8 +104,28 @@ impl RootView {
                     el = el
                         .cursor_pointer()
                         .hover(|style| style.bg(theme::board_hover()))
-                        .when(self.settings.show_legal_moves, |el| {
-                            el.child(div().size(cell * 0.2).rounded_full().bg(theme::legal_dot()))
+                        .map(|el| {
+                            match value_of(square).filter(|_| self.settings.candidate_values) {
+                                Some(value) => el.child(
+                                    div()
+                                        .text_size(cell * 0.3)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(if Some(value) == best {
+                                            theme::focus_ring()
+                                        } else {
+                                            theme::candidate_text()
+                                        })
+                                        .child(format!("{value:+}").replace('-', "−")),
+                                ),
+                                None if self.settings.show_legal_moves || analysis.is_some() => el
+                                    .child(
+                                        div()
+                                            .size(cell * 0.2)
+                                            .rounded_full()
+                                            .bg(theme::legal_dot()),
+                                    ),
+                                None => el,
+                            }
                         })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.run(Command::Play(square), cx)
