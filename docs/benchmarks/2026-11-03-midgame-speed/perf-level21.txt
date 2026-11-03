@@ -1,0 +1,13 @@
+perf record -F 1999 -g, mid150 level 21, 1 thread (c433a80 engine), self time by symbol
+ 49.01% [.] _RNvMs0_NtCs8KtzPwsjnpv_19deft_reversi_engine10evaluationNtB5_12PatternModel24evaluate_state_and_moves - - 
+ 21.06% [.] _RNvMs1_NtCs8KtzPwsjnpv_19deft_reversi_engine10evaluationNtB5_9EvalState6played - - 
+ 17.40% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search8orderingNtNtB4_7session7Context15ordering_search - - 
+ 5.02% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4treeNtNtB4_7session7Context13simple_search - - 
+ 2.18% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4treeNtNtB4_7session7Context4node - - 
+ 1.55% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search8orderingNtNtB4_7session7Context16midgame_ordering - - 
+ 1.53% [.] _RNvMs0_NtCs8KtzPwsjnpv_19deft_reversi_engine13transpositionNtB5_5Table3get - - 
+ 0.60% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4treeNtNtB4_7session7Context7probcut - - 
+ 0.43% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4treeNtNtB4_7session7Context7sibling - - 
+ 0.15% [.] _RNvNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4tree9pick_best - - 
+ 0.12% [.] _RNvMs0_NtNtCs8KtzPwsjnpv_19deft_reversi_engine6search7sessionNtB5_4Line7prepend - - 
+ 0.11% [k] clear_page_erms - - 

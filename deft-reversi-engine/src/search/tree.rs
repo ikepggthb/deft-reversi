@@ -7,10 +7,16 @@ use std::ops::ControlFlow;
 pub(super) const SPLIT_DEPTH: u8 = 4;
 pub(super) const SPLIT_EMPTIES: u8 = 10;
 /// Null-window midgame nodes below this depth search without the TT, and
-/// below `ORDERED_SEARCH_DEPTH` without move ordering too (main's
-/// `SWITCH_SIMPLE_SEARCH_LEVEL` and `SWITCH_NEGAALPHA_SEARCH_LEVEL`).
-pub(super) const SIMPLE_SEARCH_DEPTH: u8 = 6;
+/// below `ORDERED_SEARCH_DEPTH` without move ordering too, like main's
+/// `SWITCH_SIMPLE_SEARCH_LEVEL` and `SWITCH_NEGAALPHA_SEARCH_LEVEL`; 5 and 3
+/// were the fastest (docs/benchmarks/2026-11-03-midgame-speed).
+pub(super) const SIMPLE_SEARCH_DEPTH: u8 = 5;
 pub(super) const ORDERED_SEARCH_DEPTH: u8 = 3;
+/// A ProbCut test runs only when the rule's prediction from the static
+/// evaluation is within these margins (discs) of its bound; Egaroucid uses 4.
+const PROBCUT_MIDGAME_UPPER_MARGIN: f64 = 8.0;
+const PROBCUT_EXACT_UPPER_MARGIN: f64 = 4.0;
+const PROBCUT_LOWER_MARGIN: f64 = 2.0;
 struct OrderingWeights {
     mobility: i32,
     corner: i32,
@@ -562,9 +568,17 @@ impl Context {
             return Ok(None);
         };
         self.stats.probcut_tries += 1;
+        // Skip a test the static evaluation does not support: its prediction
+        // is too far below the upper bound or above the lower one.
+        let predicted = rule.slope * f64::from(self.evaluate(board, &state)) + rule.intercept;
+        let upper_margin = if exact {
+            PROBCUT_EXACT_UPPER_MARGIN
+        } else {
+            PROBCUT_MIDGAME_UPPER_MARGIN
+        };
         let high =
             ((f64::from(beta) - rule.intercept + sigma * rule.deviation) / rule.slope).ceil();
-        if high < 64.0 {
+        if high < 64.0 && predicted >= high - upper_margin {
             let bound = high.max(-64.0) as i32;
             let score = self.probcut_shallow(board, state, bound - 1, bound, rule.shallow_depth)?;
             if score >= bound {
@@ -574,7 +588,7 @@ impl Context {
         }
         let low =
             ((f64::from(alpha) - rule.intercept - sigma * rule.deviation) / rule.slope).floor();
-        if low > -64.0 {
+        if low > -64.0 && predicted <= low + PROBCUT_LOWER_MARGIN {
             let bound = low.min(64.0) as i32;
             let score = self.probcut_shallow(board, state, bound, bound + 1, rule.shallow_depth)?;
             if score <= bound {
