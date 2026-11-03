@@ -33,6 +33,49 @@ impl History {
         history
     }
 
+    /// Rebuilds a saved history, replaying every action. Fails on an
+    /// illegal action, a missing or extra pass, or bad groups or cursor.
+    pub fn restore(
+        initial: Position,
+        actions: Vec<Action>,
+        groups: Vec<usize>,
+        cursor: usize,
+    ) -> Result<Self, &'static str> {
+        let mut positions = Vec::with_capacity(actions.len() + 1);
+        positions.push(initial);
+        for &action in &actions {
+            let position = *positions.last().expect("not empty");
+            let forced = !position.is_terminal() && position.must_pass();
+            if forced != (action == Action::Pass) {
+                return Err("a pass where a move was possible, or a missing pass");
+            }
+            positions.push(position.play(action).map_err(|_| "an illegal move")?);
+        }
+        let last = *positions.last().expect("not empty");
+        if !last.is_terminal() && last.must_pass() {
+            return Err("the record ends before a forced pass");
+        }
+        let ascending = groups.windows(2).all(|w| w[0] < w[1]);
+        let in_range = groups.iter().all(|&g| g < actions.len());
+        let starts = actions.is_empty() || groups.first() == Some(&0);
+        if !ascending || !in_range || !starts {
+            return Err("bad undo groups");
+        }
+        if cursor > actions.len() {
+            return Err("the cursor is past the record");
+        }
+        Ok(Self {
+            positions,
+            actions,
+            groups,
+            cursor,
+        })
+    }
+
+    pub fn groups(&self) -> &[usize] {
+        &self.groups
+    }
+
     pub fn current(&self) -> Position {
         self.positions[self.cursor]
     }

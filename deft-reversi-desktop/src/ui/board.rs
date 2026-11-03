@@ -155,9 +155,9 @@ impl RootView {
                     el.text_color(theme::text_secondary())
                         .cursor_pointer()
                         .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
-                        .on_click(
-                            cx.listener(move |this, _: &ClickEvent, _, cx| this.run(command, cx)),
-                        )
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.run(command.clone(), cx)
+                        }))
                 } else {
                     el.text_color(theme::text_muted())
                 }

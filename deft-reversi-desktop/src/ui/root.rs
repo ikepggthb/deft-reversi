@@ -1,19 +1,28 @@
 //! The window: toolbar, the record on the left, the board in the middle and
 //! the AI on the right (§9.2 of the plan), and the dialogs over them.
-use super::{new_game::NewGameForm, theme, widgets};
+use super::{theme, widgets};
 use crate::{
     app::{Command, Controller, Effect, Status},
     domain::Settings,
-    services::engine::{EngineCommand, EngineEvent, EngineService},
+    persistence::paths::Paths,
+    services::{
+        engine::{EngineCommand, EngineEvent, EngineService},
+        storage::{GameSummary, StorageEvent, StorageService},
+    },
 };
 use deft_reversi_engine::Square;
-use gpui::{App, Context, FocusHandle, KeyBinding, Pixels, Window, actions, div, prelude::*, px};
+use gpui::{
+    App, Context, FocusHandle, KeyBinding, Pixels, SharedString, Subscription, Window, actions,
+    div, prelude::*, px,
+};
 use std::time::{Duration, Instant};
 
 actions!(
     deft,
     [
         NewGame,
+        OpenFile,
+        ExportFile,
         Undo,
         Redo,
         StepBack,
@@ -41,6 +50,8 @@ pub fn bind_keys(cx: &mut App) {
     let board = Some("Board");
     cx.bind_keys([
         KeyBinding::new("ctrl-n", NewGame, workspace),
+        KeyBinding::new("ctrl-o", OpenFile, workspace),
+        KeyBinding::new("ctrl-shift-s", ExportFile, workspace),
         KeyBinding::new("ctrl-z", Undo, workspace),
         KeyBinding::new("ctrl-y", Redo, workspace),
         KeyBinding::new("ctrl-shift-z", Redo, workspace),
@@ -66,6 +77,7 @@ pub fn bind_keys(cx: &mut App) {
 pub(super) enum Dialog {
     NewGame,
     Settings,
+    Games,
 }
 
 const LEFT_WIDTH: f32 = 150.;
@@ -79,8 +91,20 @@ pub struct RootView {
     engine: Option<EngineService>,
     pub(super) settings: Settings,
     pub(super) dialog: Option<Dialog>,
-    /// Kept between games, so the dialog opens with the last choices.
-    pub(super) new_game_form: NewGameForm,
+    /// None when the OS gives no folders; then nothing is saved.
+    pub(super) storage: Option<StorageService>,
+    pub(super) paths: Option<Paths>,
+    /// The controller revision last sent to storage; 0 is an untouched game.
+    pub(super) saved_revision: u64,
+    pub(super) saved_settings: Settings,
+    /// A message about files, until the next one.
+    pub(super) notice: Option<SharedString>,
+    pub(super) menu_open: bool,
+    /// The saved games while the list is open.
+    pub(super) games: Option<Vec<GameSummary>>,
+    /// A game whose delete button was pressed once.
+    pub(super) delete_pending: Option<String>,
+    _quit: Option<Subscription>,
     focus: FocusHandle,
     dialog_focus: FocusHandle,
     pub(super) board_focus: FocusHandle,
@@ -93,9 +117,36 @@ impl RootView {
     pub fn new(
         launched: Instant,
         engine: Option<(EngineService, async_channel::Receiver<EngineEvent>)>,
+        storage: Option<(StorageService, Paths, async_channel::Receiver<StorageEvent>)>,
+        settings: Settings,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (storage, paths, quit) = match storage {
+            None => (None, None, None),
+            Some((service, paths, events)) => {
+                cx.spawn(async move |this, cx| {
+                    while let Ok(event) = events.recv().await {
+                        if this
+                            .update(cx, |this, cx| this.on_storage(event, cx))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                })
+                .detach();
+                // The last save is written before the process ends.
+                let quit = cx.on_app_quit(|this: &mut Self, _| {
+                    this.persist();
+                    if let Some(storage) = this.storage.as_mut() {
+                        storage.shutdown();
+                    }
+                    async {}
+                });
+                (Some(service), Some(paths), Some(quit))
+            }
+        };
         let engine = engine.map(|(service, events)| {
             cx.spawn(async move |this, cx| {
                 while let Ok(event) = events.recv().await {
@@ -130,9 +181,17 @@ impl RootView {
         Self {
             controller: Controller::default(),
             engine,
-            settings: Settings::default(),
+            settings,
             dialog: None,
-            new_game_form: NewGameForm::default(),
+            storage,
+            paths,
+            saved_revision: 0,
+            saved_settings: settings,
+            notice: None,
+            menu_open: false,
+            games: None,
+            delete_pending: None,
+            _quit: quit,
             focus,
             dialog_focus: cx.focus_handle(),
             board_focus: cx.focus_handle(),
@@ -147,6 +206,7 @@ impl RootView {
     }
 
     pub(super) fn run(&mut self, command: Command, cx: &mut Context<Self>) {
+        self.notice = None;
         let effects = self.controller.apply(command);
         self.dispatch(effects, cx);
         cx.notify();
@@ -188,6 +248,12 @@ impl RootView {
 
     /// Focus follows on the next render.
     pub(super) fn open_dialog(&mut self, dialog: Dialog, cx: &mut Context<Self>) {
+        if matches!(dialog, Dialog::Games) {
+            self.games = None;
+            self.delete_pending = None;
+            self.send_storage(crate::services::storage::StorageCommand::ListGames);
+        }
+        self.menu_open = false;
         self.dialog = Some(dialog);
         cx.notify();
     }
@@ -230,6 +296,12 @@ impl RootView {
             .border_b_1()
             .border_color(theme::hairline())
             .child(widgets::link(
+                "file-menu",
+                s.file_menu,
+                widgets::handler(|this, _| this.menu_open = !this.menu_open),
+                cx,
+            ))
+            .child(widgets::link(
                 "new-game",
                 s.new_game,
                 open(|| Dialog::NewGame),
@@ -252,6 +324,7 @@ impl Render for RootView {
             eprintln!("[startup] first frame at {} ms", t.as_millis());
             self.first_frame = Some(t);
         }
+        self.persist();
         // Handlers have no window, so focus follows the dialog here.
         if self.dialog.is_some() {
             if !self.dialog_focus.contains_focused(window, cx) {
@@ -267,6 +340,8 @@ impl Render for RootView {
             .on_action(
                 cx.listener(|this, _: &NewGame, _, cx| this.open_dialog(Dialog::NewGame, cx)),
             )
+            .on_action(cx.listener(|this, _: &OpenFile, _, cx| this.open_file(cx)))
+            .on_action(cx.listener(|this, _: &ExportFile, _, cx| this.export_file(cx)))
             .on_action(cx.listener(|this, _: &Undo, _, cx| this.run(Command::Undo, cx)))
             .on_action(cx.listener(|this, _: &Redo, _, cx| this.run(Command::Redo, cx)))
             .on_action(cx.listener(|this, _: &StepBack, _, cx| this.run(Command::Step(-1), cx)))
@@ -338,6 +413,7 @@ impl Render for RootView {
             let panel = match dialog {
                 Dialog::NewGame => self.render_new_game(cx).into_any_element(),
                 Dialog::Settings => self.render_settings(cx).into_any_element(),
+                Dialog::Games => self.render_games(cx).into_any_element(),
             };
             div()
                 .absolute()
@@ -366,6 +442,7 @@ impl Render for RootView {
             .text_color(theme::text())
             .text_sm()
             .child(workspace)
+            .children(self.menu_open.then(|| self.render_file_menu(cx)))
             .children(dialog)
     }
 }

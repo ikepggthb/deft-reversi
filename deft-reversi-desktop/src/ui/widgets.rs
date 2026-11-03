@@ -1,6 +1,8 @@
 //! Small controls shared by the dialogs.
 use super::{root::RootView, theme};
-use gpui::{ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
+use gpui::{
+    ClickEvent, Context, Div, ElementId, FontWeight, SharedString, Stateful, div, prelude::*, px,
+};
 use std::rc::Rc;
 
 pub(super) type Handler = Rc<dyn Fn(&mut RootView, &mut Context<RootView>)>;
@@ -50,7 +52,7 @@ pub(super) fn segmented(
 
 /// Plain text that acts on click.
 pub(super) fn link(
-    id: &'static str,
+    id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     f: Handler,
     cx: &mut Context<RootView>,

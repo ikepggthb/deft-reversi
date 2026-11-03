@@ -48,6 +48,15 @@ pub struct Strings {
     pub threads: &'static str,
     pub hash_table: &'static str,
     pub close: &'static str,
+    pub file_menu: &'static str,
+    pub open: &'static str,
+    pub export: &'static str,
+    pub games: &'static str,
+    pub delete: &'static str,
+    pub delete_confirm: &'static str,
+    pub in_progress: &'static str,
+    pub no_games: &'static str,
+    pub already_running: &'static str,
     move_number: fn(usize) -> String,
     wins_by: fn(Color, i32) -> String,
     color: fn(Color) -> &'static str,
@@ -57,6 +66,10 @@ pub struct Strings {
     depth: fn(u8) -> String,
     seconds: fn(u64) -> String,
     logical_cpus: fn(usize) -> String,
+    moves: fn(usize) -> String,
+    exported: fn(&str) -> String,
+    load_failed: fn(&str) -> String,
+    save_failed: fn(&str) -> String,
 }
 
 impl Strings {
@@ -88,6 +101,18 @@ impl Strings {
     }
     pub fn logical_cpus(&self, n: usize) -> String {
         (self.logical_cpus)(n)
+    }
+    pub fn moves(&self, n: usize) -> String {
+        (self.moves)(n)
+    }
+    pub fn exported(&self, path: &str) -> String {
+        (self.exported)(path)
+    }
+    pub fn load_failed(&self, error: &str) -> String {
+        (self.load_failed)(error)
+    }
+    pub fn save_failed(&self, error: &str) -> String {
+        (self.save_failed)(error)
     }
 }
 
@@ -140,6 +165,15 @@ static JA: Strings = Strings {
     threads: "スレッド数",
     hash_table: "置換表",
     close: "閉じる",
+    file_menu: "ファイル",
+    open: "開く…",
+    export: "書き出し…",
+    games: "対局一覧",
+    delete: "削除",
+    delete_confirm: "削除する",
+    in_progress: "対局中",
+    no_games: "保存された対局はありません",
+    already_running: "deft-reversi はすでに起動しています。",
     move_number: |n| format!("{n}手目"),
     wins_by: |winner, margin| {
         let side = (JA.color)(winner);
@@ -161,6 +195,10 @@ static JA: Strings = Strings {
     depth: |depth| format!("{depth}手読み"),
     seconds: |s| format!("{s} 秒"),
     logical_cpus: |n| format!("論理CPU {n}"),
+    moves: |n| format!("{n}手"),
+    exported: |path| format!("書き出しました: {path}"),
+    load_failed: |error| format!("開けませんでした: {error}"),
+    save_failed: |error| format!("保存できませんでした: {error}"),
 };
 
 static EN: Strings = Strings {
@@ -203,6 +241,15 @@ static EN: Strings = Strings {
     threads: "Threads",
     hash_table: "Hash table",
     close: "Close",
+    file_menu: "File",
+    open: "Open…",
+    export: "Export…",
+    games: "Games",
+    delete: "Delete",
+    delete_confirm: "Delete it",
+    in_progress: "In progress",
+    no_games: "No saved games",
+    already_running: "deft-reversi is already running.",
     move_number: |n| format!("Move {n}"),
     wins_by: |winner, margin| format!("{} wins by {margin}", (EN.color)(winner)),
     color: |color| match color {
@@ -221,4 +268,8 @@ static EN: Strings = Strings {
     depth: |depth| format!("{depth} moves ahead"),
     seconds: |s| format!("{s} s"),
     logical_cpus: |n| format!("{n} logical CPUs"),
+    moves: |n| format!("{n} moves"),
+    exported: |path| format!("Exported to {path}"),
+    load_failed: |error| format!("Could not open: {error}"),
+    save_failed: |error| format!("Could not save: {error}"),
 };

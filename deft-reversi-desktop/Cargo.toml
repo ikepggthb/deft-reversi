@@ -14,6 +14,10 @@ deft_reversi_engine = { path = "../deft-reversi-engine" }
 gpui = { git = "https://github.com/zed-industries/zed.git", tag = "v0.233.10", default-features = false }
 gpui_platform = { git = "https://github.com/zed-industries/zed.git", tag = "v0.233.10", features = ["wayland", "x11"] }
 async-channel = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# OS data and config folders.
+dirs = "6"
 
 [dev-dependencies]
 # Tests build a small engine from the zero model with known ProbCut rules.

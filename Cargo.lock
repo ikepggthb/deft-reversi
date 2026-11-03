@@ -1391,8 +1391,11 @@ version = "0.1.0"
 dependencies = [
  "async-channel 2.5.0",
  "deft_reversi_engine",
+ "dirs",
  "gpui",
  "gpui_platform",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -33,6 +33,21 @@ impl Preset {
         Self::Strongest,
     ];
 
+    /// The name in files.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Beginner => "beginner",
+            Self::Intermediate => "intermediate",
+            Self::Advanced => "advanced",
+            Self::Expert => "expert",
+            Self::Strongest => "strongest",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.key() == key)
+    }
+
     /// Levels 1 to 10 search without ProbCut; the strongest is the highest
     /// level whose longest move stayed near 5 s on 8 threads (§7.1).
     pub fn level(self) -> u8 {

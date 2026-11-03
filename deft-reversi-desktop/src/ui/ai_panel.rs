@@ -58,12 +58,17 @@ impl RootView {
                 EngineStatus::Ready => {}
             }
         }
-        if let Some(notice) = c.notice() {
+        for notice in c
+            .notice()
+            .map(str::to_string)
+            .into_iter()
+            .chain(self.notice.as_ref().map(|n| n.to_string()))
+        {
             lines.push(
                 div()
                     .text_xs()
                     .text_color(theme::danger())
-                    .child(notice.to_string())
+                    .child(notice)
                     .into_any_element(),
             );
         }

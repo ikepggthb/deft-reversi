@@ -1,6 +1,6 @@
 //! Finds the model and builds engines from it on the `engine-ctl` thread.
 use crate::services::engine::{EngineBackend, Resources};
-use deft_reversi_engine::{Engine, EngineOptions, Model};
+use deft_reversi_engine::{Engine, EngineError, EngineOptions, Model};
 use std::{
     path::{Path, PathBuf},
     thread,
@@ -52,18 +52,38 @@ pub fn backend(model_path: PathBuf, resources: Resources) -> Result<EngineBacken
             .map_err(|error| format!("{}: {error}", model_path.display()))?;
         let model_time = start.elapsed();
         let start = Instant::now();
-        let options = EngineOptions::default()
-            .threads(resources.threads)
-            .tt_mib(resources.tt_mib);
-        let engine = Engine::new(model, options).map_err(|error| error.to_string())?;
-        eprintln!(
-            "[engine] model {} ms, engine {} ms ({} threads, TT {} MiB) from {}",
-            model_time.as_millis(),
-            start.elapsed().as_millis(),
-            resources.threads,
-            resources.tt_mib,
-            model_path.display(),
-        );
-        Ok(engine)
+        let mut model = Some(model);
+        let mut tt_mib = resources.tt_mib;
+        loop {
+            let options = EngineOptions::default()
+                .threads(resources.threads)
+                .tt_mib(tt_mib);
+            let current = model.take().expect("the model is read again on retry");
+            match Engine::new(current, options) {
+                Ok(engine) => {
+                    eprintln!(
+                        "[engine] model {} ms, engine {} ms ({} threads, TT {tt_mib} MiB) from {}",
+                        model_time.as_millis(),
+                        start.elapsed().as_millis(),
+                        resources.threads,
+                        model_path.display(),
+                    );
+                    return Ok(engine);
+                }
+                // A table too large for this PC: halve it, down to 16 MiB.
+                Err(EngineError::Memory(error)) if tt_mib > 16 => {
+                    eprintln!(
+                        "[engine] TT {tt_mib} MiB: {error}; trying {} MiB",
+                        tt_mib / 2
+                    );
+                    tt_mib /= 2;
+                    model = Some(
+                        Model::from_file(&model_path)
+                            .map_err(|error| format!("{}: {error}", model_path.display()))?,
+                    );
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        }
     })
 }

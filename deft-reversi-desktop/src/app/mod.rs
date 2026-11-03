@@ -1,7 +1,8 @@
 //! The controller: commands in, state changes and effects out. It does not
 //! touch GPUI or threads, so it is tested without a window or an engine.
 use crate::{
-    domain::{Grouping, History, Player, Strength},
+    domain::{GameInfo, Grouping, History, Player, Strength},
+    persistence::record::LoadedGame,
     services::engine::{EngineEvent, Report, Resources, SearchId, SearchJob},
 };
 use deft_reversi_engine::{Action, Color, Position, Square};
@@ -26,7 +27,7 @@ impl Default for NewGame {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Command {
     NewGame(NewGame),
     Play(Square),
@@ -45,6 +46,8 @@ pub enum Command {
     /// Plays the AI's best move so far.
     MoveNow,
     SetResources(Resources),
+    /// A checked record replaces the game; it opens paused.
+    Load(Box<LoadedGame>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +98,7 @@ pub struct Thinking {
 }
 
 pub struct Controller {
+    game: GameInfo,
     history: History,
     players: [Player; 2],
     status: Status,
@@ -111,6 +115,7 @@ impl Default for Controller {
     fn default() -> Self {
         let new_game = NewGame::default();
         Self {
+            game: GameInfo::new(),
             history: History::new(new_game.start),
             players: new_game.players,
             status: Status::Playing,
@@ -139,6 +144,15 @@ impl Thinking {
 impl Controller {
     pub fn history(&self) -> &History {
         &self.history
+    }
+
+    pub fn game(&self) -> &GameInfo {
+        &self.game
+    }
+
+    /// Changes with every change worth saving.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn players(&self) -> [Player; 2] {
@@ -184,6 +198,7 @@ impl Controller {
         match command {
             Command::NewGame(new_game) => {
                 self.cancel(&mut effects);
+                self.game = GameInfo::new();
                 self.history = History::new(new_game.start);
                 self.players = new_game.players;
                 self.status = Status::Playing;
@@ -220,6 +235,21 @@ impl Controller {
                 self.cancel(&mut effects);
                 self.engine = EngineStatus::Loading;
                 effects.push(Effect::Reconfigure(resources));
+            }
+            Command::Load(loaded) => {
+                self.cancel(&mut effects);
+                let LoadedGame {
+                    game,
+                    players,
+                    history,
+                } = *loaded;
+                self.game = game;
+                self.players = players;
+                self.history = history;
+                // A loaded game never plays on by itself.
+                self.status = Status::Paused;
+                self.revision += 1;
+                effects.push(Effect::ClearTt);
             }
         }
         self.autoplay(&mut effects);
@@ -514,6 +544,29 @@ mod tests {
         assert!(started(&finish(&mut c, step)).is_none(), "stays paused");
         assert_eq!(c.history().actions().len(), 2);
         assert_eq!(c.status(), Status::Paused);
+        assert!(started(&c.apply(Command::Resume)).is_some());
+    }
+
+    #[test]
+    fn a_loaded_game_opens_paused() {
+        let mut c = ready([Player::Human, AI]);
+        let id = started(&play(&mut c, "f5")).unwrap();
+        let mut history = History::new(Position::initial());
+        history
+            .play(Action::Place("f5".parse().unwrap()), Grouping::NewGroup)
+            .unwrap();
+        let game = GameInfo::new();
+        let effects = c.apply(Command::Load(Box::new(LoadedGame {
+            game: game.clone(),
+            players: [Player::Human, AI],
+            history,
+        })));
+        assert_eq!(effects, [Effect::CancelSearch, Effect::ClearTt]);
+        assert_eq!(c.status(), Status::Paused);
+        assert_eq!(c.game(), &game);
+        // The search from before the load is not applied.
+        finish(&mut c, id);
+        assert_eq!(c.history().actions().len(), 1);
         assert!(started(&c.apply(Command::Resume)).is_some());
     }
 

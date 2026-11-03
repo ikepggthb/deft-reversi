@@ -3,83 +3,15 @@
 use super::{root::RootView, theme, widgets};
 use crate::{
     app::{Command, NewGame},
-    domain::{Player, Preset, Strength, player::MOVE_TIMES},
+    domain::{
+        Preset, Strength,
+        player::MOVE_TIMES,
+        settings::{AiChoice, ManualMode},
+    },
     i18n::Strings,
 };
 use deft_reversi_engine::{Color, Position, ResultKind, Selectivity, level_reading};
 use gpui::{ClickEvent, Context, Div, FontWeight, Rgba, SharedString, div, prelude::*, px};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AiChoice {
-    Preset(Preset),
-    Manual,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ManualMode {
-    Level,
-    Time,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct SideForm {
-    pub ai: bool,
-    pub choice: AiChoice,
-    pub mode: ManualMode,
-    pub level: u8,
-    /// An index into `MOVE_TIMES`.
-    pub time: usize,
-}
-
-impl SideForm {
-    fn human() -> Self {
-        Self {
-            ai: false,
-            choice: AiChoice::Preset(Preset::Intermediate),
-            mode: ManualMode::Level,
-            level: 20,
-            time: 2,
-        }
-    }
-
-    fn strength(&self) -> Strength {
-        match (self.choice, self.mode) {
-            (AiChoice::Preset(preset), _) => Strength::Preset(preset),
-            (AiChoice::Manual, ManualMode::Level) => Strength::Level(self.level),
-            (AiChoice::Manual, ManualMode::Time) => Strength::TimePerMove(MOVE_TIMES[self.time]),
-        }
-    }
-
-    fn player(&self) -> Player {
-        if self.ai {
-            Player::Ai(self.strength())
-        } else {
-            Player::Human
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct NewGameForm {
-    /// Black, then White.
-    pub sides: [SideForm; 2],
-    pub from_current: bool,
-}
-
-impl Default for NewGameForm {
-    fn default() -> Self {
-        Self {
-            sides: [
-                SideForm::human(),
-                SideForm {
-                    ai: true,
-                    ..SideForm::human()
-                },
-            ],
-            from_current: false,
-        }
-    }
-}
 
 /// How a strength reads in a short label: a preset's name, a level, or a
 /// time per move.
@@ -142,23 +74,23 @@ const STRIP_WIDTH: f32 = 500.;
 impl RootView {
     pub(super) fn render_new_game(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
-        let form = self.new_game_form;
+        let form = self.settings.new_game;
         let current = self.controller.history().current();
         let move_number = crate::ui::record::move_number(current);
         let start_items = vec![
             (
                 s.initial_position.into(),
                 !form.from_current,
-                widgets::handler(|this, _| this.new_game_form.from_current = false),
+                widgets::handler(|this, _| this.settings.new_game.from_current = false),
             ),
             (
                 s.current_position(move_number).into(),
                 form.from_current,
-                widgets::handler(|this, _| this.new_game_form.from_current = true),
+                widgets::handler(|this, _| this.settings.new_game.from_current = true),
             ),
         ];
         let start = widgets::handler(|this, cx| {
-            let form = this.new_game_form;
+            let form = this.settings.new_game;
             let start = if form.from_current {
                 this.controller.history().current()
             } else {
@@ -248,7 +180,7 @@ impl RootView {
     fn render_side(&self, color: Color, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let i = side_index(color);
-        let side = self.new_game_form.sides[i];
+        let side = self.settings.new_game.sides[i];
         let disc = match color {
             Color::Black => theme::black_disc(),
             Color::White => theme::white_disc(),
@@ -283,7 +215,7 @@ impl RootView {
                 .child(widgets::link(
                     "swap",
                     format!("⇄ {}", s.swap),
-                    widgets::handler(|this, _| this.new_game_form.sides.swap(0, 1)),
+                    widgets::handler(|this, _| this.settings.new_game.sides.swap(0, 1)),
                     cx,
                 ));
         }
@@ -293,12 +225,12 @@ impl RootView {
                 (
                     s.human.into(),
                     !side.ai,
-                    widgets::handler(move |this, _| this.new_game_form.sides[i].ai = false),
+                    widgets::handler(move |this, _| this.settings.new_game.sides[i].ai = false),
                 ),
                 (
                     s.ai.into(),
                     side.ai,
-                    widgets::handler(move |this, _| this.new_game_form.sides[i].ai = true),
+                    widgets::handler(move |this, _| this.settings.new_game.sides[i].ai = true),
                 ),
             ],
             cx,
@@ -337,7 +269,7 @@ impl RootView {
                         .when(on, |el| el.bg(theme::hover()))
                         .hover(|style| style.bg(theme::hover()))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.new_game_form.sides[i].choice = choice;
+                            this.settings.new_game.sides[i].choice = choice;
                             cx.notify();
                         }))
                         .child(
@@ -369,7 +301,7 @@ impl RootView {
     fn render_manual(&self, color: Color, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let i = side_index(color);
-        let side = self.new_game_form.sides[i];
+        let side = self.settings.new_game.sides[i];
         let id = |name: &'static str, black: &'static str| if i == 0 { black } else { name };
         let mode = widgets::segmented(
             id("white-mode", "black-mode"),
@@ -378,14 +310,14 @@ impl RootView {
                     s.by_level.into(),
                     side.mode == ManualMode::Level,
                     widgets::handler(move |this, _| {
-                        this.new_game_form.sides[i].mode = ManualMode::Level
+                        this.settings.new_game.sides[i].mode = ManualMode::Level
                     }),
                 ),
                 (
                     s.by_time.into(),
                     side.mode == ManualMode::Time,
                     widgets::handler(move |this, _| {
-                        this.new_game_form.sides[i].mode = ManualMode::Time
+                        this.settings.new_game.sides[i].mode = ManualMode::Time
                     }),
                 ),
             ],
@@ -395,7 +327,7 @@ impl RootView {
             ManualMode::Level => {
                 let step = move |delta: i8| {
                     widgets::handler(move |this, _| {
-                        let level = &mut this.new_game_form.sides[i].level;
+                        let level = &mut this.settings.new_game.sides[i].level;
                         *level = (*level as i8 + delta).clamp(1, 60) as u8;
                     })
                 };
@@ -438,7 +370,9 @@ impl RootView {
                         (
                             s.seconds(limit.as_secs()).into(),
                             side.time == t,
-                            widgets::handler(move |this, _| this.new_game_form.sides[i].time = t),
+                            widgets::handler(move |this, _| {
+                                this.settings.new_game.sides[i].time = t
+                            }),
                         )
                     })
                     .collect();
