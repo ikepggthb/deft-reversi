@@ -11,7 +11,8 @@ least 0; `FROM-TO:N` sets a depth directly.
 
 Midgame rules and multiples come from BASE_RULES.json unchanged. The exact
 rules come from the formula of fit_formula.py fitted on every cell, with
-a and b evaluated at min(e, 24) (no data beyond 24), and the exact
+a and b evaluated at min(e, E_MEASURED) (no data beyond 24; the
+environment variable E_MEASURED, default 24, changes it), and the exact
 multiples are the pooled quantiles of |z| over every cell.
 """
 import json
@@ -21,7 +22,8 @@ import numpy as np
 
 from fit_formula import HERE, MEAN_FORM, SIGMA_FORMS, STAGES, load, make_cells
 
-E_MEASURED = 24
+import os
+E_MEASURED = int(os.environ.get("E_MEASURED", "24"))
 
 
 def current(e):
