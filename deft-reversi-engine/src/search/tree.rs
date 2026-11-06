@@ -8,15 +8,17 @@ pub(super) const SPLIT_DEPTH: u8 = 4;
 pub(super) const SPLIT_EMPTIES: u8 = 10;
 /// Null-window midgame nodes below this depth search without the TT, and
 /// below `ORDERED_SEARCH_DEPTH` without move ordering too, like main's
-/// `SWITCH_SIMPLE_SEARCH_LEVEL` and `SWITCH_NEGAALPHA_SEARCH_LEVEL`; 5 and 3
-/// were the fastest (docs/benchmarks/2026-11-03-midgame-speed).
-pub(super) const SIMPLE_SEARCH_DEPTH: u8 = 5;
+/// `SWITCH_SIMPLE_SEARCH_LEVEL` and `SWITCH_NEGAALPHA_SEARCH_LEVEL`. With
+/// the PEN evaluation 4 and 3 were the fastest (5 and 3 with the linear
+/// one; docs/benchmarks/2026-11-06-pen-tuning).
+pub(super) const SIMPLE_SEARCH_DEPTH: u8 = 4;
 pub(super) const ORDERED_SEARCH_DEPTH: u8 = 3;
 /// A ProbCut test runs only when the rule's prediction from the static
 /// evaluation is within these margins (discs) of its bound; Egaroucid uses 4.
+/// Chosen for the PEN evaluation (docs/benchmarks/2026-11-06-pen-tuning).
 const PROBCUT_MIDGAME_UPPER_MARGIN: f64 = 8.0;
-const PROBCUT_EXACT_UPPER_MARGIN: f64 = 4.0;
-const PROBCUT_LOWER_MARGIN: f64 = 2.0;
+const PROBCUT_EXACT_UPPER_MARGIN: f64 = 2.0;
+const PROBCUT_LOWER_MARGIN: f64 = 4.0;
 struct OrderingWeights {
     mobility: i32,
     corner: i32,

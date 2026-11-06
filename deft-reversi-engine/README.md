@@ -16,7 +16,7 @@
 - `mpc`: 旧 main の ProbCut 規則（旧 main から変換したモデル用）。
 - `search/root`: ルート候補ごとの境界、アスピレーションの安定化、最善手順の継承。
 - `search/level`: 元のレベルからの深さ・選択率・終盤への移行と序盤補正。
-- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。中盤のヌルウィンドウ探索は、残り5手未満で TT を使わず（評価値と着手可能数で手順付け）、残り3手未満で手順付けもしない（旧 main の `SWITCH_SIMPLE_SEARCH_LEVEL`・`SWITCH_NEGAALPHA_SEARCH_LEVEL` と同じ仕組みで、深さは測って決めた）。MPC の浅い探索は、MPC を使わない中盤探索である。MPC はゼロ窓のノードだけで試す（Edax と同じ。[終盤 MPC の悪手の調査](../docs/benchmarks/2026-11-05-endgame-mpc-quality/README.md)）。MPC の判定は、静的評価から規則で予測した値が境界から離れすぎていれば浅い探索を省く（上側は中盤8石・終盤4石、下側は2石。[中盤探索の高速化](../docs/benchmarks/2026-11-03-midgame-speed/README.md)）。
+- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。中盤のヌルウィンドウ探索は、残り4手未満で TT を使わず（評価値と着手可能数で手順付け）、残り3手未満で手順付けもしない（旧 main の `SWITCH_SIMPLE_SEARCH_LEVEL`・`SWITCH_NEGAALPHA_SEARCH_LEVEL` と同じ仕組みで、深さは PEN のモデルで測って決めた。[PEN に合わせた調整](../docs/benchmarks/2026-11-06-pen-tuning/README.md)）。MPC の浅い探索は、MPC を使わない中盤探索である。MPC はゼロ窓のノードだけで試す（Edax と同じ。[終盤 MPC の悪手の調査](../docs/benchmarks/2026-11-05-endgame-mpc-quality/README.md)）。MPC の判定は、静的評価から規則で予測した値が境界から離れすぎていれば浅い探索を省く（上側は中盤8石・終盤2石、下側は4石。[中盤探索の高速化](../docs/benchmarks/2026-11-03-midgame-speed/README.md)、[PEN に合わせた調整](../docs/benchmarks/2026-11-06-pen-tuning/README.md)）。
 - `board/stability`: 元実装の辺の全パターン表・満杯のライン・接触による確定石判定。
 - `search/endgame/mod`: 終盤探索の入口と通常窓の処理。
 - `search/endgame/local_tt`: 空き6〜13ごとの局所TT。境界・候補手・選択率を保持し、照会結果は値として再帰へ渡す。
