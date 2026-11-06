@@ -135,6 +135,10 @@ PEN では、浅い探索の値から深い探索の値を予想したときの�
 
 結果のファイルは [results/](results) にある（`pen-vs-linear-*.tsv`、`pen-edax-level*.tsv`、`pen-egaroucid-level*.tsv`、まとめは `summary.txt`）。
 
+## 完全読み（FFO 40〜59）
+
+PEN でも、完全読みは遅くならなかった（合計 275.9 s。線形 276.4 s、Edax 310.9 s、Egaroucid 288.3 s）。ノード数は約10%減った。詳しくは [2026-11-06-ffo-pen](../2026-11-06-ffo-pen/README.md) にある。
+
 ## モデル
 
 | ファイル | 大きさ | sha256 |
