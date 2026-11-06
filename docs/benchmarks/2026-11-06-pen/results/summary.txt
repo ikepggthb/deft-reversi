@@ -3,3 +3,6 @@ deft vs edax level5: games 500  wins 310 draws 21 losses 169  score 64.1%  elo +
 deft vs edax level12: games 500  wins 275 draws 74 losses 151  score 62.4%  elo +88 [+57, +121]  mean disc diff +2.11 ± 0.28  time deft 217s opp 303s (ratio 0.71)
 deft vs deft time1: games 500  wins 242 draws 81 losses 177  score 56.5%  elo +45 [+14, +77]  mean disc diff +1.59 ± 0.31  time deft 480s opp 480s (ratio 1.00)
 deft vs deft level12: games 500  wins 276 draws 81 losses 143  score 63.3%  elo +95 [+63, +128]  mean disc diff +1.89 ± 0.28  time deft 250s opp 246s (ratio 1.01)
+deft vs egaroucid level1: games 500  wins 287 draws 10 losses 203  score 58.4%  elo +59 [+28, +91]  mean disc diff +5.84 ± 1.18  time deft 0s opp 0s (ratio 3.00)
+deft vs egaroucid level5: games 500  wins 300 draws 22 losses 178  score 62.2%  elo +87 [+55, +119]  mean disc diff +4.41 ± 0.70  time deft 3s opp 2s (ratio 1.96)
+deft vs egaroucid level12: games 500  wins 231 draws 86 losses 183  score 54.8%  elo +33 [+2, +65]  mean disc diff +0.54 ± 0.23  time deft 244s opp 321s (ratio 0.76)
