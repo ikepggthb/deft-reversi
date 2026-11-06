@@ -1,6 +1,7 @@
 use crate::{
     Result, StoneRange, for_each_parallel,
     pen::{PenSettings, PenWeights},
+    pen_rel::{RelWeights, Relation},
     phase::{Metrics, PhaseWeights, Settings},
     rd,
 };
@@ -59,6 +60,10 @@ pub struct TrainArgs {
     /// only: the engine cannot read such a model, so no model is written.
     #[arg(long, requires = "pen")]
     pen_separate: bool,
+    /// With `--pen`, add a relation path between the four orientations
+    /// (see `pen_rel.rs`). For measurement only: no model is written.
+    #[arg(long, requires = "pen", value_enum)]
+    pen_rel: Option<Relation>,
     /// AdaGrad step size of the PEN embeddings.
     #[arg(long, default_value_t = 0.01)]
     pen_lr: f32,
@@ -102,6 +107,8 @@ enum Weights {
     /// PEN without the linear weights (`--pen-no-linear`). Last, so older
     /// checkpoints keep their tags.
     PenOnly(Box<PenWeights>),
+    /// PEN with a relation path (`--pen-rel`); measurement only.
+    PenRel(Box<RelWeights>),
 }
 
 impl Weights {
@@ -110,7 +117,8 @@ impl Weights {
             (Self::Linear(w), _) => w.train(records, &identity.settings),
             (Self::Pen(w), Some(pen)) => w.train(records, &identity.settings, pen, true),
             (Self::PenOnly(w), Some(pen)) => w.train(records, &identity.settings, pen, false),
-            (Self::Pen(_) | Self::PenOnly(_), None) => {
+            (Self::PenRel(w), Some(pen)) => w.train(records, &identity.settings, pen),
+            (Self::Pen(_) | Self::PenOnly(_) | Self::PenRel(_), None) => {
                 unreachable!("the identity matched the checkpoint")
             }
         }
@@ -119,6 +127,7 @@ impl Weights {
         match self {
             Self::Linear(w) => w.validate(records, huber_delta),
             Self::Pen(w) | Self::PenOnly(w) => w.validate(records, huber_delta),
+            Self::PenRel(w) => w.validate(records, huber_delta),
         }
     }
 }
@@ -187,7 +196,7 @@ pub fn run(args: TrainArgs) -> Result<()> {
     for_each_parallel(&order, threads, |&s| {
         train_phase(&args, identity, s, &metrics)
     })?;
-    if args.pen_separate {
+    if args.pen_separate || args.pen_rel.is_some() {
         println!("--pen-separate: the engine cannot read this network; no model written");
         return Ok(());
     }
@@ -230,6 +239,17 @@ fn train_phase(
                 "{}: trained with other settings ({:?}); use another --work",
                 path.display(),
                 c.identity
+            )
+            .into());
+        }
+        let rel = match &c.weights {
+            Weights::PenRel(w) => Some(w.relation()),
+            _ => None,
+        };
+        if rel != args.pen_rel {
+            return Err(format!(
+                "{}: trained with another relation path ({rel:?}); use another --work",
+                path.display()
             )
             .into());
         }
@@ -286,6 +306,14 @@ fn train_phase(
     };
     let (mut weights, done) = match checkpoint {
         Some(c) => (c.weights, c.epochs),
+        None if identity.pen.is_some() && args.pen_rel.is_some() => (
+            Weights::PenRel(Box::new(RelWeights::new(
+                &records,
+                args.seed ^ u64::from(stones) << 40,
+                args.pen_rel.unwrap(),
+            ))),
+            0,
+        ),
         None if identity.pen.is_some() => {
             let w = Box::new(PenWeights::new(
                 &records,
@@ -352,6 +380,12 @@ pub fn export(args: &ExportArgs) -> Result<()> {
             let p = usize::from(stones) - 4;
             match c.weights {
                 Weights::Linear(w) => trained[p] = Some(w.export(args.shrink)),
+                Weights::PenRel(_) => {
+                    return Err(format!(
+                        "phase {stones}: a relation-path network has no engine format"
+                    )
+                    .into());
+                }
                 Weights::Pen(w) | Weights::PenOnly(w) => {
                     let (linear, network) = w.export(args.shrink);
                     trained[p] = Some(linear);
@@ -448,6 +482,7 @@ mod tests {
             pen: false,
             pen_no_linear: false,
             pen_separate: false,
+            pen_rel: None,
             pen_lr: 0.01,
             pen_dense_lr: 0.001,
             pen_batch: 256,

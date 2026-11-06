@@ -3,6 +3,7 @@ mod eval;
 mod model;
 mod mpc;
 mod pen;
+mod pen_rel;
 mod phase;
 mod rd;
 mod train;

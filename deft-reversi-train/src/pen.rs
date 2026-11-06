@@ -46,27 +46,27 @@ impl PenSettings {
 }
 
 /// Every embedding starts here, so states never seen stay alike.
-const EMBEDDING_INIT: f32 = 0.125;
+pub(crate) const EMBEDDING_INIT: f32 = 0.125;
 /// Gradient kept through a clipped activation outside its range, so a
 /// unit that left it can come back.
-const LEAK: f32 = 0.01;
+pub(crate) const LEAK: f32 = 0.01;
 /// Largest hidden weight the engine's i8 holds at scale 64.
-const HIDDEN_MAX: f32 = 127.0 / 64.0;
+pub(crate) const HIDDEN_MAX: f32 = 127.0 / 64.0;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Adam {
+pub(crate) struct Adam {
     m: Vec<f32>,
     v: Vec<f32>,
 }
 
 impl Adam {
-    fn new(n: usize) -> Self {
+    pub(crate) fn new(n: usize) -> Self {
         Self {
             m: vec![0.0; n],
             v: vec![0.0; n],
         }
     }
-    fn step(&mut self, params: &mut [f32], grads: &[f32], lr: f32, t: u64) {
+    pub(crate) fn step(&mut self, params: &mut [f32], grads: &[f32], lr: f32, t: u64) {
         const B1: f32 = 0.9;
         const B2: f32 = 0.999;
         let c1 = 1.0 - B1.powi(t.min(1 << 20) as i32);

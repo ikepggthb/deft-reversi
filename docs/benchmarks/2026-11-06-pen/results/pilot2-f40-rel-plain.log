@@ -1,0 +1,5 @@
+stones 40 epoch 1/4  train mae 4.523  valid mae 4.221  (28409068 positions, 315.5s)
+stones 40 epoch 2/4  train mae 4.104  valid mae 4.076  (28409068 positions, 314.9s)
+stones 40 epoch 3/4  train mae 3.981  valid mae 4.001  (28409068 positions, 309.2s)
+stones 40 epoch 4/4  train mae 3.913  valid mae 3.986  (28409068 positions, 297.7s)
+--pen-separate: the engine cannot read this network; no model written
