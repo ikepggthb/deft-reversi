@@ -54,6 +54,11 @@ pub struct TrainArgs {
     /// the positions (the exported linear tables are zero).
     #[arg(long, requires = "pen")]
     pen_no_linear: bool,
+    /// With `--pen`, give the network each pattern instance on its own
+    /// instead of the sum of a pattern's four orientations. For measurement
+    /// only: the engine cannot read such a model, so no model is written.
+    #[arg(long, requires = "pen")]
+    pen_separate: bool,
     /// AdaGrad step size of the PEN embeddings.
     #[arg(long, default_value_t = 0.01)]
     pen_lr: f32,
@@ -182,6 +187,10 @@ pub fn run(args: TrainArgs) -> Result<()> {
     for_each_parallel(&order, threads, |&s| {
         train_phase(&args, identity, s, &metrics)
     })?;
+    if args.pen_separate {
+        println!("--pen-separate: the engine cannot read this network; no model written");
+        return Ok(());
+    }
     export(&ExportArgs {
         work: args.work.clone(),
         out: args.out.clone(),
@@ -221,6 +230,15 @@ fn train_phase(
                 "{}: trained with other settings ({:?}); use another --work",
                 path.display(),
                 c.identity
+            )
+            .into());
+        }
+        let separate = matches!(&c.weights, Weights::Pen(w) | Weights::PenOnly(w) if w.separate());
+        if separate != args.pen_separate {
+            return Err(format!(
+                "{}: trained {} separate pattern instances; use another --work",
+                path.display(),
+                if args.pen_separate { "without" } else { "with" }
             )
             .into());
         }
@@ -272,6 +290,7 @@ fn train_phase(
             let w = Box::new(PenWeights::new(
                 &records,
                 args.seed ^ u64::from(stones) << 40,
+                args.pen_separate,
             ));
             let w = if args.pen_no_linear {
                 Weights::PenOnly(w)
@@ -428,6 +447,7 @@ mod tests {
             seed: 1,
             pen: false,
             pen_no_linear: false,
+            pen_separate: false,
             pen_lr: 0.01,
             pen_dense_lr: 0.001,
             pen_batch: 256,
