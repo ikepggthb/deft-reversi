@@ -289,9 +289,16 @@ fn selective_preparation_cannot_supply_the_exact_final_score() {
                     .collect(),
             )
             .unwrap();
+        // Fourteen empties: ProbCut runs only at null-window nodes, and the
+        // thirteen-empty children after the first one are searched so. The
+        // expected value is a solve without any ProbCut rule (the plain
+        // minimax reference is too slow at fourteen empties).
         for seed in [3, 7, 11] {
-            let board = position(seed, 13);
-            let expected = reference(board);
+            let board = position(seed, 14);
+            let mut plain =
+                Engine::new(model(), EngineOptions::default().threads(1).tt_mib(1)).unwrap();
+            plain.set_probcut_rules(Vec::new()).unwrap();
+            let expected = plain.search(board, &exact()).unwrap().score.unwrap();
             for run in 0..2 {
                 let result = engine.search(board, &exact()).unwrap();
                 assert_eq!(result.stop_reason, StopReason::Completed);

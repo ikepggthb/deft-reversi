@@ -555,6 +555,11 @@ impl Context {
         if self.runtime.sigma().is_none() {
             return Ok(None);
         }
+        // Like Edax, only null-window nodes try ProbCut: a wide window is a
+        // principal-variation node, where a wrong cut costs the most.
+        if beta - alpha > 1 {
+            return Ok(None);
+        }
         // Selective iterations tag their quality with the stage plus one.
         let stage = usize::from(self.runtime.quality.load(Ordering::Relaxed)).saturating_sub(1);
         let sigma = self.runtime.sigmas.get(exact, stage.min(5));
