@@ -1,5 +1,6 @@
-//! The `.rd` dataset: `phase_<stones>/<split>.rd` files of positions labelled
-//! with the final disc difference.
+//! The `.rd` dataset of reversi-dataset-gen (rdg): `phase_<NN>/<split>.rd`
+//! files of positions labelled with the final disc difference, where the
+//! phase `NN` is the disc count minus 4, in two digits.
 //!
 //! Each file is `RDGBBVAL1\n` followed by 18-byte records: the mover's discs
 //! (u64 LE), the opponent's discs (u64 LE) and the label (i16 LE), all from
@@ -24,7 +25,7 @@ pub struct Record {
 /// The file holding `split` ("train", "valid" or "test") for positions with
 /// `stones` discs.
 pub fn path(data: &Path, stones: u8, split: &str) -> PathBuf {
-    data.join(format!("phase_{stones}"))
+    data.join(format!("phase_{:02}", stones - 4))
         .join(format!("{split}.rd"))
 }
 

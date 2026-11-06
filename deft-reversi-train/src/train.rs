@@ -1,5 +1,6 @@
 use crate::{
     Result, StoneRange, for_each_parallel,
+    pen::{PenSettings, PenWeights},
     phase::{Metrics, PhaseWeights, Settings},
     rd,
 };
@@ -16,7 +17,7 @@ use std::{
 
 #[derive(Args, Debug)]
 pub struct TrainArgs {
-    /// Dataset directory with `phase_<stones>/{train,valid}.rd`.
+    /// rdg dataset directory with `phase_<NN>/{train,valid}.rd`.
     #[arg(long)]
     data: PathBuf,
     /// Checkpoints and metrics; an interrupted run resumes from here.
@@ -46,6 +47,18 @@ pub struct TrainArgs {
     shrink: f32,
     #[arg(long, default_value_t = 1)]
     seed: u64,
+    /// Add a pattern embedding network (PEN) to the linear weights.
+    #[arg(long)]
+    pen: bool,
+    /// AdaGrad step size of the PEN embeddings.
+    #[arg(long, default_value_t = 0.01)]
+    pen_lr: f32,
+    /// Adam step size of the PEN dense layers.
+    #[arg(long, default_value_t = 0.001)]
+    pen_dense_lr: f32,
+    /// Samples per Adam step of the PEN dense layers.
+    #[arg(long, default_value_t = 256)]
+    pen_batch: u32,
     /// Phases trained at once. Each holds its data in memory: 24 bytes a
     /// position, up to about 1.2 GB for the largest phase of the full set.
     #[arg(short, long)]
@@ -68,8 +81,31 @@ pub struct ExportArgs {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 struct Identity {
     settings: Settings,
+    pen: Option<PenSettings>,
     limit: Option<u64>,
     seed: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+enum Weights {
+    Linear(PhaseWeights),
+    Pen(Box<PenWeights>),
+}
+
+impl Weights {
+    fn train(&mut self, records: &[rd::Record], identity: &Identity) -> Metrics {
+        match (self, &identity.pen) {
+            (Self::Linear(w), _) => w.train(records, &identity.settings),
+            (Self::Pen(w), Some(pen)) => w.train(records, &identity.settings, pen),
+            (Self::Pen(_), None) => unreachable!("the identity matched the checkpoint"),
+        }
+    }
+    fn validate(&self, records: &[rd::Record], huber_delta: f32) -> Metrics {
+        match self {
+            Self::Linear(w) => w.validate(records, huber_delta),
+            Self::Pen(w) => w.validate(records, huber_delta),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -79,9 +115,9 @@ struct Checkpoint {
     identity: Identity,
     data: rd::Fingerprint,
     epochs: u32,
-    weights: PhaseWeights,
+    weights: Weights,
 }
-const CHECKPOINT_VERSION: u32 = 2;
+const CHECKPOINT_VERSION: u32 = 3;
 
 #[derive(Serialize)]
 struct EpochLog {
@@ -100,10 +136,18 @@ pub fn run(args: TrainArgs) -> Result<()> {
             l2: args.l2,
             huber_delta: args.huber_delta,
         },
+        pen: args.pen.then_some(PenSettings {
+            lr: args.pen_lr,
+            dense_lr: args.pen_dense_lr,
+            batch: args.pen_batch,
+        }),
         limit: args.limit,
         seed: args.seed,
     };
     identity.settings.validate()?;
+    if let Some(pen) = &identity.pen {
+        pen.validate()?;
+    }
     if args.limit == Some(0) {
         return Err("--limit must be at least 1".into());
     }
@@ -202,7 +246,14 @@ fn train_phase(
     };
     let (mut weights, done) = match checkpoint {
         Some(c) => (c.weights, c.epochs),
-        None => (PhaseWeights::new(&records), 0),
+        None if identity.pen.is_some() => (
+            Weights::Pen(Box::new(PenWeights::new(
+                &records,
+                args.seed ^ u64::from(stones) << 40,
+            ))),
+            0,
+        ),
+        None => (Weights::Linear(PhaseWeights::new(&records)), 0),
     };
     // Replay the finished epochs' shuffles so a resumed run sees the same
     // orders as an uninterrupted one.
@@ -212,7 +263,7 @@ fn train_phase(
     for epoch in done..args.epochs {
         let start = Instant::now();
         records.shuffle(&mut rng);
-        let train = weights.train(&records, &identity.settings);
+        let train = weights.train(&records, &identity);
         let valid = (!valid.is_empty()).then(|| weights.validate(&valid, args.huber_delta));
         let log = EpochLog {
             stones,
@@ -249,15 +300,35 @@ fn train_phase(
 pub fn export(args: &ExportArgs) -> Result<()> {
     validate_shrink(args.shrink)?;
     let mut trained = vec![None; deft_reversi_engine::PHASE_COUNT];
+    let mut networks = vec![None; deft_reversi_engine::PHASE_COUNT];
     for stones in 4..=63u8 {
         if let Some(c) = read_checkpoint(&checkpoint_path(&args.work, stones))? {
-            trained[usize::from(stones) - 4] = Some(c.weights.export(args.shrink));
+            let p = usize::from(stones) - 4;
+            match c.weights {
+                Weights::Linear(w) => trained[p] = Some(w.export(args.shrink)),
+                Weights::Pen(w) => {
+                    let (linear, network) = w.export(args.shrink);
+                    trained[p] = Some(linear);
+                    networks[p] = Some(network);
+                }
+            }
         }
     }
     let filled: Vec<usize> = (0..trained.len())
         .filter(|&p| trained[p].is_none())
         .collect();
-    let bytes = crate::model::assemble(&mut |p| trained[p].take())?;
+    let bytes = if networks.iter().any(Option::is_some) {
+        if networks
+            .iter()
+            .zip(&trained)
+            .any(|(n, t)| n.is_some() != t.is_some())
+        {
+            return Err("a work directory mixes linear and PEN checkpoints".into());
+        }
+        crate::model::assemble_pen(&trained, &networks)?
+    } else {
+        crate::model::assemble(&mut |p| trained[p].take())?
+    };
     atomic_write(&args.out, &bytes)?;
     if !filled.is_empty() {
         println!(
@@ -328,6 +399,10 @@ mod tests {
             huber_delta: 4.0,
             shrink: 32.0,
             seed: 1,
+            pen: false,
+            pen_lr: 0.01,
+            pen_dense_lr: 0.001,
+            pen_batch: 256,
             threads: Some(2),
         };
         run(args(1)).unwrap();

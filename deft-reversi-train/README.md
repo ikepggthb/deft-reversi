@@ -1,38 +1,52 @@
 # deft-reversi-train
 
-`deft_reversi_engine` のパターン評価を `.rd` データセットから学習する。NNUE は対象外。学習から採用までの手順と推奨する設定は [docs/pattern-training.md](../docs/pattern-training.md) にある。
+`deft_reversi_engine` のパターン評価（線形、または PEN を足したもの）を `.rd` データセットから学習する。学習から採用までの手順と推奨する設定は [docs/pattern-training.md](../docs/pattern-training.md) にある。
 
 ```sh
 cargo build --release -p deft_reversi_train
 T=target/release/deft-reversi-train
 
+# Egaroucid の学習データ（棋譜）から rdg 形式のデータセットを作る
+$T convert --transcripts transcripts --out egaroucid-rd
+
 # 学習。--work に途中経過を残し、全段階が終わると --out に DPR2 を書く
-$T train --data egaroucid_rd_data_set --work runs/p1 --out runs/p1/model.dpr2
+$T train --data egaroucid-rd --work runs/p1 --out runs/p1/model.dpr2
+
+# パターン埋め込みネット（PEN）を足して学習する（DPR2 版3）
+$T train --data egaroucid-rd --work runs/pen --out runs/pen/model.dpr2 --pen
 
 # 中断した学習は同じコマンドで再開する。--epochs を増やすと続きから学習する
-$T train --data egaroucid_rd_data_set --work runs/p1 --out runs/p1/model.dpr2 --epochs 6
+$T train --data egaroucid-rd --work runs/p1 --out runs/p1/model.dpr2 --epochs 6
 
 # 縮小の強さを変えて書き出し直す（学習し直さない）
 $T export --work runs/p1 --out runs/p1/model-k64.dpr2 --shrink 64
 
 # test 分割で、エンジンの評価値と最終石差の平均絶対誤差を比べる
-$T eval -m old.dpr2 -m runs/p1/model.dpr2 --data egaroucid_rd_data_set
+$T eval -m old.dpr2 -m runs/p1/model.dpr2 --data egaroucid-rd
 
 # モデルの MPC（ProbCut）を校正し、校正入りのモデル runs/p1/mpc/model.dpr2 を書く
-$T mpc -m runs/p1/model.dpr2 --data egaroucid_rd_data_set --out runs/p1/mpc --positions 1000
+$T mpc -m runs/p1/model.dpr2 --data egaroucid-rd --out runs/p1/mpc --positions 1000
 ```
 
 ## データセット
 
-`phase_<石数>/{train,valid,test}.rd`。各ファイルは `RDGBBVAL1\n` の後に18バイトのレコードが続く。
+[reversi-dataset-gen](https://github.com/ikepggthb/reversi-dataset-gen)（rdg）の形式。`phase_<NN>/{train,valid,test}.rd` で、NN は段階（石数 − 4）の2桁。各ファイルは `RDGBBVAL1\n` の後に18バイトのレコードが続く。コマンドの `--stones` は石数で指定する。
 
 | バイト | 内容 |
 |---|---|
 | 0–7 | 手番側の石（u64 LE、A1 が最下位ビット） |
 | 8–15 | 相手の石（u64 LE） |
-| 16–17 | 手番側から見た最終石差（i16 LE、−64〜64） |
+| 16–17 | 手番側から見た最終石差（i16 LE、−64〜64。空きマスはどちらにも数えない） |
 
 読み込み時に、石数がディレクトリ名と一致すること、石の重なりが無いこと、値が範囲内であることを確かめる。
+
+`convert` は、Egaroucid の学習データ（`<ランダムに打った手数>/*.txt`、1行1局）から、rdg と同じ規則でデータセットを作る。
+
+- ランダムに打った手より前の局面は使わない。それ以降の、手番側に打てる手がある局面をすべて使う。
+- 値は終局の石差（黒 − 白、空きマスは数えない）を手番側から見たもの。
+- train / valid / test は、局面を8通りの対称で正規化したハッシュ（rdg の `canonical_own_opponent_v1`）で分ける（既定 98% / 1% / 1%）。同じ局面とその対称形は、必ず同じ分割に入る。
+- 同じ局面が何度出てきても、すべて残す（別々の対局の結果を持つため）。rdg の生成器は重複を除く。
+- 各段階に `metadata.json` と `stats.json`、全体に `summary.json` を書く。
 
 ## 設計
 
@@ -43,6 +57,7 @@ $T mpc -m runs/p1/model.dpr2 --data egaroucid_rd_data_set --out runs/p1/mpc --po
 - 1局面ごとに更新する。損失は Huber（`--huber-delta` 石を超える誤差は線形）、最適化は AdaGrad（`--lr`）と L2（`--l2`）。対称な配置では複数の向きが同じ重みを指す。その重みは勾配を足し合わせて1回だけ更新する。
 - 定数項は、その段階の最終石差の平均から始める。
 - 書き出し時に重みを128倍して i16 に丸める。出現の少ない重みは `--shrink` で0に寄せる（n 回使われた重みを n / (n + shrink) 倍する）。
+- `--pen` を付けると、パターン埋め込みネット（PEN）を一緒に学習する。パターンの状態ごとに8個の値を持ち、4つの向きを足してから小さい MLP（90 → 32 → 1）に通し、線形の和に足す。エンジンの整数計算（`evaluation/pen.rs`）に合わせて、値と重みを i8 に収まる範囲に保つ。線形の重みと埋め込みは1局面ずつ AdaGrad（`--lr`、`--pen-lr`）、MLP は `--pen-batch` 局面ごとに Adam（`--pen-dense-lr`）で更新する。埋め込みも、出現の少ないものは `--shrink` で初期値に寄せる。
 - データに無い段階は、学習済みの最も近い段階の重みを写す。既定のデータセットは石数12〜63なので、段階0〜7は段階8の重みになる。train に局面が無い段階はチェックポイントを作らず、同じく近い段階を写す。
 
 ## MPC の校正

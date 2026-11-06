@@ -4,7 +4,8 @@
 
 ## 準備
 
-- データセット：`egaroucid_rd_data_set/phase_<石数>/{train,valid,test}.rd`（石数12〜63）。train は約13.5億局面、valid と test は各約1,400万局面。
+- データセット：rdg 形式の `phase_<NN>/{train,valid,test}.rd`（NN は石数 − 4。石数12〜63）。Egaroucid の学習データ（棋譜）から `deft-reversi-train convert` で作る。train は約13.5億局面、valid と test は各約1,400万局面。以前の `egaroucid_rd_data_set` はディレクトリ名が石数（`phase_<石数>`）なので、そのままでは読めない。
+- PEN（`train --pen`）を足すと精度が上がる（[PEN の測定](benchmarks/2026-11-06-pen/README.md)）。
 - メモリ：1局面24バイト。同時に学習する段階の数（`-t`）だけデータを載せる。最大の段階は約1.2 GB で、16スレッドでも約20 GB に収まる。
 - 時間：Core Ultra 7 265K・16スレッドで、全データ1エポックあたり約2分40秒。段階ごとの所要時間はデータ量に比例し、石数の多い段階ほど長い。
 - ビルド：

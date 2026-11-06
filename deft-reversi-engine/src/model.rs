@@ -9,6 +9,9 @@
 //!   stages, then six exact ones), the rule count as u32, and every rule as
 //!   exact (u8), depth (u8), empties (u8), shallow depth (u8), slope,
 //!   intercept and deviation (f64)
+//! - version 3: the phases, `PEN1` and the 60 phases' pattern embedding
+//!   networks (see `evaluation/pen.rs`), then optionally the calibration as
+//!   in version 2
 use crate::{
     evaluation::PatternModel,
     search::{ProbCutRule, ProbCutSigmas, validate_calibration},
@@ -48,11 +51,19 @@ impl Model {
             return Err(invalid_data("not a DPR2 model"));
         }
         let version = u32::from_le_bytes(header[4..].try_into().unwrap());
-        if !matches!(version, 1 | 2) {
+        if !matches!(version, 1..=3) {
             return Err(invalid_data(format!("unsupported DPR2 version {version}")));
         }
-        let pattern = PatternModel::read_phases(&mut bytes)?;
-        let calibration = if version == 2 {
+        let mut pattern = PatternModel::read_phases(&mut bytes)?;
+        if version == 3 {
+            let mut tag = [0; 4];
+            bytes.read_exact(&mut tag)?;
+            if &tag != b"PEN1" {
+                return Err(invalid_data("missing pattern embedding network"));
+            }
+            pattern = pattern.read_pen(&mut bytes)?;
+        }
+        let calibration = if version == 2 || (version == 3 && !bytes.is_empty()) {
             Some(read_calibration(&mut bytes)?)
         } else {
             None
@@ -69,12 +80,23 @@ impl Model {
     pub fn has_calibration(&self) -> bool {
         self.calibration.is_some()
     }
-    /// Writes the model: version 2 with its calibration, version 1 without.
+    /// Writes the model: version 3 with a pattern embedding network, else
+    /// version 2 with its calibration and version 1 without.
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
-        let version: u32 = if self.calibration.is_some() { 2 } else { 1 };
+        let version: u32 = if self.pattern.has_pen() {
+            3
+        } else if self.calibration.is_some() {
+            2
+        } else {
+            1
+        };
         out.write_all(b"DPR2")?;
         out.write_all(&version.to_le_bytes())?;
         self.pattern.write_phases(&mut out)?;
+        if self.pattern.has_pen() {
+            out.write_all(b"PEN1")?;
+            self.pattern.write_pen(&mut out)?;
+        }
         if let Some(c) = &self.calibration {
             out.write_all(b"MPC1")?;
             for v in c.sigmas.midgame.iter().chain(&c.sigmas.exact) {
@@ -234,9 +256,9 @@ mod tests {
         let mut longer = v2.clone();
         longer.push(0);
         assert!(Model::from_bytes(&longer).is_err());
-        let mut v3 = v2.clone();
-        v3[4] = 3;
-        assert!(Model::from_bytes(&v3).is_err());
+        let mut v9 = v2.clone();
+        v9[4] = 9;
+        assert!(Model::from_bytes(&v9).is_err());
         assert!(Model::from_bytes(b"{\"format_version\":4}").is_err());
         let mut bad_sigma = v2.clone();
         let at = v1.len() + 4;

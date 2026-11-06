@@ -2,7 +2,7 @@
 """Matches between Deft and Edax 4.5.5 or Egaroucid 7.8.1 over GTP.
 
 usage: match.py OPPONENT MODE OPENINGS OUT.tsv [WORKERS]
-  OPPONENT  edax | egaroucid
+  OPPONENT  edax | egaroucid | deft (Deft with the model OPP_MODEL)
   MODE      levelN (every engine at level N) | levelD:E (Deft at level D, the
             opponent at level E) | timeS (S seconds per side per game)
             | timeS:D (the opponent S seconds, Deft D seconds, to even the time used)
@@ -22,7 +22,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DEFT = [str(HERE / "tools/target/release/deft-gtp"),
-        "/home/azure/dev/deft-reversi-feature/runs/v2-pattern-lr0.3/mpc-formula/model.dpr2"]
+        os.environ.get("DEFT_MODEL",
+                       "/home/azure/dev/deft-reversi-feature/runs/v2-pattern-lr0.3/mpc-formula/model.dpr2")]
 EDAX = "/home/azure/dev/edax-4.5.5/bin/lEdax-x86-64-v3"
 EGAR = "/home/azure/dev/bench-engines/dl-egaroucid-7.8.1/Egaroucid-console_v7.8.1/bin/Egaroucid_for_Console_clang.out"
 FULL = (1 << 64) - 1
@@ -150,6 +151,9 @@ def engine(kind, mode, cpu):
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
         # DEFT_GTP_LOG=FILE: Deft logs each move's budget and time there.
         return Gtp([*DEFT, *args, "--tt", "64"], cpu, log=os.environ.get("DEFT_GTP_LOG"))
+    if kind == "deft-opp":
+        args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
+        return Gtp([DEFT[0], os.environ["OPP_MODEL"], *args, "--tt", "64"], cpu)
     if kind == "edax":
         # EDAX_MOVE_TIME=S: a time per move instead of per game.
         if seconds and os.environ.get("EDAX_MOVE_TIME"):
@@ -241,7 +245,7 @@ def main():
     lock = threading.Lock()
 
     def worker(cpu):
-        engines = {"deft": engine("deft", mode, cpu), "opp": engine(opp, mode, cpu)}
+        engines = {"deft": engine("deft", mode, cpu), "opp": engine("deft-opp" if opp == "deft" else opp, mode, cpu)}
         try:
             while True:
                 with lock:

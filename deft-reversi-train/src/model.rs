@@ -1,4 +1,4 @@
-use deft_reversi_engine::{PHASE_COUNT, PatternModel, PatternPhase};
+use deft_reversi_engine::{Model, PHASE_COUNT, PatternModel, PatternPhase, PenPhase};
 use std::io;
 
 /// A DPR2 model from the phases `phase` returns. A phase it has no weights
@@ -21,6 +21,31 @@ pub fn assemble(phase: &mut dyn FnMut(usize) -> Option<PatternPhase>) -> io::Res
     PatternModel::new(phases)
         .map_err(io::Error::other)?
         .write_to(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// A DPR2 version 3 model: linear phases with their networks. Missing
+/// phases copy the nearest trained one, as in `assemble`.
+pub fn assemble_pen(
+    linear: &[Option<PatternPhase>],
+    networks: &[Option<PenPhase>],
+) -> io::Result<Vec<u8>> {
+    let trained: Vec<usize> = (0..PHASE_COUNT).filter(|&p| linear[p].is_some()).collect();
+    if trained.is_empty() {
+        return Err(io::Error::other("no trained phase"));
+    }
+    let nearest = |p: usize| *trained.iter().min_by_key(|&&q| (q.abs_diff(p), q)).unwrap();
+    let phases = (0..PHASE_COUNT)
+        .map(|p| linear[nearest(p)].clone().unwrap())
+        .collect();
+    let pen = (0..PHASE_COUNT)
+        .map(|p| networks[nearest(p)].clone().unwrap())
+        .collect();
+    let model = PatternModel::new(phases)
+        .and_then(|m| m.with_pen(pen))
+        .map_err(io::Error::other)?;
+    let mut bytes = Vec::new();
+    Model::from_pattern(model).write_to(&mut bytes)?;
     Ok(bytes)
 }
 

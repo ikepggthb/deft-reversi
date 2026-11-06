@@ -1,6 +1,8 @@
+mod convert;
 mod eval;
 mod model;
 mod mpc;
+mod pen;
 mod phase;
 mod rd;
 mod train;
@@ -20,6 +22,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Build an `.rd` dataset from game transcripts.
+    Convert(convert::ConvertArgs),
     /// Train every phase and write the model.
     Train(train::TrainArgs),
     /// Write the model from the checkpoints of a training run.
@@ -34,6 +38,7 @@ enum Command {
 
 fn main() {
     let result = match Cli::parse().command {
+        Command::Convert(args) => convert::run(args),
         Command::Train(args) => train::run(args),
         Command::Export(args) => train::export(&args),
         Command::Eval(args) => eval::run(args),

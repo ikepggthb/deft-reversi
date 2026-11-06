@@ -61,7 +61,7 @@ pub use worker::{EngineWorker, SearchHandle};
 pub use {
     evaluation::{
         FEATURE_COUNT, Features, MOBILITY_WEIGHT_COUNT, PATTERN_COUNT, PATTERN_WEIGHT_COUNT,
-        PHASE_COUNT, PatternModel, PatternPhase,
+        PEN_DIM, PEN_HIDDEN, PEN_INPUTS, PHASE_COUNT, PatternModel, PatternPhase, PenPhase,
     },
     search::{ProbCutRule, ProbCutSigmas},
 };

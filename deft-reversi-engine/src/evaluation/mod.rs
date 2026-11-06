@@ -1,10 +1,13 @@
 #[cfg(feature = "endgame-pattern-ordering")]
 mod end_ordering;
 mod pattern;
+mod pen;
 use crate::Board;
 use pattern::definition::{
     FEATURE_COORD, PATTERN_TABLE_SIZES, SQUARE_TO_FEATURES, TOTAL_PATTERN_WEIGHTS,
 };
+#[allow(unused_imports)]
+pub use pen::{PEN_DIM, PEN_HIDDEN, PEN_INPUTS, PenPhase};
 use std::{
     io::{self, Read, Write},
     sync::Arc,
@@ -60,6 +63,8 @@ fn mobility_index(moves: u64, board: &Board) -> usize {
 #[derive(Clone)]
 pub struct PatternModel {
     phases: Arc<[PatternPhase]>,
+    /// The pattern embedding network of every phase, if the model has one.
+    pen: Option<Arc<[PenPhase]>>,
 }
 #[derive(Clone)]
 pub struct PatternPhase {
@@ -111,7 +116,19 @@ impl PatternModel {
         }
         Ok(Self {
             phases: phases.into(),
+            pen: None,
         })
+    }
+    /// The model with a pattern embedding network, one per phase.
+    pub fn with_pen(mut self, pen: Vec<PenPhase>) -> Result<Self, &'static str> {
+        if pen.len() != PHASE_COUNT {
+            return Err("PEN requires 60 phases");
+        }
+        self.pen = Some(pen.into());
+        Ok(self)
+    }
+    pub fn has_pen(&self) -> bool {
+        self.pen.is_some()
     }
     /// Explicitly zero weights, useful for rule/search tests. Not a trained AI.
     pub fn zero() -> Self {
@@ -162,7 +179,18 @@ impl PatternModel {
             offset += size;
         }
         let moves = board.get_moves();
-        raw += i32::from(weights.mobility[mobility_index(moves, board)]);
+        let opponent_moves = board.get_opponent_moves();
+        raw += i32::from(
+            weights.mobility
+                [64 + moves.count_ones() as usize - opponent_moves.count_ones() as usize],
+        );
+        if let Some(pen) = &self.pen {
+            raw += pen[phase_of(board)].evaluate(
+                state,
+                moves.count_ones(),
+                opponent_moves.count_ones(),
+            );
+        }
         (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
     }
     /// DPR2 version 1, weights only. `Model::write_to` also writes the
@@ -207,6 +235,20 @@ impl PatternModel {
             out.write_all(&bytes)?;
         }
         Ok(())
+    }
+    /// The 60 phases' networks; see `pen.rs`.
+    pub(crate) fn write_pen(&self, mut out: impl Write) -> io::Result<()> {
+        for phase in self.pen.iter().flat_map(|p| p.iter()) {
+            phase.write(&mut out)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn read_pen(mut self, mut input: impl Read) -> io::Result<Self> {
+        let pen = (0..PHASE_COUNT)
+            .map(|_| PenPhase::read(&mut input))
+            .collect::<io::Result<Vec<_>>>()?;
+        self.pen = Some(pen.into());
+        Ok(self)
     }
     pub(crate) fn read_phases(mut input: impl Read) -> io::Result<Self> {
         let mut phases = Vec::with_capacity(PHASE_COUNT);
