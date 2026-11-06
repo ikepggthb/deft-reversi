@@ -50,6 +50,10 @@ pub struct TrainArgs {
     /// Add a pattern embedding network (PEN) to the linear weights.
     #[arg(long)]
     pen: bool,
+    /// With `--pen`, leave out the linear weights: the network alone fits
+    /// the positions (the exported linear tables are zero).
+    #[arg(long, requires = "pen")]
+    pen_no_linear: bool,
     /// AdaGrad step size of the PEN embeddings.
     #[arg(long, default_value_t = 0.01)]
     pen_lr: f32,
@@ -90,20 +94,26 @@ struct Identity {
 enum Weights {
     Linear(PhaseWeights),
     Pen(Box<PenWeights>),
+    /// PEN without the linear weights (`--pen-no-linear`). Last, so older
+    /// checkpoints keep their tags.
+    PenOnly(Box<PenWeights>),
 }
 
 impl Weights {
     fn train(&mut self, records: &[rd::Record], identity: &Identity) -> Metrics {
         match (self, &identity.pen) {
             (Self::Linear(w), _) => w.train(records, &identity.settings),
-            (Self::Pen(w), Some(pen)) => w.train(records, &identity.settings, pen),
-            (Self::Pen(_), None) => unreachable!("the identity matched the checkpoint"),
+            (Self::Pen(w), Some(pen)) => w.train(records, &identity.settings, pen, true),
+            (Self::PenOnly(w), Some(pen)) => w.train(records, &identity.settings, pen, false),
+            (Self::Pen(_) | Self::PenOnly(_), None) => {
+                unreachable!("the identity matched the checkpoint")
+            }
         }
     }
     fn validate(&self, records: &[rd::Record], huber_delta: f32) -> Metrics {
         match self {
             Self::Linear(w) => w.validate(records, huber_delta),
-            Self::Pen(w) => w.validate(records, huber_delta),
+            Self::Pen(w) | Self::PenOnly(w) => w.validate(records, huber_delta),
         }
     }
 }
@@ -214,6 +224,18 @@ fn train_phase(
             )
             .into());
         }
+        if matches!(c.weights, Weights::PenOnly(_)) != args.pen_no_linear {
+            return Err(format!(
+                "{}: trained {} the linear weights; use another --work",
+                path.display(),
+                if args.pen_no_linear {
+                    "with"
+                } else {
+                    "without"
+                }
+            )
+            .into());
+        }
         if c.data != data {
             return Err(format!(
                 "{}: trained on other data than {}; use another --work",
@@ -246,13 +268,18 @@ fn train_phase(
     };
     let (mut weights, done) = match checkpoint {
         Some(c) => (c.weights, c.epochs),
-        None if identity.pen.is_some() => (
-            Weights::Pen(Box::new(PenWeights::new(
+        None if identity.pen.is_some() => {
+            let w = Box::new(PenWeights::new(
                 &records,
                 args.seed ^ u64::from(stones) << 40,
-            ))),
-            0,
-        ),
+            ));
+            let w = if args.pen_no_linear {
+                Weights::PenOnly(w)
+            } else {
+                Weights::Pen(w)
+            };
+            (w, 0)
+        }
         None => (Weights::Linear(PhaseWeights::new(&records)), 0),
     };
     // Replay the finished epochs' shuffles so a resumed run sees the same
@@ -306,7 +333,7 @@ pub fn export(args: &ExportArgs) -> Result<()> {
             let p = usize::from(stones) - 4;
             match c.weights {
                 Weights::Linear(w) => trained[p] = Some(w.export(args.shrink)),
-                Weights::Pen(w) => {
+                Weights::Pen(w) | Weights::PenOnly(w) => {
                     let (linear, network) = w.export(args.shrink);
                     trained[p] = Some(linear);
                     networks[p] = Some(network);
@@ -400,6 +427,7 @@ mod tests {
             shrink: 32.0,
             seed: 1,
             pen: false,
+            pen_no_linear: false,
             pen_lr: 0.01,
             pen_dense_lr: 0.001,
             pen_batch: 256,

@@ -181,8 +181,16 @@ impl PenWeights {
         self.linear.predict(&pass.features) + pass.output
     }
 
-    /// One pass over `records` in their order.
-    pub fn train(&mut self, records: &[Record], s: &Settings, pen: &PenSettings) -> Metrics {
+    /// One pass over `records` in their order. Without `linear`, the linear
+    /// weights stay as they started (only the bias, at the mean label) and
+    /// the network alone fits the positions.
+    pub fn train(
+        &mut self,
+        records: &[Record],
+        s: &Settings,
+        pen: &PenSettings,
+        linear: bool,
+    ) -> Metrics {
         let mut m = Accumulator::default();
         let mut grads = vec![0.0f32; DENSE];
         let mut in_batch = 0;
@@ -191,7 +199,9 @@ impl PenWeights {
             let error = self.linear.predict(&pass.features) + pass.output - f32::from(r.value);
             m.add(error, s.huber_delta);
             let grad = error.clamp(-s.huber_delta, s.huber_delta);
-            self.linear.update(&pass.features, grad, s);
+            if linear {
+                self.linear.update(&pass.features, grad, s);
+            }
             self.backward(&pass, grad, &mut grads, pen);
             in_batch += 1;
             if in_batch == pen.batch {
@@ -347,7 +357,7 @@ mod tests {
         let mut pen = PenWeights::new(train, 1);
         for _ in 0..20 {
             linear.train(train, &SETTINGS);
-            pen.train(train, &SETTINGS, &PEN);
+            pen.train(train, &SETTINGS, &PEN, true);
         }
         let l = linear.validate(valid, 4.0).mae;
         let p = pen.validate(valid, 4.0).mae;
@@ -360,7 +370,7 @@ mod tests {
         let records = crate::test_records(&mut random, 24, 2000);
         let mut pen = PenWeights::new(&records, 2);
         for _ in 0..10 {
-            pen.train(&records, &SETTINGS, &PEN);
+            pen.train(&records, &SETTINGS, &PEN, true);
         }
         let (linear, network) = pen.export(0.0);
         let model = PatternModel::new(vec![linear; PHASE_COUNT])
