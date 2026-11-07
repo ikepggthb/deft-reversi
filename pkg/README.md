@@ -12,7 +12,7 @@ wasm-pack build deft-reversi-wasm-engine --target web --release
 ```
 
 生成物は `deft-reversi-wasm-engine/pkg` に出力され、JavaScript と TypeScript の宣言を含みます。ワークスペースの `.cargo/config.toml` で WebAssembly SIMD を有効にしているため、SIMD に対応したブラウザが必要です。
-評価モデルはバンドルしません。v3/v4 JSON・bincode または DPR2 のモデルを別途配信してください。
+評価モデルはバンドルしません。DPR2 バージョン1〜3を読み込めます。現行の配布モデルは [model-v3-pen](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v3-pen) です。従来のJSON・bincode形式は読み込めないため、DPR2を使用してください。モデルは展開後約171 MiBで、置換表などのメモリも別途必要です。
 
 ## 利用例（module Web Worker 内）
 
@@ -20,7 +20,7 @@ wasm-pack build deft-reversi-wasm-engine --target web --release
 import init, { WasmEngine, WasmPosition } from './pkg/deft_reversi_wasm_engine.js';
 
 await init();
-const response = await fetch('/models/eval-v4.bin');
+const response = await fetch('/models/deft-eval-v3-pen.dpr2');
 if (!response.ok) throw new Error(`Model download failed: ${response.status}`);
 const engine = new WasmEngine(new Uint8Array(await response.arrayBuffer()), 32);
 const position = new WasmPosition();
