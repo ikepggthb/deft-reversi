@@ -11,6 +11,7 @@ self.addEventListener('message', async ({ data }) => {
         await init();
         const bytes = await loadModel(data.model, progress => self.postMessage({ type: 'progress', progress }));
         engine = new WasmEngine(bytes, 32);
+        if (data.model === 'classic') engine.useLegacyCalibration();
         self.postMessage({ type: 'ready', ok: true, protocolVersion: 1 });
     } catch (error) {
         self.postMessage({ type: 'ready', ok: false, error: String(error), protocolVersion: 1 });

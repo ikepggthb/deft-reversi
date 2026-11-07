@@ -200,6 +200,11 @@ impl WasmEngine {
         .map(Self)
         .map_err(error)
     }
+    /// Opt in to the reference engine's calibration for the classic model.
+    #[wasm_bindgen(js_name = useLegacyCalibration)]
+    pub fn use_legacy_calibration(&mut self) -> Result<(), JsValue> {
+        self.0.set_legacy_main_mpc().map_err(error)
+    }
     #[wasm_bindgen(js_name = clearTt)]
     pub fn clear_tt(&mut self) -> Result<(), JsValue> {
         self.0.clear_tt().map_err(error)

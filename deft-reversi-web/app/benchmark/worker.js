@@ -8,6 +8,7 @@ self.onmessage = async ({ data }) => {
             await init();
             const bytes = await loadModel(data.model, progress => self.postMessage({ type: 'progress', progress }));
             engine = new WasmEngine(bytes, data.ttMiB);
+            if (data.model === 'classic') engine.useLegacyCalibration();
             self.postMessage({ type: 'ready' });
         } else if (data.type === 'solve') {
             if (!engine) throw new Error('エンジンが初期化されていません');

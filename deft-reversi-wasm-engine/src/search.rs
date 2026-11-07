@@ -107,7 +107,6 @@ impl Engine {
     }
     /// Use the MPC table from the legacy main-branch evaluator. This is an
     /// explicit opt-in for models converted from main's `data/eval/eval.json`.
-    #[cfg(feature = "tuning")]
     pub fn set_legacy_main_mpc(&mut self) -> Result<(), EngineError> {
         self.set_rules(crate::mpc::legacy_main_rules(), ProbCutSigmas::NORMAL)
     }

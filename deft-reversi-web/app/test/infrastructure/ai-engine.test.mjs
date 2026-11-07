@@ -31,3 +31,29 @@ test('AiEngine passes selected model, reports progress and rejects requests when
         engine.terminate();
     } finally { globalThis.Worker = originalWorker; }
 });
+
+test('AiEngine rejects a pending search if the worker crashes', async () => {
+    const originalWorker = globalThis.Worker;
+    let worker;
+    class FakeWorker {
+        constructor() { this.listeners = {}; worker = this; }
+        addEventListener(type, callback) { (this.listeners[type] ??= []).push(callback); }
+        removeEventListener(type, callback) { this.listeners[type] = (this.listeners[type] ?? []).filter(c => c !== callback); }
+        postMessage() {}
+        terminate() { this.terminated = true; }
+        emit(type, event) { for (const callback of this.listeners[type] ?? []) callback(event); }
+    }
+    globalThis.Worker = FakeWorker;
+    try {
+        let failure;
+        const engine = new AiEngine();
+        engine.initialize(() => {}, error => { failure = error; });
+        worker.emit('message', { data: { type: 'ready', ok: true } });
+        const search = engine.solveTurn(1n, 2n, 18);
+        worker.emit('error', { message: 'worker crashed' });
+        await assert.rejects(search, /Engine stopped/);
+        assert.equal(failure.message, 'worker crashed');
+        assert.equal(engine.isReady, false);
+        assert.equal(worker.terminated, true);
+    } finally { globalThis.Worker = originalWorker; }
+});

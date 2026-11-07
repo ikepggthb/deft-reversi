@@ -1,12 +1,10 @@
 /**
  * @fileoverview AiEngine - Web Worker + WASM のAIエンジン呼び出しを管理する
  *
- * - Worker通信（requestId / timeout）
+ * - Worker通信（requestId / エラー処理）
  * - BigInt bitboard ↔ u32 low/high 変換
  * を1箇所に集約し、アプリケーション層をWorker境界の表現から隔離する。
  */
-
-const DEFAULT_TIMEOUT_MS = 120000;
 
 /**
  * BigIntを32ビットペアに変換（Worker通信用）
@@ -95,9 +93,15 @@ export class AiEngine {
         };
         this._worker.addEventListener('message', this._readyHandler);
         this._attachMessageHandler();
-        this._worker.addEventListener('error', event => {
-            if (!this._ready) onError?.(new Error(event.message || 'Worker failed'));
-        });
+        const worker = this._worker;
+        const fail = event => {
+            if (this._worker !== worker) return;
+            const error = new Error(event.message || 'Worker failed');
+            this.terminate();
+            onError?.(error);
+        };
+        worker.addEventListener('error', fail);
+        worker.addEventListener('messageerror', fail);
         this._worker.postMessage({ type: 'init', model });
     }
 
@@ -133,21 +137,9 @@ export class AiEngine {
     _sendRequest(type, payload) {
         return new Promise((resolve, reject) => {
             const requestId = `${Date.now()}-${Math.random()}`;
-            const timeoutId = setTimeout(() => {
-                this._pendingRequests.delete(requestId);
-                reject(new Error(`Worker request timeout: ${type}`));
-            }, DEFAULT_TIMEOUT_MS);
-
-            this._pendingRequests.set(requestId, {
-                resolve: (v) => {
-                    clearTimeout(timeoutId);
-                    resolve(v);
-                },
-                reject: (e) => {
-                    clearTimeout(timeoutId);
-                    reject(e);
-                },
-            });
+            // A high-level search can legitimately take several minutes.
+            // It ends on a result, worker error, or explicit termination.
+            this._pendingRequests.set(requestId, { resolve, reject });
 
             const message = { type, payload: [payload], requestId };
             this._worker.postMessage(message);

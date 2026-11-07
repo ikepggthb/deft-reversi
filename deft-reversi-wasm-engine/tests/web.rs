@@ -126,3 +126,21 @@ fn time_and_node_limits_return_legal_fallbacks() {
         assert!(position.legal_moves().contains(&result.best_move.unwrap()));
     }
 }
+
+#[wasm_bindgen_test]
+fn classic_calibration_allows_selective_level_searches() {
+    let mut engine = engine();
+    let position = WasmPosition::new();
+    let search = request(r#"{"goal":{"kind":"level","value":11}}"#);
+    assert!(engine.search(&position, search.clone()).is_err());
+    engine.use_legacy_calibration().unwrap();
+    // A zero node budget returns an immediate legal fallback while still
+    // validating the selective level and its installed calibration.
+    let value = serde_json::json!({"goal":{"kind":"level","value":18},"nodeLimit":1});
+    let limited = value
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
+        .unwrap();
+    let result: Output =
+        serde_wasm_bindgen::from_value(engine.search(&position, limited).unwrap()).unwrap();
+    assert!(position.legal_moves().contains(&result.best_move.unwrap()));
+}
