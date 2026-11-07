@@ -87,7 +87,6 @@ export class UI {
 
     onModelChanging() {
         this._engineReady = false;
-        this._graphManager.invalidateEvaluations();
         this.onModelProgress({ stage: 'manifest' });
         this._render();
     }
@@ -105,6 +104,26 @@ export class UI {
         } else {
             this._modelProgress.removeAttribute('value');
         }
+        this._updatePanelModelStatus();
+    }
+
+    onModelChanged() {
+        this._graphManager.invalidateEvaluations();
+    }
+
+    onModelSelectionRestored(model) {
+        this._evaluationModel = model;
+        this._renderPanel();
+    }
+
+    onModelCancelled() {
+        this._engineReady = false;
+        this._lastModelProgress = null;
+        this._lastModelError = new Error('ダウンロードはキャンセルされました');
+        this._modelStatus.hidden = false;
+        this._modelStatusText.textContent = 'モデルは読み込まれていません';
+        this._modelProgress.hidden = true;
+        this._modelRetry.hidden = false;
         this._updatePanelModelStatus();
     }
 
@@ -294,7 +313,7 @@ export class UI {
         this._toastEl = /** @type {HTMLDivElement} */ (root.querySelector('#toast'));
 
         root.addEventListener('click', (e) => {
-            const target = e.target instanceof HTMLElement ? e.target : null;
+            const target = e.target instanceof Element ? e.target : null;
             if (!target) return;
 
             const open = target.closest('[data-action="open-panel"]');

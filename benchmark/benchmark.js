@@ -1,5 +1,5 @@
 import { compareAnswer, formatDuration, nodesPerSecond } from './model.js';
-import { progressText } from '../engine/model-loader.js';
+import { progressText, confirmModelDownload } from '../engine/model-loader.js';
 
 const el = id => document.getElementById(id);
 const ui = Object.fromEntries(['first','last','goal','goal-value','value-field','value-label','limit','tt','model','model-progress','start','stop','status','download','count','metric-count','metric-time','metric-nodes','metric-nps','progress','rows'].map(id => [id, el(id)]));
@@ -104,8 +104,10 @@ ui.start.addEventListener('click', async () => {
         worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
         worker.onmessage = ({ data }) => {
             if (workerId !== currentWorkerId) return;
-            if (data.type === 'error') { finish(data.message, true); return; }
+            if (data.type === 'consent') { worker.postMessage({ type: 'consent-response', allowed: confirmModelDownload(data.info) }); return; }
+            if (data.type === 'error') { finish(data.message, !data.cancelled); return; }
             if (data.type === 'progress') {
+                if (data.progress.stage === 'storage-warning') alert(progressText(data.progress));
                 setStatus(progressText(data.progress));
                 const bar = ui['model-progress'];
                 bar.hidden = false;

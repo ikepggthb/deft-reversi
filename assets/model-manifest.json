@@ -1,1 +1,1 @@
-{"classic": {"file": "eval-classic.dpr2.gz", "compressedBytes": 12154449, "uncompressedBytes": 35794808}, "pen": {"file": "eval-pen.dpr2.gz", "compressedBytes": 71952433, "uncompressedBytes": 179148252}}
+{"classic": {"file": "eval-classic.dpr2.gz", "compressedBytes": 12154449, "uncompressedBytes": 35794808, "sha256": "486a27a1aea7988e06a0b3841d0030fa4385bf0d9cc26f3d2e42d2f09951b106"}, "pen": {"file": "eval-pen.dpr2.gz", "compressedBytes": 71952433, "uncompressedBytes": 179148252, "sha256": "6c2b0ea9dffc9d0a2cc5d81b21bdb0e070e09f219e1e8da23e2edee7f4be6a30"}}

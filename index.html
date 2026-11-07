@@ -36,7 +36,11 @@
         }
         button, input, select, textarea { font: inherit; }
         #app { height: 100%; }
-        .app-shell { height: 100%; display: grid; grid-template-rows: auto 1fr auto; }
+        .app-shell { height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+        .app-shell > .topbar { grid-row: 1; }
+        .app-shell > .model-status { grid-row: 2; }
+        .app-shell > .content { grid-row: 3; }
+        .app-shell > .dock { grid-row: 4; }
         .topbar {
             display: flex;
             align-items: center;
