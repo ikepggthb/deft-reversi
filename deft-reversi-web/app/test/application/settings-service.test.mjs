@@ -197,3 +197,14 @@ test('SettingsService.save: does not persist hint settings', () => {
     assert.equal(stored.enableHint, undefined);
     assert.equal(stored.hintLevel, undefined);
 });
+
+test('SettingsService: model defaults to classic and persists PEN', () => {
+    const service = new SettingsService();
+    assert.equal(service.evaluationModel, 'classic');
+    service.evaluationModel = 'pen';
+    service.save();
+    assert.equal(new SettingsService().evaluationModel, 'pen');
+    service.evaluationModel = 'invalid';
+    service.save();
+    assert.equal(new SettingsService().evaluationModel, 'classic');
+});

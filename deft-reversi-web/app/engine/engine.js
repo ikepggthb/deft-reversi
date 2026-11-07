@@ -1,24 +1,25 @@
 import init, { WasmEngine, WasmPosition } from '../pkg/deft_reversi_wasm_engine.js';
 
-async function initialize() {
-    await init();
-    const response = await fetch(new URL('../assets/eval.dpr2.gz', import.meta.url));
-    if (!response.ok) throw new Error(`評価データの読み込みに失敗しました: ${response.status}`);
-    const stream = response.body.pipeThrough(new DecompressionStream('gzip'));
-    const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
-    return new WasmEngine(bytes, 32);
-}
+import { loadModel } from './model-loader.js';
 
 let engine;
-try {
-    engine = await initialize();
-    self.postMessage({ type: 'ready', ok: true, protocolVersion: 1 });
-} catch (error) {
-    self.postMessage({ type: 'ready', ok: false, error: String(error), protocolVersion: 1 });
-}
+let initializing = false;
+self.addEventListener('message', async ({ data }) => {
+    if (data?.type !== 'init' || initializing) return;
+    initializing = true;
+    try {
+        await init();
+        const bytes = await loadModel(data.model, progress => self.postMessage({ type: 'progress', progress }));
+        engine = new WasmEngine(bytes, 32);
+        self.postMessage({ type: 'ready', ok: true, protocolVersion: 1 });
+    } catch (error) {
+        self.postMessage({ type: 'ready', ok: false, error: String(error), protocolVersion: 1 });
+    }
+});
 
 self.addEventListener('message', ({ data }) => {
     const { type, payload, requestId } = data;
+    if (type === 'init') return;
     try {
         if (!engine) throw new Error('Engine not initialized');
         if (type !== 'solveTurn') throw new Error(`Unknown message type: ${type}`);

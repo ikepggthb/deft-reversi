@@ -60,6 +60,8 @@ function normalizeSettings(raw, defaults) {
         whiteAiLevel,
         aiTurn,
         humanOpening,
+        evaluationModel: raw?.evaluationModel === 'pen' || raw?.evaluationModel === 'classic'
+            ? raw.evaluationModel : (defaults.evaluationModel ?? 'classic'),
     };
 }
 

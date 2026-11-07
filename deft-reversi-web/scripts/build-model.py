@@ -15,7 +15,7 @@ with source.open('rb') as data:
         hash_value.update(chunk)
 if hash_value.hexdigest() != expected:
     raise SystemExit(f'Invalid PEN model SHA-256: {source}')
-output = root / 'app/assets/eval.dpr2.gz'
+output = root / 'app/assets/eval-pen.dpr2.gz'
 output.parent.mkdir(parents=True, exist_ok=True)
 with source.open('rb') as data, output.open('wb') as file:
     with gzip.GzipFile(filename='', fileobj=file, mode='wb', compresslevel=9, mtime=0) as target:

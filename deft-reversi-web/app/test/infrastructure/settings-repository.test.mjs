@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     whiteAiLevel: 5,
     aiTurn: 'white',
     humanOpening: null,
+    evaluationModel: 'classic',
 });
 
 test.beforeEach(() => {
@@ -269,4 +270,14 @@ test('SettingsRepository.load: converts string number humanOpening to integer', 
     const settings = repo.load(DEFAULT_SETTINGS);
 
     assert.equal(settings.humanOpening, 7);
+});
+
+test('SettingsRepository: old settings default to classic and valid model is retained', () => {
+    const repo = new SettingsRepository();
+    localStorage.setItem('deft-reversi-settings', JSON.stringify({ aiEnabled: true }));
+    assert.equal(repo.load(DEFAULT_SETTINGS).evaluationModel, 'classic');
+    localStorage.setItem('deft-reversi-settings', JSON.stringify({ evaluationModel: 'pen' }));
+    assert.equal(repo.load(DEFAULT_SETTINGS).evaluationModel, 'pen');
+    localStorage.setItem('deft-reversi-settings', JSON.stringify({ evaluationModel: 'bogus' }));
+    assert.equal(repo.load(DEFAULT_SETTINGS).evaluationModel, 'classic');
 });

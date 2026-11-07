@@ -1,14 +1,19 @@
 import { compareAnswer, formatDuration, nodesPerSecond } from './model.js';
+import { progressText } from '../engine/model-loader.js';
 
 const el = id => document.getElementById(id);
-const ui = Object.fromEntries(['first','last','goal','goal-value','value-field','value-label','limit','tt','start','stop','status','download','count','metric-count','metric-time','metric-nodes','metric-nps','progress','rows'].map(id => [id, el(id)]));
+const ui = Object.fromEntries(['first','last','goal','goal-value','value-field','value-label','limit','tt','model','model-progress','start','stop','status','download','count','metric-count','metric-time','metric-nodes','metric-nps','progress','rows'].map(id => [id, el(id)]));
 let worker = null, selected = [], results = [], cursor = 0, request, running = false;
-let currentWorkerId = 0;
+let currentWorkerId = 0, measuredModel = 'classic';
+try {
+    const saved = JSON.parse(localStorage.getItem('deft-reversi-settings') || '{}');
+    if (saved.evaluationModel === 'pen') ui.model.value = 'pen';
+} catch { /* storage is optional */ }
 
 function setStatus(message, error = false) { ui.status.textContent = message; ui.status.classList.toggle('error', error); }
 function setRunning(value) {
     running = value;
-    for (const id of ['first','last','goal','goal-value','limit','tt','start']) ui[id].disabled = value;
+    for (const id of ['first','last','goal','goal-value','limit','tt','model','start']) ui[id].disabled = value;
     ui.stop.disabled = !value;
     ui.download.disabled = !results.length;
 }
@@ -51,6 +56,7 @@ function finish(message, error = false) {
     worker = null;
     currentWorkerId++;
     setRunning(false);
+    ui['model-progress'].hidden = true;
     setStatus(message, error);
 }
 function next() {
@@ -79,6 +85,7 @@ ui.start.addEventListener('click', async () => {
         const ttMiB = integer(ui.tt, 1, 256, '置換表');
         const goal = ui.goal.value === 'endgame' ? { kind: 'endgame' } : { kind: ui.goal.value, value: integer(ui['goal-value'], 1, 60, '深さ・レベル') };
         request = { goal, ...(limit ? { timeLimitMs: limit * 1000 } : {}) };
+        measuredModel = ui.model.value;
         results = []; cursor = 0; selected = []; ui.rows.replaceChildren();
         for (const id of ['metric-count','metric-time','metric-nodes','metric-nps']) ui[id].textContent = '—';
         ui.count.textContent = '局面を読み込んでいます';
@@ -98,7 +105,16 @@ ui.start.addEventListener('click', async () => {
         worker.onmessage = ({ data }) => {
             if (workerId !== currentWorkerId) return;
             if (data.type === 'error') { finish(data.message, true); return; }
-            if (data.type === 'ready') { next(); return; }
+            if (data.type === 'progress') {
+                setStatus(progressText(data.progress));
+                const bar = ui['model-progress'];
+                bar.hidden = false;
+                if (Number.isFinite(data.progress.total) && data.progress.total > 0) {
+                    bar.max = data.progress.total; bar.value = Math.min(data.progress.loaded, data.progress.total);
+                } else bar.removeAttribute('value');
+                return;
+            }
+            if (data.type === 'ready') { ui['model-progress'].hidden = true; next(); return; }
             if (data.type === 'result') {
                 const item = selected[cursor];
                 if (!item || item.number !== data.number) { finish('結果の順序が不正です', true); return; }
@@ -107,15 +123,15 @@ ui.start.addEventListener('click', async () => {
             }
         };
         worker.onerror = event => { if (workerId === currentWorkerId) finish(`エンジンの起動に失敗しました: ${event.message || '不明なエラー'}`, true); };
-        worker.postMessage({ type: 'init', ttMiB });
+        worker.postMessage({ type: 'init', ttMiB, model: measuredModel });
     } catch (error) { if (workerId === undefined || workerId === currentWorkerId) finish(error?.message ?? String(error), true); }
 });
 ui.stop.addEventListener('click', () => finish('停止しました。完了した局面の結果を表示しています。'));
 ui.download.addEventListener('click', () => {
-    const lines = [['FFO','状態','最善手','評価値','探索時間ms','ノード数','ノード毎秒','正解照合']];
+    const lines = [['モデル','FFO','状態','最善手','評価値','探索時間ms','ノード数','ノード毎秒','正解照合']];
     for (const { item, result } of results) {
         const check = compareAnswer(result, item.answers);
-        lines.push([item.number, result.solved ? '完全読了' : result.stopReason, result.bestMove ?? '', result.score ?? '', result.elapsedMs, result.nodes, nodesPerSecond(result.nodes, result.elapsedMs).replaceAll(',', ''), check === null ? '' : check ? '一致' : '不一致']);
+        lines.push([measuredModel, item.number, result.solved ? '完全読了' : result.stopReason, result.bestMove ?? '', result.score ?? '', result.elapsedMs, result.nodes, nodesPerSecond(result.nodes, result.elapsedMs).replaceAll(',', ''), check === null ? '' : check ? '一致' : '不一致']);
     }
     const csv = '\ufeff' + lines.map(line => line.map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));

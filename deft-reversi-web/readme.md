@@ -6,13 +6,15 @@
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack --locked
 wasm-pack build deft-reversi-wasm-engine --target web --release --out-dir ../deft-reversi-web/app/pkg
+python3 deft-reversi-web/scripts/build-legacy-model.py
 gh release download model-v3-pen --repo ikepggthb/deft-reversi --pattern deft-eval-v3-pen.dpr2 --dir /tmp
 DEFT_PEN_MODEL=/tmp/deft-eval-v3-pen.dpr2 python3 deft-reversi-web/scripts/build-model.py
+python3 deft-reversi-web/scripts/build-model-manifest.py
 cd deft-reversi-web/app
 python3 -m http.server 8000
 ```
 
-http://localhost:8000/ を開いてください。評価モデルは初回に読み込まれ、Web Worker内で探索します。gzip解凍には `DecompressionStream` を利用します。
+http://localhost:8000/ を開いてください。標準は軽量モデルです。設定からPENに切り替えられ、選択は保存されます。モデルのダウンロードと展開の進捗を表示し、Web Worker内で探索します。gzip解凍には `DecompressionStream` を利用します。
 
 ```sh
 cd deft-reversi-web/app

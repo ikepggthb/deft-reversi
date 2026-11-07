@@ -11,3 +11,7 @@ deft-reversi-wasm-engine/pkg/
 deft-reversi-web/app/pkg/
 
 deft-reversi-web/app/assets/eval.dpr2.gz
+
+deft-reversi-web/app/assets/eval-classic.dpr2.gz
+deft-reversi-web/app/assets/eval-pen.dpr2.gz
+deft-reversi-web/app/assets/model-manifest.json

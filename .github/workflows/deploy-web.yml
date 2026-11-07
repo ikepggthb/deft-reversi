@@ -25,6 +25,7 @@ jobs:
       - run: node --test
         working-directory: deft-reversi-web/app
       - run: wasm-pack build deft-reversi-wasm-engine --target web --release --out-dir ../deft-reversi-web/app/pkg --locked
+      - run: python3 deft-reversi-web/scripts/build-legacy-model.py
       - name: Download published PEN model
         env:
           GH_TOKEN: ${{ github.token }}
@@ -32,6 +33,7 @@ jobs:
       - run: python3 deft-reversi-web/scripts/build-model.py
         env:
           DEFT_PEN_MODEL: /tmp/deft-eval-v3-pen.dpr2
+      - run: python3 deft-reversi-web/scripts/build-model-manifest.py
       - run: |
           mkdir -p /tmp/deft-pages
           cp -a deft-reversi-web/app/. /tmp/deft-pages/

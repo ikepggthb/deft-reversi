@@ -5,7 +5,7 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 if (process.argv.length !== 3) throw new Error('Specify a wasm-bindgen nodejs module');
 const { WasmEngine, WasmPosition } = require(path.resolve(process.argv[2]));
-const model = zlib.gunzipSync(fs.readFileSync(process.env.DEFT_BENCH_MODEL || 'deft-reversi-web/app/assets/eval.dpr2.gz'));
+const model = zlib.gunzipSync(fs.readFileSync(process.env.DEFT_BENCH_MODEL || 'deft-reversi-web/app/assets/eval-classic.dpr2.gz'));
 const positions = JSON.parse(fs.readFileSync('deft-reversi-web/app/benchmark/positions.json')).filter(p => p.number >= 40 && p.number <= 49);
 if (positions.length !== 10) throw new Error('Expected ten FFO positions');
 const engine = new WasmEngine(model, 32);

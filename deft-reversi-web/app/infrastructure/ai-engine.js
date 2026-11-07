@@ -71,7 +71,7 @@ export class AiEngine {
      * @param {Function} [onReady] 準備完了時のコールバック
      * @param {Function} [onError] エラー時のコールバック
      */
-    initialize(onReady, onError) {
+    initialize(onReady, onError, { model = 'classic', onProgress } = {}) {
         this.terminate();
 
         this._worker = new Worker(new URL('../engine/engine.js', import.meta.url), {
@@ -81,6 +81,7 @@ export class AiEngine {
 
         this._readyHandler = (event) => {
             const data = event.data;
+            if (data?.type === 'progress') { onProgress?.(data.progress); return; }
             if (data?.type !== 'ready') return;
 
             if (data.ok) {
@@ -94,6 +95,10 @@ export class AiEngine {
         };
         this._worker.addEventListener('message', this._readyHandler);
         this._attachMessageHandler();
+        this._worker.addEventListener('error', event => {
+            if (!this._ready) onError?.(new Error(event.message || 'Worker failed'));
+        });
+        this._worker.postMessage({ type: 'init', model });
     }
 
     /**
@@ -197,6 +202,9 @@ export class AiEngine {
         }
         this._ready = false;
         this._onReadyCallbacks = [];
+        for (const pending of this._pendingRequests.values()) {
+            pending.reject(new Error('Engine stopped'));
+        }
         this._pendingRequests.clear();
     }
 }
