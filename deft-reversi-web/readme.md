@@ -6,7 +6,8 @@
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack --locked
 wasm-pack build deft-reversi-wasm-engine --target web --release --out-dir ../deft-reversi-web/app/pkg
-python3 deft-reversi-web/scripts/build-model.py
+gh release download model-v3-pen --repo ikepggthb/deft-reversi --pattern deft-eval-v3-pen.dpr2 --dir /tmp
+DEFT_PEN_MODEL=/tmp/deft-eval-v3-pen.dpr2 python3 deft-reversi-web/scripts/build-model.py
 cd deft-reversi-web/app
 python3 -m http.server 8000
 ```

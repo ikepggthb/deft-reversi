@@ -214,7 +214,7 @@ impl RootSearch {
         let split = context.runtime.parallel
             && self.candidates.len() >= 3
             && if spec.exact {
-                self.position.board.empty_count() >= tree::SPLIT_EMPTIES
+                self.position.board.empty_count() >= context.exact_split_empties()
             } else {
                 spec.depth >= tree::SPLIT_DEPTH
             };

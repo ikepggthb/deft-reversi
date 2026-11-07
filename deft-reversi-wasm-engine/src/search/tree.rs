@@ -5,7 +5,37 @@ use std::ops::ControlFlow;
 // Midgame nodes split down to four plies of remaining depth: the shallow
 // iterations before an endgame solve otherwise leave most threads idle.
 pub(super) const SPLIT_DEPTH: u8 = 4;
+/// Fewest empties at which an exact node splits with few threads, and in
+/// the selective stages before an exact solve. Below 14 empties only the
+/// root can split: the local endgame (`LOCAL_END_MAX`) never does.
 pub(super) const SPLIT_EMPTIES: u8 = 10;
+/// The same for the final exact solve. With many threads idle ones are
+/// almost always there, and small splits cost more in handoffs and joins
+/// than they save: at 20 threads one 28-empties FFO position made 470,000
+/// helper jobs at 14 empties and 67,000 at 17, and FFO 40-59 took 10% less
+/// time; at 4 threads 14 stays the fastest. The selective stages prune too
+/// much to keep 20 threads busy at 17, and keep `SPLIT_EMPTIES`
+/// (docs/benchmarks/2026-11-07-parallel).
+pub(super) fn split_empties(threads: usize) -> u8 {
+    if threads < 8 {
+        SPLIT_EMPTIES
+    } else {
+        13 + threads.min(16) as u8 / 4
+    }
+}
+/// Null-window midgame nodes below this depth search without the TT, and
+/// below `ORDERED_SEARCH_DEPTH` without move ordering too, like main's
+/// `SWITCH_SIMPLE_SEARCH_LEVEL` and `SWITCH_NEGAALPHA_SEARCH_LEVEL`. With
+/// the PEN evaluation 4 and 3 were the fastest (5 and 3 with the linear
+/// one; docs/benchmarks/2026-11-06-pen-tuning).
+pub(super) const SIMPLE_SEARCH_DEPTH: u8 = 4;
+pub(super) const ORDERED_SEARCH_DEPTH: u8 = 3;
+/// A ProbCut test runs only when the rule's prediction from the static
+/// evaluation is within these margins (discs) of its bound; Egaroucid uses 4.
+/// Chosen for the PEN evaluation (docs/benchmarks/2026-11-06-pen-tuning).
+const PROBCUT_MIDGAME_UPPER_MARGIN: f64 = 8.0;
+const PROBCUT_EXACT_UPPER_MARGIN: f64 = 2.0;
+const PROBCUT_LOWER_MARGIN: f64 = 4.0;
 struct OrderingWeights {
     mobility: i32,
     corner: i32,
@@ -33,6 +63,14 @@ impl Context {
             end_cache: EndgameCache::default(),
             #[cfg(feature = "endgame-pattern-ordering")]
             end_ordering: [None; 3],
+        }
+    }
+    /// Fewest empties at which an exact node splits in the current stage.
+    pub(super) fn exact_split_empties(&self) -> u8 {
+        if self.runtime.sigma().is_some() {
+            SPLIT_EMPTIES
+        } else {
+            self.runtime.split_empties
         }
     }
     pub(super) fn aborted(&self) -> bool {
@@ -93,6 +131,12 @@ impl Context {
             exact,
             probcut: allow_probcut,
         } = spec;
+        // As in main: shallow null-window midgame nodes skip the TT.
+        if !exact && beta - alpha == 1 && (1..SIMPLE_SEARCH_DEPTH).contains(&depth) {
+            return self
+                .simple_search(position, alpha, depth, allow_probcut)
+                .map(Line::leaf);
+        }
         self.enter()?;
         if exact && beta - alpha == 1 && board.empty_count() <= super::endgame::LOCAL_END_MAX {
             #[cfg(feature = "endgame-pattern-ordering")]
@@ -429,7 +473,7 @@ impl Context {
         let can_split = self.runtime.parallel
             && child_spec.probcut
             && if child_spec.exact {
-                position.board.empty_count() >= SPLIT_EMPTIES
+                position.board.empty_count() >= self.exact_split_empties()
             } else {
                 depth >= SPLIT_DEPTH
             };
@@ -535,9 +579,17 @@ impl Context {
         beta: i32,
         exact: bool,
     ) -> Result<Option<i32>, Aborted> {
-        let Some(sigma) = self.runtime.sigma() else {
+        if self.runtime.sigma().is_none() {
             return Ok(None);
-        };
+        }
+        // Like Edax, only null-window nodes try ProbCut: a wide window is a
+        // principal-variation node, where a wrong cut costs the most.
+        if beta - alpha > 1 {
+            return Ok(None);
+        }
+        // Selective iterations tag their quality with the stage plus one.
+        let stage = usize::from(self.runtime.quality.load(Ordering::Relaxed)).saturating_sub(1);
+        let sigma = self.runtime.sigmas.get(exact, stage.min(5));
         let Some(rule) = self
             .runtime
             .rules
@@ -548,16 +600,19 @@ impl Context {
             return Ok(None);
         };
         self.stats.probcut_tries += 1;
+        // Skip a test the static evaluation does not support: its prediction
+        // is too far below the upper bound or above the lower one.
+        let predicted = rule.slope * f64::from(self.evaluate(board, &state)) + rule.intercept;
+        let upper_margin = if exact {
+            PROBCUT_EXACT_UPPER_MARGIN
+        } else {
+            PROBCUT_MIDGAME_UPPER_MARGIN
+        };
         let high =
             ((f64::from(beta) - rule.intercept + sigma * rule.deviation) / rule.slope).ceil();
-        if high < 64.0 {
+        if high < 64.0 && predicted >= high - upper_margin {
             let bound = high.max(-64.0) as i32;
-            let score = self.ordering_search(
-                Position { board, state },
-                bound - 1,
-                bound,
-                rule.shallow_depth,
-            )?;
+            let score = self.probcut_shallow(board, state, bound - 1, bound, rule.shallow_depth)?;
             if score >= bound {
                 self.stats.probcut_cuts += 1;
                 return Ok(Some(beta));
@@ -565,20 +620,107 @@ impl Context {
         }
         let low =
             ((f64::from(alpha) - rule.intercept - sigma * rule.deviation) / rule.slope).floor();
-        if low > -64.0 {
+        if low > -64.0 && predicted <= low + PROBCUT_LOWER_MARGIN {
             let bound = low.min(64.0) as i32;
-            let score = self.ordering_search(
-                Position { board, state },
-                bound,
-                bound + 1,
-                rule.shallow_depth,
-            )?;
+            let score = self.probcut_shallow(board, state, bound, bound + 1, rule.shallow_depth)?;
             if score <= bound {
                 self.stats.probcut_cuts += 1;
                 return Ok(Some(alpha));
             }
         }
         Ok(None)
+    }
+    /// The shallow search of a ProbCut test: the midgame search without
+    /// ProbCut, so its value is the plain minimax value the rules were
+    /// measured with. Like every midgame search it uses the TT and move
+    /// ordering only far enough from the leaves.
+    fn probcut_shallow(
+        &mut self,
+        board: Board,
+        state: EvalState,
+        alpha: i32,
+        beta: i32,
+        depth: u8,
+    ) -> Result<i32, Aborted> {
+        let spec = SearchSpec {
+            depth,
+            exact: false,
+            probcut: false,
+        };
+        Ok(self
+            .node(Position { board, state }, alpha, beta, spec)?
+            .score)
+    }
+    /// Null-window midgame search near the leaves, without the TT: moves
+    /// ordered by their evaluation and mobility, and below
+    /// `ORDERED_SEARCH_DEPTH` not ordered at all. Fail-soft.
+    fn simple_search(
+        &mut self,
+        position: Position,
+        alpha: i32,
+        depth: u8,
+        allow_probcut: bool,
+    ) -> Result<i32, Aborted> {
+        let beta = alpha + 1;
+        if depth < ORDERED_SEARCH_DEPTH {
+            return self.ordering_search(position, alpha, beta, depth);
+        }
+        self.enter()?;
+        let Position { board, state } = position;
+        let mut moves = board.get_moves();
+        if moves == 0 {
+            if board.get_opponent_moves() == 0 {
+                self.stats.leaves += 1;
+                return Ok(board.final_score());
+            }
+            let passed = Position {
+                board: board.board_after_pass(),
+                state: state.passed(),
+            };
+            return Ok(-self.simple_search(passed, -beta, depth, allow_probcut)?);
+        }
+        if allow_probcut
+            && let Some(score) = self.probcut(board, state, depth, alpha, beta, false)?
+        {
+            return Ok(score);
+        }
+        let mut candidates = [Candidate {
+            square: Square::lowest(1),
+            flips: 0,
+            ordering: 0,
+        }; 64];
+        let mut count = 0;
+        while moves != 0 {
+            let bit = moves.isolate_lowest_one();
+            moves &= moves - 1;
+            candidates[count] = Candidate {
+                square: Square::lowest(bit),
+                flips: board.flip_mask(bit),
+                ordering: 0,
+            };
+            count += 1;
+        }
+        let candidates = &mut candidates[..count];
+        if count > 1 {
+            for candidate in candidates.iter_mut() {
+                let bit = candidate.square.bit();
+                let child = board.after_known_move(bit, candidate.flips);
+                candidate.ordering =
+                    self.midgame_ordering(position, child, bit, candidate.flips, alpha, depth)?;
+            }
+        }
+        let mut best = -65;
+        for index in 0..count {
+            pick_best(candidates, index);
+            let child = candidates[index].child(position, true);
+            let score = -self.simple_search(child, -beta, depth - 1, allow_probcut)?;
+            if score >= beta {
+                self.stats.beta_cuts += 1;
+                return Ok(score);
+            }
+            best = best.max(score);
+        }
+        Ok(best)
     }
 }
 /// Whether a TT entry was stored by a search of the same depth, mode and
@@ -748,6 +890,8 @@ mod tt_tests {
             .runtime
             .table
             .store(board.board_after_move(bit), entry(2, -7, -7));
+        // A wide window: shallow null-window midgame nodes skip the TT, and
+        // from depth 4 the child-TT pass would cut first.
         let line = context
             .node(
                 Position {
@@ -755,7 +899,7 @@ mod tt_tests {
                     state: EvalState::from_board(board),
                 },
                 -1,
-                0,
+                1,
                 SearchSpec {
                     depth: 3,
                     exact: false,
@@ -777,11 +921,20 @@ mod tt_tests {
         let bit = 1u64 << (63 - board.get_moves().leading_zeros());
         let mut context = test_context();
         context.runtime.table.store(board, entry(1, -64, 64));
-        context
-            .runtime
-            .table
-            .store(board.board_after_move(bit), entry(3, -7, -7));
-        assert_eq!(search(&mut context, -1, 0), 7);
+        context.runtime.table.store(
+            board.board_after_move(bit),
+            entry(SIMPLE_SEARCH_DEPTH, -7, -7),
+        );
+        let spec = SearchSpec {
+            depth: SIMPLE_SEARCH_DEPTH + 1,
+            exact: false,
+            probcut: true,
+        };
+        let position = Position {
+            board,
+            state: EvalState::from_board(board),
+        };
+        assert_eq!(context.node(position, -1, 0, spec).unwrap().score, 7);
         assert_eq!(context.stats.nodes, 1);
         assert_eq!(context.stats.evaluations, 0);
     }
@@ -803,6 +956,31 @@ mod tt_tests {
             )
             .unwrap()
             .score
+    }
+    #[test]
+    fn shallow_null_window_midgame_nodes_skip_the_tt() {
+        let board = Board::new();
+        let mut context = test_context();
+        context
+            .runtime
+            .table
+            .store(board, entry(SIMPLE_SEARCH_DEPTH - 1, 7, 7));
+        let spec = SearchSpec {
+            depth: SIMPLE_SEARCH_DEPTH - 1,
+            exact: false,
+            probcut: false,
+        };
+        let position = Position {
+            board,
+            state: EvalState::from_board(board),
+        };
+        let score = context.node(position, -1, 0, spec).unwrap().score;
+        assert_eq!(context.stats.tt_cuts, 0);
+        assert!(context.stats.nodes > 1);
+        // The same value as the full-width search with the TT.
+        let mut wide = test_context();
+        let full = wide.node(position, -64, 64, spec).unwrap().score;
+        assert_eq!(score >= 0, full >= 0);
     }
     #[test]
     fn wide_window_tt_cuts_require_matching_depth_mode_and_selectivity() {

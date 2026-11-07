@@ -1,7 +1,6 @@
 use crate::{
-    Action, Board, Model, ModelMetadata, Square,
+    Action, Board, Model, Square,
     evaluation::{EvalState, PatternModel},
-    mpc::MpcConfig,
     parallel::{self, Helper, Padded, Pool, Workers},
     transposition::{Entry, Table},
 };
@@ -35,14 +34,13 @@ mod ybwc;
 /// Single-threaded search engine for a Web Worker.
 pub struct Engine {
     model: Arc<PatternModel>,
-    mpc: Option<MpcConfig>,
-    metadata: Option<ModelMetadata>,
     table: Arc<Table>,
     pv_table: Arc<Table>,
     workers: Workers,
     options: EngineOptions,
     generation: u8,
     calibration: Arc<[Option<ProbCutRule>]>,
+    sigmas: ProbCutSigmas,
     cache_sigma: Option<u64>,
     end_cache: EndgameCache,
     /// Tags the local endgame caches that are valid for the current state.
@@ -57,16 +55,11 @@ impl Engine {
         }
         let (table, pv_table) = new_tables(options.tt_mib)?;
         let workers = Workers::new(0).map_err(EngineError::Thread)?;
-        let Model {
-            metadata,
-            pattern,
-            mpc,
-        } = model;
+        let (rules, sigmas) = split_calibration(model.calibration);
         Ok(Self {
-            model: Arc::new(pattern),
-            calibration: indexed_rules(mpc.rules()),
-            mpc: Some(mpc),
-            metadata,
+            model: Arc::new(model.pattern),
+            calibration: indexed_rules(rules),
+            sigmas,
             table,
             pv_table,
             workers,
@@ -80,19 +73,11 @@ impl Engine {
     pub fn options(&self) -> EngineOptions {
         self.options
     }
-    pub fn metadata(&self) -> Option<&ModelMetadata> {
-        self.metadata.as_ref()
-    }
-    /// Replaces the model and its MPC configuration, and clears every table.
+    /// Replaces the model and its ProbCut calibration, and clears every table.
     pub fn set_model(&mut self, model: Model) -> Result<(), EngineError> {
-        let Model {
-            metadata,
-            pattern,
-            mpc,
-        } = model;
-        self.set_rules(mpc.rules(), Some(mpc))?;
-        self.model = Arc::new(pattern);
-        self.metadata = metadata;
+        let (rules, sigmas) = split_calibration(model.calibration);
+        self.set_rules(rules, sigmas)?;
+        self.model = Arc::new(model.pattern);
         Ok(())
     }
     /// Forgets every searched position, for example before a new game.
@@ -120,61 +105,37 @@ impl Engine {
         let job = self.resolve(position.into(), request)?;
         self.run(job, &mut on_progress)
     }
-    #[cfg(feature = "tuning")]
-    pub fn mpc_config(&self) -> Option<&MpcConfig> {
-        self.mpc.as_ref()
-    }
-    #[cfg(feature = "tuning")]
-    pub fn set_mpc_config(&mut self, config: MpcConfig) -> Result<(), EngineError> {
-        config.validate().map_err(EngineError::Model)?;
-        self.set_rules(config.rules(), Some(config))
-    }
     /// Use the MPC table from the legacy main-branch evaluator. This is an
     /// explicit opt-in for models converted from main's `data/eval/eval.json`.
     #[cfg(feature = "tuning")]
     pub fn set_legacy_main_mpc(&mut self) -> Result<(), EngineError> {
-        self.set_rules(crate::mpc::legacy_main_rules(), None)
+        self.set_rules(crate::mpc::legacy_main_rules(), ProbCutSigmas::NORMAL)
     }
+    /// Installs ProbCut rules with the normal deviation multiples.
     #[cfg(feature = "tuning")]
     pub fn set_probcut_rules(&mut self, rules: Vec<ProbCutRule>) -> Result<(), EngineError> {
-        for (i, r) in rules.iter().enumerate() {
-            if r.empties > 60
-                || r.depth > r.empties
-                || (r.exact && r.depth != r.empties)
-                || r.depth > 60
-                || r.depth < 2
-                || r.shallow_depth >= r.depth
-                || !r.slope.is_finite()
-                || r.slope <= 0.0
-                || !r.intercept.is_finite()
-                || !r.deviation.is_finite()
-                || r.deviation < 0.0
-            {
-                return Err(EngineError::InvalidCalibration(
-                    "invalid ProbCut regression",
-                ));
-            }
-            if rules[..i]
-                .iter()
-                .any(|p| p.exact == r.exact && p.depth == r.depth && p.empties == r.empties)
-            {
-                return Err(EngineError::InvalidCalibration(
-                    "duplicate ProbCut regression",
-                ));
-            }
-        }
-        self.set_rules(rules, None)
+        self.set_probcut_calibration(rules, ProbCutSigmas::NORMAL)
+    }
+    /// Installs ProbCut rules with measured deviation multiples per stage.
+    #[cfg(feature = "tuning")]
+    pub fn set_probcut_calibration(
+        &mut self,
+        rules: Vec<ProbCutRule>,
+        sigmas: ProbCutSigmas,
+    ) -> Result<(), EngineError> {
+        validate_calibration(&rules, &sigmas)?;
+        self.set_rules(rules, sigmas)
     }
     /// Installs new ProbCut rules. Every cached result depends on them, so
     /// the tables are replaced first; on failure nothing changes.
     fn set_rules(
         &mut self,
         rules: Vec<ProbCutRule>,
-        mpc: Option<MpcConfig>,
+        sigmas: ProbCutSigmas,
     ) -> Result<(), EngineError> {
         self.clear_tt()?;
         self.calibration = indexed_rules(rules);
-        self.mpc = mpc;
+        self.sigmas = sigmas;
         self.cache_sigma = None;
         Ok(())
     }
@@ -390,10 +351,12 @@ impl Engine {
             pending_lock: Mutex::new(()),
             pending_ready: Padded(std::sync::Condvar::new()),
             parallel: false,
+            split_empties: tree::split_empties(1),
             // Each iteration sets its own stage before it starts.
             sigma: AtomicU64::new(target_sigma.map_or(0, f64::to_bits)),
             quality: AtomicU8::new(0),
             rules: self.calibration.clone(),
+            sigmas: self.sigmas,
             // Exact requests use selective stages only to seed the tables;
             // results below this bound are exact and reused by the final stage.
             cache_epoch: self.cache_epoch,
@@ -573,6 +536,50 @@ fn iterative_depths(target: u8) -> Vec<u8> {
     (start..=target).step_by(2).collect()
 }
 
+fn split_calibration(c: Option<crate::model::Calibration>) -> (Vec<ProbCutRule>, ProbCutSigmas) {
+    c.map_or((Vec::new(), ProbCutSigmas::NORMAL), |c| (c.rules, c.sigmas))
+}
+
+/// Checks ProbCut rules and multiples the way every installer does: rules
+/// within the board, a shallow depth below the deep one, finite positive
+/// slopes and deviations, no triple twice, and positive non-decreasing
+/// multiples.
+pub(crate) fn validate_calibration(
+    rules: &[ProbCutRule],
+    sigmas: &ProbCutSigmas,
+) -> Result<(), EngineError> {
+    if !sigmas.is_valid() {
+        return Err(EngineError::InvalidCalibration(
+            "ProbCut multiples must be positive, finite and non-decreasing",
+        ));
+    }
+    let mut seen = vec![false; 2 * 61 * 61];
+    for r in rules {
+        if r.empties > 60
+            || r.depth > r.empties
+            || (r.exact && r.depth != r.empties)
+            || r.depth < 2
+            || r.shallow_depth >= r.depth
+            || !r.slope.is_finite()
+            || r.slope <= 0.0
+            || !r.intercept.is_finite()
+            || !r.deviation.is_finite()
+            || r.deviation < 0.0
+        {
+            return Err(EngineError::InvalidCalibration(
+                "invalid ProbCut regression",
+            ));
+        }
+        let i = rule_index(r.exact, r.depth, r.empties);
+        if std::mem::replace(&mut seen[i], true) {
+            return Err(EngineError::InvalidCalibration(
+                "duplicate ProbCut regression",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn rule_index(exact: bool, depth: u8, empties: u8) -> usize {
     (usize::from(exact) * 61 + usize::from(depth)) * 61 + usize::from(empties)
 }
@@ -632,6 +639,13 @@ impl Engine {
                 rule.shallow_depth,
             ])?;
             for value in [rule.slope, rule.intercept, rule.deviation] {
+                out.write_all(&value.to_bits().to_le_bytes())?;
+            }
+        }
+        // Normal multiples write nothing, so earlier settings stay the same.
+        if self.sigmas != ProbCutSigmas::NORMAL {
+            out.write_all(b"sigmas")?;
+            for value in self.sigmas.midgame.iter().chain(&self.sigmas.exact) {
                 out.write_all(&value.to_bits().to_le_bytes())?;
             }
         }

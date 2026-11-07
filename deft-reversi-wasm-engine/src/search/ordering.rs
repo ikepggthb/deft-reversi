@@ -15,7 +15,9 @@ impl Context {
         let empties = parent.board.empty_count();
         let narrow = beta - alpha == 1;
         let depth = if narrow {
-            if empties < 24 { empties >> 4 } else { 1 }
+            // From 20 empties a one-ply search under each child, as
+            // Egaroucid orders its endgame null-window moves.
+            if empties >= 20 { 2 } else { empties >> 4 }
         } else {
             (empties >> 3).max(1)
         };

@@ -14,7 +14,7 @@ mod transposition;
 mod types;
 pub use board::bitboard::{Board, MoveError};
 pub use diagnostics::perft;
-pub use model::{Model, ModelMetadata};
+pub use model::Model;
 pub use position::{Color, ParsePositionError, Position};
 pub use search::{
     Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, SearchRequest,
@@ -24,7 +24,6 @@ pub use types::{Action, Moves, Square};
 #[cfg(feature = "tuning")]
 pub use {
     evaluation::{PATTERN_COUNT, PHASE_COUNT, PatternModel, PatternPhase},
-    mpc::{EvalSearchMpcConfig, FinalSearchMpcConfig, MpcConfig, MpcParams, MpcRegression},
     search::ProbCutRule,
 };
 

@@ -32,7 +32,7 @@ Node.js v24.19.0での探索的な完全読み10問の生データも [results](
 
 ## 再現
 
-1. 配布用のモデルを `python3 deft-reversi-web/scripts/build-model.py` で生成する。
+1. 配布用のモデルを `python3 deft-reversi-web/scripts/build-legacy-model.py` で生成する。
 2. 従来コミットと改良版をそれぞれ同じRust設定で `cargo build --release --locked --target wasm32-unknown-unknown -p deft-reversi-wasm-engine` し、各WASMに `wasm-bindgen --target web` と `wasm-opt -O --enable-simd --enable-bulk-memory --enable-sign-ext --enable-nontrapping-float-to-int` を適用する。別の `CARGO_TARGET_DIR` を使う。
 3. 任意のHTTP配信ディレクトリに `baseline/` と `candidate/` を作り、それぞれに生成された `deft_reversi_wasm_engine.js` と `_bg.wasm` を配置する。同ディレクトリに評価モデルを `model.gz` としてコピーし、`index.html` を置いて `python3 -m http.server 8770` で配信する。
 4. リポジトリのルートから、Playwrightを利用できる環境で `CHROMIUM_PATH=/path/to/chromium taskset -c 0 node tools/bench/wasm_ffo40_49_browser.cjs http://127.0.0.1:8770/` を実行する。全問を解けなかった場合や、各回の最善手・スコア・ノード数が違った場合はエラーにする。

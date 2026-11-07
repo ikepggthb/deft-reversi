@@ -75,16 +75,10 @@ pub enum Selectivity {
     Full,
 }
 impl Selectivity {
+    /// The normal multiplier of the stage; `None` for `Full`. A search uses
+    /// the engine's `ProbCutSigmas` for the actual cut.
     pub(crate) fn sigma(self) -> Option<f64> {
-        [
-            Some(1.0),
-            Some(1.20),
-            Some(1.43953),
-            Some(1.960),
-            Some(2.326),
-            Some(2.576),
-            None,
-        ][self as usize]
+        NORMAL_SIGMAS.get(self as usize).copied()
     }
     pub fn percent(self) -> u8 {
         [68, 77, 85, 95, 98, 99, 100][self as usize]
@@ -305,6 +299,43 @@ impl std::error::Error for EngineError {
         }
     }
 }
+
+/// The multiples of a rule's deviation that each selectivity stage
+/// (68%, 77%, 85%, 95%, 98%, 99%) cuts at, for midgame rules and for exact
+/// rules. A stage at probability p should cut where a fraction 1 - p of the
+/// standardized prediction errors |deep - predicted| / deviation lie beyond.
+/// The default assumes normal errors; measured errors have heavier tails, so
+/// a calibration can supply the empirical quantiles instead.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProbCutSigmas {
+    pub midgame: [f64; 6],
+    pub exact: [f64; 6],
+}
+impl ProbCutSigmas {
+    /// Two-sided normal quantiles of the stage probabilities.
+    pub const NORMAL: Self = Self {
+        midgame: NORMAL_SIGMAS,
+        exact: NORMAL_SIGMAS,
+    };
+    pub(crate) fn get(&self, exact: bool, stage: usize) -> f64 {
+        if exact {
+            self.exact[stage]
+        } else {
+            self.midgame[stage]
+        }
+    }
+    pub(crate) fn is_valid(&self) -> bool {
+        [self.midgame, self.exact].iter().all(|s| {
+            s.iter().all(|v| v.is_finite() && *v > 0.0) && s.windows(2).all(|w| w[0] <= w[1])
+        })
+    }
+}
+impl Default for ProbCutSigmas {
+    fn default() -> Self {
+        Self::NORMAL
+    }
+}
+const NORMAL_SIGMAS: [f64; 6] = [1.0, 1.20, 1.43953, 1.960, 2.326, 2.576];
 
 /// Advanced per-position calibration overriding the regression configuration.
 #[derive(Clone, Copy, Debug)]

@@ -1,10 +1,13 @@
 #[cfg(feature = "endgame-pattern-ordering")]
 mod end_ordering;
 mod pattern;
+mod pen;
 use crate::Board;
 use pattern::definition::{
     FEATURE_COORD, PATTERN_TABLE_SIZES, SQUARE_TO_FEATURES, TOTAL_PATTERN_WEIGHTS,
 };
+#[allow(unused_imports)]
+pub use pen::{PEN_DIM, PEN_HIDDEN, PEN_INPUTS, PenPhase};
 use std::{
     io::{self, Read, Write},
     sync::Arc,
@@ -12,11 +15,56 @@ use std::{
 
 pub const PATTERN_COUNT: usize = 11;
 pub const PHASE_COUNT: usize = 60;
+/// Pattern weights in one phase, all tables back to back.
+pub const PATTERN_WEIGHT_COUNT: usize = TOTAL_PATTERN_WEIGHTS;
+/// Mobility weights in one phase, indexed by 64 + own moves - opponent moves.
+pub const MOBILITY_WEIGHT_COUNT: usize = 128;
+/// Pattern lookups per evaluation: every pattern in four orientations.
+pub const FEATURE_COUNT: usize = PATTERN_COUNT * 4;
+
+/// The weights one evaluation reads, for training the model. The score is
+/// `bias + Σ patterns[i] + mobility[mobility]` of phase `phase`, divided
+/// by 128 and rounded as `PatternModel::evaluate` does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Features {
+    /// 0..60; 60 minus the empty squares, with a full board in phase 59.
+    pub phase: usize,
+    /// Indices into the phase's `PATTERN_WEIGHT_COUNT` pattern weights.
+    pub patterns: [u32; FEATURE_COUNT],
+    /// Index into the phase's `MOBILITY_WEIGHT_COUNT` mobility weights.
+    pub mobility: usize,
+}
+impl Features {
+    pub fn of(board: &Board) -> Self {
+        let state = EvalState::from_board(*board);
+        let mut patterns = [0; FEATURE_COUNT];
+        let mut offset = 0;
+        for (p, size) in PATTERN_TABLE_SIZES.iter().enumerate() {
+            for r in 0..4 {
+                patterns[p * 4 + r] = (offset + state.current[p * 4 + r] as usize) as u32;
+            }
+            offset += size;
+        }
+        Self {
+            phase: phase_of(board),
+            patterns,
+            mobility: mobility_index(board.get_moves(), board),
+        }
+    }
+}
+fn phase_of(board: &Board) -> usize {
+    usize::from(60u8.saturating_sub(board.empty_count())).min(59)
+}
+fn mobility_index(moves: u64, board: &Board) -> usize {
+    64 + moves.count_ones() as usize - board.get_opponent_moves().count_ones() as usize
+}
 
 /// Runtime model: tables in pattern order, weights shared across rotations.
 #[derive(Clone)]
 pub struct PatternModel {
     phases: Arc<[PatternPhase]>,
+    /// The pattern embedding network of every phase, if the model has one.
+    pen: Option<Arc<[PenPhase]>>,
 }
 #[derive(Clone)]
 pub struct PatternPhase {
@@ -44,6 +92,22 @@ impl PatternPhase {
             bias,
         })
     }
+    /// Like `new`, with the pattern tables back to back as `Features` indexes
+    /// them.
+    pub fn from_flat(
+        patterns: Vec<i16>,
+        mobility: [i16; 128],
+        bias: i16,
+    ) -> Result<Self, &'static str> {
+        if patterns.len() != TOTAL_PATTERN_WEIGHTS {
+            return Err("invalid pattern table dimensions");
+        }
+        Ok(Self {
+            weights: patterns.into_boxed_slice(),
+            mobility,
+            bias,
+        })
+    }
 }
 impl PatternModel {
     pub fn new(phases: Vec<PatternPhase>) -> Result<Self, &'static str> {
@@ -52,7 +116,19 @@ impl PatternModel {
         }
         Ok(Self {
             phases: phases.into(),
+            pen: None,
         })
+    }
+    /// The model with a pattern embedding network, one per phase.
+    pub fn with_pen(mut self, pen: Vec<PenPhase>) -> Result<Self, &'static str> {
+        if pen.len() != PHASE_COUNT {
+            return Err("PEN requires 60 phases");
+        }
+        self.pen = Some(pen.into());
+        Ok(self)
+    }
+    pub fn has_pen(&self) -> bool {
+        self.pen.is_some()
     }
     /// Explicitly zero weights, useful for rule/search tests. Not a trained AI.
     pub fn zero() -> Self {
@@ -93,8 +169,7 @@ impl PatternModel {
     }
     /// Return the legal moves already computed for the model's mobility term.
     pub(crate) fn evaluate_state_and_moves(&self, board: &Board, state: &EvalState) -> (i32, u64) {
-        let phase = usize::from(60u8.saturating_sub(board.empty_count())).min(59);
-        let weights = &self.phases[phase];
+        let weights = &self.phases[phase_of(board)];
         let mut raw = i32::from(weights.bias);
         let mut offset = 0;
         for (p, size) in PATTERN_TABLE_SIZES.iter().enumerate() {
@@ -104,14 +179,48 @@ impl PatternModel {
             offset += size;
         }
         let moves = board.get_moves();
-        let mobility =
-            64 + moves.count_ones() as i32 - board.get_opponent_moves().count_ones() as i32;
-        raw += i32::from(weights.mobility[mobility as usize]);
+        let opponent_moves = board.get_opponent_moves();
+        raw += i32::from(
+            weights.mobility
+                [64 + moves.count_ones() as usize - opponent_moves.count_ones() as usize],
+        );
+        if let Some(pen) = &self.pen {
+            raw += pen[phase_of(board)].evaluate(
+                state,
+                moves.count_ones(),
+                opponent_moves.count_ones(),
+            );
+        }
         (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
     }
-    /// DPR2 version 1: LE i16, 60 phases, 11 fixed-schema tables, mobility, bias.
+    /// DPR2 version 1, weights only. `Model::write_to` also writes the
+    /// calibration (version 2); see `model.rs` for the layout.
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
         out.write_all(b"DPR2\x01\x00\x00\x00")?;
+        self.write_phases(&mut out)
+    }
+    /// Reads DPR2 version 1. `Model::from_file` reads both versions.
+    pub fn read_from(mut input: impl Read) -> io::Result<Self> {
+        let mut magic = [0; 8];
+        input.read_exact(&mut magic)?;
+        if &magic != b"DPR2\x01\x00\x00\x00" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported pattern model/schema",
+            ));
+        }
+        let model = Self::read_phases(&mut input)?;
+        let mut extra = [0];
+        if input.read(&mut extra)? != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "trailing model data",
+            ));
+        }
+        Ok(model)
+    }
+    /// The 60 phases: LE i16 pattern tables, mobility, bias.
+    pub(crate) fn write_phases(&self, mut out: impl Write) -> io::Result<()> {
         let mut bytes = Vec::with_capacity((TOTAL_PATTERN_WEIGHTS + 129) * 2);
         for phase in self.phases.iter() {
             bytes.clear();
@@ -127,15 +236,21 @@ impl PatternModel {
         }
         Ok(())
     }
-    pub fn read_from(mut input: impl Read) -> io::Result<Self> {
-        let mut magic = [0; 8];
-        input.read_exact(&mut magic)?;
-        if &magic != b"DPR2\x01\x00\x00\x00" {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unsupported pattern model/schema",
-            ));
+    /// The 60 phases' networks; see `pen.rs`.
+    pub(crate) fn write_pen(&self, mut out: impl Write) -> io::Result<()> {
+        for phase in self.pen.iter().flat_map(|p| p.iter()) {
+            phase.write(&mut out)?;
         }
+        Ok(())
+    }
+    pub(crate) fn read_pen(mut self, mut input: impl Read) -> io::Result<Self> {
+        let pen = (0..PHASE_COUNT)
+            .map(|_| PenPhase::read(&mut input))
+            .collect::<io::Result<Vec<_>>>()?;
+        self.pen = Some(pen.into());
+        Ok(self)
+    }
+    pub(crate) fn read_phases(mut input: impl Read) -> io::Result<Self> {
         let mut phases = Vec::with_capacity(PHASE_COUNT);
         let mut bytes = vec![0; (TOTAL_PATTERN_WEIGHTS + 129) * 2];
         for _ in 0..PHASE_COUNT {
@@ -153,13 +268,6 @@ impl PatternModel {
                 mobility,
                 bias,
             });
-        }
-        let mut extra = [0];
-        if input.read(&mut extra)? != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "trailing model data",
-            ));
         }
         Ok(Self::new(phases).unwrap())
     }
@@ -292,6 +400,35 @@ mod tests {
 #[cfg(test)]
 mod score_tests {
     use super::*;
+    #[test]
+    fn features_read_the_weights_evaluate_reads() {
+        let model = PatternModel::nonzero_for_tests();
+        let mut random = 11u64;
+        let mut board = Board::new();
+        while !board.is_terminal() {
+            let f = Features::of(&board);
+            let phase = &model.phases[f.phase];
+            let raw = i32::from(phase.bias)
+                + f.patterns
+                    .iter()
+                    .map(|&i| i32::from(phase.weights[i as usize]))
+                    .sum::<i32>()
+                + i32::from(phase.mobility[f.mobility]);
+            assert_eq!(
+                model.evaluate(&board),
+                ((raw + raw.signum() * 64) / 128).clamp(-64, 64)
+            );
+            let moves = board.get_moves();
+            board = if moves == 0 {
+                board.board_after_pass()
+            } else {
+                board.board_after_move(crate::test_util::random_move(moves, &mut random))
+            };
+        }
+        let flat = PatternPhase::from_flat(vec![1; TOTAL_PATTERN_WEIGHTS], [0; 128], 0).unwrap();
+        assert_eq!(flat.weights.len(), TOTAL_PATTERN_WEIGHTS);
+        assert!(PatternPhase::from_flat(vec![], [0; 128], 0).is_err());
+    }
     #[test]
     fn phase_mobility_and_signed_rounding() {
         let phases = (0..60)

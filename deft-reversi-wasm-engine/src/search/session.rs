@@ -56,9 +56,14 @@ pub(super) struct Runtime {
     pub(super) pending_lock: Mutex<()>,
     pub(super) pending_ready: Padded<std::sync::Condvar>,
     pub(super) parallel: bool,
+    /// Fewest empties at which an exact node of the final solve splits
+    /// (`tree::split_empties`).
+    pub(super) split_empties: u8,
     pub(super) sigma: AtomicU64,
     pub(super) quality: AtomicU8,
     pub(super) rules: Arc<[Option<ProbCutRule>]>,
+    /// Deviation multiples per stage; the stage is `quality - 1`.
+    pub(super) sigmas: ProbCutSigmas,
     /// Fewest empties at which the local endgame tries ProbCut.
     pub(super) endgame_probcut_min: u8,
     /// Threads reuse the local endgame cache they keep only under this epoch.
@@ -195,9 +200,11 @@ pub(super) fn test_context() -> Context {
         pending_lock: Mutex::new(()),
         pending_ready: Padded(std::sync::Condvar::new()),
         parallel: false,
+        split_empties: u8::MAX,
         sigma: AtomicU64::new(0),
         quality: AtomicU8::new(0),
         rules: Arc::from([]),
+        sigmas: ProbCutSigmas::NORMAL,
         endgame_probcut_min: super::endgame::PROBCUT_MIN_EMPTIES,
         cache_epoch: 0,
     });
