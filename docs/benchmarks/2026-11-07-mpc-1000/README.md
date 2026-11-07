@@ -26,7 +26,7 @@ PEN のモデル（`full-pen.dpr2`）の MPC を、空きマスごとに250局�
 ## 測り方
 
 - この PC（Core Ultra 7 265K）で測った。前回の値（i3-14100）とは時間を比べない。
-- `examples/solve`（`0f11ef5`、`-Ctarget-cpu=native`）を1スレッド、CPU 2（P コア）、TT 256 MiB で、1つずつ順に動かした（[bench.sh](bench.sh)、順番は [queue.sh](queue.sh)）。
+- `examples/solve`（`0f11ef5`、`-Ctarget-cpu=native`）を1スレッド、CPU 2（P コア）、TT 256 MiB で、1つずつ順に動かした（`bench.sh`、順番は `queue.sh`）。
 - 局面と、手の質の比べ方は前回と同じ（[mid150.obf](../2026-11-03-midgame-speed/mid150.obf)、[ffo40-59.obf](../2026-11-06-pen-tuning/ffo40-59.obf)、[ref-l24.tsv](../2026-11-06-pen-tuning/results/ref-l24.tsv)）。
 - 結果は [bench.log](bench.log) と [results/](results) にある。64番は [p64.obf](p64.obf)。
 
@@ -35,3 +35,7 @@ PEN のモデル（`full-pen.dpr2`）の MPC を、空きマスごとに250局�
 - 250局面の10,250局面は、1,000局面にすべて同じ値で入っていた。
 - 判定の幅（p=0.99）は、中盤で平均 −0.6%（最大1.1%）、完全読みで平均 +0.1%（最大1.2%）しか変わらない。
 - 1,000局面にだけある30,750局面で、250局面の校正のはみ出し率は p=0.99 で 0.96%（中盤）、1.15%（完全読み）だった。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-07-mpc-1000/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

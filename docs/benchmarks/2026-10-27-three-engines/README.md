@@ -119,3 +119,7 @@ run/results.tsvは全生データ、run/process-output.jsonlは全コマンド�
 
 
 現在の比較ツールは [tools/bench](../../../tools/bench/README.md) に移した。Edaxの評価ファイルは `--edax-eval` で指定できる。このディレクトリのスクリプトと結果は、上記測定時の記録として保持する。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-27-three-engines/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

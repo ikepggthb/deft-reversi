@@ -33,3 +33,7 @@ AMD EPYC 9V74仮想環境。deftは `8ab1682` に旧mainのMPC設定を追加し
 確認探索の変更はFFO 49のノードを約284Mから218Mへ減らしたが、45・46・48では増えた。40〜44および48〜49は改善した一方、45〜47が約5.2%悪化したため採用していない。確定石判定の省略は差が小さく測定変動と重なるため採用していない。局所TTの拡大も改善を確認できず採用していない。`deft-tt-probe*.tsv/json`、`deft-no-stability.*`、`deft-4096.*` が生データ。
 
 FFO 43の1ms間隔ユーザー空間サンプリングでは、局所終盤探索 `endgame_score_entered` 34.1%、`tail_score_impl` 19.9%、`null_window_upper` 10.7%。これらは実行ファイル内のシンボルに対応できたサンプルの比率で、ハードウェアカウンタでも処理時間の厳密な内訳でもない。`deft-main-ffo43-profile.json` と `.samples` を保存した。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-27-legacy-mpc/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

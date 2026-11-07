@@ -56,3 +56,7 @@ python3 run.py 2 ../2026-11-01-ffo-engines/ffo40-59-answers.obf .
   - 57（31.3 s）と 58（25.4 s）は、Edax・Egaroucid の 1.3〜1.6倍かかる。
   - 53 と 54 も、Egaroucid より 8〜13% 遅い。
   - どれも空き28〜30の問題である。空き25以上の規則は、データがないので空き24の傾き・切片を使っている（[残っていること](../2026-11-02-exact-mpc-formula/README.md#残っていること)）。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-03-ffo-engines/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

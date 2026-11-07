@@ -70,3 +70,7 @@ python3 run.py 8
 - Deft が遅いのは、問題57（Edax・Egaroucid の約2倍）と、問題53・58（Egaroucid の約1.4倍）。どれも空き28〜30で、ノード数が Egaroucid より多い。
 - 1秒あたりのノード数は、Deft が約51M、Edax が約78M、Egaroucid が約50M。
 - まだ1周だけである。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-01-ffo-engines/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

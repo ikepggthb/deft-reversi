@@ -28,7 +28,7 @@ PEN のモデルで、中盤（レベル21）が約7%、FFO 40〜59 が約3%速�
 
 - 局面：中盤は [mid150.obf](../2026-11-03-midgame-speed/mid150.obf)（空き32・40・48 を各50局面）、終盤は FFO 40〜59（[ffo40-59.obf](ffo40-59.obf)）。
 - モデル：`mpc-pen/model.dpr2`（PEN、MPC は250局面で校正）。
-- `examples/solve` を1スレッド、CPU 2 に固定、TT 256 MiB で、1つずつ順に動かした（[bench.sh](bench.sh)、集計は [summarize.py](summarize.py)）。
+- `examples/solve` を1スレッド、CPU 2 に固定、TT 256 MiB で、1つずつ順に動かした（`bench.sh`、集計は `summarize.py`）。
 - 中盤の手の質は、同じモデルのレベル24 の結果（[results/ref-l24.tsv](results/ref-l24.tsv)）と比べた。
 - 値を変えるために、一時的に環境変数で定数を置き換えるパッチを当てた（`DEFT_SIMPLE`、`DEFT_ORDERED`、`DEFT_MID_MARGIN`、`DEFT_EXACT_MARGIN`、`DEFT_LOW_MARGIN`、`DEFT_END_ORDER`）。パッチはコミットしていない。
 - 結果は [tune.log](tune.log) と [results/](results) にある。
@@ -77,3 +77,7 @@ PEN のモデルで、中盤（レベル21）が約7%、FFO 40〜59 が約3%速�
 | 隠れ層を AVX-VNNI の `vpdpbusd` で計算 | 6.01 → 6.04 s（変化なし）。コンパイラが、もとの2命令を `vpdpwssd` にまとめていた |
 | 埋め込みの行の先読み（prefetch） | 6.04 → 6.2〜6.5 s（遅くなった）。L3 を外れる読み込みは1ノードあたり約0.1回で、表はもともとキャッシュに載っていた |
 | 遅延評価（PEN の出力の範囲を足しても窓の外なら、PEN を計算しない） | モデルの重みから求めた PEN の出力の範囲が、石数40で −57〜+58石と広く、窓の外と言える場面がほとんどない。結果を変えずに使えるものにはならないので、実装しなかった |
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-06-pen-tuning/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

@@ -39,7 +39,7 @@
 
 ## 2. 段ごとの時間
 
-`trace` で段ごとの時間を測った（[2026-11-01-mpc-tails/tools](../2026-11-01-mpc-tails/tools) を、ワークスペースと同じ LTO 設定でビルドした）。
+`trace` で段ごとの時間を測った（`2026-11-01-mpc-tails/tools` を、ワークスペースと同じ LTO 設定でビルドした）。
 
 | 問題 | 空き | 準備（MPC あり） | 最終段（MPC なし） | 最終段の割合 |
 |---|---|---|---|---|
@@ -91,7 +91,7 @@ Egaroucid 7.8.1 は、終盤のゼロ窓探索の手順付けを、残りの深�
 
 ## 5. 呼び出しの抜き取り
 
-この機械には perf がない。そこで、問題57の最終段の途中で、gdb で呼び出しを120回抜き取った（[stack_samples.sh](stack_samples.sh)、結果は [stack-samples-ffo57.txt](stack-samples-ffo57.txt)）。
+この機械には perf がない。そこで、問題57の最終段の途中で、gdb で呼び出しを120回抜き取った（`stack_samples.sh`、結果は [stack-samples-ffo57.txt](stack-samples-ffo57.txt)）。
 
 | 部分 | 抜き取りのうちの割合（およそ） |
 |---|---|
@@ -118,3 +118,7 @@ Egaroucid 7.8.1 は、終盤のゼロ窓探索の手順付けを、残りの深�
   - `final`：採用した形のエンジン
 - `end120-*.tsv`：end120 の解（`base`、`ord20`）
 - `stack-samples-ffo57.txt`、`stack_samples.sh`：呼び出しの抜き取り
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-03-endgame-large-empties/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

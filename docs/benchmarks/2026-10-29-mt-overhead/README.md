@@ -281,3 +281,7 @@ Edax（v4.6のソースで確認、4.5.5も同じ設計）は分割した節点�
 - `runs-cpu-use-t8.tsv`・`runs-perf-base.tsv`・`runs-perf-head.tsv`：CPU時間とカウンタ。
 - `run_set.sh`（版どうしの比較をスレッド数ごとに実行、7章）、`compare_midgame.py`（中盤の固定深さの確認、7章）、`runs-cpu-use-ctype.tsv`（7章の稼働率）。7章の診断は `diag/apply_split_diag.py`・`apply_type_diag.py`・`apply_busy_diag.py`・`apply_open_diag.py`・`apply_join_diag.py`（`apply_diag.py` の後に当てる。busy・open・joinは単独で、この順に当てる）、集計は `split_waste.py`・`busy_summary.py`・`idle_kind.py`。
 - `diag/`：診断（`apply_diag.py`、`apply_order_diag.py`・`apply_general_diag.py`（6章）、`deft-diag.patch`、`wait-diag.patch`）、集計（`analyze.py`・`by_empties.py`・`order_quality.py`・`general_quality.py`）、生データ（`base`＝`3b4e83d`、`cold1`＝局所TTを毎回空にした1スレッド、`padts`・`padts-nws15`、`order`＝`c0ed2aa` の6章の計測）。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-29-mt-overhead/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

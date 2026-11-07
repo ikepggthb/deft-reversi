@@ -1,0 +1,7 @@
+position	condition	depth	empties	search_seconds	process_seconds	nodes	score	mode	completed_depth	trust_percent	pv_legal	stdout_log	stderr_log
+seed1-p12	remote_deft	12	48	0.132481025	0.21210579500075255	1141035	2	Depth	12	100	True	logs/seed1-p12-remote_deft-depth12.stdout.log	logs/seed1-p12-remote_deft-depth12.stderr.log
+seed1-p12	edax_4_5_5	12	48	0.043	0.08446392099995137	1894085	1	fixed depth	12	100	recorded only	logs/seed1-p12-edax_4_5_5-depth12.stdout.log	logs/seed1-p12-edax_4_5_5-depth12.stderr.log
+seed1-p12	edax_4_6_native	12	48	0.055	0.13188564099982614	1915538	1	fixed depth	12	100	recorded only	logs/seed1-p12-edax_4_6_native-depth12.stdout.log	logs/seed1-p12-edax_4_6_native-depth12.stderr.log
+seed8-p36	remote_deft	12	24	0.017379412	0.08653010299985908	112035	18	Depth	12	100	True	logs/seed8-p36-remote_deft-depth12.stdout.log	logs/seed8-p36-remote_deft-depth12.stderr.log
+seed8-p36	edax_4_5_5	12	24	0.012	0.052649358999588	477742	17	fixed depth	12	100	recorded only	logs/seed8-p36-edax_4_5_5-depth12.stdout.log	logs/seed8-p36-edax_4_5_5-depth12.stderr.log
+seed8-p36	edax_4_6_native	12	24	0.014	0.09070188799978496	488606	17	fixed depth	12	100	recorded only	logs/seed8-p36-edax_4_6_native-depth12.stdout.log	logs/seed8-p36-edax_4_6_native-depth12.stderr.log

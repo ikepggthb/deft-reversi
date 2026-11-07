@@ -75,7 +75,7 @@ b(e, s) = β0 + β1·e + β2·s
 
 候補は少ないが、確認用のセルで選んだ分だけ、成績は良く見えている可能性がある。
 
-### 確かめたこと（[fit_formula.py](fit_formula.py)、結果は [results.txt](results.txt)）
+### 確かめたこと（`fit_formula.py`、結果は [results.txt](results.txt)）
 
 数値は、当てはめに使っていないセルでの誤差である（平均 / 二乗平均、単位は石）。
 
@@ -120,9 +120,9 @@ b(e, s) = β0 + β1·e + β2·s
 
 ### 空き12〜19：1マスずつ
 
-[tune/per_empties.py](tune/per_empties.py) を使い、ログは [tune/per-empties-log.txt](tune/per-empties-log.txt) にある。
+`tune/per_empties.py` を使い、ログは [tune/per-empties-log.txt](tune/per-empties-log.txt) にある。
 
-- **局面**：valid 分割のうち、ProbCut の測定に使っていない局面を、別の乱数で選んだ（[tune/make_sets.py](tune/make_sets.py)）。
+- **局面**：valid 分割のうち、ProbCut の測定に使っていない局面を、別の乱数で選んだ（`tune/make_sets.py`）。
   - 空き12〜15：根が空き18の300局面
   - 空き16〜19：根が空き22の200局面
 - **測り方**：1つの空きマス数だけ深さを変え、ほかは固定した。1コアで1つずつ解き、1局面ごとの時間の比の幾何平均をとった。
@@ -136,7 +136,7 @@ b(e, s) = β0 + β1·e + β2·s
 
 ### 空き20以上：FFO 40〜59
 
-[tune/ffo_tables.py](tune/ffo_tables.py) を使い、ログは [tune/ffo-log.txt](tune/ffo-log.txt) にある。FFO 40〜59 を1コアで1回ずつ解いた。
+`tune/ffo_tables.py` を使い、ログは [tune/ffo-log.txt](tune/ffo-log.txt) にある。FFO 40〜59 を1コアで1回ずつ解いた。
 
 | 空き12〜15 | 空き16〜19 | 空き20〜28 | 空き29以上 | 合計 |
 |---|---|---|---|---|
@@ -204,7 +204,11 @@ Deft の規則は MPC を使わない全幅探索の値で測っているので�
 ## ファイル
 
 - [positions-exact.tsv](positions-exact.tsv)：データ
-- [fit_formula.py](fit_formula.py)：式の候補の当てはめと確認。`python3 fit_formula.py > results.txt`
+- `fit_formula.py`：式の候補の当てはめと確認。`python3 fit_formula.py > results.txt`
 - [results.txt](results.txt)：その出力
-- [make_rules.py](make_rules.py)：式から、任意の浅い深さの表の規則（`rules.json`）を作る。学習ツールと同じ値を出す。
+- `make_rules.py`：式から、任意の浅い深さの表の規則（`rules.json`）を作る。学習ツールと同じ値を出す。
 - [tune/](tune)：浅い深さの表の選び方（局面・スクリプト・ログ）
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-02-exact-mpc-formula/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

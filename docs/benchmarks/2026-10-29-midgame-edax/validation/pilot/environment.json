@@ -1,0 +1,31 @@
+{
+  "pilot_only_excluded_from_primary_comparison": true,
+  "conditions": {
+    "remote_deft": {
+      "binary": "/tmp/reversi-benchmark-verify/remote/target/release/examples/bench_midgame",
+      "sha256": "e142a93662d2ccb024484b3a6e664e2cb271243919d2e14e8c2bb3659df88b23"
+    },
+    "edax_4_5_5": {
+      "binary": "/home/azure/dev/edax-4.5.5/bin/lEdax-x86-64-v3",
+      "sha256": "04d07fdd161dbf0150d45d98277a3ee233e385035e59249e482c2412ebb71476"
+    },
+    "edax_4_6_native": {
+      "binary": "/tmp/edax-4.6-native-20261029/source/bin/lEdax-native",
+      "sha256": "406cdfa8aa6e28962d77834e926f72f6a6dec78741f82d1552287761a1d2f0be"
+    }
+  },
+  "fixture": "/home/azure/dev/deft-reversi-rewrite/deft-reversi-engine/tests/fixtures/midgame.obf",
+  "fixture_sha256": "59bdb48ee0558073824de339e27801bf4b55e7c0a40bd3e20bbe8046cd01e044",
+  "model_sha256": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "tested_positions": [
+    "seed1-p12",
+    "seed8-p36"
+  ],
+  "depth": 12,
+  "edax_depth_flag": "-depth 12",
+  "edax_full_selectivity": "-selectivity 5; NO_SELECTIVITY=5",
+  "edax_full_search_gate": "Final result depth must equal requested depth 12 and no @trust% suffix is allowed.",
+  "deft_search_gate": "Mode Depth(12), requested/completed depth 12, selectivity Full=100%, stop Completed, selective=false, legal PV.",
+  "run_count": 6
+}

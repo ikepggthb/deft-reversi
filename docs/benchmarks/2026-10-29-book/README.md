@@ -8,11 +8,11 @@
 
 | 対象 | 結果 | 記録 |
 |---|---|---|
-| 通常構成の全体試験、ignoredストレス試験を含む | 94成功 | [tests-base.log](tests-base.log) |
-| 全featureの全体試験、同ストレス試験を含む | 94成功 | [tests-all-features.log](tests-all-features.log) |
-| 最終の生成品質修正後、通常構成のbook・CLI試験 | 26成功 | [tests-final-book.log](tests-final-book.log) |
-| 同修正後、全featureのbook・CLI・確保回数試験 | 27成功 | [tests-final-book-all-features.log](tests-final-book-all-features.log) |
-| 全target・全featureのClippy、警告をエラー化 | 成功 | [clippy.log](clippy.log) |
+| 通常構成の全体試験、ignoredストレス試験を含む | 94成功 | `tests-base.log` |
+| 全featureの全体試験、同ストレス試験を含む | 94成功 | `tests-all-features.log` |
+| 最終の生成品質修正後、通常構成のbook・CLI試験 | 26成功 | `tests-final-book.log` |
+| 同修正後、全featureのbook・CLI・確保回数試験 | 27成功 | `tests-final-book-all-features.log` |
+| 全target・全featureのClippy、警告をエラー化 | 成功 | `clippy.log` |
 
 最終試験には、既存解析より深く・選択的にする変更と、浅く・非選択的にする変更の両方を追加した。双方の強い条件で解析し、比較不能な新しい値を破棄したまま段階だけ完了することを防ぐ。探索カーネルはこの修正の対象ではない。
 
@@ -64,3 +64,7 @@ FFO40–49の10局面を、それぞれ新しいEngineプロセス・1スレッ�
 比較元は [前回の結果](../2026-10-28-pull-comparison/results.tsv) の `version=after, round=1`。全10局面で **スコア・着手・モード・深さ・ノード数・葉数・停止理由が一致**。合計は **627,055,807ノード**。[各局面](search-regression.tsv) と [条件・照合結果](search-regression.json) を保存した。
 
 探索の再帰内にbook参照・分岐・ロックは追加していない。本照合は結果と探索量の回帰確認であり、壁時計時間の統計的な性能差や対局勝率の保証ではない。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-29-book/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

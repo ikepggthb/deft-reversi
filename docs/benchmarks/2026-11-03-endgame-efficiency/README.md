@@ -28,7 +28,7 @@
 
 ### 局面
 
-[make_positions.py](make_positions.py) で、valid 分割から次の局面を除いて選んだ（乱数の種3）。
+`make_positions.py` で、valid 分割から次の局面を除いて選んだ（乱数の種3）。
 
 - ProbCut の測定に使った局面
 - 浅い深さの調整に使った局面
@@ -46,9 +46,9 @@
 
 ### 測り方
 
-- **空き24〜30**（[engines.py](engines.py) → [solves.tsv](solves.tsv)、集計は [summarize.py](summarize.py)）
+- **空き24〜30**（`engines.py` → [solves.tsv](solves.tsv)、集計は `summarize.py`）
   - 1局面ごとに新しいプロセスで解いた。CPU 2 に固定し、エンジンの順番は局面ごとに回した。
-- **空き13〜20**（[batch.py](batch.py) → [small.tsv](small.tsv)）
+- **空き13〜20**（`batch.py` → [small.tsv](small.tsv)）
   - 1局面が短いので、ファイルごとに1つのプロセスで解いた（CPU 6）。
   - このとき CPU 2 で別の測定を同時に走らせていたので、時間は参考値である。ノード数は影響を受けない。
 - すべての局面で、3つのエンジンの答えが一致した。
@@ -139,7 +139,11 @@ Edax の深さは、子から (空き − 15)/3 手（空き27以上は +1）で
 
 ## ファイル
 
-- 局面：`pos-*.obf`、[make_positions.py](make_positions.py)
-- 3エンジンの比較：[engines.py](engines.py)、[solves.tsv](solves.tsv)、[engines.log](engines.log)、[summarize.py](summarize.py)、[batch.py](batch.py)、[small.tsv](small.tsv)
+- 局面：`pos-*.obf`、`make_positions.py`
+- 3エンジンの比較：`engines.py`、[solves.tsv](solves.tsv)、`engines.log`、`summarize.py`、`batch.py`、[small.tsv](small.tsv)
 - 診断：[diag-counters.patch](diag-counters.patch)、[diag-results.txt](diag-results.txt)、[perf-ffo57.txt](perf-ffo57.txt)
 - 並べ替えの試み：[ordering-from/](ordering-from)、[deep-ordering/](deep-ordering)
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-03-endgame-efficiency/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

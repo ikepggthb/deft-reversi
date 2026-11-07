@@ -102,3 +102,7 @@ python3 tools/summarize_rewrite_profile.py target/release/examples/solve /tmp/so
 `environment.json` にソースのスナップショットハッシュ、Rust、ビルド条件、検証件数を記録。
 生データ、プロファイル、並列・再探索測定は同じディレクトリのTSV/JSON。
 初回実装の測定は `../2026-10-24/README.md` に履歴として残す。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-24-single-thread/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

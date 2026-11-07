@@ -30,7 +30,7 @@
 
 ## 学習
 
-線形と PEN を、同じデータ・同じ設定で学習した（[full.sh](full.sh)）。
+線形と PEN を、同じデータ・同じ設定で学習した（`full.sh`）。
 
 - 全データ（1段階あたり約2,600万局面）× 8エポック。線形の重みは AdaGrad（lr 0.3）。
 - PEN の埋め込みは AdaGrad（`--pen-lr 0.03`）、MLP は 256局面ごとに Adam（`--pen-dense-lr 0.0003`）。
@@ -79,7 +79,7 @@
 
 ## MPC
 
-線形・PEN それぞれに、`deft-reversi-train mpc` で MPC を合わせ直した（1空き数あたり250局面。[mpc.sh](mpc.sh)）。結果は [mpc-pen/](mpc-pen) と [mpc-lin/](mpc-lin) にある（局面の一覧は、データ由来なので入れていない）。
+線形・PEN それぞれに、`deft-reversi-train mpc` で MPC を合わせ直した（1空き数あたり250局面。`mpc.sh`）。結果は [mpc-pen/](mpc-pen) と [mpc-lin/](mpc-lin) にある（局面の一覧は、データ由来なので入れていない）。
 
 PEN では、浅い探索の値から深い探索の値を予想したときの誤差の幅（σ）が、多くの所で小さくなった。
 
@@ -95,7 +95,7 @@ PEN では、浅い探索の値から深い探索の値を予想したときの�
 
 ## 対局
 
-[match.py](../2026-11-03-engine-match/match.py) で打った。
+`match.py` で打った。
 
 - XOT の序盤（[xot-openingslarge.txt](../2026-11-03-engine-match/xot-openingslarge.txt)）から250序盤を選び、先後を入れ替えて500局。
 - どのエンジンも1スレッド、先読みなし。
@@ -186,3 +186,7 @@ DEFT_MODEL=mpc-pen/model.dpr2 OPP_MODEL=mpc-lin/model.dpr2 XOT=xot-openingslarge
   python3 match.py deft time1 250 time1.tsv 1
 DEFT_MODEL=mpc-pen/model.dpr2 XOT=xot-openingslarge.txt python3 match.py edax level12 250 edax12.tsv 1
 ```
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-06-pen/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

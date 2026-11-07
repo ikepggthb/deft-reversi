@@ -201,3 +201,7 @@ Edaxとの差はFFO46・47・48・49に集中する。`bbf716e` 時点のノー�
 - four-finalは1回目の測定の1周目に別CPUで診断ビルドの実行が重なったため破棄し、最初からやり直した結果である。
 - `node-histogram/`：空き数別節点数の診断パッチ（deft・Egaroucid）、生データ（変更前 `raw-base`、`bbf716e` 時点 `raw-stageB`、Egaroucid `raw-egaroucid`）、集計スクリプト `summarize.py [raw-dir]` と結果。
 - `egaroucid-console-readlink.patch`：Egaroucidコンソールの修正。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-28-engine-gap/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

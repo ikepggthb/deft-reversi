@@ -64,3 +64,7 @@ python3 run.py 2 ../2026-11-01-ffo-engines/ffo40-59-answers.obf .
   - 今回の PEN では 24.6 s・17.6 s になった。58 は Egaroucid とほぼ同じである。57 は、まだ Egaroucid・Edax の約1.24倍かかる。
 - **deft-release は、前回の Deft（300.7 s）から 277.8 s に速くなった。** これはエンジンの変更による（中盤の切り替えの深さと、ProbCut の事前判定 c40fbb0、ゼロ窓だけで MPC を試す変更 7dd1aad）。
 - MPC の局面数（250 と 1,000）の違いは、合計の時間にはほとんど出なかった（deft-linear 276.4 s、deft-release 277.8 s）。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-06-ffo-pen/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

@@ -95,3 +95,7 @@ FFO40・41・46・47は中央値で増えている。短い局面の変動もあ
 最終コード差分はfinal.patchに保存した。モデル値・手順付け点・ノード数を保った今回の変更と、今後のハッシュ・安定石カット等による探索量の変更は分けて扱う。
 
 採用版はendgame-pattern-ordering有効時も全61テストに成功した（feature-tests.log）。最終の既定機能リビルドは測定版のSHA-256 37c7921866885a22a7e8b407e253d3d85a4f54ea7977a9ca2ca8417fbbcc0ae8 と一致した。cargo fmt --all --check、git diff --check、すべての累積patchの比較前ソースへの適用検査、final.patch適用後の現ソースとの一致検査にも成功した。validation.jsonに記録した。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-27-ordering-reuse/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

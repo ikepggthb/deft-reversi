@@ -106,3 +106,7 @@ python3 docs/benchmarks/2026-10-24-regression-investigation/reproduce.py --outpu
 このスクリプトは保存済みソースを `/tmp` へ展開して診断用にビルドする。本体の作業ファイルは変更しない。標準ではFFO 49の主要6条件を5周。`--case 48 --variants control,six_order,tail_first,tail_match,pv_root4` で追加診断も再現できる。展開・パッチ・ビルド・実行の再現確認として、control / FFO 40を1回実行し、本体と同じ8,728,417ノード・スコア38を確認した。
 
 生データ: `ab-final-ffo49.tsv`、`ab-ffo49.tsv`、`stages.log`、`previous-all-trace.log`、`screen-extra-ffo48.json`。集計は対応するJSON。モデル・本体バイナリ・スナップショットのハッシュと実行条件は `environment.json`。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-24-regression-investigation/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

@@ -87,12 +87,12 @@ Deft の強さを、Edax 4.5.5・Egaroucid 7.8.1 との対局で、同じレベ�
 
 ## 対局の仕組み
 
-- [match.py](match.py)：GTP で両エンジンを動かして対局させる。
+- `match.py`：GTP で両エンジンを動かして対局させる。
   - `levelN`：両方がレベル N
   - `levelD:E`：Deft がレベル D、相手がレベル E
   - `timeS`、`timeS:D`：持ち時間（1局ずつに限る）
   - `XOT=FILE`：XOT の一覧から序盤を選ぶ
-- [tools/](tools)：Deft の GTP プログラム `deft-gtp`（エンジンのライブラリを使う）。
+- `tools/`：Deft の GTP プログラム `deft-gtp`（エンジンのライブラリを使う）。
   - `--level N`：レベルを指定して打つ。
   - `--game-ms MS`：持ち時間を指定して打つ。空き20以下はすぐ読み切れるので、残り時間を、空き21以上の自分の手に配る。
 
@@ -110,3 +110,7 @@ Deft の強さを、Edax 4.5.5・Egaroucid 7.8.1 との対局で、同じレベ�
 
 - **乱数の序盤、4局同時に打ったもの**（`edax-level{11,21}`、`egaroucid-level{11,21}`）：同じレベルで、Edax とは互角、Egaroucid にはやや負け越しだった。思考時間は、ほかの対局の負荷がかかった状態の値である。
 - **使わなかった結果**（[invalid/](invalid)）：持ち時間の対局を4局同時に打ったもの、Egaroucid を `-time` で打たせたつもりのもの、途中で止めたもの。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-03-engine-match/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

@@ -12,7 +12,7 @@
 
 ## 測り方
 
-[tools/](tools) の `mpc-quality` を使った。
+`tools/` の `mpc-quality` を使った。
 
 1. 各局面で、TT を空にしてから、Deft の 98% の選択的な終盤探索（`Goal::Endgame`、`Selectivity::Percent98`）で手を選ぶ。
 2. その局面と、選んだ手の後の局面を、完全読みで解く（結果は保存して使い回す）。
@@ -20,15 +20,15 @@
 
 局面は2組使った。
 
-- **対局の局面**（[games-22-24.obf](games-22-24.obf)、1,445局面）：レベル12の対局で、Deft の手番で空き22〜24 だった局面（[game_positions.py](game_positions.py)）。
+- **対局の局面**（[games-22-24.obf](games-22-24.obf)、1,445局面）：レベル12の対局で、Deft の手番で空き22〜24 だった局面（`game_positions.py`）。
 - **ランダムな局面**（[pos-22-24.obf](pos-22-24.obf)、1,800局面）：valid 分割から選んだ空き22・23・24 を各600。ProbCut の測定と、浅い深さの調整に使った局面は除いた。
 
-モデルは `mpc-formula/model.dpr2` である。確認探索を深くした規則は、[make_rules.py](../2026-11-02-exact-mpc-formula/make_rules.py) で作った（σ は式で深さごとに決まる）。
+モデルは `mpc-formula/model.dpr2` である。確認探索を深くした規則は、`make_rules.py` で作った（σ は式で深さごとに決まる）。
 
 - `deep2`：空き20以上を 10/9 手
 - `edax`：空き20以上を Edax と同じ 2⌊e/4⌋ + (e の偶奇)
 
-ほかの2つは、診断用の環境変数で切り替えた（コミットしたエンジンには含まない）。結果は [runs/](runs) にある。集計は [summarize.py](summarize.py)、[paired.py](paired.py) で行った。
+ほかの2つは、診断用の環境変数で切り替えた（コミットしたエンジンには含まない）。結果は [runs/](runs) にある。集計は `summarize.py`、`paired.py` で行った。
 
 ## 結果
 
@@ -85,3 +85,7 @@
 ## まだ決めていないこと
 
 選択的な終盤探索の確率を上げるか（例：レベル表の 98% を 99% にする）。上げれば悪手は減るが、その範囲の時間が約1.2倍になる。レベルの意味が変わるので、決めてから入れる。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-05-endgame-mpc-quality/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。
