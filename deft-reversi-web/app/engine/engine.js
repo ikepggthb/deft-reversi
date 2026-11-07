@@ -4,23 +4,28 @@ import { loadModel } from './model-loader.js';
 
 let engine;
 let initializing = false;
+let resolveConsent;
+function requestConsent(info) {
+    return new Promise(resolve => { resolveConsent = resolve; self.postMessage({ type: 'consent', info }); });
+}
 self.addEventListener('message', async ({ data }) => {
+    if (data?.type === 'consent-response') { resolveConsent?.(Boolean(data.allowed)); resolveConsent = null; return; }
     if (data?.type !== 'init' || initializing) return;
     initializing = true;
     try {
         await init();
-        const bytes = await loadModel(data.model, progress => self.postMessage({ type: 'progress', progress }));
+        const bytes = await loadModel(data.model, progress => self.postMessage({ type: 'progress', progress }), requestConsent);
         engine = new WasmEngine(bytes, 32);
         if (data.model === 'classic') engine.useLegacyCalibration();
         self.postMessage({ type: 'ready', ok: true, protocolVersion: 1 });
     } catch (error) {
-        self.postMessage({ type: 'ready', ok: false, error: String(error), protocolVersion: 1 });
+        self.postMessage({ type: 'ready', ok: false, cancelled: error?.name === 'ModelDownloadCancelled', error: String(error), protocolVersion: 1 });
     }
 });
 
 self.addEventListener('message', ({ data }) => {
     const { type, payload, requestId } = data;
-    if (type === 'init') return;
+    if (type === 'init' || type === 'consent-response') return;
     try {
         if (!engine) throw new Error('Engine not initialized');
         if (type !== 'solveTurn') throw new Error(`Unknown message type: ${type}`);

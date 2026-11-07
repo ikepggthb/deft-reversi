@@ -295,3 +295,23 @@ test('GameService scenario: analyzeRecord reports progress from start to finish'
     ]);
     assert.deepEqual(result.analysis.map((point) => point.ply), [0, 1, 2]);
 });
+
+test('new game reuses an idle engine and interrupts an active request', async () => {
+    class CountingEngine extends StubAiEngine {
+        constructor() { super(); this.hasPendingRequests = false; this.starts = 0; this.stops = 0; }
+        initialize() { this.starts++; }
+        terminate() { this.stops++; this.hasPendingRequests = false; }
+    }
+    const engine = new CountingEngine();
+    const { service } = createService({ aiEngine: engine });
+    assert.equal(engine.starts, 1);
+    service.startNewGame();
+    await settle(service);
+    assert.equal(engine.starts, 1);
+    assert.equal(engine.stops, 0);
+    engine.hasPendingRequests = true;
+    service.startNewGame();
+    await settle(service);
+    assert.equal(engine.starts, 2);
+    assert.equal(engine.stops, 1);
+});

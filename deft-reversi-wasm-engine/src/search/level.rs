@@ -5,21 +5,13 @@ enum Config {
 }
 
 /// The reference engine's mapping from a level (1..=60) to the search mode
-/// and selectivity, with its opening correction.
+/// and selectivity.
 pub(super) fn level_plan(empties: u8, level: u8) -> (SearchMode, Selectivity) {
     match level_to_config(i32::from(empties), i32::from(level)) {
-        Config::Eval(mut depth, mut selectivity) => {
-            if 60 - i32::from(empties) < 20 && depth > 14 {
-                depth -= 4;
-                if selectivity != 6 {
-                    selectivity = 3;
-                }
-            }
-            (
-                SearchMode::Depth(depth as u8),
-                Selectivity::from_level(selectivity as u8),
-            )
-        }
+        Config::Eval(depth, selectivity) => (
+            SearchMode::Depth(depth as u8),
+            Selectivity::from_level(selectivity as u8),
+        ),
         Config::Final(selectivity) => (
             if selectivity == 6 {
                 SearchMode::Exact
@@ -163,7 +155,7 @@ fn level_to_config(n_empties: i32, level: i32) -> Config {
 mod tests {
     use super::*;
     #[test]
-    fn reference_level_boundaries_and_opening_correction() {
+    fn reference_level_boundaries_and_opening_depth() {
         for (empties, level, expected_depth, expected_selectivity) in [
             (60, 8, Some(8), 6),
             (20, 10, None, 6),
@@ -196,8 +188,22 @@ mod tests {
         }
         assert_eq!(
             level_plan(60, 16),
-            (SearchMode::Depth(12), Selectivity::Percent95)
+            (SearchMode::Depth(16), Selectivity::Percent85)
         );
+        for empties in [60, 41, 40] {
+            assert_eq!(
+                level_plan(empties, 14),
+                (SearchMode::Depth(14), Selectivity::Percent85)
+            );
+            assert_eq!(
+                level_plan(empties, 15),
+                (SearchMode::Depth(15), Selectivity::Percent85)
+            );
+            assert_eq!(
+                level_plan(empties, 18),
+                (SearchMode::Depth(18), Selectivity::Percent85)
+            );
+        }
         assert_eq!(level_plan(60, 60).0, SearchMode::Exact);
     }
 }

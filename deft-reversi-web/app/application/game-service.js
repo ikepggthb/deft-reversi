@@ -5,6 +5,7 @@
 import { Game } from '../domain/game.js';
 import { turnToLower, Turn, positionToNotation } from '../domain/types.js';
 import { AiEngine } from '../infrastructure/ai-engine.js';
+import { confirmModelDownload } from '../engine/model-loader.js';
 import { HintService } from './hint-service.js';
 import { SettingsService } from './settings-service.js';
 import { OpeningService } from './opening-service.js';
@@ -227,13 +228,17 @@ export class GameService {
      * 新規ゲーム開始
      */
     startNewGame() {
-        this._runExclusive(async () => {
-            this._clearStudyState();
-            this._aiToken += 1;
-            this._isAiThinking = false;
-            this._hintService.cancel();
+        // Invalidate and interrupt an outstanding search before entering the
+        // queue; otherwise a long search blocks the new-game action.
+        this._aiToken += 1;
+        this._isAiThinking = false;
+        this._hintService.cancel();
+        if (this._aiEngine.hasPendingRequests) {
             this._aiEngine.terminate();
             this._initializeEngine();
+        }
+        this._runExclusive(async () => {
+            this._clearStudyState();
             await this._startNewGame();
         });
     }
@@ -902,6 +907,7 @@ export class GameService {
     /** Change the model without resetting the game; invalidate in-flight work. */
     setEvaluationModel(model) {
         if (model !== 'classic' && model !== 'pen') return;
+        const previous = this._settingsService.evaluationModel ?? 'classic';
         this._settingsService.evaluationModel = model;
         this._settingsService.save();
         this._aiToken += 1;
@@ -911,13 +917,22 @@ export class GameService {
             if (state) state.hintScores = null;
         }
         this._ui.onModelChanging?.();
-        this._initializeEngine();
+        this._initializeEngine({ onReady: () => {
+            if (model !== previous) this._ui.onModelChanged?.();
+        }, onCancel: () => {
+            this._settingsService.evaluationModel = previous;
+            this._settingsService.save();
+            this._ui.onModelSelectionRestored?.(previous);
+            if (previous !== model) this._initializeEngine({ allowPrompt: false });
+            else this._ui.onModelCancelled?.();
+        } });
     }
 
     /** @private */
-    _initializeEngine() {
+    _initializeEngine({ onReady, onCancel, allowPrompt = true } = {}) {
         this._aiEngine.initialize(
             () => {
+                onReady?.();
                 this._ui.onAIReady();
                 this._runExclusive(async () => {
                     if (this._mainState.game && this._settingsService.enableAi && !this._mainState.pendingAutoStart) {
@@ -932,7 +947,13 @@ export class GameService {
                     `AIエンジンの初期化に失敗しました。ページを再読み込みするか、Worker / WASM / 評価データが正しく配信されているか確認してください: ${error.message}`
                 );
             },
-            { model: this._settingsService.evaluationModel ?? 'classic', onProgress: progress => this._ui.onModelProgress?.(progress) }
+            { model: this._settingsService.evaluationModel ?? 'classic',
+                onProgress: progress => {
+                    if (progress.stage === 'storage-warning') this._ui.logInfo('モデルを保存できませんでした。次回も確認が必要です。');
+                    this._ui.onModelProgress?.(progress);
+                },
+                onConsent: info => allowPrompt && confirmModelDownload(info),
+                onCancel: onCancel ?? (() => this._ui.onModelCancelled?.()) }
         );
     }
 

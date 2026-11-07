@@ -69,7 +69,7 @@ export class AiEngine {
      * @param {Function} [onReady] 準備完了時のコールバック
      * @param {Function} [onError] エラー時のコールバック
      */
-    initialize(onReady, onError, { model = 'classic', onProgress } = {}) {
+    initialize(onReady, onError, { model = 'classic', onProgress, onConsent, onCancel } = {}) {
         this.terminate();
 
         this._worker = new Worker(new URL('../engine/engine.js', import.meta.url), {
@@ -80,6 +80,13 @@ export class AiEngine {
         this._readyHandler = (event) => {
             const data = event.data;
             if (data?.type === 'progress') { onProgress?.(data.progress); return; }
+            if (data?.type === 'consent') {
+                const worker = this._worker;
+                Promise.resolve().then(() => onConsent?.(data.info) ?? false).catch(() => false).then(allowed => {
+                    if (this._worker === worker) worker.postMessage({ type: 'consent-response', allowed });
+                });
+                return;
+            }
             if (data?.type !== 'ready') return;
 
             if (data.ok) {
@@ -87,6 +94,8 @@ export class AiEngine {
                 onReady?.();
                 this._onReadyCallbacks.forEach((cb) => cb());
                 this._onReadyCallbacks = [];
+            } else if (data.cancelled) {
+                onCancel?.();
             } else {
                 onError?.(new Error(data.error ?? 'Engine initialization failed'));
             }
@@ -145,6 +154,8 @@ export class AiEngine {
             this._worker.postMessage(message);
         });
     }
+
+    get hasPendingRequests() { return this._pendingRequests.size > 0; }
 
     /** @returns {boolean} エンジンが準備完了しているか */
     get isReady() {

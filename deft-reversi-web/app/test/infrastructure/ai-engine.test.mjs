@@ -57,3 +57,29 @@ test('AiEngine rejects a pending search if the worker crashes', async () => {
         assert.equal(worker.terminated, true);
     } finally { globalThis.Worker = originalWorker; }
 });
+
+test('AiEngine requests consent and reports cancellation without marking ready', async () => {
+    const originalWorker = globalThis.Worker;
+    let worker;
+    class FakeWorker {
+        constructor() { this.listeners = {}; this.messages = []; worker = this; }
+        addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+        removeEventListener() {}
+        postMessage(message) { this.messages.push(message); }
+        terminate() {}
+        emit(data) { for (const fn of this.listeners.message ?? []) fn({ data }); }
+    }
+    globalThis.Worker = FakeWorker;
+    try {
+        let cancelled = false;
+        const engine = new AiEngine();
+        engine.initialize(() => {}, () => {}, { onConsent: () => false, onCancel: () => { cancelled = true; } });
+        worker.emit({ type: 'consent', info: { model: 'classic', bytes: 10 } });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(worker.messages.at(-1), { type: 'consent-response', allowed: false });
+        worker.emit({ type: 'ready', ok: false, cancelled: true });
+        assert.equal(cancelled, true);
+        assert.equal(engine.isReady, false);
+        engine.terminate();
+    } finally { globalThis.Worker = originalWorker; }
+});

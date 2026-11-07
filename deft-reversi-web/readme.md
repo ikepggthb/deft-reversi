@@ -14,7 +14,7 @@ cd deft-reversi-web/app
 python3 -m http.server 8000
 ```
 
-http://localhost:8000/ を開いてください。標準は軽量モデルです。設定からPENに切り替えられ、選択は保存されます。モデルのダウンロードと展開の進捗を表示し、Web Worker内で探索します。gzip解凍には `DecompressionStream` を利用します。
+http://localhost:8000/ を開いてください。標準は軽量モデルです。設定からPENに切り替えられ、選択は保存されます。未保存モデルのダウンロード前に容量を表示して確認し、取得済みモデルはブラウザーに保存して再利用します。ブラウザーのデータ削除や容量不足で保存されない場合は、次回も確認します。ダウンロードと展開の進捗を表示し、Web Worker内で探索します。gzip解凍には `DecompressionStream` を利用します。
 
 ```sh
 cd deft-reversi-web/app
