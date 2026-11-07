@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     whiteAiLevel: 5,
     aiTurn: 'white',
     humanOpening: null,
+    evaluationModel: 'classic',
 });
 
 /**
@@ -53,6 +54,7 @@ export class SettingsService {
         // その他
         /** @private */
         this._humanOpening = saved.humanOpening;
+        this._evaluationModel = saved.evaluationModel;
     }
 
     // === AI設定 ===
@@ -156,6 +158,9 @@ export class SettingsService {
         this._enableHint = !this._enableHint;
     }
 
+    get evaluationModel() { return this._evaluationModel; }
+    set evaluationModel(value) { this._evaluationModel = value === 'pen' ? 'pen' : 'classic'; }
+
     // === その他 ===
 
     /** @returns {number | null} */
@@ -181,6 +186,7 @@ export class SettingsService {
             whiteAiLevel: this._whiteAiLevel,
             aiTurn: this._aiTurn,
             humanOpening: this._humanOpening,
+            evaluationModel: this._evaluationModel,
         });
     }
 }

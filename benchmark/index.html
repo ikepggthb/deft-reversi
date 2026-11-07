@@ -29,8 +29,10 @@
       <div class="field"><label for="goal">探索方法</label><select id="goal"><option value="endgame">完全読み（終局まで）</option><option value="depth">深さ指定</option><option value="level">レベル指定</option></select><span class="field-note">正解照合は完全読みが完了した局面のみ。</span></div>
       <div class="field" id="value-field" hidden><label for="goal-value" id="value-label">探索の深さ</label><input id="goal-value" type="number" min="1" max="60" value="10"></div>
       <div class="field"><label for="limit">1局面の時間上限（秒）</label><input id="limit" type="number" min="0" max="4294967" step="1" value="10"><span class="field-note">0は無制限。難しい局面では長時間かかります。</span></div>
+      <div class="field"><label for="model">評価モデル</label><select id="model"><option value="classic">標準（軽量）</option><option value="pen">PEN（高精度・約69 MiB）</option></select></div>
       <div class="field"><label for="tt">置換表（MiB）</label><select id="tt"><option>16</option><option selected>32</option><option>64</option><option>128</option><option>256</option></select></div>
       <div class="buttons"><button id="start" class="primary">ベンチマーク開始</button><button id="stop" class="secondary" disabled>停止</button></div>
+      <progress id="model-progress" aria-label="モデルの読み込み進捗" style="width:100%;height:6px;accent-color:#20a581" hidden></progress>
       <p id="status" class="status" role="status" aria-live="polite">準備できています</p>
     </section>
     <section class="panel" aria-labelledby="results-title">

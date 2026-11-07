@@ -130,6 +130,7 @@ export class GameService {
                 whiteAiLevel: this._settingsService.whiteAiLevel,
                 aiTurn: this._settingsService.aiTurn,
                 humanOpening: this._settingsService.humanOpening,
+                evaluationModel: this._settingsService.evaluationModel ?? 'classic',
             });
 
         this._initializeEngine();
@@ -898,6 +899,21 @@ export class GameService {
         }
     }
 
+    /** Change the model without resetting the game; invalidate in-flight work. */
+    setEvaluationModel(model) {
+        if (model !== 'classic' && model !== 'pen') return;
+        this._settingsService.evaluationModel = model;
+        this._settingsService.save();
+        this._aiToken += 1;
+        this._isAiThinking = false;
+        this._hintService.cancel();
+        for (const state of [this._mainState, this._studyState]) {
+            if (state) state.hintScores = null;
+        }
+        this._ui.onModelChanging?.();
+        this._initializeEngine();
+    }
+
     /** @private */
     _initializeEngine() {
         this._aiEngine.initialize(
@@ -911,10 +927,12 @@ export class GameService {
                 });
             },
             (error) => {
+                this._ui.onModelError?.(error);
                 this._ui.logError(
                     `AIエンジンの初期化に失敗しました。ページを再読み込みするか、Worker / WASM / 評価データが正しく配信されているか確認してください: ${error.message}`
                 );
-            }
+            },
+            { model: this._settingsService.evaluationModel ?? 'classic', onProgress: progress => this._ui.onModelProgress?.(progress) }
         );
     }
 

@@ -2,6 +2,7 @@ import { Board } from '../domain/board.js';
 import { OPENINGS } from './openings.js';
 import { clampInt, escapeHtml, formatRecordText, formatSigned, formatWinnerMessage, renderSparklineSvg } from './utils.js';
 import { GraphStateManager } from './graph-state-manager.js';
+import { progressText } from '../engine/model-loader.js';
 
 export class UI {
     /**
@@ -32,6 +33,9 @@ export class UI {
         this._studyMode = Boolean(this.gameService.isStudyModeEnabled);
         this._showBoardEval = Boolean(this.gameService.hintEnabled);
         this._engineReady = false;
+        this._evaluationModel = initialSettings.evaluationModel ?? 'classic';
+        this._lastModelProgress = { stage: 'manifest' };
+        this._lastModelError = null;
         this._toastTimer = null;
         this._passTimer = null;
         this._resultTimer = null;
@@ -75,7 +79,62 @@ export class UI {
 
     onAIReady() {
         this._engineReady = true;
+        this._lastModelProgress = null;
+        this._lastModelError = null;
+        this._modelStatus.hidden = true;
         this._render();
+    }
+
+    onModelChanging() {
+        this._engineReady = false;
+        this._graphManager.invalidateEvaluations();
+        this.onModelProgress({ stage: 'manifest' });
+        this._render();
+    }
+
+    onModelProgress(progress) {
+        this._lastModelProgress = progress;
+        this._lastModelError = null;
+        this._modelStatus.hidden = false;
+        this._modelProgress.hidden = false;
+        this._modelStatusText.textContent = progressText(progress);
+        this._modelRetry.hidden = true;
+        if (Number.isFinite(progress.loaded) && Number.isFinite(progress.total) && progress.total > 0) {
+            this._modelProgress.max = progress.total;
+            this._modelProgress.value = Math.min(progress.loaded, progress.total);
+        } else {
+            this._modelProgress.removeAttribute('value');
+        }
+        this._updatePanelModelStatus();
+    }
+
+    onModelError(error) {
+        this._engineReady = false;
+        this._lastModelError = error;
+        this._lastModelProgress = null;
+        this._modelStatus.hidden = false;
+        this._modelStatusText.textContent = `モデルの読み込みに失敗しました: ${error.message}`;
+        this._modelProgress.hidden = true;
+        this._modelRetry.hidden = false;
+        this._updatePanelModelStatus();
+    }
+
+    _updatePanelModelStatus() {
+        const area = this._panelBody.querySelector('#panel-model-status');
+        if (!area) return;
+        const text = area.querySelector('#panel-model-status-text');
+        const bar = area.querySelector('#panel-model-progress');
+        const retry = area.querySelector('#panel-model-retry');
+        const progress = this._lastModelProgress;
+        area.hidden = !progress && !this._lastModelError;
+        retry.hidden = !this._lastModelError;
+        bar.hidden = Boolean(this._lastModelError);
+        text.textContent = this._lastModelError
+            ? `モデルの読み込みに失敗しました: ${this._lastModelError.message}`
+            : progress ? progressText(progress) : '';
+        if (progress && Number.isFinite(progress.loaded) && Number.isFinite(progress.total) && progress.total > 0) {
+            bar.max = progress.total; bar.value = Math.min(progress.loaded, progress.total);
+        } else bar.removeAttribute('value');
     }
 
     logError(message) {
@@ -200,6 +259,11 @@ export class UI {
               <h1>Deft Reversi</h1>
               <a class="benchmark-link" href="./benchmark/">FFOベンチ</a>
             </header>
+            <div class="model-status" id="model-status" role="status" aria-live="polite">
+              <span id="model-status-text">モデルを準備中…</span>
+              <progress id="model-progress" aria-label="モデルの読み込み進捗"></progress>
+              <button id="model-retry" type="button" hidden>再試行</button>
+            </div>
             <main class="content" id="content"></main>
             <nav class="dock">
               <button class="dock-btn" data-action="open-panel" data-panel="mode"><span class="dock-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/></svg></span><span class="dock-label">対局</span></button>
@@ -217,6 +281,11 @@ export class UI {
         `;
 
         this._root = root;
+        this._modelStatus = root.querySelector('#model-status');
+        this._modelStatusText = root.querySelector('#model-status-text');
+        this._modelProgress = root.querySelector('#model-progress');
+        this._modelRetry = root.querySelector('#model-retry');
+        this._modelRetry.onclick = () => { this._modelProgress.hidden = false; this.gameService.setEvaluationModel(this._evaluationModel); };
         this._content = /** @type {HTMLDivElement} */ (root.querySelector('#content'));
         this._panelOverlay = /** @type {HTMLDivElement} */ (root.querySelector('#panel-overlay'));
         this._panelBody = /** @type {HTMLDivElement} */ (root.querySelector('#panel-body'));
@@ -722,6 +791,19 @@ export class UI {
             <div class="panel-section-title">評価レベル</div>
             ${this._renderSelectRow('盤面評価', 'analysis-level-select', analysisLevelOptions)}
           </div>
+          <div class="panel-section mode-panel-section">
+            <div class="panel-section-title">評価モデル</div>
+            <label class="mini" for="evaluation-model-select">使用するモデル</label>
+            <select id="evaluation-model-select" class="select">
+              <option value="classic" ${this._evaluationModel === 'classic' ? 'selected' : ''}>標準（軽量）</option>
+              <option value="pen" ${this._evaluationModel === 'pen' ? 'selected' : ''}>PEN（高精度・約69 MiB）</option>
+            </select>
+            <div id="panel-model-status" class="model-status" role="status" aria-live="polite" hidden>
+              <span id="panel-model-status-text"></span>
+              <progress id="panel-model-progress" aria-label="モデルの読み込み進捗"></progress>
+              <button id="panel-model-retry" type="button" hidden>再試行</button>
+            </div>
+          </div>
           <div class="panel-section mode-panel-section settings-toggles">
             <button class="secondary-btn" data-click="toggle-study-mode" aria-pressed="${this._studyMode}">検討モード ${this._studyMode ? 'ON' : 'OFF'}</button>
             <button class="secondary-btn" data-click="toggle-board-eval" aria-pressed="${this._showBoardEval}">評価値表示 ${this._showBoardEval ? 'ON' : 'OFF'}</button>
@@ -758,6 +840,17 @@ export class UI {
             };
         };
 
+        this._updatePanelModelStatus();
+        const panelRetry = this._panelBody.querySelector('#panel-model-retry');
+        if (panelRetry) panelRetry.onclick = () => this.gameService.setEvaluationModel(this._evaluationModel);
+        const modelSelect = this._panelBody.querySelector('#evaluation-model-select');
+        if (modelSelect instanceof HTMLSelectElement) {
+            modelSelect.onchange = () => {
+                this._evaluationModel = modelSelect.value === 'pen' ? 'pen' : 'classic';
+                this._modelProgress.hidden = false;
+                this.gameService.setEvaluationModel(this._evaluationModel);
+            };
+        }
         bindSelect('analysis-level-select', (next) => {
             this._analysisLevel = next;
             this._graphManager.setAnalysisLevel(next);

@@ -163,6 +163,11 @@ export class GraphStateManager {
         this._studyBranchPly = null;
     }
 
+    invalidateEvaluations() {
+        this._mainGraph = this._createState();
+        if (this._studyMode) this._studyGraph = this._createState();
+    }
+
     /**
      * 評価レベルを更新
      * @param {number} level
