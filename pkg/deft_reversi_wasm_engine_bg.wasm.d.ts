@@ -7,6 +7,7 @@ export const wasmengine_clearTt: (a: number) => [number, number];
 export const wasmengine_new: (a: number, b: number, c: number) => [number, number, number];
 export const wasmengine_search: (a: number, b: number, c: any) => [number, number, number];
 export const wasmengine_setModel: (a: number, b: number, c: number) => [number, number];
+export const wasmengine_useLegacyCalibration: (a: number) => [number, number];
 export const wasmposition_cells: (a: number) => [number, number];
 export const wasmposition_fromBits: (a: bigint, b: bigint) => [number, number, number];
 export const wasmposition_fromString: (a: number, b: number) => [number, number, number];

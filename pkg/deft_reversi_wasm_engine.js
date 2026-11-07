@@ -57,6 +57,15 @@ export class WasmEngine {
             throw takeFromExternrefTable0(ret[0]);
         }
     }
+    /**
+     * Opt in to the reference engine's calibration for the classic model.
+     */
+    useLegacyCalibration() {
+        const ret = wasm.wasmengine_useLegacyCalibration(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
 }
 if (Symbol.dispose) WasmEngine.prototype[Symbol.dispose] = WasmEngine.prototype.free;
 

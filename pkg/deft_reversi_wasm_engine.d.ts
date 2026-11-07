@@ -11,6 +11,10 @@ export class WasmEngine {
     constructor(model_bytes: Uint8Array, tt_mib: number);
     search(position: WasmPosition, request: any): any;
     setModel(bytes: Uint8Array): void;
+    /**
+     * Opt in to the reference engine's calibration for the classic model.
+     */
+    useLegacyCalibration(): void;
 }
 
 /**
@@ -47,6 +51,7 @@ export interface InitOutput {
     readonly wasmengine_new: (a: number, b: number, c: number) => [number, number, number];
     readonly wasmengine_search: (a: number, b: number, c: any) => [number, number, number];
     readonly wasmengine_setModel: (a: number, b: number, c: number) => [number, number];
+    readonly wasmengine_useLegacyCalibration: (a: number) => [number, number];
     readonly wasmposition_cells: (a: number) => [number, number];
     readonly wasmposition_fromBits: (a: bigint, b: bigint) => [number, number, number];
     readonly wasmposition_fromString: (a: number, b: number) => [number, number, number];

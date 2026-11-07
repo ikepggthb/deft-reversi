@@ -40,7 +40,7 @@ try {
 
 - `WasmPosition`: `fromBits(player, opponent)`（BigIntの手番側・相手ビットボード）、`fromString` / `toString`（64マスと手番 X/O）、`cells()`（A1→H8、0=空/1=黒/2=白）、`sideToMove()`、`legalMoves()`、`play("F5" | "pass")`、`mustPass()`、`isTerminal()`。
 - `play` は元の局面を変更せず、新しい局面を返します。生成したオブジェクトは利用後に `free()` してください。
-- `WasmEngine(modelBytes, ttMiB)`: 1スレッド固定。置換表は 1〜256 MiB（補助表・モデルなどは別途メモリを使用）。`setModel(bytes)`、`clearTt()`、`search(position, request)` を公開します。
+- `WasmEngine(modelBytes, ttMiB)`: 1スレッド固定。校正情報のない旧モデルで選択的探索を使う場合は `useLegacyCalibration()` を明示的に呼びます。置換表は 1〜256 MiB（補助表・モデルなどは別途メモリを使用）。`setModel(bytes)`、`clearTt()`、`search(position, request)` を公開します。
 - `goal`: `{kind: "depth", value: 0..60}` / `{kind: "level", value: 1..60}` / `{kind: "endgame"}`。Depth と Endgame は完全選択率、Level はエンジン定義の選択率です。
 - `timeLimitMs` / `nodeLimit`: 任意の u32。`allMoves`: 既定 false。探索は同期処理なので Web Worker 上で実行してください。実行中の同じ Worker へのメッセージでは停止できません。時間・ノード制限を使うか、Worker を terminate してください。
 - 結果: `bestMove`、`score`、`depth`、`selectivity`、`solved`、`pv`、`moves`、`stopReason`、`nodes`、`elapsedMs`。任意値の未確定は `undefined`、手は `A1`〜`H8` / `pass`、スコアは手番側から見た石差です。`nodes` は精度を保つため十進文字列です。`stopReason` は `Completed` / `Requested` / `TimeLimit` / `NodeLimit` / `WorkerFailed`。
