@@ -77,9 +77,9 @@ $T mpc -m runs/NAME/model.dpr2 --data $D --out runs/NAME/mpc --positions 1000 -t
 
 誤差が小さいことと探索が強いことは同じではない。採用する前に次を確かめる。
 
-- FFO 40〜49：`tools/bench/positions/ffo40-49-answers.obf` と全問の石差が一致すること、ノード数と時間が今のモデルから悪化していないこと。
+- FFO 40〜49：`tools/bench/positions/ffo40-59.obf` の最初の10問（`tools/bench/ffo.py --only 40-49`）と全問の石差が一致すること、ノード数と時間が今のモデルから悪化していないこと。
 - FFO は `tools/bench/compare_versions.py` で測る。`--before`・`--after` には、同じ `solve` にそれぞれのモデルを渡すシェルスクリプトを指定する（[例](benchmarks/2026-10-31-pattern-lr0.3/README.md#ffo-4049)）。
-- 自己対戦：今のモデルと、同じレベルで、先手後手を入れ替えて対局する。[benchmarks/2026-11-01-mpc-tails/tools/](benchmarks/2026-11-01-mpc-tails/tools/) の `selfplay` を使う。`selfplay 新モデル[@rules.json] 今のモデル レベル[/ミリ秒] 序盤の数 序盤の手数 スレッド数 seed 出力.tsv`。`@rules.json` を付けると校正した規則と段ごとの倍率、`@rules.json:normal` は規則だけ（倍率は正規分布の値）、付けないと main の規則を使う。`/ミリ秒` を付けると1手ごとに時間を区切る。同じディレクトリの `solve` は、エンジンの `solve` と同じ出力で、モデルを同じ書き方で受け取る。レベル11の1局は1スレッドで約2秒、レベル14は約8秒。
+- 自己対戦：今のモデルと、先手後手を入れ替えて対局する。[tools/bench/match.py](../tools/bench/match.py) を使う（`DEFT_MODEL=新モデル OPP_MODEL=今のモデル XOT=tools/bench/positions/xot-openingslarge.txt python3 tools/bench/match.py deft level12 250 出力.tsv`。同じ持ち時間なら `time1` など）。
 
 ## 7. 記録する
 

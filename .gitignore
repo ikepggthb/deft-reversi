@@ -1,8 +1,12 @@
 target
-target-native
+/target-*/
 __pycache__/
 
 todo_list.md
 
 deft-reversi-cli/self-play*
 deft-reversi-cli/problem/test.obf
+
+# Local data, reference engines, release staging and notes; never committed.
+# The training data in local/data must not be redistributed.
+/local/

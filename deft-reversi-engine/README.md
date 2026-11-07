@@ -103,22 +103,9 @@ RUSTFLAGS="-Ctarget-cpu=native" cargo run --locked --release -p deft_reversi_eng
 OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・時間をTSV出力する。任意の末尾引数で1局面の時間上限（ミリ秒）を指定できる。
 `PatternModel::zero()` はルール・探索テスト用。棋力のあるモデルではない。
 
-## 旧版との比較
+## 比較
 
-[tools/bench/compare_reference.py](../tools/bench/compare_reference.py) は、旧エンジンへの依存を生成先の独立したCargoプロジェクトへ設定します。通常ワークスペースに旧実装を含めません。
-
-```sh
-RUSTFLAGS="-Ctarget-cpu=native" python3 tools/bench/compare_reference.py --old-engine /path/to/old/deft-reversi-engine -- OLD_MODEL NEW_MODEL POSITIONS.obf level:60 5
-```
-
-現行の比較コマンドと配置は [比較ツールの説明](../tools/bench/README.md) を参照してください。
-
-通常API同士の性能比較には `level:60` を使う。`exact` と固定深さは診断用で、通常APIの比較とは条件が異なる。評価値の一致を確認し、新旧を交互に実行、局面ごとにTTを空にし、探索スコアの一致と5回以上の中央値を報告する。初期化とモデル読み込みは測定外。
-既存の参考先レビューにあるノード集計差があるため、NPSだけで採否を決めない。
-基準局面、CPU割当、ビルド条件、モデルハッシュ、参考コミットを固定する。
-旧版の `clear_tt` は世代更新だけなので、比較ツールでは旧Solverを作り直し、スレッド内の局所TTも新しいスレッドで初期化する。
-`tools/generate_rewrite_fixtures.py` で固定した座標ルールのゲームから局面を再生成できる。
-LinuxのCPU 1に固定する場合は、比較コマンドの先頭に `taskset -c 1` を付ける。
+速さの比較（変更の前後、Edax・Egaroucid）と対局は [tools/bench](../tools/bench/README.md) を使う。`examples/solve` が完全読みと固定レベルの探索、`examples/gtp` が対局用の GTP である。
 
 ## 並列測定
 

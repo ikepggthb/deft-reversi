@@ -32,7 +32,7 @@ cargo run --locked --release --example solve -- MODEL.dpr2 POSITIONS.obf exact 1
 
 公開済みの[Web版](https://az.recazbowl.net/deft-reversi-web/index.html)は、ここで保存している旧アプリケーションに対応します。新エンジンへの移行は未実施です。
 
-現在の比較ツールは [tools/bench](tools/bench/README.md) にあります。旧版とのAPI比較では `--old-engine` で旧クレートの場所を指定し、通常API同士の比較には `level:60` を指定します。Edax・Egaroucidとの比較も、評価データとバイナリの場所を引数で指定できます。
+計測ツールは [tools/bench](tools/bench/README.md) にあります（FFO の完全読みの比較、中盤の速さ、Edax・Egaroucid との対局）。比較用エンジン・モデル・学習データは、`.gitignore` で除外した `local/` に置きます。
 
 ## 測定記録
 

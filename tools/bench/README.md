@@ -1,42 +1,81 @@
-# 比較ツール
+# 計測ツール
 
-現在使用する入口です。`docs/benchmarks/` のスクリプト・データは測定時の記録として保持します。Linuxの `taskset` とPython 3の標準ライブラリを使います。
+Deft の速さと強さを測るスクリプトです。測った結果は `docs/benchmarks/<日付>-<名前>/` に、README（何を、どのコマンドで測ったか、結果と結論）と結果のデータを置きます。スクリプトは測定のたびに写さず、ここのものを使います。
 
-## 現行版の変更前後
+Linux の `taskset` と Python 3.11 以上の標準ライブラリを使います。
+
+## 準備
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release --example solve
-python3 tools/bench/compare_versions.py --before /path/to/before-solve --after target/release/examples/solve --model MODEL --positions tools/bench/positions/ffo40-49.obf --out results.tsv --cpu 0 --rounds 6 --legacy-main-mpc
+RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native \
+  cargo build --release -p deft_reversi_engine --example solve --example gtp
 ```
 
-各局面を新しいプロセスで解き、1スレッド・主TT 256 MiBで比較します。`--legacy-main-mpc` はmain由来の変換モデルにだけ指定します。既定の完全読みでは完了・探索方式・深さ・スコア一致を検証します。結果TSVを各実行後に保存し、完走後に時間とファイルハッシュをJSONへ出力します。異なるノード数は許容します。途中失敗時のTSVは未完了の測定であり、最終比較には使いません。既存の出力を上書きするため、実行ごとに別の `--out` を使ってください。
+エンジン・モデルの場所は [common.py](common.py) の `DEFAULTS` にあります。どれも `.gitignore` で除外した `local/` の下です（`local/README.md`、ローカルにだけある）。
 
-構造変更とアルゴリズム変更を分ける場合は `compare_variants.py --base BEFORE --layout LAYOUT --final AFTER --model MODEL --positions POSITIONS --out results.tsv --rounds 6 --cpu 0 --legacy-main-mpc` を使います。各局面を6通りの実行順で比較します。6の倍数の周回で全順序が均等になります。
+| キー | 既定の場所 |
+|---|---|
+| `solve`・`gtp` | `target-native/release/examples/` |
+| `model` | `local/release/model-v3-pen/deft-eval-v3-pen.dpr2`（今の Release のモデル） |
+| `edax` | `local/edax-4.5.5/bin/lEdax-x86-64-v3`（Edax 4.5.5 の配布版） |
+| `egaroucid` | `local/bench-engines/dl-egaroucid-7.8.1/…/Egaroucid_for_Console_clang.out`（Egaroucid 7.8.1、公式の clang の手順でビルド） |
 
-## 旧版とのAPI比較
+場所を変えるときは `local/bench.toml` に同じキーで書きます（リポジトリからの相対パスか絶対パス）。
+
+## 完全読み：[ffo.py](ffo.py)
+
+FFO 40〜59 を、Deft の設定・Edax・Egaroucid で解いて比べます。1問ごとに新しいプロセスで解き、エンジンの順番を問題と回ごとに回します。石差はすべて正解と照らし合わせ、違えば止まります。
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" python3 tools/bench/compare_reference.py --old-engine /path/to/old/deft-reversi-engine -- OLD_MODEL NEW_MODEL POSITIONS.obf level:60 5
+# 1スレッド（CPU 4）と20スレッドで3エンジン
+python3 tools/bench/ffo.py --threads 1 --cpus 4 --rounds 3 --out OUT/t1 deft edax egaroucid
+python3 tools/bench/ffo.py --threads 20 --cpus 0-19 --rounds 5 --out OUT/t20 deft edax egaroucid
+# Deft の2つのビルドを比べる
+python3 tools/bench/ffo.py --threads 20 --cpus 0-19 --rounds 5 --out OUT \
+  base:solve=/path/to/solve-base new:solve=/path/to/solve-new
 ```
 
-旧クレートの配置を固定せず、`target/reference-compare` に独立したCargoプロジェクトを生成します。`--project PATH` で生成先を変更、`--prepare-only` で生成だけ、`--offline` でキャッシュだけを使用できます。生成先はこのツール専用にしてください。初回に独立したlockfileを生成し、以降は `--locked` で実行します。再現する際は生成先の `Cargo.lock` と両エンジンのコミットを保存してください。旧エンジンの場所を変えた場合は別の生成先を使います。Rustはルートと同じ1.99.1です。
+Deft の設定は `NAME:key=value,...` で書きます。キーは `solve`（バイナリ）、`model`、`tt`（MiB、既定 256）。大文字のキーは環境変数として渡します（一時的な切り替え用）。`--only 40-49` で一部の問題だけを解きます。
 
-`level:60` は通常API同士の比較です。`exact` と固定深さは診断用途です。旧モデルと新モデルの評価・MPCが対応することを確認してください。
+結果は `OUT/results.tsv`（全部の解）と `OUT/summary.txt`（問題ごとの中央値、エンジンごとの合計の中央値と、最初のエンジンに対する比）です。
 
-## Edax・Egaroucid
+## 中盤：[midgame.py](midgame.py)
+
+中盤150局面（[positions/mid150.obf](positions/mid150.obf)、空き32・40・48 を各50）を、レベル21 と18 で読む時間と、選んだ手の質を比べます。手の質は、レベル24 の結果（[positions/mid150-level24.tsv](positions/mid150-level24.tsv)、PEN のモデル・MPC 250局面校正）と同じ手を選んだ割合と、石差の差の平均です。
 
 ```sh
-python3 tools/bench/compare_engines.py --root /path/to/binaries --edax-eval /path/to/edax/eval.dat --model MODEL --positions tools/bench/positions/ffo40-49.obf --answers tools/bench/positions/ffo40-49-answers.obf --out run --cpu 0 --rounds 8
+python3 tools/bench/midgame.py --cpus 2 --rounds 3 --out OUT base:solve=/path/to/solve-base new:solve=/path/to/solve-new
 ```
 
-`--root` の下に `deft/engine`・`edax/engine`・`egar_simd/engine`・`egar_avx512/engine` を配置します。Egaroucidの評価データなどはそれぞれの実行ディレクトリに、使用する版の要求どおり配置してください。AVX-512版を実行できるCPUが必要です。実行順は4周ごとに均等化します。
+## 対局：[match.py](match.py)
 
-Deftは1スレッド・256 MiB・main由来MPC、EdaxとEgaroucidは1スレッド・レベル60・ハッシュ23・定石無効です。各版の完了深さと非選択探索の出力、公開正解のスコアを確認します。時間の出力精度・ノードの数え方はエンジン間で異なります。主TTの項目数を揃えてもメモリ量は一致しません。結果・プロセス出力を各実行で保存します。
-
-Egaroucidの乱数ハッシュを固定する補助コードは `make_egar_hash.cpp` です。対応するEgaroucidソースとビルド・配置方法は [測定時の記録](../../docs/benchmarks/2026-10-27-three-engines/README.md) を参照してください。
-
-## ツール自身の検証
+Deft（`gtp`）と Edax・Egaroucid・別のモデルの Deft を、GTP で対局させます。開局は XOT から選び、色を入れ替えて2局ずつ打ちます。
 
 ```sh
-python3 -m unittest discover -s tools/bench/tests -v
+XOT=tools/bench/positions/xot-openingslarge.txt python3 tools/bench/match.py edax level12 250 OUT.tsv
+DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=tools/bench/positions/xot-openingslarge.txt \
+  python3 tools/bench/match.py deft time1 250 OUT.tsv
+```
+
+使い方の詳細はファイルの先頭にあります。
+
+## 局面
+
+| ファイル | 中身 |
+|---|---|
+| [ffo40-59.obf](positions/ffo40-59.obf) | FFO 40〜59 と全部の手の正解 |
+| [mid150.obf](positions/mid150.obf) | 中盤150局面 |
+| [mid150-level24.tsv](positions/mid150-level24.tsv) | 中盤150局面のレベル24 の結果（手の質の基準） |
+| [xot-openingslarge.txt](positions/xot-openingslarge.txt) | XOT の開局（large） |
+
+## 決まり
+
+- 時間の比較は、同じ機械・同じスレッド数・同じ TT で測った値どうしだけで行う。
+- 時間を測っている間は、ビルドやほかの重い処理を動かさない。測定は1つずつ順に動かす。
+- 結果は `docs/benchmarks/<日付>-<名前>/` に置く。README には、使ったコマンド、機械、コミット、モデルを書く。
+
+## ツール自身の確認
+
+```sh
+python3 -m unittest discover -s tools/bench/tests
 ```

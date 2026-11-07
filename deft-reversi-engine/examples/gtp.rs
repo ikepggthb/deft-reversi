@@ -1,6 +1,7 @@
-//! A minimal GTP front end for matches against Edax and Egaroucid.
+//! A minimal GTP front end for matches against Edax and Egaroucid
+//! (`tools/bench/match.py`).
 //!
-//! usage: deft-gtp MODEL (--level N | --game-ms MS) [--tt MIB]
+//! usage: gtp MODEL (--level N | --game-ms MS) [--tt MIB]
 //!
 //! With `--level`, every move is a `Goal::Level(N)` search. With
 //! `--game-ms`, each side has MS milliseconds for the game (or what
