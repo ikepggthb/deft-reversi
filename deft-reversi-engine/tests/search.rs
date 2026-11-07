@@ -176,10 +176,33 @@ fn ybwc_exact_repetition_and_thread_counts() {
         // miss a worker still releasing its mailbox from the preceding stage.
         // Require real parallel execution across the repeated workload, while
         // checking the score and completion of every individual search above.
-        if threads > 1 {
+        // With 8 or more threads exact nodes split only from 15-17 empties.
+        if (2..8).contains(&threads) {
             assert!(splits > 0, "no split with {threads} threads");
             assert!(helper_jobs > 0, "no helper executed with {threads} threads");
         }
+    }
+    // Too many empties for the brute-force reference: one thread is it.
+    let boards: Vec<Board> = (1..=5).map(|seed| position(seed, 20)).collect();
+    let expected: Vec<_> = boards
+        .iter()
+        .map(|&board| engine(1).search(board, &exact()).unwrap().score)
+        .collect();
+    for threads in [8, 20] {
+        let mut engine = engine(threads);
+        let mut splits = 0;
+        let mut helper_jobs = 0;
+        for (&board, &expected) in boards.iter().zip(&expected) {
+            for _ in 0..5 {
+                let result = engine.search(board, &exact()).unwrap();
+                assert_eq!(result.score, expected);
+                assert_eq!(result.stop_reason, StopReason::Completed);
+                splits += result.stats.splits;
+                helper_jobs += result.stats.helper_jobs;
+            }
+        }
+        assert!(splits > 0, "no split with {threads} threads");
+        assert!(helper_jobs > 0, "no helper executed with {threads} threads");
     }
 }
 

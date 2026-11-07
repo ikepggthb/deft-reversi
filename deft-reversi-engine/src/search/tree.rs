@@ -5,7 +5,24 @@ use std::ops::ControlFlow;
 // Midgame nodes split down to four plies of remaining depth: the shallow
 // iterations before an endgame solve otherwise leave most threads idle.
 pub(super) const SPLIT_DEPTH: u8 = 4;
+/// Fewest empties at which an exact node splits with few threads, and in
+/// the selective stages before an exact solve. Below 14 empties only the
+/// root can split: the local endgame (`LOCAL_END_MAX`) never does.
 pub(super) const SPLIT_EMPTIES: u8 = 10;
+/// The same for the final exact solve. With many threads idle ones are
+/// almost always there, and small splits cost more in handoffs and joins
+/// than they save: at 20 threads one 28-empties FFO position made 470,000
+/// helper jobs at 14 empties and 67,000 at 17, and FFO 40-59 took 10% less
+/// time; at 4 threads 14 stays the fastest. The selective stages prune too
+/// much to keep 20 threads busy at 17, and keep `SPLIT_EMPTIES`
+/// (docs/benchmarks/2026-11-07-parallel).
+pub(super) fn split_empties(threads: usize) -> u8 {
+    if threads < 8 {
+        SPLIT_EMPTIES
+    } else {
+        13 + threads.min(16) as u8 / 4
+    }
+}
 /// Null-window midgame nodes below this depth search without the TT, and
 /// below `ORDERED_SEARCH_DEPTH` without move ordering too, like main's
 /// `SWITCH_SIMPLE_SEARCH_LEVEL` and `SWITCH_NEGAALPHA_SEARCH_LEVEL`. With
@@ -46,6 +63,14 @@ impl Context {
             end_cache: EndgameCache::default(),
             #[cfg(feature = "endgame-pattern-ordering")]
             end_ordering: [None; 3],
+        }
+    }
+    /// Fewest empties at which an exact node splits in the current stage.
+    pub(super) fn exact_split_empties(&self) -> u8 {
+        if self.runtime.sigma().is_some() {
+            SPLIT_EMPTIES
+        } else {
+            self.runtime.split_empties
         }
     }
     pub(super) fn aborted(&self) -> bool {
@@ -448,7 +473,7 @@ impl Context {
         let can_split = self.runtime.parallel
             && child_spec.probcut
             && if child_spec.exact {
-                position.board.empty_count() >= SPLIT_EMPTIES
+                position.board.empty_count() >= self.exact_split_empties()
             } else {
                 depth >= SPLIT_DEPTH
             };

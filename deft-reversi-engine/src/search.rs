@@ -345,6 +345,7 @@ impl Engine {
             pending_lock: Mutex::new(()),
             pending_ready: Padded(std::sync::Condvar::new()),
             parallel: self.options.threads > 1,
+            split_empties: tree::split_empties(self.options.threads),
             // Each iteration sets its own stage before it starts.
             sigma: AtomicU64::new(target_sigma.map_or(0, f64::to_bits)),
             quality: AtomicU8::new(0),

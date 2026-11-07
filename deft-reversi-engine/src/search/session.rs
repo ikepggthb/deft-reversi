@@ -56,6 +56,9 @@ pub(super) struct Runtime {
     pub(super) pending_lock: Mutex<()>,
     pub(super) pending_ready: Padded<std::sync::Condvar>,
     pub(super) parallel: bool,
+    /// Fewest empties at which an exact node of the final solve splits
+    /// (`tree::split_empties`).
+    pub(super) split_empties: u8,
     pub(super) sigma: AtomicU64,
     pub(super) quality: AtomicU8,
     pub(super) rules: Arc<[Option<ProbCutRule>]>,
@@ -197,6 +200,7 @@ pub(super) fn test_context() -> Context {
         pending_lock: Mutex::new(()),
         pending_ready: Padded(std::sync::Condvar::new()),
         parallel: false,
+        split_empties: u8::MAX,
         sigma: AtomicU64::new(0),
         quality: AtomicU8::new(0),
         rules: Arc::from([]),
