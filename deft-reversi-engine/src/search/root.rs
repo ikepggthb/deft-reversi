@@ -62,6 +62,15 @@ impl RootSearch {
             bounds: [RootBound::UNBOUNDED; 64],
         }
     }
+    pub(super) fn restrict(&mut self, mask: u64, preferred: Option<Square>) {
+        self.candidates
+            .retain(|c| mask & (1u64 << c.square.index()) != 0);
+        if let Some(square) = preferred
+            && let Some(i) = self.candidates.iter().position(|c| c.square == square)
+        {
+            self.candidates.swap(0, i);
+        }
+    }
     pub(super) fn iteration(
         &mut self,
         context: &mut Context,

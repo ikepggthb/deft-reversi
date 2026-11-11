@@ -1,5 +1,10 @@
 use super::*;
 
+/// Compatibility epoch for persisted estimated search values. Increment when
+/// evaluation/search/MPC semantics change incompatibly, including level plans.
+/// Thread counts, time limits and performance-only changes do not require a bump.
+pub const SEARCH_SEMANTICS_REVISION: u32 = 2;
+
 /// The internal search driver mode a request resolves to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SearchMode {
@@ -62,7 +67,7 @@ impl EngineOptions {
 }
 /// How strongly multi-ProbCut prunes: the confidence that a pruned move is
 /// really outside the window. `Full` does not prune.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Selectivity {
     Percent68,
@@ -116,6 +121,8 @@ pub struct SearchRequest {
     pub(super) time_limit: Option<Duration>,
     pub(super) node_limit: Option<u64>,
     pub(super) all_moves: bool,
+    pub(super) root_moves: Option<u64>,
+    pub(super) preferred_move: Option<crate::Square>,
     pub(super) stop: StopHandle,
 }
 impl SearchRequest {
@@ -126,6 +133,8 @@ impl SearchRequest {
             time_limit: None,
             node_limit: None,
             all_moves: false,
+            root_moves: None,
+            preferred_move: None,
             stop: StopHandle::new(),
         }
     }
@@ -133,6 +142,18 @@ impl SearchRequest {
     /// chooses its own, so setting one there is an invalid request.
     pub fn selectivity(mut self, selectivity: Selectivity) -> Self {
         self.selectivity = Some(selectivity);
+        self
+    }
+    /// Search only these legal root squares. Descendants are unrestricted.
+    /// A subset result proves at most the selected moves, not the whole root.
+    /// For a forced pass or terminal root the only valid mask is zero.
+    pub fn root_moves(mut self, mask: u64) -> Self {
+        self.root_moves = Some(mask);
+        self
+    }
+    /// A legal ordering hint; ignored if outside the selected root moves.
+    pub fn preferred_move(mut self, square: crate::Square) -> Self {
+        self.preferred_move = Some(square);
         self
     }
     /// Stops after this much time, returning the last completed iteration.
@@ -145,7 +166,7 @@ impl SearchRequest {
         self.node_limit = Some(limit);
         self
     }
-    /// Also scores every legal move with a full window (`SearchResult::moves`).
+    /// Also scores every selected legal root move with a full window (`SearchResult::moves`).
     /// This searches each move again, so it takes several times longer.
     pub fn all_moves(mut self) -> Self {
         self.all_moves = true;
@@ -241,11 +262,20 @@ pub struct SearchResult {
     pub stop_reason: StopReason,
     pub stats: SearchStats,
     pub elapsed: Duration,
+    /// Root squares included in this result (zero at a forced pass/terminal).
+    pub root_moves: u64,
+    /// True when legal root moves were deliberately excluded.
+    pub root_restricted: bool,
 }
 impl SearchResult {
     /// Whether `score` is the exact game value: a full-selectivity endgame
     /// iteration completed.
     pub fn is_solved(&self) -> bool {
+        !self.root_restricted && self.is_subset_solved()
+    }
+    /// Exact maximum over the selected root moves. Does not certify excluded
+    /// moves; callers must retain the mask when backing this result up.
+    pub fn is_subset_solved(&self) -> bool {
         self.kind
             == Some(ResultKind::Endgame {
                 selectivity: Selectivity::Full,

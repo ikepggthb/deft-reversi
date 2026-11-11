@@ -64,6 +64,47 @@ impl Engine {
             cache_epoch: new_cache_epoch(),
         })
     }
+    /// Independent search state sharing immutable model/calibration weights.
+    /// Tables and workers obey the supplied budgets and are not duplicated
+    /// from the source. Useful for a bounded pool of independent batch jobs.
+    pub fn fork(&self, options: EngineOptions) -> Result<Self, EngineError> {
+        if options.threads == 0 || options.threads > 256 {
+            return Err(EngineError::InvalidOptions("threads must be 1..=256"));
+        }
+        let (table, pv_table) = new_tables(options.tt_mib)?;
+        Ok(Self {
+            model: self.model.clone(),
+            calibration: self.calibration.clone(),
+            sigmas: self.sigmas,
+            table,
+            pv_table,
+            workers: Workers::new(options.threads - 1).map_err(EngineError::Thread)?,
+            options,
+            generation: 0,
+            cache_sigma: None,
+            end_cache: EndgameCache::default(),
+            cache_epoch: new_cache_epoch(),
+        })
+    }
+    /// Reconfigure idle search resources. Existing tables survive unchanged
+    /// sizes; changing worker count joins old workers before creating new ones.
+    pub fn set_resources(&mut self, options: EngineOptions) -> Result<(), EngineError> {
+        if options.threads == 0 || options.threads > 256 {
+            return Err(EngineError::InvalidOptions("threads must be 1..=256"));
+        }
+        if options.tt_mib != self.options.tt_mib {
+            (self.table, self.pv_table) = new_tables(options.tt_mib)?;
+            self.invalidate_end_caches();
+            self.options.tt_mib = options.tt_mib;
+        }
+        if options.threads != self.options.threads {
+            self.workers = Workers::new(0).map_err(EngineError::Thread)?;
+            self.options.threads = 1;
+            self.workers = Workers::new(options.threads - 1).map_err(EngineError::Thread)?;
+        }
+        self.options = options;
+        Ok(())
+    }
     pub fn options(&self) -> EngineOptions {
         self.options
     }
@@ -79,6 +120,26 @@ impl Engine {
         (self.table, self.pv_table) = new_tables(self.options.tt_mib)?;
         self.invalidate_end_caches();
         Ok(())
+    }
+    /// Resolves the requested depth/mode and selectivity without searching.
+    /// A plan is a target, not evidence that a search completed or solved a game.
+    /// This validates the goal but does not require MPC calibration; calibration
+    /// is checked when an actual selective search is requested.
+    pub fn search_plan(
+        &self,
+        position: impl Into<Board>,
+        request: &SearchRequest,
+    ) -> Result<ResultKind, EngineError> {
+        let job = self.resolve(position.into(), request)?;
+        Ok(match job.mode {
+            SearchMode::Depth(depth) => ResultKind::Depth {
+                depth: depth.min(job.board.empty_count()),
+                selectivity: job.selectivity,
+            },
+            SearchMode::Exact | SearchMode::SelectiveEndgame => ResultKind::Endgame {
+                selectivity: job.selectivity,
+            },
+        })
     }
     /// Searches `position`, blocking the calling thread.
     pub fn search(
@@ -97,6 +158,11 @@ impl Engine {
         mut on_progress: impl FnMut(&Progress),
     ) -> Result<SearchResult, EngineError> {
         let job = self.resolve(position.into(), request)?;
+        if job.selectivity != Selectivity::Full && self.calibration.is_empty() {
+            return Err(EngineError::InvalidCalibration(
+                "ProbCut requires model-specific calibration",
+            ));
+        }
         self.run(job, &mut on_progress)
     }
     /// Use the MPC table from the legacy main-branch evaluator. This is an
@@ -172,12 +238,17 @@ impl Engine {
                 (mode, selectivity, Some(level))
             }
         };
-        if selectivity != Selectivity::Full && self.calibration.is_empty() {
-            return Err(EngineError::InvalidCalibration(
-                "ProbCut requires model-specific calibration",
-            ));
+        if let Some(mask) = request.root_moves {
+            let legal = board.get_moves();
+            if mask & !legal != 0 || (legal != 0 && mask == 0) {
+                return Err(EngineError::InvalidRequest(
+                    "root move mask must be a nonempty legal subset",
+                ));
+            }
         }
         Ok(Job {
+            root_moves: request.root_moves,
+            preferred_move: request.preferred_move,
             board,
             mode,
             selectivity,
@@ -200,6 +271,8 @@ impl Engine {
             let passed = Job {
                 board: job.board.board_after_pass(),
                 all_moves: false,
+                root_moves: None,
+                preferred_move: None,
                 ..job
             };
             let mut forward = |progress: &Progress| {
@@ -226,6 +299,8 @@ impl Engine {
                     score,
                 }];
             }
+            result.root_moves = 0;
+            result.root_restricted = false;
             result.elapsed = pass_start.elapsed();
             return Ok(result);
         }
@@ -248,6 +323,12 @@ impl Engine {
         };
         let board = job.board;
         let mut result = initial_result(board);
+        let mask = job.root_moves.unwrap_or_else(|| board.get_moves());
+        result.root_moves = mask;
+        result.root_restricted = mask != board.get_moves();
+        if mask != 0 {
+            result.best_move = Some(Action::Place(Square::lowest(mask)));
+        }
         if result.best_move.is_none() {
             result.score = Some(board.final_score());
             result.kind = Some(ResultKind::Endgame {
@@ -259,6 +340,7 @@ impl Engine {
         let runtime = self.runtime(&job, deadline);
         let state = EvalState::from_board(board);
         let mut root = root::RootSearch::new(Position { board, state });
+        root.restrict(mask, job.preferred_move);
         let mut context = Context::new(runtime.clone(), Vec::new(), Vec::new());
         // Owned by the active context; retained by this Engine between requests.
         context.end_cache = std::mem::take(&mut self.end_cache);
@@ -439,6 +521,8 @@ struct Job {
     time_limit: Option<Duration>,
     node_limit: Option<u64>,
     all_moves: bool,
+    root_moves: Option<u64>,
+    preferred_move: Option<Square>,
     stop: StopHandle,
 }
 
@@ -467,6 +551,8 @@ fn initial_result(board: Board) -> SearchResult {
         stop_reason: StopReason::Completed,
         stats: SearchStats::default(),
         elapsed: Duration::ZERO,
+        root_moves: moves,
+        root_restricted: false,
     }
 }
 
@@ -622,8 +708,11 @@ impl Engine {
     }
 
     /// Serialize the effective analysis settings in a stable order.
-    /// Includes the compiled evaluation variant and expanded calibration rules.
+    /// Includes the search compatibility revision, compiled evaluation variant,
+    /// and expanded calibration rules.
     pub fn write_analysis_settings(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
+        out.write_all(b"deft-search-semantics")?;
+        out.write_all(&SEARCH_SEMANTICS_REVISION.to_le_bytes())?;
         out.write_all(&[u8::from(cfg!(feature = "endgame-pattern-ordering"))])?;
         for rule in self.calibration.iter().flatten() {
             out.write_all(&[
@@ -644,5 +733,28 @@ impl Engine {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+    #[test]
+    fn forks_share_only_immutable_weights_and_stable_resize_keeps_tables() {
+        let mut engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let fork = engine
+            .fork(EngineOptions::default().threads(2).tt_mib(1))
+            .unwrap();
+        assert!(Arc::ptr_eq(&engine.model, &fork.model));
+        assert!(Arc::ptr_eq(&engine.calibration, &fork.calibration));
+        assert!(!Arc::ptr_eq(&engine.table, &fork.table));
+        assert!(!Arc::ptr_eq(&engine.pv_table, &fork.pv_table));
+        let table = engine.table.clone();
+        engine.set_resources(engine.options()).unwrap();
+        assert!(Arc::ptr_eq(&engine.table, &table));
     }
 }
