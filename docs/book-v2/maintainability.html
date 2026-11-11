@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>理解の負担を減らすための見直し · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="maintainability.html" aria-current="page">理解の負担を減らすための見直し</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Bookの検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">評価の表現を一つにする</a></li><li><a href="#section-3">旧形式の都合を通常処理から外す</a></li><li><a href="#section-4">採用規則だけを読めるようにする</a></li><li><a href="#section-5">複数の意味に使っていた名前をやめる</a></li><li><a href="#section-6">まだ残る複雑さ</a></li></ul></aside>
+<h1 id="section-1">理解の負担を減らすための見直し</h1>
+<p>今回の基準は「普通の変更をするために、いくつの独自の分類を理解する必要があるか」。説明を増やすだけでなく、現行のデータと処理を変更した。</p>
+<h2 id="section-2">評価の表現を一つにする</h2>
+<p>以前はAssessment、ValueClaim、ValueAnalysisから、Derivation、CalculationSubject、SearchProjectionなどへ進んで、対象と値の意味を調べる構造だった。簡易表示用の点数・深さ・確定フラグも同じ評価内に重複して保持していた。</p>
+<p>現在は<code>Evaluation</code>が点数・出所・モデル識別値を持つ。点数は<code>result()</code>、条件は<code>conditions()</code>、出所は<code>source()</code>で直接読む。子から計算した値を作る場合も「導出→現在の計算→対象」の入れ子を組み立てず、子の盤面と条件を直接記録する。</p>
+<p>点と上下限、中盤と終盤、推定と最終石差、要求と完了条件は引き続き区別する。これらはリバーシの評価を正しく使うために必要な情報であり、省略して単一の深さへ潰してはいない。</p>
+<h2 id="section-3">旧形式の都合を通常処理から外す</h2>
+<p>旧評価の分類、計算元のハッシュ、旧採用方式、旧バイナリ表現は<code>legacy</code>へ移した。形式の検査で当時の解釈が必要な場合だけ使う。</p>
+<p>現行のBookEditor、Book、生成器は旧採用方式を保持しない。局面にあった旧方式の途中結果欄も削除した。旧ファイルの完了した候補は読込中に取り込み、現行の局面へ途中状態を持ち込まない。</p>
+<p>一時的な保存用の評価一覧はformat内に移した。対局用データを作るだけで、保存用の一覧も同時に理解する必要はない。</p>
+<p>保存するバイト表現はwork v8 / play v4を維持した。旧データを検査しないで受け入れる変更ではない。</p>
+<h2 id="section-4">採用規則だけを読めるようにする</h2>
+<p>局面の検索・参照番号の解決・値の採用が一つの処理に混ざっていた。現在は、候補を集める処理と<code>MoveValues::choose</code>を分けた。採用規則のレビューでは、手動値・最終石差・子の値・直接値・集合探索の比較だけを追える。</p>
+<p>診断で返す名前も、direct、child、manual、final_score、selectedなど、何の値かを示すものへ変えた。子へ返すための保持欄も「backup」ではなく、親の手番から見た値であることを名前にした。</p>
+<h2 id="section-5">複数の意味に使っていた名前をやめる</h2>
+<p>Frontierは、集合探索の記録、優先順の種類、未登録手だけを再計算する設定に使われていた。これを<code>MoveSearch</code>、<code>SchedulePolicy::Promising</code>、<code>unregistered_only</code>へ分け、それぞれの動作が読める名前にした。CLIの既存の<code>--schedule frontier</code>は引き続き受理する。</p>
+<p>使用許可が二通りしかない旧評価・計算値の設定は、専用の方針型をやめ、<code>allow_imported</code>・<code>allow_calculated</code>という真偽値にした。手動値の<code>allow_manual</code>と同じ読み方になる。</p>
+<h2 id="section-6">まだ残る複雑さ</h2>
+<p>登録した進行が合流する場合の損失制限、手動値と独立した最終石差の保持、中断した仕事の再開、旧形式の検査は依然として複雑である。これらまで単純な点数と深さだけにすると、既知の情報を失ったり、登録範囲を誤ったりする。</p>
+<p>また、共有するメモリ配置は読取用のEvaluationとは異なる。ただしその違いはvaluesと形式の境界へ閉じ込め、通常の編集・生成が旧表現や保存形式へ変換しながら進む構造にはしていない。</p>
+<p>変更点の評価は、型名や行数が減ったことだけで判断しない。<a href="source-review.html">ソースの読み方</a>の操作を、旧形式の内部や内部番号へ寄り道せず追えるかを確認する。今後も機能追加の際には、この理解に必要な範囲を増やしていないかをレビューする。</p>
+<footer>正本：<a href="maintainability.md">maintainability.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

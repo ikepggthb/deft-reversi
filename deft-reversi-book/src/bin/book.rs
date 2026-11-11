@@ -281,14 +281,14 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
     }
     if command != "resume" {
         let mut config = previous_config.unwrap_or_default();
-        config.frontier_only = command == "leaves";
+        config.unregistered_only = command == "leaves";
         config.line_plies = u8::try_from(num("line-plies", u64::from(config.line_plies))?)?;
         config.max_parallel_jobs =
             u16::try_from(num("jobs", u64::from(config.max_parallel_jobs))?)?;
         if let Some(value) = flags.get("schedule") {
             config.schedule = match value.as_str() {
                 "breadth" => SchedulePolicy::Breadth,
-                "frontier" => SchedulePolicy::Frontier,
+                "frontier" | "promising" => SchedulePolicy::Promising,
                 _ => return Err("schedule must be breadth or frontier".into()),
             };
         }
@@ -353,9 +353,9 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         )?);
         config.reuse_completed = !matches!(command.as_str(), "reanalyze" | "leaves");
         if let Some(value) = flags.get("legacy-values") {
-            config.legacy = match value.as_str() {
-                "reject" => LegacyPolicy::Reject,
-                "recorded" => LegacyPolicy::RecordedQuality,
+            config.allow_imported = match value.as_str() {
+                "reject" => false,
+                "recorded" => true,
                 _ => return Err("legacy-values must be reject or recorded".into()),
             };
         }
@@ -418,7 +418,7 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
     let p = &report.profile;
     println!(
         "profile searches={} parallel={} engine={:.6}s resources={:.6}s expand={:.6}s schedule={:.6}s plan={:.6}s reachability={:.6}s publish={:.6}s checkpoint={:.6}s reach_hits={} reach_misses={}",
-        p.frontier_searches,
+        p.move_searches,
         p.max_parallel_jobs,
         p.engine_wall.as_secs_f64(),
         p.resources_wall.as_secs_f64(),
@@ -433,12 +433,12 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
     );
     Ok(())
 }
-fn inspect_value(label: &str, value: Option<Assessment>) {
+fn inspect_value(label: &str, value: Option<Evaluation>) {
     if let Some(value) = value {
         println!(
-            "  {label} claim={:?} analysis={:?}",
-            value.claim(),
-            value.analysis()
+            "  {label} score={:?} source={:?}",
+            value.result(),
+            value.source()
         );
     }
 }
@@ -453,21 +453,21 @@ fn inspect_position(book: &Book, editor: Option<&BookEditor>, board: Board) {
         return;
     };
     inspect_value("position-value", entry.value());
-    inspect_value("position-proof", entry.proof());
+    inspect_value("position-final_score", entry.final_score());
     for c in entry.candidates() {
         println!(" move={:?} registered={}", c.action, c.registered);
         inspect_value("effective", c.value);
-        inspect_value("certificate", c.certificate);
+        inspect_value("certificate", c.final_score);
         if let Some(editor) = editor {
             let ev = editor
-                .candidate_evidence(board, c.action)
+                .move_values(board, c.action)
                 .expect("snapshot/editor candidate match");
-            println!("  source={:?}", ev.source);
+            println!("  source={:?}", ev.selected_from);
             inspect_value("direct", ev.direct);
-            inspect_value("frontier", ev.frontier);
+            inspect_value("frontier", ev.move_search);
             inspect_value("manual", ev.manual);
-            inspect_value("propagated", ev.propagated);
-            inspect_value("propagated-certificate", ev.propagated_certificate);
+            inspect_value("propagated", ev.child);
+            inspect_value("propagated-certificate", ev.child_final_score);
         }
     }
 }

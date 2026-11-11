@@ -15,7 +15,7 @@ use std::{
 pub enum SchedulePolicy {
     #[default]
     Breadth,
-    Frontier,
+    Promising,
 }
 // Smaller means more urgent: promising incoming/frontier loss, larger backup
 // disagreement, then weaker frontier depth/selectivity. Distance breaks ties.
@@ -132,7 +132,7 @@ impl GenerationState {
 fn priority(editor: &BookEditor, state: &GenerationState, c: Context) -> Rank {
     let node = &editor.nodes[&c.key];
     let mut incoming = 0;
-    if state.roots.binary_search(&c).is_err() && !state.config.frontier_only {
+    if state.roots.binary_search(&c).is_err() && !state.config.unregistered_only {
         incoming = 128;
         if let Some(parents) = editor.parents.get(&c.key) {
             for &p in parents {
@@ -163,22 +163,22 @@ fn priority(editor: &BookEditor, state: &GenerationState, c: Context) -> Rank {
     let mut selectivity = Selectivity::Full as u8;
     let mut best = None;
     for edge in &node.edges {
-        let ev = editor.evidence(c.key, edge);
-        if let (Some(d), Some(p)) = (ev.direct, ev.propagated)
-            && d.bound() == Bound::Exact
-            && p.bound() == Bound::Exact
+        let ev = editor.move_values_at(c.key, edge);
+        if let (Some(d), Some(p)) = (ev.direct, ev.child)
+            && d.bound() == Bound::Point
+            && p.bound() == Bound::Point
         {
             gap = gap.max((d.score() - p.score()).unsigned_abs());
         }
-        let value = ev.effective.filter(|v| v.bound() == Bound::Exact);
+        let value = ev.selected.filter(|v| v.bound() == Bound::Point);
         if let Some(v) = value {
             best = Some(best.map_or(v.score(), |b: i16| b.max(v.score())));
         }
         if !edge.registered {
             if let Some(v) = value {
                 frontier = Some(frontier.map_or(v.score(), |b: i16| b.max(v.score())));
-                depth = depth.min(v.quality().depth);
-                selectivity = selectivity.min(v.quality().selectivity as u8);
+                depth = depth.min(v.depth());
+                selectivity = selectivity.min(v.selectivity() as u8);
             } else {
                 unknown = true;
             }
@@ -201,6 +201,7 @@ fn priority(editor: &BookEditor, state: &GenerationState, c: Context) -> Rank {
 mod tests {
     use super::super::generate::{BookSide, GenerationRoot};
     use super::*;
+    use crate::legacy::{AnalysisQuality, ImportedValue, ValueOrigin};
     fn boards() -> (Board, Board) {
         let a = Board::new();
         let b = a.play(legal_actions(a)[0]).unwrap();
@@ -211,14 +212,14 @@ mod tests {
             ed.record_candidate(
                 b,
                 action,
-                Assessment::import(ImportedValue {
+                Evaluation::import(ImportedValue {
                     score: 0,
                     quality: AnalysisQuality {
                         depth,
                         selectivity: Selectivity::Full,
                         solved: false,
                     },
-                    bound: Bound::Exact,
+                    bound: legacy::Bound::Exact,
                     origin: ValueOrigin::Search,
                     identity: [0; 32],
                 })
@@ -238,7 +239,7 @@ mod tests {
         ed.configure_generation_roots(
             &roots,
             GenerationConfig {
-                schedule: SchedulePolicy::Frontier,
+                schedule: SchedulePolicy::Promising,
                 max_plies: 0,
                 ..Default::default()
             },
@@ -298,7 +299,7 @@ mod tests {
         let mut loaded = BookEditor::load(&path, ReadLimits::default()).unwrap();
         assert_eq!(
             loaded.generation_config().unwrap().schedule,
-            SchedulePolicy::Frontier
+            SchedulePolicy::Promising
         );
         let mut live = ed.generation.take().unwrap();
         let mut restored = loaded.generation.take().unwrap();
@@ -322,14 +323,14 @@ mod tests {
         let aa = legal_actions(b);
         assert!(aa.len() > 1);
         for (i, &action) in aa.iter().enumerate() {
-            let v = Assessment::import(ImportedValue {
+            let v = Evaluation::import(ImportedValue {
                 score: if i == 0 { -3 } else { 0 },
                 quality: AnalysisQuality {
                     depth: 20,
                     selectivity: Selectivity::Full,
                     solved: false,
                 },
-                bound: Bound::Exact,
+                bound: legacy::Bound::Exact,
                 origin: ValueOrigin::Search,
                 identity: [0; 32],
             })
@@ -340,7 +341,7 @@ mod tests {
         ed.configure_generation(
             &[b],
             GenerationConfig {
-                schedule: SchedulePolicy::Frontier,
+                schedule: SchedulePolicy::Promising,
                 max_plies: 1,
                 ..Default::default()
             },
@@ -352,12 +353,7 @@ mod tests {
             side: BookSide::White,
         };
         assert_ne!(state.priority_job(&ed, true).unwrap().0, bad);
-        let mut v = ed
-            .candidate_evidence(b, aa[0])
-            .unwrap()
-            .direct
-            .unwrap()
-            .as_imported();
+        let mut v = ImportedValue::from(ed.move_values(b, aa[0]).unwrap().direct.unwrap());
         v.score = 5;
         ed.record_imported(b, aa[0], v).unwrap();
         state.invalidate(Key::new(b).0);
@@ -377,19 +373,14 @@ mod tests {
         let mut state = ed.generation.take().unwrap();
         // Change one candidate's direct value while its propagated score is 0.
         let action = legal_actions(a)[0];
-        let mut direct = ed
-            .candidate_evidence(a, action)
-            .unwrap()
-            .direct
-            .unwrap()
-            .as_imported();
+        let mut direct = ImportedValue::from(ed.move_values(a, action).unwrap().direct.unwrap());
         direct.score = -10;
         direct.quality.depth = 20;
         ed.record_imported(a, action, direct).unwrap();
         assert_eq!(state.pop(&ed).unwrap().0.key, Key::new(a).0);
         assert_eq!(
-            ed.candidate_evidence(a, action).unwrap().direct,
-            Some(Assessment::import(direct).unwrap())
+            ed.move_values(a, action).unwrap().direct,
+            Some(Evaluation::import(direct).unwrap())
         );
     }
 }

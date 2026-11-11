@@ -47,10 +47,29 @@ verifyは入力を書き換えない。repairは指定先を新形式で保存�
 
 読込時は、長さ、件数、割当上限、盤面、合法手・パス、参照番号、探索対象、品質、上下限、登録先を検査する。不明な必須拡張は拒否する。未知の任意拡張は無編集の往復で保持し、意味の変わる更新では破棄する。
 
-## 旧APIからの変更
+## Rust APIの変更
 
-`GenerationConfig.levels / stages`は`analysis`へ統合した。汎用の`record`は、`record_search`、`record_candidate`、`record_imported`、`set_manual / record_manual`へ分けた。評価のフィールドを旧表示へ自動で読み替える仕組みは廃止し、`score()`、`claim()`、`analysis()`などで明示的に読む。
+ファイルのバイト表現は維持しているが、以前の型の別名を現行APIへ残すことはしていない。Rustの呼出し側は次の対応で修正する。
 
-旧入力用の`LegacyAssessment`は`ImportedValue`へ変更した。外部入力を`Assessment::import`で明示的に扱う。`evidence_inputs / evidence_by_id`による過去の計算経路の参照は廃止した。
+|以前|現在|
+|---|---|
+|Assessment|Evaluation|
+|claim() / ValueClaim|result() / Score。推定と最終石差をここで区別|
+|analysis().summary()|conditions()。中盤・終盤それぞれの条件を直接読む|
+|analysis() / Derivation / CalculationSubject|source()。計算対象の盤面や手は直接の欄にある|
+|project(SearchProjection::BestMove)|best_move_value()|
+|project(SearchProjection::OtherMoveUpper)|other_moves_upper_bound()|
+|AnalysisQualityの表示欄|depth()・selectivity()・is_solved()。編集可能な確定フラグを保持しない|
+|Bound::Exact / ProvenLower / ProvenUpper|BoundはPoint・Lower・Upperだけ。最終石差かはScore::Finalまたはfinal_bounds()で確認|
+|candidate_evidence()|move_values()。direct・child・manual・final_scoreとselected / selected_fromを返す|
+|BookEntry::proof()|final_score()。手動値とは独立した最終石差の情報|
+|UsePolicy.derived / legacy|allow_calculated / allow_importedという真偽値|
+|GenerationConfig.legacy / frontier_only|allow_imported / unregistered_only|
+|SchedulePolicy::Frontier|SchedulePolicy::Promising。CLIの--schedule frontierも引き続き受理|
+|frontier_candidatesなどの統計名|unregistered_candidatesなど、未登録手であることを示す名前|
 
-[保存場所とAPI](architecture.md)、[値の更新](propagation.md)、[試験・実測](validation.md)も参照。
+外部の旧入力はlegacy::ImportedValueで明示し、Evaluation::importまたはrecord_importedへ渡す。legacy内の旧分類は、通常の評価処理へ持ち込まない。旧方式の途中状態は局面データから削除し、読込中にだけ扱う。
+
+以前に行ったGenerationConfig.levels / stagesからanalysisへの統合、汎用recordから探索・手動・取込別の入口への分離、過去の計算入力をたどるAPIの廃止も維持している。
+
+[保存場所とAPI](architecture.md)、[ソースの読み方](source-review.md)、[今回の見直し](maintainability.md)、[検証](validation.md)も参照。

@@ -10,13 +10,20 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 @media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
 </style></head>
 <body><a class="skip" href="#content">本文へ</a><div class="layout">
-<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html" aria-current="page">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="maintainability.html">理解の負担を減らすための見直し</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html" aria-current="page">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Bookの検証</a></li></ol></nav>
 <main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
-<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">何を、どこへ保存するか</a></li><li><a href="#section-3">生成と更新の入口</a></li><li><a href="#section-4">対局で読む</a></li><li><a href="#section-5">実装の配置</a></li></ul></aside>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">評価は一つの型で読む</a></li><li><a href="#section-3">局面と手に持つ情報</a></li><li><a href="#section-4">変更する入口</a></li><li><a href="#section-5">生成と対局</a></li></ul></aside>
 <h1 id="section-1">保存する情報とAPI</h1>
-<p>この版は、局面の値と最良の未登録手を中心にする。探索結果を一か所へ置き、必要な場所から番号で参照する。生成・更新の元データを持つ型が<code>BookEditor</code>、対局で読む型が<code>Book</code>である。</p>
-<p>コードを確認する場合は、<a href="source-review.html">ソースの読み方</a>に読む順序、関数間の流れ、保存する情報と作り直す情報、対応する試験をまとめた。</p>
-<h2 id="section-2">何を、どこへ保存するか</h2>
+<p><code>BookEditor</code>が生成・編集する元データ、<code>Book</code>がその時点の対局用データである。editorを変更しても、以前に取り出したBookは変わらない。<code>BookPlayer</code>はBookから利用できる手を選ぶ。</p>
+<h2 id="section-2">評価は一つの型で読む</h2>
+<p><code>Evaluation</code>が点数・出所・モデル識別値を持つ。点数や確定フラグを簡易表示用の別構造へ重ねて保存しない。</p>
+<ul>
+<li><code>result()</code>：推定の点・上下限、または最終石差の範囲。</li>
+<li><code>conditions()</code>：中盤の深さ・選択率、終盤の選択率など、採用する値の探索条件。</li>
+<li><code>source()</code>：直接探索した結果か、子から計算した値か、手動値かなどの出所。</li>
+</ul>
+<p>一回の探索の要求・予定・完了条件は<code>CompletedSearch</code>に残す。中盤と終盤、推定と確定を一つの深さ番号へ潰さない。<a href="value-model.html">評価の意味</a>を参照。</p>
+<h2 id="section-3">局面と手に持つ情報</h2>
 <div class="table-wrap"><table>
 <thead>
 <tr>
@@ -27,46 +34,29 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 <tbody>
 <tr>
 <td>局面</td>
-<td>盤面、登録した手、現在の値、最終石差の上下限、最良の未登録手を探した記録への番号</td>
+<td>盤面、合法手と登録状態、現在値、独立した最終石差の情報、集合探索の記録</td>
 </tr>
 <tr>
-<td>探索記録の一覧</td>
-<td>実際に行った一回の探索について、対象盤面・手集合・最良手・結果・要求・予定・完了条件・実行番号を一件だけ保存</td>
+<td>手</td>
+<td>着手先の局面、登録状態。個別の直接評価・手動値・最終石差の情報がある場合だけ追加領域を確保</td>
 </tr>
 <tr>
-<td>モデル等の一覧</td>
-<td>モデルと校正・探索仕様の識別情報を共有。各評価は一覧内の番号で対応付ける</td>
+<td>共有する評価一覧</td>
+<td>点数・出所・探索記録・モデル識別値を共有。各局面・手は内部の番号で参照</td>
 </tr>
 <tr>
-<td>個別の手の追加情報</td>
-<td>独立した探索結果、手動値、残すべき最終石差の上下限がある場合だけ追加の領域を確保</td>
+<td>生成の状態</td>
+<td>開始局面と色、設定、完了段階、未完の仕事</td>
 </tr>
 <tr>
-<td>生成状態</td>
-<td>開始局面と色、設定、次の仕事、停止再開に必要な状態</td>
+<td>モデル・実行の一覧</td>
+<td>モデル等の説明、一回の生成の条件と停止理由</td>
 </tr>
 </tbody>
 </table></div>
-<p>例えば局面Pの候補A・B・Cを探索し、Aが最良、評価+4だった場合、元の探索記録は一件。集合全体の最大値、Aの点評価、B・Cの上限は、この記録をどの意味で使うかだけを変える。探索条件や盤面を三件分複製しない。</p>
-<p>候補や局面が持つ記録番号は4バイト。番号は内部用で、呼出し側へ公開しない。使わなくなった記録を解放する際は、参照する番号もまとめて更新する。探索中の仕事は盤面・更新世代・予定条件を持ち、この番号を保持しない。</p>
-<p>更新中は、内容から記録番号を検索するための補助索引も持つ。この索引のメモリも見積もりへ含め、対局用データでは索引を解放する。</p>
-<p>局面の値、親を逆引きする一覧、座標変換済みの子局面、探索の優先順位は、保存した情報から作り直せる補助データである。子局面の座標計算を繰り返さないための補助データは残す。過去の評価を計算した入力記録の全経路は保存しない。</p>
-<h2 id="section-3">生成と更新の入口</h2>
-<p><code>GenerationConfig.analysis</code>は次のどちらか一方である。</p>
-<pre><code class="language-rust">use deft_reversi_book::{AnalysisSchedule, GenerationConfig, Stage};
-use deft_reversi_engine::Selectivity;
-let levels = GenerationConfig {
-    analysis: AnalysisSchedule::Levels(vec![4, 8, 12]),
-    ..Default::default()
-};
-let depths = GenerationConfig {
-    analysis: AnalysisSchedule::Stages(vec![Stage {
-        depth: 16, selectivity: Selectivity::Percent95,
-    }]),
-    ..Default::default()
-};
-</code></pre>
-<p><code>configure_generation_roots</code>で開始局面と黒白の色を渡す。<code>generate</code>または<code>generate_with_checkpoint</code>へ、Engineと明示的な時間・ノード・追加局面予算を渡す。後者のコールバックで<code>save</code>すれば定期保存できる。</p>
+<p>局面PのA・B・Cを探索してAが最良で+4なら、元の探索記録は一件。Aには点評価、B・Cには+4以下という上限を与える。B・Cが+4の点評価を持つわけではない。</p>
+<p>内部番号は4バイトで、外部へ公開しない。記録の共有はメモリ配置の問題として<code>values.rs</code>へ分けている。内容を探す補助索引はメモリ見積もりへ含め、対局用では解放する。過去の計算入力の全経路は保持しない。</p>
+<h2 id="section-4">変更する入口</h2>
 <div class="table-wrap"><table>
 <thead>
 <tr>
@@ -76,42 +66,44 @@ let depths = GenerationConfig {
 </thead>
 <tbody>
 <tr>
-<td>record_search</td>
-<td>現在のモデル等で行った探索の結果を、対象手集合ごと取り込む。盤面と着手は正規化した座標で渡す</td>
+<td><code>record_search</code></td>
+<td>正規化した盤面で得た探索結果を、対象手集合ごと取り込む</td>
 </tr>
 <tr>
-<td>record_candidate</td>
-<td>特定の手について得た、検査済みの探索・取込結果を追加する</td>
+<td><code>record_candidate</code></td>
+<td>特定の手について得た検査済みの評価を追加する</td>
 </tr>
 <tr>
-<td>record_imported / Assessment::import</td>
-<td>外部から申告された値を明示的に取り込む。失われた探索方法は不明のまま</td>
+<td><code>set_manual</code> / <code>record_manual</code></td>
+<td>手動値を設定する</td>
 </tr>
 <tr>
-<td>set_manual / record_manual</td>
-<td>手動値を設定する。探索結果の追加とは入口を分ける</td>
+<td><code>record_imported</code></td>
+<td>探索方法が残っていない旧入力を明示して取り込む。入力型はlegacy内</td>
 </tr>
 <tr>
-<td>register_move / unregister_move</td>
-<td>手をbookの進行として登録・解除する。局面の存在だけでは登録扱いにしない</td>
+<td><code>register_move</code> / <code>unregister_move</code></td>
+<td>その親から進む手として登録・解除する。局面の存在とは別</td>
 </tr>
 <tr>
-<td>repair</td>
-<td>保存結果から現在の値と補助データを作り直す。探索は行わない</td>
+<td><code>move_values</code></td>
+<td>直接評価・子の値・手動値・採用値を一度に確認する診断用の入口</td>
 </tr>
 <tr>
-<td>retarget</td>
-<td>モデル等の変更に伴い、互換性のない推定を無効にする</td>
+<td><code>repair</code></td>
+<td>探索せず、登録関係から現在値と補助データを再構築する</td>
+</tr>
+<tr>
+<td><code>retarget</code></td>
+<td>モデル等が変わった際、互換性のない推定を無効にする</td>
 </tr>
 </tbody>
 </table></div>
-<p>これらの変更は、対象の更新、影響する親の再計算、必要な仕事の追加を共通の手順で行う。矛盾などで失敗した場合は値・登録状態・更新世代を戻す。</p>
-<h2 id="section-4">対局で読む</h2>
-<p><code>Book::probe</code>は入力盤面に対応する参照を返す。通常の手の走査には<code>BookEntry::moves()</code>を使う。返す<code>BookMove</code>の値は借用した<code>EvaluationRef</code>で、点数や品質の確認時に探索記録一式をコピーしない。詳しい探索条件は<code>analysis()</code>、独立した読取結果が必要なら<code>to_owned()</code>で取得する。</p>
-<p><code>BookEntry::candidates()</code>は、詳しい評価記録を展開して返す診断用の便利な入口として残す。<code>value()</code>と<code>proof()</code>は局面の現在値と最終石差の情報を返す。<code>positions()</code>で保存局面を列挙できる。</p>
-<p><code>BookPlayer</code>は通常の手の参照を使い、品質・モデル・登録・損失条件を確認する。使える手がなければ理由付きで通常探索へ戻す。問い合わせごとのメモリ確保はしない。Engineの再帰探索にはbook参照を追加しない。</p>
-<h2 id="section-5">実装の配置</h2>
-<p><code>values.rs</code>が共有する記録、<code>editor.rs</code>が局面と更新、<code>generate.rs / grow.rs</code>が仕事の選択と探索実行、<code>format.rs</code>が新旧形式の読書き、<code>snapshot.rs / player.rs</code>が対局用の配置と手の選択を担当する。古い形式の評価採用方式は、読込時の比較・変換だけで使う。</p>
-<p><a href="value-model.html">評価の意味</a>、<a href="propagation.html">値の更新</a>、<a href="compatibility.html">保存形式と移行</a>、<a href="validation.html">測定と試験</a>も参照。</p>
+<p>採用する値は<code>MoveValues::choose</code>、親への更新は<code>refresh_from</code>で確認できる。手動値とは別に最終石差の情報を残し、矛盾する変更は巻き戻す。<a href="propagation.html">子からの更新</a>を参照。</p>
+<h2 id="section-5">生成と対局</h2>
+<p><code>GenerationConfig.analysis</code>は、<code>Levels(Vec&lt;u8&gt;)</code>か<code>Stages(Vec&lt;Stage&gt;)</code>の一方だけを持つ。<code>configure_generation_roots</code>で開始局面と色を渡し、<code>generate</code>へEngineと時間・ノード・追加局面の予算を渡す。定期保存する場合は<code>generate_with_checkpoint</code>のコールバックでsaveする。</p>
+<p><code>Book::probe</code>→<code>BookEntry::moves()</code>は、入力盤面の座標へ戻した手と、借用した評価を返す。点数を読むだけで探索記録全体をコピーしない。詳細を独立して持つ場合は<code>to_owned()</code>を使う。<code>candidates()</code>は独立した評価を列挙する診断用の入口で、評価の意味は同じである。</p>
+<p><code>BookEntry::value()</code>は採用する局面値、<code>final_score()</code>は手動指定とは別の最終石差の情報。使える登録手がなければBookPlayerは理由を返し、通常探索は呼出し元で行う。Engineの再帰探索はbookを読まない。</p>
+<p>コードを追う順序と試験は<a href="source-review.html">ソースの読み方</a>、APIの変更は<a href="compatibility.html">互換性</a>にまとめている。</p>
 <footer>正本：<a href="architecture.md">architecture.md</a> · 再生成：tools/render_book_docs.py</footer></main>
 </div></body></html>

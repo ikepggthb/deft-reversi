@@ -126,10 +126,10 @@ pub struct GenerationConfig {
     /// 現在の条件を満たす完了済み評価を再利用する。falseでも確定情報は捨てない。
     pub reuse_completed: bool,
     /// 探索方法が不明な旧データを、記録された条件だけで再利用してよいか。
-    pub legacy: LegacyPolicy,
+    pub allow_imported: bool,
     /// Recompute unregistered candidates over the saved registered graph only.
     /// Does not expand links and ignores loss filters during reachability.
-    pub frontier_only: bool,
+    pub unregistered_only: bool,
     pub schedule: SchedulePolicy,
     /// Maximum consecutive best-line additions before returning to deviations.
     pub line_plies: u8,
@@ -160,8 +160,8 @@ impl Default for GenerationConfig {
     fn default() -> Self {
         Self {
             reuse_completed: true,
-            legacy: LegacyPolicy::Reject,
-            frontier_only: false,
+            allow_imported: false,
+            unregistered_only: false,
             schedule: SchedulePolicy::Breadth,
             line_plies: 8,
             max_parallel_jobs: 0,
@@ -247,7 +247,7 @@ pub enum GenerationStop {
 }
 #[derive(Clone, Debug, Default)]
 pub struct GenerationProfile {
-    pub frontier_searches: u64,
+    pub move_searches: u64,
     pub engine_wall: Duration,
     pub resources_wall: Duration,
     pub expansion_wall: Duration,
@@ -337,7 +337,7 @@ impl GenerationState {
             + self.fresh.len() as u64
             + self.deepen.len() as u64)
             * 128
-            + if self.config.schedule == SchedulePolicy::Frontier {
+            + if self.config.schedule == SchedulePolicy::Promising {
                 (self.fresh.len() + self.deepen.len() + self.distances.len()) as u64 * 512
             } else { 0 }
             + (self.urgent.capacity() as u64 * 64 + self.hints.len() as u64 * 128)
@@ -384,7 +384,7 @@ impl GenerationState {
         let prefer_new = self.iteration % total < u64::from(self.config.new_job_weight);
         // One in sixteen jobs retains ordinary breadth/stage order for fairness.
         let selected =
-            if self.config.schedule == SchedulePolicy::Frontier && self.iteration % 16 != 15 {
+            if self.config.schedule == SchedulePolicy::Promising && self.iteration % 16 != 15 {
                 self.priority_job(editor, prefer_new)
             } else {
                 if prefer_new {
@@ -518,7 +518,6 @@ impl BookEditor {
             .collect();
         keys.sort_unstable();
         keys.dedup();
-        self.normalize_if_pending()?;
         // Count before inserting roots so a small memory budget cannot be bypassed.
         if check_memory
             && self
@@ -536,7 +535,6 @@ impl BookEditor {
         }
         for n in self.nodes.values_mut() {
             n.completed_stages = 0;
-            n.pending = None;
         }
         let mut state = GenerationState {
             reachability: RefCell::default(),
@@ -745,15 +743,15 @@ pub(super) fn eligible_mask(editor: &BookEditor, key: Key, loss: u8) -> u64 {
     if editor
         .values
         .opt(n.value)
-        .is_none_or(|v| v.bound() != Bound::Exact)
+        .is_none_or(|v| v.bound() != Bound::Point)
     {
         return 0;
     }
     let best = editor.values.opt(n.value).unwrap().score();
     n.edges.iter().enumerate().fold(0, |mask, (i, e)| {
         if editor
-            .effective(key, e)
-            .is_some_and(|v| v.bound() == Bound::Exact && v.score() >= best - i16::from(loss))
+            .selected(key, e)
+            .is_some_and(|v| v.bound() == Bound::Point && v.score() >= best - i16::from(loss))
         {
             mask | (1u64 << i)
         } else {
@@ -779,14 +777,14 @@ pub(super) fn local_loss(editor: &BookEditor, key: Key, action: Action) -> Optio
     let best = editor
         .values
         .opt(node.value)
-        .filter(|v| v.bound() == Bound::Exact)?
+        .filter(|v| v.bound() == Bound::Point)?
         .score();
     let value = node
         .edges
         .iter()
         .find(|e| e.action == action)
-        .and_then(|e| editor.effective(key, e))?;
-    (value.bound() == Bound::Exact).then_some((best - value.score()).max(0) as u16)
+        .and_then(|e| editor.selected(key, e))?;
+    (value.bound() == Bound::Point).then_some((best - value.score()).max(0) as u16)
 }
 fn advance(
     path: PathCost,
@@ -854,7 +852,7 @@ pub(super) fn active_paths(
                 if !state.distances.contains_key(&parent_context) {
                     continue;
                 }
-                let mask = if state.config.frontier_only {
+                let mask = if state.config.unregistered_only {
                     u64::MAX
                 } else {
                     eligible_mask(editor, parent, state.config.loss(parent_context.side))
@@ -869,7 +867,7 @@ pub(super) fn active_paths(
                     {
                         continue;
                     }
-                    let loss = if state.config.frontier_only {
+                    let loss = if state.config.unregistered_only {
                         0
                     } else {
                         local_loss(editor, parent, e.action).unwrap()
@@ -943,23 +941,20 @@ pub(super) fn analysis_distance(
                     {
                         continue;
                     }
-                    let (loss, uncertain) = if state.config.frontier_only {
+                    let (loss, uncertain) = if state.config.unregistered_only {
                         (0, false)
                     } else {
                         match (
                             editor.values.opt(editor.nodes[&key].value),
-                            editor.effective(key, edge),
+                            editor.selected(key, edge),
                         ) {
                             (Some(v), Some(e))
-                                if v.bound() == Bound::Exact
-                                    && matches!(
-                                        e.bound(),
-                                        Bound::Exact | Bound::Upper | Bound::ProvenUpper
-                                    ) =>
+                                if v.bound() == Bound::Point
+                                    && matches!(e.bound(), Bound::Point | Bound::Upper) =>
                             {
                                 (
                                     (v.score() - e.score()).max(0) as u16,
-                                    e.bound() != Bound::Exact,
+                                    e.bound() != Bound::Point,
                                 )
                             }
                             _ => (0, true),
@@ -1025,15 +1020,18 @@ pub(super) fn candidate_plan(
     action: Action,
     config: &GenerationConfig,
     index: usize,
-) -> Result<(SearchRequest, AnalysisQuality)> {
+) -> Result<(SearchRequest, Stage)> {
     let child = board.play(action).unwrap();
     let placement = u8::from(matches!(action, Action::Place(_)));
     if child.is_terminal() {
         return Ok((
             SearchRequest::new(Goal::Depth(0)),
-            terminal_value(child)
-                .child_to_parent(placement != 0)
-                .quality(),
+            Stage {
+                depth: terminal_value(child)
+                    .child_to_parent(placement != 0)
+                    .depth(),
+                selectivity: Selectivity::Full,
+            },
         ));
     }
     let request = if let Some(levels) = config.analysis.levels() {
@@ -1054,10 +1052,9 @@ pub(super) fn candidate_plan(
     };
     Ok((
         request,
-        AnalysisQuality {
+        Stage {
             depth: (depth + placement).min(60),
             selectivity: plan.selectivity(),
-            solved: false,
         },
     ))
 }
@@ -1065,17 +1062,18 @@ pub(super) fn candidate_plan(
 #[cfg(test)]
 mod path_tests {
     use super::*;
+    use crate::legacy::{AnalysisQuality, ImportedValue, ValueOrigin};
     use std::collections::BTreeMap;
 
-    fn value(score: i16) -> Assessment {
-        Assessment::import(ImportedValue {
+    fn value(score: i16) -> Evaluation {
+        Evaluation::import(ImportedValue {
             score,
             quality: AnalysisQuality {
                 depth: 50,
                 selectivity: Selectivity::Full,
                 solved: false,
             },
-            bound: Bound::Exact,
+            bound: legacy::Bound::Exact,
             identity: [0; 32],
             origin: ValueOrigin::Search,
         })
@@ -1142,8 +1140,8 @@ mod path_tests {
         fill(&mut editor, target);
         // The short root is absent from the long path, so only the short
         // continuation pays three points. Manual evidence keeps it independent
-        // of backups, allowing the reachability rule to be tested directly.
-        let mut v = value(-3).as_imported();
+        // of values_for_parent, allowing the reachability rule to be tested directly.
+        let mut v = ImportedValue::from(value(-3));
         v.origin = ValueOrigin::Manual;
         editor
             .record_imported(short[0].0.key.board(), short[0].1, v)
@@ -1260,9 +1258,9 @@ mod path_tests {
         .unwrap();
         assert_eq!(
             editor
-                .candidate_evidence(board, first)
+                .move_values(board, first)
                 .unwrap()
-                .effective
+                .selected
                 .unwrap()
                 .score(),
             20
@@ -1310,12 +1308,12 @@ mod path_tests {
                 StopHandle::new(),
             )
             .unwrap();
-        assert!(editor.nodes[&key].pending.is_none());
-        assert!(editor.nodes[&key].frontier.is_none());
+
+        assert!(editor.nodes[&key].move_search.is_none());
         editor
             .register_move(board, legal_actions(board)[0])
             .unwrap();
-        assert!(editor.nodes[&key].pending.is_none());
+
         editor.validate().unwrap();
     }
     #[test]

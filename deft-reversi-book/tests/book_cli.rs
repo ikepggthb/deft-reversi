@@ -105,7 +105,7 @@ fn cli_generation_resume_export_extend_and_retarget() {
     let detail = String::from_utf8_lossy(&detail.stdout);
     assert!(detail.contains("requested: ParentDepth"));
     assert!(detail.contains("completed: Midgame { depth: 2"));
-    assert!(detail.contains("analysis=Derived"));
+    assert!(detail.contains("source=Position"));
     let detail = success(&[
         "inspect",
         "--book",
@@ -189,7 +189,7 @@ fn cli_generation_resume_export_extend_and_retarget() {
         .generation_config()
         .unwrap()
         .clone();
-    assert_eq!(loss_config.schedule, SchedulePolicy::Frontier);
+    assert_eq!(loss_config.schedule, SchedulePolicy::Promising);
     assert_eq!(loss_config.cumulative_loss, Some(5));
     assert_eq!(loss_config.leaf_loss, Some(2));
     for extra in [
@@ -307,7 +307,7 @@ fn cli_generation_resume_export_extend_and_retarget() {
             .unwrap()
             .generation_config()
             .unwrap()
-            .frontier_only
+            .unregistered_only
     );
     success(&[
         "resume",
@@ -345,7 +345,7 @@ fn cli_generation_resume_export_extend_and_retarget() {
         .generation_config()
         .unwrap()
         .clone();
-    assert!(!config.frontier_only);
+    assert!(!config.unregistered_only);
     assert!(config.reuse_completed);
     std::fs::remove_dir_all(dir).unwrap();
 }

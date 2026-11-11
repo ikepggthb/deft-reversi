@@ -2,11 +2,11 @@
 
 ## 選択と既定値
 
-`GenerationConfig.schedule`またはCLI `--schedule breadth|frontier`で選ぶ。既定のBreadthは従来の距離・解析段階順を保つ。Frontierは同じ新規/深掘りの配分の中で候補を優先する。
+`GenerationConfig.schedule`またはCLI `--schedule breadth|promising`で選ぶ。既定のBreadthは従来の距離・解析段階順を保つ。Promisingは同じ新規/深掘りの配分の中で候補を優先する。旧CLI表記のfrontierも受理する。
 
 ```sh
 target/release/book extend --model MODEL --work openings.dbook-work \
-  --levels 4,8,12 --max-plies 24 --schedule frontier --seconds 60
+  --levels 4,8,12 --max-plies 24 --schedule promising --seconds 60
 ```
 
 優先順位はヒューリスティックであり、統計的な誤差確率や棋力の証明ではない。条件を満たす有限のジョブ集合を処理し終えれば、探索目標と展開条件はBreadthと同じである。途中の予算で得られるグラフは異なり得る。
@@ -33,11 +33,11 @@ target/release/book extend --model MODEL --work openings.dbook-work \
 
 索引の見積もり容量をメモリ制限に含める。索引はworkに保存せず、読込後の最初の取り出しで再構築する。未処理キュー、iteration、schedule設定は保存する。保存の前後で同じ正本から次のジョブが選ばれることを試験する。
 
-work形式v5はconfig末尾にscheduleのu8（0=Breadth、1=Frontier）を追加する。v1〜v4はBreadthとして読む。現在のwork v8・対局用v4の追加は[互換性](compatibility.md)を参照。resumeでscheduleを変更せず、extend/reanalyze/leavesで変更する。
+work形式v5はconfig末尾にscheduleのu8（0=Breadth、1=Promising）を追加する。v1〜v4はBreadthとして読む。現在のwork v8・対局用v4の追加は[互換性](compatibility.md)を参照。resumeでscheduleを変更せず、extend/reanalyze/leavesで変更する。
 
 ## 検証
 
-未評価末端の優先、品質更新による順位変更、親評価変化による流入手の再順位付け、直接値と伝播値の差、新規/深掘りの配分、定期的な通常順、保存前後の順序を試験する。独立した完全列挙と比較できる小終盤では、ノード予算で中断し保存再開したFrontierと、完了したBreadthのグラフ・評価を比較する。
+未評価末端の優先、品質更新による順位変更、親評価変化による流入手の再順位付け、直接値と伝播値の差、新規/深掘りの配分、定期的な通常順、保存前後の順序を試験する。独立した完全列挙と比較できる小終盤では、ノード予算で中断し保存再開したPromisingと、完了したBreadthのグラフ・評価を比較する。
 
 ## 最良進行の連続伸長
 

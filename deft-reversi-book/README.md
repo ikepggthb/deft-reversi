@@ -28,6 +28,8 @@ cargo doc --locked -p deft_reversi_book --all-features --no-deps --document-priv
 Book v2：[設計と実装順序](../docs/book-v2/design.md)、[レベルによる育成](../docs/book-v2/levels.md)。work v1〜v8と対局用v1〜v4を読込み、保存はwork v8・対局用v4。最良の未展開手と残り候補の上限を探索し、PV連続伸長と資源予算内の局面並列を行う。全候補生成モードは廃止。
 [解析互換性と移行](../docs/book-v2/compatibility.md)、[損失制御](../docs/book-v2/loss-control.md)も参照。
 
-[伝播と証拠のAPI](../docs/book-v2/propagation.md)、[末端再計算・品質診断](../docs/book-v2/diagnostics.md)。
+[子からの更新](../docs/book-v2/propagation.md)、[末端再計算・品質診断](../docs/book-v2/diagnostics.md)。
 
 [評価値と探索条件](../docs/book-v2/value-model.md)：要求・予定・実際に完了した探索、推定と最終石差の上下限を区別する。探索記録は共有し、子の値は自動で親へ反映する。過去の計算経路は保存しない。通常の対局参照には`BookEntry::moves()`を使い、詳しい記録は必要時に展開する。
+
+保守性の見直しでは、現行の評価を`Evaluation`へ統合し、点数・探索条件・出所を直接読む形にした。旧分類・途中状態は形式の境界へ移した。[変更理由](../docs/book-v2/maintainability.md)と[Rust APIの移行](../docs/book-v2/compatibility.md)を参照。

@@ -23,9 +23,9 @@ workの`stats()`は保存された全局面と候補を走査する診断用API�
 |valued_positions / solved_positions|現在値がある局面と、最終石差が点まで確定した局面|
 |complete_positions|全候補に個別の点評価がある局面。集合の最大値だけ分かる場合とは異なる|
 |leaf_positions|登録した出辺を持たない局面|
-|frontier_candidates / unknown_frontier_candidates|未登録候補と、そのうち点評価がない候補|
+|unregistered_candidates / unknown_unregistered_candidates|未登録候補と、そのうち点評価がない候補|
 |bounded_candidates|上限・下限のみの候補|
-|direct_values_used / propagated_values_used / manual_values_used / frontier_values_used|現在使う値の採用元|
+|direct_values_used / child_values_used / manual_values_used / move_search_values_used|現在使う値の採用元|
 |inactive_manual_records|古いモデル等に対応するため採用しない手動値|
 |qualities / value_kinds / mixed_derivations|品質と探索方法の分布。計算した値の到達深さを直接探索の深さと混同しない|
 |root_lines / lines_saturated|登録された進行の経路数と、数値上限への到達有無|

@@ -2,7 +2,7 @@
 //!
 //! AnalysisProfileは識別値に付ける説明、GenerationRunは一回のgenerate呼出しの記録。
 //! 局面・手に付く実際の探索条件はvalues.rsのCompletedSearchが持ち、ここへ集約しない。
-//! Catalog::derivationsは旧ファイルの入力関係を検査するためだけに使い、移行後は空。
+//! 旧ファイルの計算元の関係はlegacy内だけで扱い、この一覧へ保持しない。
 use super::*;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnalysisProfile {
@@ -53,7 +53,6 @@ pub struct GenerationRun {
 pub(super) struct Catalog {
     pub profiles: std::collections::BTreeMap<AnalysisIdentity, AnalysisProfile>,
     pub runs: Vec<GenerationRun>,
-    pub derivations: std::collections::BTreeMap<[u8; 32], Vec<[u8; 32]>>,
 }
 impl Catalog {
     pub fn engine(&mut self, identity: AnalysisIdentity) {
@@ -71,12 +70,8 @@ impl Catalog {
         p.search_revision = Some(deft_reversi_engine::SEARCH_SEMANTICS_REVISION);
     }
     pub fn bytes(&self) -> u64 {
-        self.derivations
-            .values()
-            .map(|v| 96 + v.capacity() as u64 * 32)
-            .sum::<u64>()
-            + (self.profiles.len() * 256
-                + self.runs.capacity() * std::mem::size_of::<GenerationRun>()) as u64
+        (self.profiles.len() * 256 + self.runs.capacity() * std::mem::size_of::<GenerationRun>())
+            as u64
             + self
                 .profiles
                 .values()

@@ -14,16 +14,6 @@ pub enum MovePolicy {
     },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LegacyPolicy {
-    Reject,
-    RecordedQuality,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DerivedPolicy {
-    Reject,
-    CheckLeaves,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BookMiss {
     NoBook,
     InvalidPosition,
@@ -55,10 +45,10 @@ pub struct UsePolicy {
     /// 全合法手に利用条件を満たす点評価を求める。上限だけの候補は条件を満たさない。
     pub require_all_evaluated: bool,
     pub min_endgame_selectivity: Selectivity,
-    pub derived: DerivedPolicy,
+    pub allow_calculated: bool,
     /// Legacy values never acquire a guessed midgame/endgame kind. This
     /// compatibility option checks their recorded depth and selectivity.
-    pub legacy: LegacyPolicy,
+    pub allow_imported: bool,
     /// 手動値、または手動値を含めて計算した値の利用を許可する。
     pub allow_manual: bool,
 }
@@ -70,8 +60,8 @@ impl Default for UsePolicy {
             min_selectivity: Selectivity::Percent95,
             require_all_evaluated: false,
             min_endgame_selectivity: Selectivity::Percent85,
-            derived: DerivedPolicy::CheckLeaves,
-            legacy: LegacyPolicy::Reject,
+            allow_calculated: true,
+            allow_imported: false,
             allow_manual: false,
         }
     }
@@ -79,7 +69,7 @@ impl Default for UsePolicy {
 #[derive(Clone, Debug)]
 pub struct BookChoice {
     pub action: Action,
-    pub value: Assessment,
+    pub value: Evaluation,
     pub all_moves_evaluated: bool,
 }
 /// Picks book moves for positions in the book. It does not search: when
@@ -148,14 +138,14 @@ impl BookPlayer {
 impl UsePolicy {
     pub fn check(
         self,
-        value: Assessment,
+        value: Evaluation,
         identity: AnalysisIdentity,
     ) -> std::result::Result<(), BookMiss> {
         self.check_parts(
-            matches!(value.analysis(), ValueAnalysis::Derived { .. }),
-            value.claim().certificate().is_some(),
+            value.is_calculated(),
+            value.result().final_bounds().is_some(),
             value.identity(),
-            value.analysis().summary(),
+            value.conditions(),
             identity,
         )
     }
@@ -166,10 +156,10 @@ impl UsePolicy {
         identity: AnalysisIdentity,
     ) -> std::result::Result<(), BookMiss> {
         self.check_parts(
-            value.is_derived(),
-            value.claim().certificate().is_some(),
+            value.is_calculated(),
+            value.result().final_bounds().is_some(),
             value.identity(),
-            value.summary(),
+            value.conditions(),
             identity,
         )
     }
@@ -180,10 +170,10 @@ impl UsePolicy {
         derived: bool,
         proven: bool,
         profile: AnalysisIdentity,
-        q: QualitySummary,
+        q: SearchConditions,
         identity: AnalysisIdentity,
     ) -> std::result::Result<(), BookMiss> {
-        if derived && self.derived == DerivedPolicy::Reject {
+        if derived && !self.allow_calculated {
             return Err(BookMiss::DerivedRejected);
         }
         if proven {
@@ -192,10 +182,10 @@ impl UsePolicy {
         if profile != identity {
             return Err(BookMiss::ModelMismatch);
         }
-        if q.families & QualitySummary::MANUAL != 0 && !self.allow_manual {
+        if q.has_manual() && !self.allow_manual {
             return Err(BookMiss::ManualRejected);
         }
-        if q.has_legacy() && self.legacy == LegacyPolicy::Reject {
+        if q.has_imported() && !self.allow_imported {
             return Err(BookMiss::LegacyUnknown);
         }
         if q.has_midgame() {
@@ -209,7 +199,7 @@ impl UsePolicy {
         if q.has_endgame() && q.endgame_selectivity().unwrap() < self.min_endgame_selectivity {
             return Err(BookMiss::EndgameSelectivity);
         }
-        if q.families & QualitySummary::LEGACY != 0 {
+        if q.has_imported() {
             if q.legacy_depth < self.min_depth {
                 return Err(BookMiss::MidgameDepth);
             }
@@ -239,7 +229,7 @@ fn choose(
     let entry = book.probe(board).ok_or(BookMiss::MissingPosition)?;
     let usable = |c: &BookMove<'_>| {
         c.value
-            .is_some_and(|v| v.bound() == Bound::Exact && policy.check_ref(v, identity).is_ok())
+            .is_some_and(|v| v.bound() == Bound::Point && policy.check_ref(v, identity).is_ok())
     };
     if policy.require_all_evaluated
         && (!entry.all_moves_evaluated() || !entry.moves().all(|c| usable(&c)))
@@ -254,8 +244,7 @@ fn choose(
         .filter(|c| {
             usable(c)
                 || c.value.is_some_and(|v| {
-                    matches!(v.bound(), Bound::Upper | Bound::ProvenUpper)
-                        && policy.check_ref(v, identity).is_ok()
+                    matches!(v.bound(), Bound::Upper) && policy.check_ref(v, identity).is_ok()
                 })
         })
         .filter_map(|c| c.value.map(|v| v.score()))

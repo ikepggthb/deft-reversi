@@ -10,9 +10,9 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 @media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
 </style></head>
 <body><a class="skip" href="#content">本文へ</a><div class="layout">
-<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html" aria-current="page">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="maintainability.html">理解の負担を減らすための見直し</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html" aria-current="page">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Bookの検証</a></li></ol></nav>
 <main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
-<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">現在の形式</a></li><li><a href="#section-3">変換で残すもの</a></li><li><a href="#section-4">ファイル互換性と探索の互換性</a></li><li><a href="#section-5">旧APIからの変更</a></li></ul></aside>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">現在の形式</a></li><li><a href="#section-3">変換で残すもの</a></li><li><a href="#section-4">ファイル互換性と探索の互換性</a></li><li><a href="#section-5">Rust APIの変更</a></li></ul></aside>
 <h1 id="section-1">保存形式と旧bookの引継ぎ</h1>
 <h2 id="section-2">現在の形式</h2>
 <div class="table-wrap"><table>
@@ -61,9 +61,76 @@ target/release/book verify --book next.dbook
 <p>今回、再帰探索とレベル表を変更していないため探索revisionは2のまま。レベルの意味・枝刈り・点数の意味が変わる場合は、別途revisionの更新を判断する。</p>
 <p>モデル等が変わる場合はコピーに<code>reanalyze</code>を使う。互換性のない推定は無効にし、登録・手動の原記録・ルールが一致する最終石差の確定情報は残す。古いモデルの手動値は黙って現在の値として使わない。探索自体の不具合で過去の確定情報が誤っていた場合は、別途監査・再構築が必要。</p>
 <p>読込時は、長さ、件数、割当上限、盤面、合法手・パス、参照番号、探索対象、品質、上下限、登録先を検査する。不明な必須拡張は拒否する。未知の任意拡張は無編集の往復で保持し、意味の変わる更新では破棄する。</p>
-<h2 id="section-5">旧APIからの変更</h2>
-<p><code>GenerationConfig.levels / stages</code>は<code>analysis</code>へ統合した。汎用の<code>record</code>は、<code>record_search</code>、<code>record_candidate</code>、<code>record_imported</code>、<code>set_manual / record_manual</code>へ分けた。評価のフィールドを旧表示へ自動で読み替える仕組みは廃止し、<code>score()</code>、<code>claim()</code>、<code>analysis()</code>などで明示的に読む。</p>
-<p>旧入力用の<code>LegacyAssessment</code>は<code>ImportedValue</code>へ変更した。外部入力を<code>Assessment::import</code>で明示的に扱う。<code>evidence_inputs / evidence_by_id</code>による過去の計算経路の参照は廃止した。</p>
-<p><a href="architecture.html">保存場所とAPI</a>、<a href="propagation.html">値の更新</a>、<a href="validation.html">試験・実測</a>も参照。</p>
+<h2 id="section-5">Rust APIの変更</h2>
+<p>ファイルのバイト表現は維持しているが、以前の型の別名を現行APIへ残すことはしていない。Rustの呼出し側は次の対応で修正する。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>以前</th>
+<th>現在</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Assessment</td>
+<td>Evaluation</td>
+</tr>
+<tr>
+<td>claim() / ValueClaim</td>
+<td>result() / Score。推定と最終石差をここで区別</td>
+</tr>
+<tr>
+<td>analysis().summary()</td>
+<td>conditions()。中盤・終盤それぞれの条件を直接読む</td>
+</tr>
+<tr>
+<td>analysis() / Derivation / CalculationSubject</td>
+<td>source()。計算対象の盤面や手は直接の欄にある</td>
+</tr>
+<tr>
+<td>project(SearchProjection::BestMove)</td>
+<td>best_move_value()</td>
+</tr>
+<tr>
+<td>project(SearchProjection::OtherMoveUpper)</td>
+<td>other_moves_upper_bound()</td>
+</tr>
+<tr>
+<td>AnalysisQualityの表示欄</td>
+<td>depth()・selectivity()・is_solved()。編集可能な確定フラグを保持しない</td>
+</tr>
+<tr>
+<td>Bound::Exact / ProvenLower / ProvenUpper</td>
+<td>BoundはPoint・Lower・Upperだけ。最終石差かはScore::Finalまたはfinal_bounds()で確認</td>
+</tr>
+<tr>
+<td>candidate_evidence()</td>
+<td>move_values()。direct・child・manual・final_scoreとselected / selected_fromを返す</td>
+</tr>
+<tr>
+<td>BookEntry::proof()</td>
+<td>final_score()。手動値とは独立した最終石差の情報</td>
+</tr>
+<tr>
+<td>UsePolicy.derived / legacy</td>
+<td>allow_calculated / allow_importedという真偽値</td>
+</tr>
+<tr>
+<td>GenerationConfig.legacy / frontier_only</td>
+<td>allow_imported / unregistered_only</td>
+</tr>
+<tr>
+<td>SchedulePolicy::Frontier</td>
+<td>SchedulePolicy::Promising。CLIの--schedule frontierも引き続き受理</td>
+</tr>
+<tr>
+<td>frontier_candidatesなどの統計名</td>
+<td>unregistered_candidatesなど、未登録手であることを示す名前</td>
+</tr>
+</tbody>
+</table></div>
+<p>外部の旧入力はlegacy::ImportedValueで明示し、Evaluation::importまたはrecord_importedへ渡す。legacy内の旧分類は、通常の評価処理へ持ち込まない。旧方式の途中状態は局面データから削除し、読込中にだけ扱う。</p>
+<p>以前に行ったGenerationConfig.levels / stagesからanalysisへの統合、汎用recordから探索・手動・取込別の入口への分離、過去の計算入力をたどるAPIの廃止も維持している。</p>
+<p><a href="architecture.html">保存場所とAPI</a>、<a href="source-review.html">ソースの読み方</a>、<a href="maintainability.html">今回の見直し</a>、<a href="validation.html">検証</a>も参照。</p>
 <footer>正本：<a href="compatibility.md">compatibility.md</a> · 再生成：tools/render_book_docs.py</footer></main>
 </div></body></html>

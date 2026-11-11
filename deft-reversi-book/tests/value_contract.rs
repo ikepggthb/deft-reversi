@@ -1,4 +1,5 @@
 //! Acceptance scenarios for the value model, independent of generator heuristics.
+use deft_reversi_book::legacy::{self, AnalysisQuality, ImportedValue, ValueOrigin};
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{
@@ -82,7 +83,7 @@ fn budget() -> GenerationLimits {
         ..Default::default()
     }
 }
-fn legacy(id: AnalysisIdentity, b: Board, score: i16, bound: Bound) -> ImportedValue {
+fn legacy(id: AnalysisIdentity, b: Board, score: i16, bound: legacy::Bound) -> ImportedValue {
     ImportedValue {
         identity: id,
         score,
@@ -91,11 +92,11 @@ fn legacy(id: AnalysisIdentity, b: Board, score: i16, bound: Bound) -> ImportedV
         quality: AnalysisQuality {
             depth: b.empty_count(),
             selectivity: Selectivity::Full,
-            solved: bound == Bound::Exact,
+            solved: bound == legacy::Bound::Exact,
         },
     }
 }
-fn search(eng: &mut Engine, b: Board, kind: SearchKind, mask: u64) -> Assessment {
+fn search(eng: &mut Engine, b: Board, kind: SearchKind, mask: u64) -> Evaluation {
     let request = match kind {
         SearchKind::Midgame { depth, selectivity } => {
             SearchRequest::new(Goal::Depth(depth)).selectivity(selectivity)
@@ -107,7 +108,7 @@ fn search(eng: &mut Engine, b: Board, kind: SearchKind, mask: u64) -> Assessment
     .root_moves(mask);
     let result = eng.search(b, &request).unwrap();
     assert_eq!(result.stop_reason, StopReason::Completed);
-    Assessment::from_search_result(
+    Evaluation::from_search_result(
         b,
         RequestedAnalysis::External,
         kind,
@@ -143,13 +144,12 @@ fn a1_requested_level_plan_completed_kind_and_profiles_survive_both_profiles() {
         );
         let direct = actions(b)
             .into_iter()
-            .find_map(|a| ed.candidate_evidence(b, a).unwrap().direct)
+            .find_map(|a| ed.move_values(b, a).unwrap().direct)
             .unwrap();
-        let ValueAnalysis::Search { trace, projection } = direct.analysis() else {
+        let EvaluationSource::SearchMove(trace) = direct.source() else {
             panic!("lost completed search")
         };
         assert_eq!(trace.requested, RequestedAnalysis::ChildLevel(19));
-        assert_eq!(projection, SearchProjection::BestMove);
         assert_eq!(trace.planned, trace.completed);
         assert_eq!(trace.root, [b.player_bits(), b.opponent_bits()]);
         assert_eq!(trace.run, Some(0));
@@ -159,7 +159,7 @@ fn a1_requested_level_plan_completed_kind_and_profiles_survive_both_profiles() {
         assert!(
             actions(b)
                 .into_iter()
-                .any(|a| loaded.candidate_evidence(b, a).unwrap().direct == Some(direct))
+                .any(|a| loaded.move_values(b, a).unwrap().direct == Some(direct))
         );
         let run = &loaded.generation_runs()[0];
         assert_eq!(run.config.analysis.levels(), Some(&vec![19]));
@@ -221,8 +221,8 @@ fn a2_midgame_endgame_and_legacy_have_distinct_use_requirements() {
     assert_eq!(policy.check(mid, id), Err(BookMiss::MidgameDepth));
     assert_eq!(policy.check(end, id), Ok(()));
     assert_eq!(policy.check(full, [99; 32]), Ok(()));
-    assert!(!end.quality().solved);
-    assert!(full.quality().solved);
+    assert!(!end.is_solved());
+    assert!(full.is_solved());
     let mut staged = BookEditor::for_engine(&eng).unwrap();
     staged
         .configure_generation(&[b], config(8, Selectivity::Percent85, 0))
@@ -233,14 +233,16 @@ fn a2_midgame_endgame_and_legacy_have_distinct_use_requirements() {
     let direct = actions(b)
         .iter()
         .find_map(|&a| {
-            staged
-                .candidate_evidence(b, a)
-                .unwrap()
-                .direct
-                .filter(|v| matches!(v.analysis(), ValueAnalysis::Search { .. }))
+            staged.move_values(b, a).unwrap().direct.filter(|v| {
+                matches!(
+                    v.source(),
+                    EvaluationSource::Search(_) | EvaluationSource::SearchMove(_)
+                )
+            })
         })
         .unwrap();
-    let ValueAnalysis::Search { trace, .. } = direct.analysis() else {
+    let (EvaluationSource::Search(trace) | EvaluationSource::SearchMove(trace)) = direct.source()
+    else {
         unreachable!()
     };
     assert_eq!(
@@ -249,18 +251,15 @@ fn a2_midgame_endgame_and_legacy_have_distinct_use_requirements() {
             selectivity: Selectivity::Percent85
         }
     );
-    assert!(!direct.quality().solved);
-    let mut old = mid.as_imported();
+    assert!(!direct.is_solved());
+    let mut old = ImportedValue::from(mid);
     old.quality.depth = 16;
-    let old = Assessment::import(old).unwrap();
-    assert!(matches!(
-        old.analysis(),
-        ValueAnalysis::LegacyUnknown { .. }
-    ));
+    let old = Evaluation::import(old).unwrap();
+    assert!(matches!(old.source(), EvaluationSource::Imported { .. }));
     assert_eq!(policy.check(old, id), Err(BookMiss::LegacyUnknown));
     assert_eq!(
         UsePolicy {
-            legacy: LegacyPolicy::RecordedQuality,
+            allow_imported: true,
             ..policy
         }
         .check(old, id),
@@ -286,16 +285,15 @@ fn a3_mixed_derivation_keeps_leaf_modes_and_round_trips_with_play_decision() {
             }
         };
         let v = search(&mut eng, b, kind, mask(a))
-            .project(SearchProjection::BestMove)
+            .best_move_value()
             .unwrap();
         ed.record_candidate(b, a, v).unwrap();
         ed.register_move(b, a).unwrap();
     }
     let book = ed.export().unwrap();
     let value = book.probe(b).unwrap().value().unwrap();
-    let ValueAnalysis::Derived { summary, .. } = value.analysis() else {
-        panic!("fabricated direct search")
-    };
+    assert!(value.is_calculated());
+    let summary = value.conditions();
     assert!(summary.has_midgame() && summary.has_endgame());
     assert_eq!(summary.midgame_depth(), Some(2));
     assert_eq!(summary.endgame_selectivity(), Some(Selectivity::Percent85));
@@ -316,7 +314,7 @@ fn a3_mixed_derivation_keeps_leaf_modes_and_round_trips_with_play_decision() {
     );
     assert_eq!(
         UsePolicy {
-            derived: DerivedPolicy::Reject,
+            allow_calculated: false,
             ..policy
         }
         .check(value, ed.identity()),
@@ -346,16 +344,16 @@ fn a4_subset_search_cannot_be_recorded_as_a_full_position_or_excluded_move() {
     );
     let exact = -brute(b.play(a).unwrap());
     assert_eq!(
-        raw.claim(),
-        ValueClaim::Certified(ScoreInterval::point(exact).unwrap())
+        raw.result(),
+        Score::Final(ScoreInterval::point(exact).unwrap())
     );
     let mut ed = BookEditor::for_engine(&eng).unwrap();
     assert!(ed.record_candidate(b, a, raw).is_err());
     assert!(
-        ed.record_candidate(b, aa[1], raw.project(SearchProjection::BestMove).unwrap())
+        ed.record_candidate(b, aa[1], raw.best_move_value().unwrap())
             .is_err()
     );
-    ed.record_candidate(b, a, raw.project(SearchProjection::BestMove).unwrap())
+    ed.record_candidate(b, a, raw.best_move_value().unwrap())
         .unwrap();
     assert!(ed.export().unwrap().probe(b).unwrap().value().is_none());
 }
@@ -397,9 +395,9 @@ fn a5_a10_generated_edit_sequences_match_an_independent_interval_reference() {
                         b,
                         score,
                         if lower {
-                            Bound::ProvenLower
+                            legacy::Bound::ProvenLower
                         } else {
-                            Bound::ProvenUpper
+                            legacy::Bound::ProvenUpper
                         },
                     ),
                 )
@@ -413,8 +411,8 @@ fn a5_a10_generated_edit_sequences_match_an_independent_interval_reference() {
                 assert!(ed.generation_config().is_some());
             }
             4 => {
-                let mut v = legacy(ed.identity(), b, 0, Bound::Upper);
-                v.bound = Bound::Exact;
+                let mut v = legacy(ed.identity(), b, 0, legacy::Bound::Upper);
+                v.bound = legacy::Bound::Exact;
                 v.quality.solved = false;
                 v.origin = ValueOrigin::Manual;
                 ed.record_imported(b, a, v).unwrap();
@@ -424,9 +422,9 @@ fn a5_a10_generated_edit_sequences_match_an_independent_interval_reference() {
             }
         }
         for (&a, &expected) in aa.iter().zip(&expected) {
-            let ev = ed.candidate_evidence(b, a).unwrap();
+            let ev = ed.move_values(b, a).unwrap();
             assert_eq!(
-                ev.certificate.and_then(|v| v.claim().certificate()),
+                ev.final_score.and_then(|v| v.result().final_bounds()),
                 expected,
                 "operation {step}"
             );
@@ -447,15 +445,11 @@ fn a5_a10_generated_edit_sequences_match_an_independent_interval_reference() {
     for &a in &aa {
         let exact = -brute(b.play(a).unwrap());
         ed.clear_manual(b, a).unwrap();
-        ed.record_imported(b, a, legacy(ed.identity(), b, exact, Bound::Exact))
+        ed.record_imported(b, a, legacy(ed.identity(), b, exact, legacy::Bound::Exact))
             .unwrap();
         assert_eq!(
-            ed.candidate_evidence(b, a)
-                .unwrap()
-                .certificate
-                .unwrap()
-                .claim(),
-            ValueClaim::Certified(ScoreInterval::point(exact).unwrap())
+            ed.move_values(b, a).unwrap().final_score.unwrap().result(),
+            Score::Final(ScoreInterval::point(exact).unwrap())
         );
     }
     assert_eq!(
@@ -477,16 +471,16 @@ fn a5_conflicting_bounds_are_rejected_without_changing_the_candidate_or_revision
     let mut ed = BookEditor::new([7; 32]);
     let b = position(123, 5);
     let a = actions(b)[0];
-    ed.record_imported(b, a, legacy([7; 32], b, 8, Bound::ProvenLower))
+    ed.record_imported(b, a, legacy([7; 32], b, 8, legacy::Bound::ProvenLower))
         .unwrap();
-    let before = ed.candidate_evidence(b, a);
+    let before = ed.move_values(b, a);
     let revision = ed.revision();
     assert!(
-        ed.record_imported(b, a, legacy([7; 32], b, 6, Bound::ProvenUpper))
+        ed.record_imported(b, a, legacy([7; 32], b, 6, legacy::Bound::ProvenUpper))
             .is_err()
     );
     assert_eq!(ed.revision(), revision);
-    assert_eq!(ed.candidate_evidence(b, a), before);
+    assert_eq!(ed.move_values(b, a), before);
 }
 #[test]
 fn a8_interruption_keeps_the_plan_and_last_iteration_separate_from_published_evidence() {
@@ -511,7 +505,7 @@ fn a8_interruption_keeps_the_plan_and_last_iteration_separate_from_published_evi
     assert!(
         actions(b)
             .iter()
-            .all(|&a| ed.candidate_evidence(b, a).unwrap().direct.is_none())
+            .all(|&a| ed.move_values(b, a).unwrap().direct.is_none())
     );
     let job = &run.interrupted[0];
     assert_eq!(
@@ -554,7 +548,7 @@ fn a8_external_stopped_search_records_only_its_completed_iteration() {
     let stop = request.stop_handle();
     let result = eng.search_with(b, &request, |_| stop.stop()).unwrap();
     assert_eq!(result.stop_reason, StopReason::Requested);
-    let value = Assessment::from_search_result(
+    let value = Evaluation::from_search_result(
         b,
         RequestedAnalysis::ParentDepth {
             depth: 16,
@@ -565,7 +559,8 @@ fn a8_external_stopped_search_records_only_its_completed_iteration() {
         analysis_identity(&eng).unwrap(),
     )
     .unwrap();
-    let ValueAnalysis::Search { trace, .. } = value.analysis() else {
+    let (EvaluationSource::Search(trace) | EvaluationSource::SearchMove(trace)) = value.source()
+    else {
         panic!()
     };
     assert_eq!(
@@ -573,7 +568,7 @@ fn a8_external_stopped_search_records_only_its_completed_iteration() {
         SearchKind::from_result(result.kind.unwrap())
     );
     assert!(trace.completed.horizon(40) < 16);
-    assert!(!value.quality().solved);
+    assert!(!value.is_solved());
 }
 #[test]
 fn a9_legacy_fixtures_preserve_unknown_modes_without_guessing_from_depth() {
@@ -587,7 +582,7 @@ fn a9_legacy_fixtures_preserve_unknown_modes_without_guessing_from_depth() {
         .unwrap()
         .value()
         .unwrap();
-    assert!(matches!(value.analysis(), ValueAnalysis::Rules { .. }));
+    assert!(matches!(value.source(), EvaluationSource::Terminal { .. }));
     assert_eq!(value.score(), board.final_score() as i16);
 
     let dir = Temp::new();
@@ -604,19 +599,15 @@ fn a9_legacy_fixtures_preserve_unknown_modes_without_guessing_from_depth() {
     let mut ed = BookEditor::load(dir.path("old.work"), ReadLimits::default()).unwrap();
     let b = Board::new();
     let a = actions(b)[0];
-    let mut value = legacy(ed.identity(), b, 0, Bound::Upper);
+    let mut value = legacy(ed.identity(), b, 0, legacy::Bound::Upper);
     value.quality.solved = false;
-    value.bound = Bound::Exact;
+    value.bound = legacy::Bound::Exact;
     ed.record_imported(b, a, value).unwrap();
     ed.save(dir.path("new.work")).unwrap();
     let ed = BookEditor::load(dir.path("new.work"), ReadLimits::default()).unwrap();
     assert!(matches!(
-        ed.candidate_evidence(b, a)
-            .unwrap()
-            .direct
-            .unwrap()
-            .analysis(),
-        ValueAnalysis::LegacyUnknown { depth: 60, .. }
+        ed.move_values(b, a).unwrap().direct.unwrap().source(),
+        EvaluationSource::Imported { depth: 60, .. }
     ));
     assert!(ed.analysis_profiles().next().is_none());
     assert_eq!(
@@ -638,8 +629,8 @@ fn a2_decisions_distinguish_no_book_unknown_mode_and_unregistered_move() {
         BookDecision::Fallback(BookMiss::NoBook)
     ));
     let mut ed = BookEditor::for_engine(&eng).unwrap();
-    let mut v = legacy(ed.identity(), b, 0, Bound::Upper);
-    v.bound = Bound::Exact;
+    let mut v = legacy(ed.identity(), b, 0, legacy::Bound::Upper);
+    v.bound = legacy::Bound::Exact;
     v.quality.solved = false;
     ed.record_imported(b, a, v).unwrap();
     player.set_book(Some(Arc::new(ed.export().unwrap())));
@@ -671,7 +662,7 @@ fn interval_negation_and_pass_reach_preserve_actual_search_kind() {
                 ed.identity(),
                 child,
                 (score - 2).max(-64),
-                Bound::ProvenLower,
+                legacy::Bound::ProvenLower,
             ),
         )
         .unwrap();
@@ -682,20 +673,20 @@ fn interval_negation_and_pass_reach_preserve_actual_search_kind() {
                 ed.identity(),
                 child,
                 (score + 2).min(64),
-                Bound::ProvenUpper,
+                legacy::Bound::ProvenUpper,
             ),
         )
         .unwrap();
     }
     let value = ed.export().unwrap().probe(child).unwrap().value().unwrap();
-    let expected = value.claim().certificate().unwrap();
+    let expected = value.result().final_bounds().unwrap();
     let backup = ed
-        .candidate_evidence(b, a)
+        .move_values(b, a)
         .unwrap()
-        .propagated
+        .child
         .unwrap()
-        .claim()
-        .certificate()
+        .result()
+        .final_bounds()
         .unwrap();
     assert_eq!(backup.lower(), expected.upper().map(|v| -v));
     assert_eq!(backup.upper(), expected.lower().map(|v| -v));
@@ -707,9 +698,10 @@ fn interval_negation_and_pass_reach_preserve_actual_search_kind() {
     ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
     let raw = actions(child)
         .iter()
-        .find_map(|&a| ed.candidate_evidence(child, a).unwrap().direct)
+        .find_map(|&a| ed.move_values(child, a).unwrap().direct)
         .unwrap();
-    let ValueAnalysis::Search { trace, .. } = raw.analysis() else {
+    let (EvaluationSource::Search(trace) | EvaluationSource::SearchMove(trace)) = raw.source()
+    else {
         panic!()
     };
     assert_eq!(
@@ -719,12 +711,12 @@ fn interval_negation_and_pass_reach_preserve_actual_search_kind() {
             selectivity: Selectivity::Full
         }
     );
-    let backup = ed.candidate_evidence(b, a).unwrap().propagated.unwrap();
-    assert_eq!(backup.analysis().summary().midgame_depth(), Some(3));
+    let backup = ed.move_values(b, a).unwrap().child.unwrap();
+    assert_eq!(backup.conditions().midgame_depth(), Some(3));
     assert!(
         actions(child)
             .into_iter()
-            .any(|a| ed.candidate_evidence(child, a).unwrap().direct == Some(raw))
+            .any(|a| ed.move_values(child, a).unwrap().direct == Some(raw))
     );
     eng.set_resources(EngineOptions::default().tt_mib(1))
         .unwrap();
@@ -743,7 +735,7 @@ fn conflicts_during_ancestor_propagation_and_registration_roll_back_the_edit() {
     };
     let mut ed = BookEditor::for_engine(&eng).unwrap();
     ed.register_move(b, a).unwrap();
-    ed.record_imported(b, a, legacy(ed.identity(), b, wrong, Bound::Exact))
+    ed.record_imported(b, a, legacy(ed.identity(), b, wrong, legacy::Bound::Exact))
         .unwrap();
     let aa = actions(child);
     for &x in &aa[..aa.len() - 1] {
@@ -754,14 +746,14 @@ fn conflicts_during_ancestor_propagation_and_registration_roll_back_the_edit() {
                 ed.identity(),
                 child,
                 -brute(child.play(x).unwrap()),
-                Bound::Exact,
+                legacy::Bound::Exact,
             ),
         )
         .unwrap();
     }
     let last = *aa.last().unwrap();
     let revision = ed.revision();
-    let before = ed.candidate_evidence(child, last);
+    let before = ed.move_values(child, last);
     assert!(
         ed.record_imported(
             child,
@@ -770,19 +762,15 @@ fn conflicts_during_ancestor_propagation_and_registration_roll_back_the_edit() {
                 ed.identity(),
                 child,
                 -brute(child.play(last).unwrap()),
-                Bound::Exact
+                legacy::Bound::Exact
             )
         )
         .is_err()
     );
     assert_eq!(ed.revision(), revision);
-    assert_eq!(ed.candidate_evidence(child, last), before);
+    assert_eq!(ed.move_values(child, last), before);
     assert_eq!(
-        ed.candidate_evidence(b, a)
-            .unwrap()
-            .certificate
-            .unwrap()
-            .score(),
+        ed.move_values(b, a).unwrap().final_score.unwrap().score(),
         wrong
     );
     let dir = Temp::new();
@@ -790,7 +778,7 @@ fn conflicts_during_ancestor_propagation_and_registration_roll_back_the_edit() {
     BookEditor::load(dir.path("rolled-back.work"), ReadLimits::default()).unwrap();
     // The same conflict is caught when a completed retained child is linked.
     let mut ed = BookEditor::for_engine(&eng).unwrap();
-    ed.record_imported(b, a, legacy(ed.identity(), b, wrong, Bound::Exact))
+    ed.record_imported(b, a, legacy(ed.identity(), b, wrong, legacy::Bound::Exact))
         .unwrap();
     for x in actions(child) {
         ed.record_imported(
@@ -800,16 +788,16 @@ fn conflicts_during_ancestor_propagation_and_registration_roll_back_the_edit() {
                 ed.identity(),
                 child,
                 -brute(child.play(x).unwrap()),
-                Bound::Exact,
+                legacy::Bound::Exact,
             ),
         )
         .unwrap();
     }
-    let before = ed.candidate_evidence(b, a);
+    let before = ed.move_values(b, a);
     let revision = ed.revision();
     assert!(ed.register_move(b, a).is_err());
     assert_eq!(ed.revision(), revision);
-    assert_eq!(ed.candidate_evidence(b, a), before);
+    assert_eq!(ed.move_values(b, a), before);
     ed.validate().unwrap();
 }
 #[test]
@@ -827,27 +815,22 @@ fn a7_full_depth_midgame_is_not_reused_as_a_completed_endgame_certificate() {
             },
             mask(a),
         )
-        .project(SearchProjection::BestMove)
+        .best_move_value()
         .unwrap();
-        assert!(!value.quality().solved);
+        assert!(!value.is_solved());
         ed.record_candidate(b, a, value).unwrap();
     }
     assert!(
-        !ed.export()
-            .unwrap()
-            .probe(b)
-            .unwrap()
-            .value()
-            .unwrap()
-            .quality()
+        !ImportedValue::from(ed.export().unwrap().probe(b).unwrap().value().unwrap())
+            .quality
             .solved
     );
     ed.configure_generation(&[b], config(6, Selectivity::Full, 0))
         .unwrap();
     let report = ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
-    assert_eq!(report.profile.frontier_searches, 1);
+    assert_eq!(report.profile.move_searches, 1);
     let value = ed.export().unwrap().probe(b).unwrap().value().unwrap();
-    assert!(value.quality().solved);
+    assert!(value.is_solved());
     assert_eq!(value.score(), brute(b));
 }
 #[test]
@@ -863,7 +846,7 @@ fn a7_modes_are_incomparable_and_unknown_estimates_require_explicit_generation_r
         },
         mask(a),
     )
-    .project(SearchProjection::BestMove)
+    .best_move_value()
     .unwrap();
     let mid = search(
         &mut eng,
@@ -874,30 +857,27 @@ fn a7_modes_are_incomparable_and_unknown_estimates_require_explicit_generation_r
         },
         mask(a),
     )
-    .project(SearchProjection::BestMove)
+    .best_move_value()
     .unwrap();
     let mut ed = BookEditor::for_engine(&eng).unwrap();
     ed.record_candidate(b, a, end).unwrap();
     assert!(ed.record_candidate(b, a, mid).is_err());
-    assert_eq!(ed.candidate_evidence(b, a).unwrap().direct, Some(end));
-    for policy in [LegacyPolicy::Reject, LegacyPolicy::RecordedQuality] {
+    assert_eq!(ed.move_values(b, a).unwrap().direct, Some(end));
+    for allow_imported in [false, true] {
         let b = position(73, 20);
         let mut ed = BookEditor::for_engine(&eng).unwrap();
         for a in actions(b) {
-            let mut v = legacy(ed.identity(), b, 0, Bound::Upper);
-            v.bound = Bound::Exact;
+            let mut v = legacy(ed.identity(), b, 0, legacy::Bound::Upper);
+            v.bound = legacy::Bound::Exact;
             v.quality.depth = 2;
             v.quality.solved = false;
             ed.record_imported(b, a, v).unwrap();
         }
         let mut cfg = config(2, Selectivity::Full, 0);
-        cfg.legacy = policy;
+        cfg.allow_imported = allow_imported;
         ed.configure_generation(&[b], cfg).unwrap();
         let report = ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
-        assert_eq!(
-            report.profile.frontier_searches,
-            u64::from(policy == LegacyPolicy::Reject)
-        );
+        assert_eq!(report.profile.move_searches, u64::from(!allow_imported));
     }
 }
 #[test]
@@ -922,9 +902,10 @@ fn a6_forced_pass_keeps_placement_depth_and_the_zero_square_scope() {
         },
         0,
     )
-    .project(SearchProjection::BestMove)
+    .best_move_value()
     .unwrap();
-    let ValueAnalysis::Search { trace, .. } = raw.analysis() else {
+    let (EvaluationSource::Search(trace) | EvaluationSource::SearchMove(trace)) = raw.source()
+    else {
         panic!()
     };
     assert_eq!(trace.moves, 0);
@@ -935,23 +916,17 @@ fn a6_forced_pass_keeps_placement_depth_and_the_zero_square_scope() {
     ed.configure_generation(&[child], config(2, Selectivity::Full, 0))
         .unwrap();
     ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
-    let backup = ed
-        .candidate_evidence(pass, Action::Pass)
-        .unwrap()
-        .propagated
-        .unwrap();
-    assert_eq!(backup.analysis().summary().midgame_depth(), Some(2));
+    let backup = ed.move_values(pass, Action::Pass).unwrap().child.unwrap();
+    assert_eq!(backup.conditions().midgame_depth(), Some(2));
     assert_eq!(
-        ed.candidate_evidence(pass, Action::Pass).unwrap().direct,
+        ed.move_values(pass, Action::Pass).unwrap().direct,
         Some(raw)
     );
     let dir = Temp::new();
     ed.save(dir.path("pass.work")).unwrap();
     let ed = BookEditor::load(dir.path("pass.work"), ReadLimits::default()).unwrap();
     assert_eq!(
-        ed.candidate_evidence(pass, Action::Pass)
-            .unwrap()
-            .propagated,
+        ed.move_values(pass, Action::Pass).unwrap().child,
         Some(backup)
     );
 }
@@ -968,33 +943,38 @@ fn independent_position_proof_survives_manual_book_values_and_propagates_separat
         ed.record_imported(
             b,
             a,
-            legacy(ed.identity(), b, -brute(b.play(a).unwrap()), Bound::Exact),
+            legacy(
+                ed.identity(),
+                b,
+                -brute(b.play(a).unwrap()),
+                legacy::Bound::Exact,
+            ),
         )
         .unwrap();
     }
     let exact = brute(b);
-    let mut manual = legacy(ed.identity(), b, 64, Bound::Upper);
-    manual.bound = Bound::Exact;
+    let mut manual = legacy(ed.identity(), b, 64, legacy::Bound::Upper);
+    manual.bound = legacy::Bound::Exact;
     manual.quality.solved = false;
     manual.origin = ValueOrigin::Manual;
     ed.record_imported(b, aa[0], manual).unwrap();
     let book = ed.export().unwrap();
     let entry = book.probe(b).unwrap();
     assert_eq!(entry.value().unwrap().score(), 64);
-    assert!(!entry.value().unwrap().quality().solved);
+    assert!(!entry.value().unwrap().is_solved());
     assert_eq!(
-        entry.proof().unwrap().claim(),
-        ValueClaim::Certified(ScoreInterval::point(exact).unwrap())
+        entry.final_score().unwrap().result(),
+        Score::Final(ScoreInterval::point(exact).unwrap())
     );
-    let ev = ed.candidate_evidence(parent, link).unwrap();
-    assert_eq!(ev.propagated.unwrap().score(), -64);
-    assert_eq!(ev.propagated_certificate.unwrap().score(), -exact);
-    assert_eq!(ev.certificate.unwrap().score(), -exact);
-    assert!(ev.effective.unwrap().quality().solved);
+    let ev = ed.move_values(parent, link).unwrap();
+    assert_eq!(ev.child.unwrap().score(), -64);
+    assert_eq!(ev.child_final_score.unwrap().score(), -exact);
+    assert_eq!(ev.final_score.unwrap().score(), -exact);
+    assert!(ev.selected.unwrap().is_solved());
     let dir = Temp::new();
     book.save(dir.path("manual.book")).unwrap();
     let loaded = Book::load(dir.path("manual.book"), ReadLimits::default()).unwrap();
-    assert_eq!(loaded.probe(b).unwrap().proof(), entry.proof());
+    assert_eq!(loaded.probe(b).unwrap().final_score(), entry.final_score());
     assert_eq!(loaded.probe(b).unwrap().value(), entry.value());
     ed.save(dir.path("manual.work")).unwrap();
     let mut loaded = BookEditor::load(dir.path("manual.work"), ReadLimits::default()).unwrap();
@@ -1028,28 +1008,29 @@ fn a8_failed_search_publication_rolls_back_raw_and_derived_evidence() {
             ed.record_imported(
                 parent,
                 link,
-                legacy(ed.identity(), parent, 64, Bound::Exact),
+                legacy(ed.identity(), parent, 64, legacy::Bound::Exact),
             )
             .unwrap();
         } else {
             for a in actions(b) {
-                ed.record_imported(b, a, legacy(ed.identity(), b, 64, Bound::ProvenLower))
-                    .unwrap();
+                ed.record_imported(
+                    b,
+                    a,
+                    legacy(ed.identity(), b, 64, legacy::Bound::ProvenLower),
+                )
+                .unwrap();
             }
         }
         ed.configure_generation(&[b], config(b.empty_count(), Selectivity::Full, 0))
             .unwrap();
         let revision = ed.revision();
-        let before: Vec<_> = actions(b)
-            .iter()
-            .map(|&a| ed.candidate_evidence(b, a))
-            .collect();
+        let before: Vec<_> = actions(b).iter().map(|&a| ed.move_values(b, a)).collect();
         assert!(ed.generate(&mut eng, budget(), StopHandle::new()).is_err());
         assert_eq!(ed.revision(), revision);
         assert_eq!(
             actions(b)
                 .iter()
-                .map(|&a| ed.candidate_evidence(b, a))
+                .map(|&a| ed.move_values(b, a))
                 .collect::<Vec<_>>(),
             before
         );
@@ -1078,8 +1059,13 @@ fn a6_unlink_preserves_reachable_jobs_when_the_saved_memory_budget_is_exceeded()
     ed.configure_generation(&[b], cfg.clone()).unwrap();
     for index in 0..128 {
         let a = aa[index % aa.len()];
-        let mut value = legacy(ed.identity(), b, (index % 64) as i16 - 32, Bound::Upper);
-        value.bound = Bound::Exact;
+        let mut value = legacy(
+            ed.identity(),
+            b,
+            (index % 64) as i16 - 32,
+            legacy::Bound::Upper,
+        );
+        value.bound = legacy::Bound::Exact;
         value.quality.solved = false;
         ed.record_imported(b, a, value).unwrap();
     }

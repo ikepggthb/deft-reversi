@@ -6,17 +6,46 @@
 //!
 //! ソースの読む順序と確認事項はリポジトリの `docs/book-v2/source-review.md`、
 //! 評価の意味は `docs/book-v2/value-model.md` を参照。
+//!
+//! 探索結果を登録して読む最小例：
+//! ```
+//! use deft_reversi_book::{BookEditor, RequestedAnalysis, SearchKind};
+//! use deft_reversi_engine::{Board, Engine, EngineOptions, Goal, Model, PatternModel, SearchRequest, Selectivity};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut engine = Engine::new(Model::from_pattern(PatternModel::zero()), EngineOptions::default().tt_mib(1))?;
+//! let board = Board::new().canonical();
+//! let request = SearchRequest::new(Goal::Depth(2));
+//! let planned = SearchKind::from_result(engine.search_plan(board, &request)?);
+//! let result = engine.search(board, &request)?;
+//! let mut editor = BookEditor::for_engine(&engine)?;
+//! editor.record_search(board, RequestedAnalysis::ParentDepth { depth: 2, selectivity: Selectivity::Full }, planned, &result)?;
+//! editor.register_move(board, result.best_move.unwrap())?;
+//! let book = editor.export()?;
+//! let entry = book.probe(board).unwrap();
+//! let chosen = entry.moves().find(|m| m.registered).unwrap();
+//! let value = chosen.value.unwrap();
+//! assert!(value.result().point_value().is_some());
+//! assert_eq!(value.conditions().midgame_depth(), Some(2));
+//! # Ok(())
+//! # }
+//! ```
 use deft_reversi_engine::{Action, Board, Engine, EngineError, Selectivity};
 use std::{fmt, io, time::Duration};
 mod catalog;
 mod editor;
 pub use catalog::{AnalysisProfile, GenerationRun, InterruptedAnalysis, RunStatus};
-mod evidence;
+mod score;
+pub use score::{Bound, Score, ScoreInterval};
+mod search_record;
+pub use search_record::{CompletedSearch, RequestedAnalysis, SearchKind};
+mod conditions;
+pub use conditions::SearchConditions;
+mod evaluation;
+pub use evaluation::{AnalysisCategory, Evaluation, EvaluationSource};
+pub mod legacy;
 mod values;
 pub use values::EvaluationRef;
 use values::{ValueId, ValueStore};
-mod value_codec;
-pub use evidence::*;
 mod format;
 mod generate;
 mod grow;
@@ -25,16 +54,12 @@ mod schedule;
 mod snapshot;
 mod stats;
 mod symmetry;
-use editor::PropagationPolicy;
-pub use editor::{BookEditor, CandidateEvidence, MigrationReport, ValueSource};
+pub use editor::{BookEditor, MigrationReport, MoveValues, SelectedFrom};
 pub use generate::{
     AnalysisSchedule, BookSide, GenerationConfig, GenerationLimits, GenerationProfile,
     GenerationReport, GenerationRoot, GenerationStop, Stage,
 };
-pub use player::{
-    BookChoice, BookDecision, BookMiss, BookPlayer, DerivedPolicy, LegacyPolicy, MovePolicy,
-    UsePolicy,
-};
+pub use player::{BookChoice, BookDecision, BookMiss, BookPlayer, MovePolicy, UsePolicy};
 pub use schedule::SchedulePolicy;
 pub use snapshot::{Book, BookCandidate, BookEntry, BookMove, BookStats};
 pub use stats::{QualityBucket, ValueKindBucket, WorkspaceStats};
@@ -42,20 +67,6 @@ pub use symmetry::Symmetry;
 
 /// 評価モデル・校正・探索仕様の識別値。推定値を再利用できるかの照合に使う。
 pub type AnalysisIdentity = [u8; 32];
-/// What a stored score is known to be: the value itself, or a bound on it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Bound {
-    /// その探索条件での点評価。最終石差が確定したことは意味しない。
-    Exact,
-    /// 探索条件内での下限。最終石差の保証とは区別する。
-    Lower,
-    /// 探索条件内での上限。この値の点数を得られる手とは限らない。
-    Upper,
-    /// Certified bound on final game score, not a point-valued solution.
-    ProvenLower,
-    /// 最終石差の確定した上限。
-    ProvenUpper,
-}
 #[derive(Debug)]
 pub enum BookError {
     Io(io::Error),
@@ -89,23 +100,6 @@ fn invalid(s: impl Into<String>) -> BookError {
     BookError::Invalid(s.into())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ValueOrigin {
-    Search,
-    Manual,
-    Imported,
-    Rules,
-    Derived,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-/// 簡易表示・比較用の条件。中盤／終盤／混在の区別はValueAnalysis側で確認する。
-pub struct AnalysisQuality {
-    /// Effective depth in placements, measured from the candidate's parent.
-    pub depth: u8,
-    pub selectivity: Selectivity,
-    /// 最終石差が一点に確定しているか。`Bound::Exact`だけではtrueにならない。
-    pub solved: bool,
-}
 #[derive(Clone, Copy, Debug)]
 /// ファイル読込の件数・割当制限。生成中のbook全体やEngineの資源予算とは別。
 pub struct ReadLimits {
@@ -162,8 +156,8 @@ fn legal_actions(b: Board) -> Vec<Action> {
     }
     out
 }
-fn terminal_value(b: Board) -> Assessment {
-    Assessment::rules(b)
+fn terminal_value(b: Board) -> Evaluation {
+    Evaluation::rules(b)
 }
 
 fn selectivity(n: u8) -> Result<Selectivity> {
@@ -223,13 +217,12 @@ pub fn analysis_identity(engine: &Engine) -> std::io::Result<AnalysisIdentity> {
 /// 下限だけの候補や不明な候補があれば、その候補が最大かもしれず推定値を決めない。
 /// 全候補が最終石差の区間を持つ場合は、区間の最大値として別に計算する。
 fn combine_values(
-    values: impl IntoIterator<Item = Option<Assessment>>,
+    values: impl IntoIterator<Item = Option<Evaluation>>,
     identity: AnalysisIdentity,
     root: Key,
-    _policy: PropagationPolicy,
-) -> (Option<Assessment>, bool) {
-    let mut summary = QualitySummary::empty();
-    let mut best: Option<Assessment> = None;
+) -> (Option<Evaluation>, bool) {
+    let mut summary = SearchConditions::empty();
+    let mut best: Option<Evaluation> = None;
     let mut upper = -65;
     let mut all_certified = true;
     let mut certified_lower: Option<i16> = None;
@@ -242,11 +235,11 @@ fn combine_values(
             return (None, false);
         };
         count += 1;
-        if !v.proven() && v.identity() != identity {
+        if !v.is_final() && v.identity() != identity {
             return (None, false);
         }
-        summary.include(v.analysis().summary());
-        if let Some(interval) = v.claim().certificate() {
+        summary.include(v.conditions());
+        if let Some(interval) = v.result().final_bounds() {
             if let Some(l) = interval.lower() {
                 certified_lower = Some(certified_lower.map_or(l, |old| old.max(l)));
             }
@@ -258,16 +251,16 @@ fn combine_values(
             all_certified = false;
         }
         match v.bound() {
-            Bound::Exact => {
+            Bound::Point => {
                 if best.is_none_or(|b| v.score() > b.score()) {
                     best = Some(v);
                 }
             }
-            Bound::Upper | Bound::ProvenUpper => {
+            Bound::Upper => {
                 upper = upper.max(v.score());
                 complete = false;
             }
-            Bound::Lower | Bound::ProvenLower => {
+            Bound::Lower => {
                 point_coverage = false;
                 complete = false;
             }
@@ -277,7 +270,7 @@ fn combine_values(
         return (None, false);
     }
     let claim = if all_certified {
-        ValueClaim::Certified(
+        Score::Final(
             ScoreInterval::new(certified_lower, certified_upper).expect("maximum interval"),
         )
     } else {
@@ -287,20 +280,17 @@ fn combine_values(
         if !point_coverage || value.score() < upper {
             return (None, complete);
         }
-        ValueClaim::Estimate {
+        Score::Estimate {
             score: value.score(),
-            bound: EstimateBound::Point,
+            bound: Bound::Point,
         }
     };
-    let analysis = ValueAnalysis::Derived {
-        basis: Derivation::Current {
-            root: [root.0, root.1],
-            subject: CalculationSubject::Position,
-        },
-        summary,
+    let analysis = EvaluationSource::Position {
+        root: [root.0, root.1],
+        conditions: summary,
     };
     (
-        Some(Assessment::new(claim, analysis, identity).expect("valid maximum")),
+        Some(Evaluation::new(claim, analysis, identity).expect("valid maximum")),
         complete,
     )
 }

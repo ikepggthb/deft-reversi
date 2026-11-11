@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 struct CandidateNotes {
     direct: Option<ValueId>,
     manual: Option<ValueId>,
-    certificate: Option<ValueId>,
+    final_score: Option<ValueId>,
 }
 #[derive(Clone, Debug)]
 pub(super) struct Edge {
@@ -29,13 +29,13 @@ impl Edge {
         registered: bool,
         direct: Option<ValueId>,
         manual: Option<ValueId>,
-        certificate: Option<ValueId>,
+        final_score: Option<ValueId>,
     ) -> Self {
-        let notes = if direct.is_some() || manual.is_some() || certificate.is_some() {
+        let notes = if direct.is_some() || manual.is_some() || final_score.is_some() {
             Some(Box::new(CandidateNotes {
                 direct,
                 manual,
-                certificate,
+                final_score,
             }))
         } else {
             None
@@ -53,14 +53,14 @@ impl Edge {
     pub fn manual(&self) -> Option<ValueId> {
         self.notes.as_ref().and_then(|n| n.manual)
     }
-    pub fn certificate(&self) -> Option<ValueId> {
-        self.notes.as_ref().and_then(|n| n.certificate)
+    pub fn final_score(&self) -> Option<ValueId> {
+        self.notes.as_ref().and_then(|n| n.final_score)
     }
     fn cleanup(&mut self) {
         if self
             .notes
             .as_ref()
-            .is_some_and(|n| n.direct.is_none() && n.manual.is_none() && n.certificate.is_none())
+            .is_some_and(|n| n.direct.is_none() && n.manual.is_none() && n.final_score.is_none())
         {
             self.notes = None;
         }
@@ -81,27 +81,19 @@ impl Edge {
         }
         self.cleanup();
     }
-    pub fn set_certificate(&mut self, v: Option<ValueId>) {
+    pub fn set_final_score(&mut self, v: Option<ValueId>) {
         if v.is_some() {
-            self.notes.get_or_insert_with(Default::default).certificate = v;
+            self.notes.get_or_insert_with(Default::default).final_score = v;
         } else if let Some(n) = &mut self.notes {
-            n.certificate = None;
+            n.final_score = None;
         }
         self.cleanup();
     }
 }
-// 旧方式で保存された候補別の途中状態。新しい生成器は作らず、読込時に
-// normalize_pendingで完了済みの値だけを通常の候補記録へ取り込む。
-#[derive(Clone, Debug)]
-pub(super) struct Pending {
-    pub stage: usize,
-    pub revision: u64,
-    pub values: Vec<Option<ValueId>>,
-}
-/// 一回の集合探索の結果。Frontierはここでは「対象候補の中の最良手と残りの上限」。
+/// 一回の集合探索の結果。MoveSearchはここでは「対象候補の中の最良手と残りの上限」。
 /// bestの点評価と、それ以外の手の上限は同じ探索記録を異なる意味で参照する。
 #[derive(Clone, Debug)]
-pub(super) struct Frontier {
+pub(super) struct MoveSearch {
     /// Canonical edge indexes covered by a single restricted root search.
     pub mask: u64,
     pub best: Action,
@@ -110,11 +102,11 @@ pub(super) struct Frontier {
     pub(super) point: ValueId,
     pub(super) upper: ValueId,
 }
-impl Frontier {
+impl MoveSearch {
     pub(super) fn new(
         mask: u64,
         best: Action,
-        value: Assessment,
+        value: Evaluation,
         pv: Vec<Action>,
         values: &mut ValueStore,
     ) -> Result<Self> {
@@ -123,16 +115,16 @@ impl Frontier {
             best,
             value: values.intern(value),
             pv,
-            point: values.intern(value.project_subset(false)?),
-            upper: values.intern(value.project_subset(true)?),
+            point: values.intern(value.best_move_value()?),
+            upper: values.intern(value.other_moves_upper_bound()?),
         })
     }
-    pub(super) fn assessment(
+    pub(super) fn evaluation(
         &self,
         index: usize,
         action: Action,
         values: &ValueStore,
-    ) -> Option<Assessment> {
+    ) -> Option<Evaluation> {
         if self.mask & (1u64 << index) == 0 {
             return None;
         }
@@ -155,13 +147,12 @@ pub(super) struct Node {
     /// 全候補に点評価があるか。局面全体の値が求まるだけではtrueにしない。
     pub complete: bool,
     /// 親の手番から見た値。添字0=パス経由、1=石を置く手経由。
-    pub backups: [Option<ValueId>; 2],
+    pub values_for_parent: [Option<ValueId>; 2],
     /// 手動値とは別に保持する、最終石差の確定値または上下限。
-    pub proof: Option<ValueId>,
-    pub proof_backups: Option<Box<[ValueId; 2]>>,
+    pub final_score: Option<ValueId>,
+    pub final_score_for_parent: Option<Box<[ValueId; 2]>>,
     pub completed_stages: usize,
-    pub pending: Option<Pending>,
-    pub frontier: Option<Frontier>,
+    pub move_search: Option<MoveSearch>,
 }
 impl Node {
     fn current_notes_bytes(&self) -> u64 {
@@ -173,16 +164,16 @@ impl Node {
     /// Non-best moves retain upper bounds, never fabricated point values.
     /// Incomparable lower/upper pairs still need aggregate coverage from the
     /// retained frontier or its replacement subset.
-    pub(super) fn preserve_frontier_proofs(&mut self, values: &mut ValueStore) {
+    pub(super) fn preserve_search_final_scores(&mut self, values: &mut ValueStore) {
         let Some(frontier) = self
-            .frontier
+            .move_search
             .as_ref()
-            .filter(|f| values.get(f.value).proven())
+            .filter(|f| values.get(f.value).is_final())
         else {
             return;
         };
         for (index, edge) in self.edges.iter_mut().enumerate() {
-            if let Some(value) = frontier.assessment(index, edge.action, values)
+            if let Some(value) = frontier.evaluation(index, edge.action, values)
                 && edge
                     .direct()
                     .is_none_or(|old| dominates(value, values.get(old)))
@@ -192,44 +183,81 @@ impl Node {
         }
     }
 }
-/// 旧ファイルの採用規則を復元・比較するための区別。
-/// 現在の編集・生成は常にBookを使い、公開の切替設定はない。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u8)]
-pub(super) enum PropagationPolicy {
-    /// Use a child backup only when it dominates the direct search quality.
-    #[default]
-    Quality,
-    /// Prefer a value-covered child backup, preserving proven direct points.
-    Book,
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ValueSource {
+pub enum SelectedFrom {
     Direct,
     Manual,
-    Propagated,
-    Frontier,
-    Certificate,
+    Child,
+    Search,
+    FinalScore,
 }
 /// All values use the input parent's perspective, including `propagated`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CandidateEvidence {
+pub struct MoveValues {
     /// 登録した子に残る最終石差の情報を、親の手番へ変換したもの。
-    pub propagated_certificate: Option<Assessment>,
+    pub child_final_score: Option<Evaluation>,
     /// この手について集めた最終石差の上下限の共通範囲。手動値とは独立。
-    pub certificate: Option<Assessment>,
+    pub final_score: Option<Evaluation>,
     pub registered: bool,
     /// この手を独立に評価した記録。子の値に採用が切り替わっても保持する。
-    pub direct: Option<Assessment>,
+    pub direct: Option<Evaluation>,
     /// Retained even when its identity is no longer active.
-    pub manual: Option<Assessment>,
+    pub manual: Option<Evaluation>,
     /// 登録した子の現在値を、親の手番へ変換したもの。
-    pub propagated: Option<Assessment>,
+    pub child: Option<Evaluation>,
     /// 集合探索から得る、この手の点評価または上限。
-    pub frontier: Option<Assessment>,
-    /// 上記から現在採用する値。sourceがその選択元を示す。
-    pub effective: Option<Assessment>,
-    pub source: Option<ValueSource>,
+    pub move_search: Option<Evaluation>,
+    /// 上記から現在採用する値。selected_fromがその選択元を示す。
+    pub selected: Option<Evaluation>,
+    pub selected_from: Option<SelectedFrom>,
+}
+impl MoveValues {
+    /// 登録関係の取得と、どの値を選ぶかを分ける。ここでは値だけを比べる。
+    fn choose(
+        &self,
+        identity: AnalysisIdentity,
+        search_maximum: Option<Evaluation>,
+    ) -> (Option<Evaluation>, Option<SelectedFrom>) {
+        if let Some(v) = self.manual.filter(|v| v.identity() == identity) {
+            return (Some(v), Some(SelectedFrom::Manual));
+        }
+        if let Some(v) = self.final_score {
+            return (Some(v), Some(SelectedFrom::FinalScore));
+        }
+        let (selected, from) = match (self.direct, self.child) {
+            (Some(v), _) if v.is_solved() => (Some(v), Some(SelectedFrom::Direct)),
+            (Some(direct), Some(child)) if !direct.is_final() || child.is_final() => {
+                (Some(child), Some(SelectedFrom::Child))
+            }
+            (Some(v), _) => (Some(v), Some(SelectedFrom::Direct)),
+            (None, Some(v)) => (Some(v), Some(SelectedFrom::Child)),
+            (None, None) => (None, None),
+        };
+        let Some(searched) = self.move_search else {
+            return (selected, from);
+        };
+        // 子を育てた値は、深い集合探索の推定に戻さない。確定した石差の情報は別。
+        if from == Some(SelectedFrom::Child) && !searched.is_final() {
+            return (selected, from);
+        }
+        let use_search = selected.is_none_or(|v| {
+            if v.is_solved() {
+                return false;
+            }
+            if v.is_final() {
+                return searched.is_final()
+                    && (dominates(searched, v)
+                        || searched.bound() == Bound::Upper && v.bound() == Bound::Lower);
+            }
+            // 他の手の上限にも、同じ探索の完了条件を使う。
+            search_maximum.is_some_and(|maximum| dominates(maximum, v))
+        });
+        if use_search && selected != Some(searched) {
+            (Some(searched), Some(SelectedFrom::Search))
+        } else {
+            (selected, from)
+        }
+    }
 }
 pub(super) struct EditCheckpoint {
     key: Key,
@@ -256,8 +284,6 @@ pub struct BookEditor {
     pub(super) catalog: catalog::Catalog,
     pub(super) values: ValueStore,
     pub(super) active_run: Option<u32>,
-    pub(super) pending_count: usize,
-    pub(super) propagation: PropagationPolicy,
     pub(super) producer: String,
     pub(super) extensions: Vec<Extension>,
     pub(super) nodes: BTreeMap<Key, Node>,
@@ -275,8 +301,6 @@ impl BookEditor {
             catalog: catalog::Catalog::default(),
             values: ValueStore::default(),
             active_run: None,
-            pending_count: 0,
-            propagation: PropagationPolicy::Book,
             producer: format!(
                 "deft_reversi_book/{};search-revision/{}",
                 env!("CARGO_PKG_VERSION"),
@@ -300,7 +324,6 @@ impl BookEditor {
     /// The old file is not changed until the caller explicitly saves.
     pub fn retarget(&mut self, engine: &Engine) -> Result<()> {
         let identity = analysis_identity(engine)?;
-        self.normalize_if_pending()?;
         if identity == self.identity {
             return Ok(());
         }
@@ -310,15 +333,15 @@ impl BookEditor {
         self.generation = None;
         for n in self.nodes.values_mut() {
             for e in &mut n.edges {
-                if e.direct().is_some_and(|v| !self.values.get(v).proven()) {
+                if e.direct().is_some_and(|v| !self.values.get(v).is_final()) {
                     e.set_direct(None);
                 }
             }
-            n.pending = None;
-            n.frontier = n
-                .frontier
+
+            n.move_search = n
+                .move_search
                 .take()
-                .filter(|f| self.values.get(f.value).proven());
+                .filter(|f| self.values.get(f.value).is_final());
             n.completed_stages = 0;
             n.revision = self.revision;
         }
@@ -364,53 +387,6 @@ impl BookEditor {
                 Err(error)
             }
         }
-    }
-    pub(super) fn normalize_if_pending(&mut self) -> Result<()> {
-        if self.pending_count != 0 {
-            self.normalize_pending()?;
-        }
-        Ok(())
-    }
-    pub(super) fn normalize_pending(&mut self) -> Result<()> {
-        let keys: Vec<_> = self
-            .nodes
-            .iter()
-            .filter(|(_, n)| n.pending.is_some())
-            .map(|(&k, _)| k)
-            .collect();
-        self.pending_count = keys.len();
-        let mut affected = BTreeSet::new();
-        for key in keys {
-            let old = self.checkpoint(key);
-            self.bump()?;
-            let pending = self.nodes.get_mut(&key).unwrap().pending.take().unwrap();
-            let node = self.nodes.get_mut(&key).unwrap();
-            node.preserve_frontier_proofs(&mut self.values);
-            for (edge, value) in node.edges.iter_mut().zip(pending.values) {
-                if let Some(value_id) = value {
-                    let value = self.values.get(value_id);
-                    if value.origin() == ValueOrigin::Manual {
-                        if edge.manual().is_none() {
-                            edge.set_manual(Some(self.values.intern(value)));
-                        }
-                    } else if edge.direct().is_none_or(|old| {
-                        dominates(value, self.values.get(old))
-                            || value.proven() && self.values.get(old).proven()
-                    }) {
-                        edge.set_direct(Some(self.values.intern(value)));
-                    }
-                }
-            }
-            node.revision = self.revision;
-            node.frontier = node
-                .frontier
-                .take()
-                .filter(|f| self.values.get(f.value).proven());
-            affected.extend(self.commit_checkpoint(old)?);
-            self.pending_count -= 1;
-        }
-        self.reschedule_edit(&affected.into_iter().collect::<Vec<_>>());
-        Ok(())
     }
     pub fn analysis_profiles(&self) -> impl Iterator<Item = &AnalysisProfile> {
         self.catalog.profiles.values()
@@ -461,11 +437,11 @@ impl BookEditor {
         };
         for n in self.nodes.values_mut() {
             n.value = n.value.map(&mut move_id);
-            n.proof = n.proof.map(&mut move_id);
-            for v in &mut n.backups {
+            n.final_score = n.final_score.map(&mut move_id);
+            for v in &mut n.values_for_parent {
                 *v = v.map(&mut move_id);
             }
-            if let Some(v) = &mut n.proof_backups {
+            if let Some(v) = &mut n.final_score_for_parent {
                 for id in v.iter_mut() {
                     *id = move_id(*id);
                 }
@@ -473,21 +449,15 @@ impl BookEditor {
             for e in &mut n.edges {
                 e.set_direct(e.direct().map(&mut move_id));
                 e.set_manual(e.manual().map(&mut move_id));
-                e.set_certificate(e.certificate().map(&mut move_id));
+                e.set_final_score(e.final_score().map(&mut move_id));
             }
-            if let Some(f) = &mut n.frontier {
+            if let Some(f) = &mut n.move_search {
                 f.value = move_id(f.value);
                 f.point = move_id(f.point);
                 f.upper = move_id(f.upper);
             }
-            if let Some(p) = &mut n.pending {
-                for v in &mut p.values {
-                    *v = v.map(&mut move_id);
-                }
-            }
         }
         self.values = replacement;
-        self.catalog.derivations.clear();
         Ok(())
     }
     pub fn migration_report(&self) -> Option<MigrationReport> {
@@ -545,7 +515,7 @@ impl BookEditor {
             })
             .collect();
         self.workspace_bytes += if board.is_terminal() {
-            proof_cache_bytes()
+            final_score_cache_bytes()
         } else {
             0
         };
@@ -570,13 +540,12 @@ impl BookEditor {
                 notes_bytes: 0,
                 edges,
                 value: terminal,
-                proof: terminal,
-                proof_backups: terminal_backups.map(Box::new),
+                final_score: terminal,
+                final_score_for_parent: terminal_backups.map(Box::new),
                 complete: board.is_terminal(),
-                backups: terminal_backups.map_or([None; 2], |v| [Some(v[0]), Some(v[1])]),
+                values_for_parent: terminal_backups.map_or([None; 2], |v| [Some(v[0]), Some(v[1])]),
                 completed_stages: 0,
-                pending: None,
-                frontier: None,
+                move_search: None,
             },
         );
         Ok(true)
@@ -594,7 +563,6 @@ impl BookEditor {
         board
             .play(action)
             .map_err(|_| invalid("illegal registered move"))?;
-        self.normalize_if_pending()?;
         let (key, t) = Key::new(board);
         self.ensure(key)?;
         let action = t.action(action);
@@ -620,7 +588,7 @@ impl BookEditor {
             let node = self.nodes.get_mut(&key).unwrap();
             node.edges[idx].registered = true;
             node.revision = self.revision;
-            node.pending = None;
+
             self.registered_links += 1;
             let parents = self.parents.entry(child).or_default();
             if !parents.contains(&key) {
@@ -648,9 +616,9 @@ impl BookEditor {
         &mut self,
         board: Board,
         action: Action,
-        value: Assessment,
+        value: Evaluation,
     ) -> Result<()> {
-        if matches!(value.analysis(), ValueAnalysis::Manual { .. }) {
+        if matches!(value.source(), EvaluationSource::Manual { .. }) {
             return Err(invalid("use record_manual for manual values"));
         }
         self.record_value(board, action, value)
@@ -660,34 +628,24 @@ impl BookEditor {
         &mut self,
         board: Board,
         action: Action,
-        value: ImportedValue,
+        value: legacy::ImportedValue,
     ) -> Result<()> {
-        let value = Assessment::import(value)?;
-        if matches!(value.analysis(), ValueAnalysis::Manual { .. }) {
+        let value = Evaluation::import(value)?;
+        if matches!(value.source(), EvaluationSource::Manual { .. }) {
             self.record_manual(board, action, value)
         } else {
             self.record_candidate(board, action, value)
         }
     }
-    pub fn record_manual(&mut self, board: Board, action: Action, value: Assessment) -> Result<()> {
-        if !matches!(value.analysis(), ValueAnalysis::Manual { .. }) || value.proven() {
+    pub fn record_manual(&mut self, board: Board, action: Action, value: Evaluation) -> Result<()> {
+        if !matches!(value.source(), EvaluationSource::Manual { .. }) || value.is_final() {
             return Err(invalid("manual estimate required"));
         }
         self.record_value(board, action, value)
     }
     /// 手動の点評価を設定する。深さ0は表示用で、探索を完了したという申告ではない。
     pub fn set_manual(&mut self, board: Board, action: Action, score: i16) -> Result<()> {
-        let value = Assessment::new(
-            ValueClaim::Estimate {
-                score,
-                bound: EstimateBound::Point,
-            },
-            ValueAnalysis::Manual {
-                depth: 0,
-                selectivity: Selectivity::Full,
-            },
-            self.identity,
-        )?;
+        let value = Evaluation::manual(score, self.identity)?;
         self.record_manual(board, action, value)
     }
     /// Publish a completed root search, preserving its actual subject and result.
@@ -700,12 +658,11 @@ impl BookEditor {
         result: &deft_reversi_engine::SearchResult,
     ) -> Result<()> {
         let value =
-            Assessment::from_search_result(board, requested, planned, result, self.identity)?;
+            Evaluation::from_search_result(board, requested, planned, result, self.identity)?;
         if board.is_terminal() {
             self.ensure(Key::new(board).0)?;
             return Ok(());
         }
-        self.normalize_if_pending()?;
         let key = Key::new(board).0;
         self.ensure(key)?;
         let best = result
@@ -720,36 +677,35 @@ impl BookEditor {
                 Action::Pass => true,
             })
             .fold(0, |m, (i, _)| m | (1u64 << i));
-        let frontier = Frontier::new(mask, best, value, result.pv.clone(), &mut self.values)?;
+        let frontier = MoveSearch::new(mask, best, value, result.pv.clone(), &mut self.values)?;
         let old = self.checkpoint(key);
         self.bump()?;
         let node = self.nodes.get_mut(&key).unwrap();
-        node.preserve_frontier_proofs(&mut self.values);
+        node.preserve_search_final_scores(&mut self.values);
         let edge = node
             .edges
             .iter_mut()
             .find(|e| e.action == best)
             .ok_or_else(|| invalid("search move"))?;
         edge.set_direct(Some(frontier.point));
-        node.frontier = Some(frontier);
-        node.pending = None;
+        node.move_search = Some(frontier);
+
         node.revision = self.revision;
         let affected = self.commit_checkpoint(old)?;
         self.reschedule_edit(&affected);
         Ok(())
     }
-    fn record_value(&mut self, board: Board, action: Action, value: Assessment) -> Result<()> {
+    fn record_value(&mut self, board: Board, action: Action, value: Evaluation) -> Result<()> {
         board
             .play(action)
             .map_err(|_| invalid("illegal candidate"))?;
         value.validate_at(board)?;
-        if !value.proven() && value.identity() != self.identity {
+        if !value.is_final() && value.identity() != self.identity {
             return Err(invalid("analysis identity mismatch"));
         }
         let (key, t) = Key::new(board);
         let action = t.action(action);
         value.validate_candidate(key, action)?;
-        self.normalize_if_pending()?;
         self.ensure(key)?;
         let idx = self.nodes[&key]
             .edges
@@ -759,27 +715,27 @@ impl BookEditor {
         let node = &self.nodes[&key];
         if let (Some(a), Some(b)) = (
             node.edges[idx]
-                .certificate()
-                .and_then(|v| self.values.get(v).claim().certificate()),
-            value.claim().certificate(),
+                .final_score()
+                .and_then(|v| self.values.get(v).result().final_bounds()),
+            value.result().final_bounds(),
         ) {
             a.intersect(b)?;
         }
         let mut previous = self.values.opt(node.edges[idx].direct());
-        if let Some(proof) = node
-            .frontier
+        if let Some(final_score) = node
+            .move_search
             .as_ref()
-            .and_then(|f| f.assessment(idx, action, &self.values))
-            .filter(|v| v.proven())
-            && previous.is_none_or(|old| dominates(proof, old))
+            .and_then(|f| f.evaluation(idx, action, &self.values))
+            .filter(|v| v.is_final())
+            && previous.is_none_or(|old| dominates(final_score, old))
         {
-            previous = Some(proof);
+            previous = Some(final_score);
         }
-        if let Some(old) = previous.filter(|_| value.origin() != ValueOrigin::Manual) {
-            if old.quality().solved && value.quality().solved && old.score() != value.score() {
+        if let Some(old) = previous.filter(|_| !value.is_manual()) {
+            if old.is_solved() && value.is_solved() && old.score() != value.score() {
                 return Err(invalid("conflicting solved values"));
             }
-            if !dominates(value, old) && !(old.proven() && value.proven()) {
+            if !dominates(value, old) && !(old.is_final() && value.is_final()) {
                 return Err(invalid("incomparable or weaker candidate analysis"));
             }
         }
@@ -787,17 +743,17 @@ impl BookEditor {
         self.bump()?;
 
         let n = self.nodes.get_mut(&key).unwrap();
-        n.preserve_frontier_proofs(&mut self.values);
-        if value.origin() == ValueOrigin::Manual {
+        n.preserve_search_final_scores(&mut self.values);
+        if value.is_manual() {
             n.edges[idx].set_manual(Some(self.values.intern(value)));
         } else {
             n.edges[idx].set_direct(Some(self.values.intern(value)));
         }
-        n.pending = None;
-        n.frontier = n
-            .frontier
+
+        n.move_search = n
+            .move_search
             .take()
-            .filter(|f| self.values.get(f.value).proven());
+            .filter(|f| self.values.get(f.value).is_final());
         n.revision = self.revision;
         let affected = self.commit_checkpoint(old)?;
         self.reschedule_edit(&affected);
@@ -818,13 +774,12 @@ impl BookEditor {
         if n.edges[index].manual().is_none() {
             return Ok(());
         }
-        self.normalize_if_pending()?;
         let old = self.checkpoint(key);
         self.bump()?;
         let n = self.nodes.get_mut(&key).unwrap();
         n.edges[index].set_manual(None);
         n.revision = self.revision;
-        n.pending = None;
+
         let affected = self.commit_checkpoint(old)?;
         self.reschedule_edit(&affected);
         Ok(())
@@ -842,18 +797,17 @@ impl BookEditor {
             .iter()
             .position(|e| e.action == a)
             .ok_or_else(|| invalid("illegal move"))?;
-        self.normalize_if_pending()?;
         let old = self.checkpoint(key);
         self.bump()?;
         let n = self.nodes.get_mut(&key).unwrap();
-        n.preserve_frontier_proofs(&mut self.values);
+        n.preserve_search_final_scores(&mut self.values);
         n.edges[idx].registered = false;
         n.revision = self.revision;
-        n.pending = None;
-        n.frontier = n
-            .frontier
+
+        n.move_search = n
+            .move_search
             .take()
-            .filter(|f| self.values.get(f.value).proven());
+            .filter(|f| self.values.get(f.value).is_final());
         self.rebuild_parents();
         self.commit_checkpoint(old)?;
         if let Some(g) = self.generation.take() {
@@ -869,7 +823,7 @@ impl BookEditor {
         }
         Ok(())
     }
-    pub fn candidate_evidence(&self, board: Board, action: Action) -> Option<CandidateEvidence> {
+    pub fn move_values(&self, board: Board, action: Action) -> Option<MoveValues> {
         let (key, transform) = Key::new(board);
         let action = transform.action(action);
         self.nodes
@@ -877,23 +831,23 @@ impl BookEditor {
             .edges
             .iter()
             .find(|e| e.action == action)
-            .map(|e| self.evidence(key, e))
+            .map(|e| self.move_values_at(key, e))
     }
     // 採用順序の中心。手動値→確定した直接値→登録した子の値→直接値を基本とし、
     // その後に集合探索の結果と最終石差の共通範囲を確認する。
     // 子の推定値を、単に深さが大きいという理由で直接推定値へ戻さない。
     // 詳しい例と例外はdocs/book-v2/propagation.mdを参照。
-    pub(super) fn evidence(&self, key: Key, edge: &Edge) -> CandidateEvidence {
+    pub(super) fn move_values_at(&self, key: Key, edge: &Edge) -> MoveValues {
         let propagated_id = if edge.registered {
-            self.nodes
-                .get(&edge.child)
-                .and_then(|n| n.backups[usize::from(matches!(edge.action, Action::Place(_)))])
+            self.nodes.get(&edge.child).and_then(|n| {
+                n.values_for_parent[usize::from(matches!(edge.action, Action::Place(_)))]
+            })
         } else {
             None
         };
-        let propagated_certificate_id = if edge.registered {
+        let child_final_score_id = if edge.registered {
             self.nodes.get(&edge.child).and_then(|n| {
-                n.proof_backups
+                n.final_score_for_parent
                     .as_ref()
                     .map(|values| values[usize::from(matches!(edge.action, Action::Place(_)))])
             })
@@ -901,100 +855,55 @@ impl BookEditor {
             None
         };
         let propagated = self.values.opt(propagated_id);
-        let propagated_certificate = self.values.opt(propagated_certificate_id);
-        let frontier = self.nodes[&key].frontier.as_ref().and_then(|f| {
+        let child_final_score = self.values.opt(child_final_score_id);
+        let frontier = self.nodes[&key].move_search.as_ref().and_then(|f| {
             let index = self.nodes[&key]
                 .edges
                 .iter()
                 .position(|e| e.action == edge.action)?;
-            f.assessment(index, edge.action, &self.values)
+            f.evaluation(index, edge.action, &self.values)
         });
-        let (mut effective, mut source) = if let Some(v) = self
-            .values
-            .opt(edge.manual())
-            .filter(|v| v.identity() == self.identity)
-        {
-            (Some(v), Some(ValueSource::Manual))
-        } else {
-            match (self.values.opt(edge.direct()), propagated) {
-                (Some(d), _) if d.quality().solved => (Some(d), Some(ValueSource::Direct)),
-                (Some(d), Some(p)) if (!d.proven() || p.proven()) => {
-                    (Some(p), Some(ValueSource::Propagated))
-                }
-                (Some(d), _) => (Some(d), Some(ValueSource::Direct)),
-                (None, Some(p)) => (Some(p), Some(ValueSource::Propagated)),
-                (None, None) => (None, None),
-            }
-        };
-        if self.values.opt(edge.manual()).is_none_or(|v| v.identity() != self.identity)
-            && let Some(f) = frontier
-            // Book deliberately prefers even a shallower child backup. Only
-            // certificates may override that choice, not estimated aggregates.
-            && !(source == Some(ValueSource::Propagated)
-                && !f.proven())
-            && effective.is_none_or(|d| {
-                if d.quality().solved {
-                    return false;
-                }
-                if d.proven() {
-                    // Retain independent bounds as evidence, while using a
-                    // tighter certified upper to cover the maximum. An upper
-                    // complements a certified lower without erasing it.
-                    f.proven()
-                        && (dominates(f, d)
-                            || (f.bound() == Bound::ProvenUpper && d.bound() == Bound::ProvenLower))
-                } else {
-                    dominates(self.values.get(self.nodes[&key].frontier.as_ref().unwrap().value), d)
-                }
-            })
-        {
-            // A newer search of this subset supersedes old non-proven points
-            // inside it, but its non-best moves receive upper bounds only.
-            if frontier != effective {
-                effective = Some(f);
-                source = Some(ValueSource::Frontier);
-            }
-        }
-        if self
-            .values
-            .opt(edge.manual())
-            .is_none_or(|v| v.identity() != self.identity)
-            && let Some(c) = self.values.opt(edge.certificate())
-        {
-            effective = Some(c);
-            source = Some(ValueSource::Certificate);
-        }
-        CandidateEvidence {
-            propagated_certificate,
-            certificate: self.values.opt(edge.certificate()),
-            frontier,
+        let mut values = MoveValues {
+            child_final_score,
+            final_score: self.values.opt(edge.final_score()),
+            move_search: frontier,
             registered: edge.registered,
             direct: self.values.opt(edge.direct()),
             manual: self.values.opt(edge.manual()),
-            propagated,
-            effective,
-            source,
-        }
+            child: propagated,
+            selected: None,
+            selected_from: None,
+        };
+        let maximum = self.nodes[&key]
+            .move_search
+            .as_ref()
+            .map(|s| self.values.get(s.value));
+        (values.selected, values.selected_from) = values.choose(self.identity, maximum);
+        values
     }
-    pub(super) fn effective(&self, key: Key, edge: &Edge) -> Option<Assessment> {
-        self.evidence(key, edge).effective
+    pub(super) fn selected(&self, key: Key, edge: &Edge) -> Option<Evaluation> {
+        self.move_values_at(key, edge).selected
     }
-    fn calculate(&mut self, key: Key) -> (Option<Assessment>, bool) {
+    fn calculate(&mut self, key: Key) -> (Option<Evaluation>, bool) {
         let n = &self.nodes[&key];
         if n.edges.is_empty() {
             return (Some(terminal_value(key.board())), true);
         }
-        let inputs: Vec<_> = n.edges.iter().map(|e| self.effective(key, e)).collect();
+        let inputs: Vec<_> = n.edges.iter().map(|e| self.selected(key, e)).collect();
         self.calculate_inputs(key, inputs)
     }
-    fn calculate_proof(&mut self, key: Key, effective: Option<Assessment>) -> Option<Assessment> {
+    fn calculate_final_score(
+        &mut self,
+        key: Key,
+        effective: Option<Evaluation>,
+    ) -> Option<Evaluation> {
         if self.nodes[&key].edges.is_empty() {
             return Some(terminal_value(key.board()));
         }
         if self.nodes[&key]
             .edges
             .iter()
-            .any(|e| e.certificate().is_none())
+            .any(|e| e.final_score().is_none())
         {
             return None;
         }
@@ -1008,54 +917,47 @@ impl BookEditor {
         let inputs = self.nodes[&key]
             .edges
             .iter()
-            .map(|e| self.values.opt(e.certificate()))
+            .map(|e| self.values.opt(e.final_score()))
             .collect();
         self.calculate_inputs(key, inputs).0
     }
     fn calculate_inputs(
         &mut self,
         key: Key,
-        inputs: Vec<Option<Assessment>>,
-    ) -> (Option<Assessment>, bool) {
-        combine_values(inputs.iter().copied(), self.identity, key, self.propagation)
+        inputs: Vec<Option<Evaluation>>,
+    ) -> (Option<Evaluation>, bool) {
+        combine_values(inputs.iter().copied(), self.identity, key)
     }
 
     // 独立に得た最終石差の上下限は、採用値から外れても失わない。
     // 全情報の共通範囲を保存し、空になる矛盾は編集エラーとして巻き戻す。
-    fn reconcile_certificates(&mut self, key: Key) -> Result<()> {
+    fn merge_final_scores(&mut self, key: Key) -> Result<()> {
         let mut updates = Vec::new();
         for (i, edge) in self.nodes[&key].edges.iter().enumerate() {
-            let ev = self.evidence(key, edge);
-            let mut certificate = self.values.opt(edge.certificate());
-            for value in [
-                ev.direct,
-                ev.frontier,
-                ev.propagated,
-                ev.propagated_certificate,
-            ]
-            .into_iter()
-            .flatten()
-            .filter(|v| v.proven())
+            let ev = self.move_values_at(key, edge);
+            let mut final_score = self.values.opt(edge.final_score());
+            for value in [ev.direct, ev.move_search, ev.child, ev.child_final_score]
+                .into_iter()
+                .flatten()
+                .filter(|v| v.is_final())
             {
-                certificate = Some(if let Some(old) = certificate {
+                final_score = Some(if let Some(old) = final_score {
                     let interval = old
-                        .claim()
-                        .certificate()
+                        .result()
+                        .final_bounds()
                         .unwrap()
-                        .intersect(value.claim().certificate().unwrap())?;
-                    if Some(interval) == old.claim().certificate() {
+                        .intersect(value.result().final_bounds().unwrap())?;
+                    if Some(interval) == old.result().final_bounds() {
                         old
                     } else {
-                        let mut summary = old.analysis().summary();
-                        summary.include(value.analysis().summary());
-                        Assessment::new(
-                            ValueClaim::Certified(interval),
-                            ValueAnalysis::Derived {
-                                basis: Derivation::Current {
-                                    root: [key.0, key.1],
-                                    subject: CalculationSubject::Candidate(edge.action),
-                                },
-                                summary,
+                        let mut summary = old.conditions();
+                        summary.include(value.conditions());
+                        Evaluation::new(
+                            Score::Final(interval),
+                            EvaluationSource::Move {
+                                root: [key.0, key.1],
+                                action: edge.action,
+                                conditions: summary,
                             },
                             self.identity,
                         )?
@@ -1064,20 +966,19 @@ impl BookEditor {
                     value
                 });
             }
-            updates.push((i, certificate));
+            updates.push((i, final_score));
         }
         for (i, v) in updates {
             let v = self.values.put(v);
-            self.nodes.get_mut(&key).unwrap().edges[i].set_certificate(v);
+            self.nodes.get_mut(&key).unwrap().edges[i].set_final_score(v);
         }
         Ok(())
     }
-    fn reschedule_edit(&mut self, keys: &[Key]) {
+    pub(super) fn reschedule_edit(&mut self, keys: &[Key]) {
         if let Some(g) = &mut self.generation {
             for &key in keys {
                 if let Some(n) = self.nodes.get_mut(&key) {
                     n.completed_stages = 0;
-                    n.pending = None;
                 }
                 for side in [BookSide::Black, BookSide::White] {
                     let c = generate::Context { key, side };
@@ -1101,31 +1002,31 @@ impl BookEditor {
             while let Some((_, _, key)) = todo.pop_first() {
                 rollback.push((key, self.nodes[&key].clone()));
                 affected.push(key);
-                self.reconcile_certificates(key)?;
+                self.merge_final_scores(key)?;
                 let node = self.nodes.get_mut(&key).unwrap();
                 let bytes = node.current_notes_bytes();
                 self.workspace_bytes = self.workspace_bytes - node.notes_bytes + bytes;
                 node.notes_bytes = bytes;
                 let calculated = self.calculate(key);
-                let proof = self.calculate_proof(key, calculated.0);
+                let final_score = self.calculate_final_score(key, calculated.0);
                 let n = self.nodes.get_mut(&key).unwrap();
                 if (self.values.opt(n.value), n.complete) != calculated
-                    || self.values.opt(n.proof) != proof
+                    || self.values.opt(n.final_score) != final_score
                 {
-                    match (n.proof.is_some(), proof.is_some()) {
-                        (false, true) => self.workspace_bytes += proof_cache_bytes(),
-                        (true, false) => self.workspace_bytes -= proof_cache_bytes(),
+                    match (n.final_score.is_some(), final_score.is_some()) {
+                        (false, true) => self.workspace_bytes += final_score_cache_bytes(),
+                        (true, false) => self.workspace_bytes -= final_score_cache_bytes(),
                         _ => {}
                     }
-                    n.proof = self.values.put(proof);
-                    n.proof_backups = proof.map(|v| {
+                    n.final_score = self.values.put(final_score);
+                    n.final_score_for_parent = final_score.map(|v| {
                         Box::new([
                             self.values.intern(v.child_to_parent(false)),
                             self.values.intern(v.child_to_parent(true)),
                         ])
                     });
                     (n.value, n.complete) = (self.values.put(calculated.0), calculated.1);
-                    n.backups = [
+                    n.values_for_parent = [
                         n.value.map(|v| {
                             let v = self.values.get(v);
                             self.values.intern(v.child_to_parent(false))
@@ -1165,28 +1066,28 @@ impl BookEditor {
         let mut keys: Vec<_> = self.nodes.keys().copied().map(order).collect();
         keys.sort_unstable();
         for (_, _, k) in keys {
-            self.reconcile_certificates(k)?;
+            self.merge_final_scores(k)?;
             let node = self.nodes.get_mut(&k).unwrap();
             let bytes = node.current_notes_bytes();
             self.workspace_bytes = self.workspace_bytes - node.notes_bytes + bytes;
             node.notes_bytes = bytes;
             let (v, c) = self.calculate(k);
-            let proof = self.calculate_proof(k, v);
+            let final_score = self.calculate_final_score(k, v);
             let n = self.nodes.get_mut(&k).unwrap();
             n.value = self.values.put(v);
-            match (n.proof.is_some(), proof.is_some()) {
-                (false, true) => self.workspace_bytes += proof_cache_bytes(),
-                (true, false) => self.workspace_bytes -= proof_cache_bytes(),
+            match (n.final_score.is_some(), final_score.is_some()) {
+                (false, true) => self.workspace_bytes += final_score_cache_bytes(),
+                (true, false) => self.workspace_bytes -= final_score_cache_bytes(),
                 _ => {}
             }
-            n.proof = self.values.put(proof);
-            n.proof_backups = proof.map(|v| {
+            n.final_score = self.values.put(final_score);
+            n.final_score_for_parent = final_score.map(|v| {
                 Box::new([
                     self.values.intern(v.child_to_parent(false)),
                     self.values.intern(v.child_to_parent(true)),
                 ])
             });
-            n.backups = [
+            n.values_for_parent = [
                 v.map(|v| self.values.intern(v.child_to_parent(false))),
                 v.map(|v| self.values.intern(v.child_to_parent(true))),
             ];
@@ -1225,15 +1126,15 @@ impl BookEditor {
                 return Err(invalid("candidate set is not canonical legal move list"));
             }
             for e in &n.edges {
-                if let Some(v) = self.values.opt(e.certificate()) {
+                if let Some(v) = self.values.opt(e.final_score()) {
                     v.validate_candidate(key, e.action)?;
-                    if !v.proven() {
-                        return Err(invalid("non-certificate in proof slot"));
+                    if !v.is_final() {
+                        return Err(invalid("non-final_score in final_score slot"));
                     }
                 }
                 if let Some(v) = self.values.opt(e.direct()) {
                     v.validate_candidate(key, e.action)?;
-                    if !v.proven() && v.identity() != self.identity {
+                    if !v.is_final() && v.identity() != self.identity {
                         return Err(invalid("foreign analysis"));
                     }
                 }
@@ -1248,15 +1149,15 @@ impl BookEditor {
             for e in &n.edges {
                 if let Some(v) = self.values.opt(e.manual()) {
                     v.validate_at(board)?;
-                    if v.origin() != ValueOrigin::Manual {
+                    if !v.is_manual() {
                         return Err(invalid("manual provenance"));
                     }
                 }
             }
-            if let Some(f) = &n.frontier {
+            if let Some(f) = &n.move_search {
                 let fv = self.values.get(f.value);
                 fv.validate_at(board)?;
-                if let ValueAnalysis::Search { trace, projection } = fv.analysis() {
+                if let EvaluationSource::Search(trace) = fv.source() {
                     let squares = n
                         .edges
                         .iter()
@@ -1270,8 +1171,7 @@ impl BookEditor {
                             }
                         })
                         .fold(0, |a, b| a | b);
-                    if projection != SearchProjection::Maximum
-                        || trace.root != [key.0, key.1]
+                    if trace.root != [key.0, key.1]
                         || trace.moves != squares
                         || trace.best != action_code(f.best)
                     {
@@ -1286,8 +1186,8 @@ impl BookEditor {
                 if f.mask == 0
                     || f.mask >> n.edges.len() != 0
                     || f.mask & (1u64 << best) == 0
-                    || fv.bound() != Bound::Exact
-                    || (!fv.proven() && fv.identity() != self.identity)
+                    || fv.bound() != Bound::Point
+                    || (!fv.is_final() && fv.identity() != self.identity)
                     || f.pv.len() > 120
                     || (!f.pv.is_empty() && f.pv[0] != f.best)
                 {
@@ -1296,18 +1196,6 @@ impl BookEditor {
                 let mut pv = board;
                 for &a in &f.pv {
                     pv = pv.play(a).map_err(|_| invalid("frontier PV"))?;
-                }
-            }
-            if let Some(p) = &n.pending {
-                if p.values.len() != n.edges.len() || p.revision != n.revision {
-                    return Err(invalid("stale pending stage"));
-                }
-                for id in p.values.iter().flatten() {
-                    let v = self.values.get(*id);
-                    v.validate_at(board)?;
-                    if !v.proven() && v.identity() != self.identity {
-                        return Err(invalid("foreign pending value"));
-                    }
                 }
             }
         }
@@ -1329,39 +1217,39 @@ pub(super) fn order(key: Key) -> (u8, bool, Key) {
     let b = key.board();
     (b.empty_count(), b.must_pass(), key)
 }
-pub(super) fn dominates(new: Assessment, old: Assessment) -> bool {
-    if new.quality().solved {
+pub(super) fn dominates(new: Evaluation, old: Evaluation) -> bool {
+    if new.is_solved() {
         return true;
     }
-    if old.quality().solved {
+    if old.is_solved() {
         return false;
     }
-    if old.proven() {
-        return new.proven()
+    if old.is_final() {
+        return new.is_final()
             && match (new.bound(), old.bound()) {
-                (Bound::ProvenUpper, Bound::ProvenUpper) => new.score() <= old.score(),
-                (Bound::ProvenLower, Bound::ProvenLower) => new.score() >= old.score(),
+                (Bound::Upper, Bound::Upper) => new.score() <= old.score(),
+                (Bound::Lower, Bound::Lower) => new.score() >= old.score(),
                 _ => false,
             };
     }
-    if new.proven() {
+    if new.is_final() {
         return true;
     }
-    if new.identity() != old.identity() || new.bound() != Bound::Exact {
+    if new.identity() != old.identity() || new.bound() != Bound::Point {
         return false;
     }
-    if old.bound() != Bound::Exact {
+    if old.bound() != Bound::Point {
         return true;
     }
-    let q = old.analysis().summary();
-    if q.families & (QualitySummary::LEGACY | QualitySummary::MANUAL) != 0 {
+    let q = old.conditions();
+    if q.has_imported() || q.has_manual() {
         // Compatibility selection retains the recorded requirements. It does
         // not reclassify the old evidence into a guessed search kind.
-        return (new.quality().depth >= old.quality().depth
+        return (new.depth() >= old.depth()
             || new.meets(SearchKind::Endgame {
-                selectivity: old.quality().selectivity,
+                selectivity: old.selectivity(),
             }))
-            && new.quality().selectivity >= old.quality().selectivity;
+            && new.selectivity() >= old.selectivity();
     }
     (!q.has_midgame()
         || new.meets(SearchKind::Midgame {
@@ -1374,7 +1262,7 @@ pub(super) fn dominates(new: Assessment, old: Assessment) -> bool {
             }))
 }
 
-fn proof_cache_bytes() -> u64 {
+fn final_score_cache_bytes() -> u64 {
     (2 * std::mem::size_of::<ValueId>() + 32) as u64
 }
 
@@ -1439,20 +1327,27 @@ mod shared_storage_tests {
         assert_eq!(
             before
                 .iter()
-                .map(|c| (c.action, c.value, c.certificate))
+                .map(|c| (c.action, c.value, c.final_score))
                 .collect::<Vec<_>>(),
             after
                 .iter()
-                .map(|c| (c.action, c.value, c.certificate))
+                .map(|c| (c.action, c.value, c.final_score))
                 .collect::<Vec<_>>()
         );
         let mut bytes = Vec::new();
-        editor.values.write(&mut bytes).unwrap();
+        crate::legacy::ValueStore::from_values(
+            editor.values.iter().map(crate::legacy::Assessment::from),
+        )
+        .0
+        .write(&mut bytes)
+        .unwrap();
         // Current max/best/upper views share one remaining search after collection.
         let mut trace_count = 0;
         let mut traces = BTreeSet::new();
         for v in editor.values.iter() {
-            if let ValueAnalysis::Search { trace, .. } = v.analysis() {
+            if let EvaluationSource::Search(trace) | EvaluationSource::SearchMove(trace) =
+                v.source()
+            {
                 trace_count += 1;
                 traces.insert(trace);
             }

@@ -7,9 +7,11 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QualityBucket {
-    pub quality: AnalysisQuality,
+    pub depth: u8,
+    pub selectivity: Selectivity,
+    pub solved: bool,
     pub candidates: u64,
-    pub frontier_candidates: u64,
+    pub unregistered_candidates: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValueKindBucket {
@@ -28,18 +30,16 @@ pub struct WorkspaceStats {
     pub leaf_positions: u64,
     pub registered_moves: u64,
     /// Unregistered legal candidates; a terminal position contributes zero.
-    pub frontier_candidates: u64,
+    pub unregistered_candidates: u64,
     /// Candidates without a point value, including known upper/lower bounds.
     pub unknown_candidates: u64,
     pub bounded_candidates: u64,
-    pub unknown_frontier_candidates: u64,
+    pub unknown_unregistered_candidates: u64,
     pub direct_values_used: u64,
-    pub propagated_values_used: u64,
+    pub child_values_used: u64,
     pub manual_values_used: u64,
-    pub frontier_values_used: u64,
+    pub move_search_values_used: u64,
     pub inactive_manual_records: u64,
-    pub pending_candidates: u64,
-    pub pending_positions: u64,
     /// Sum of registered path counts at configured roots, or graph roots when
     /// generation is unconfigured. A leaf contributes one line; shared child
     /// paths are counted once per incoming path. Saturates at u64::MAX.
@@ -49,7 +49,7 @@ pub struct WorkspaceStats {
     pub qualities: Vec<QualityBucket>,
     pub value_kinds: Vec<ValueKindBucket>,
     pub mixed_derivations: u64,
-    pub certificate_values_used: u64,
+    pub final_score_values_used: u64,
 }
 impl BookEditor {
     /// Traverses the graph without searching. Allocates O(positions) temporary
@@ -70,8 +70,8 @@ impl BookEditor {
             result.complete_positions += u64::from(node.complete);
             result.solved_positions += u64::from(
                 self.values
-                    .opt(node.proof)
-                    .is_some_and(|v| v.quality().solved),
+                    .opt(node.final_score)
+                    .is_some_and(|v| v.is_solved()),
             );
             let mut count = 0u64;
             let mut linked = false;
@@ -82,54 +82,44 @@ impl BookEditor {
                     let child = e.child;
                     count = add_lines(count, lines[&child], &mut result.lines_saturated);
                 } else {
-                    result.frontier_candidates += 1;
+                    result.unregistered_candidates += 1;
                 }
-                let evidence = self.evidence(key, e);
+                let evidence = self.move_values_at(key, e);
                 result.inactive_manual_records += u64::from(
                     self.values
                         .opt(e.manual())
                         .is_some_and(|v| v.identity() != self.identity),
                 );
-                match evidence.source {
-                    Some(ValueSource::Direct) => result.direct_values_used += 1,
-                    Some(ValueSource::Propagated) => result.propagated_values_used += 1,
-                    Some(ValueSource::Manual) => result.manual_values_used += 1,
-                    Some(ValueSource::Certificate) => result.certificate_values_used += 1,
-                    Some(ValueSource::Frontier) => result.frontier_values_used += 1,
+                match evidence.selected_from {
+                    Some(SelectedFrom::Direct) => result.direct_values_used += 1,
+                    Some(SelectedFrom::Child) => result.child_values_used += 1,
+                    Some(SelectedFrom::Manual) => result.manual_values_used += 1,
+                    Some(SelectedFrom::FinalScore) => result.final_score_values_used += 1,
+                    Some(SelectedFrom::Search) => result.move_search_values_used += 1,
                     None => {}
                 }
-                if let Some(v) = evidence.effective {
-                    let count = kinds.entry(v.analysis().category()).or_default();
-                    if v.bound() == Bound::Exact {
+                if let Some(v) = evidence.selected {
+                    let count = kinds.entry(v.source().category()).or_default();
+                    if v.bound() == Bound::Point {
                         count.0 += 1;
                     } else {
                         count.1 += 1;
                     }
-                    let q = v.analysis().summary();
-                    result.mixed_derivations += u64::from(
-                        matches!(v.analysis(), ValueAnalysis::Derived { .. })
-                            && q.has_midgame()
-                            && q.has_endgame(),
-                    );
+                    let q = v.conditions();
+                    result.mixed_derivations +=
+                        u64::from(v.is_calculated() && q.has_midgame() && q.has_endgame());
                 }
-                result.bounded_candidates += u64::from(
-                    evidence
-                        .effective
-                        .is_some_and(|v| v.bound() != Bound::Exact),
-                );
-                if let Some(v) = evidence.effective.filter(|v| v.bound() == Bound::Exact) {
+                result.bounded_candidates +=
+                    u64::from(evidence.selected.is_some_and(|v| v.bound() != Bound::Point));
+                if let Some(v) = evidence.selected.filter(|v| v.bound() == Bound::Point) {
                     let entry = qualities
-                        .entry((
-                            v.quality().depth,
-                            v.quality().selectivity as u8,
-                            v.quality().solved,
-                        ))
+                        .entry((v.depth(), v.selectivity() as u8, v.is_solved()))
                         .or_default();
                     entry.0 += 1;
                     entry.1 += u64::from(!e.registered);
                 } else {
                     result.unknown_candidates += 1;
-                    result.unknown_frontier_candidates += u64::from(!e.registered);
+                    result.unknown_unregistered_candidates += u64::from(!e.registered);
                 }
             }
             if !linked {
@@ -137,10 +127,6 @@ impl BookEditor {
                 result.leaf_positions += 1;
             }
             lines.insert(key, count);
-            if let Some(p) = &node.pending {
-                result.pending_positions += 1;
-                result.pending_candidates += p.values.iter().filter(|v| v.is_some()).count() as u64;
-            }
         }
         if let Some(generation) = &self.generation {
             for root in &generation.roots {
@@ -169,14 +155,12 @@ impl BookEditor {
         result.qualities = qualities
             .into_iter()
             .map(
-                |((depth, sel, solved), (candidates, frontier_candidates))| QualityBucket {
-                    quality: AnalysisQuality {
-                        depth,
-                        selectivity: selectivity(sel).unwrap(),
-                        solved,
-                    },
+                |((depth, sel, solved), (candidates, unregistered_candidates))| QualityBucket {
+                    depth,
+                    selectivity: selectivity(sel).unwrap(),
+                    solved,
                     candidates,
-                    frontier_candidates,
+                    unregistered_candidates,
                 },
             )
             .collect();

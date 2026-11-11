@@ -1,4 +1,4 @@
-use deft_reversi_book::ImportedValue;
+use deft_reversi_book::legacy::{self, AnalysisQuality, ImportedValue, ValueOrigin};
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{
@@ -65,20 +65,20 @@ fn brute(b: Board) -> i16 {
 }
 fn compat_policy() -> UsePolicy {
     UsePolicy {
-        legacy: LegacyPolicy::RecordedQuality,
+        allow_imported: true,
         allow_manual: true,
         ..UsePolicy::default()
     }
 }
-fn estimate(identity: AnalysisIdentity, score: i16) -> Assessment {
-    Assessment::import(ImportedValue {
+fn estimate(identity: AnalysisIdentity, score: i16) -> Evaluation {
+    Evaluation::import(ImportedValue {
         score,
         quality: AnalysisQuality {
             depth: 12,
             selectivity: Selectivity::Percent95,
             solved: false,
         },
-        bound: Bound::Exact,
+        bound: legacy::Bound::Exact,
         identity,
         origin: ValueOrigin::Search,
     })
@@ -86,7 +86,7 @@ fn estimate(identity: AnalysisIdentity, score: i16) -> Assessment {
 }
 fn config(depth: u8, plies: u8) -> GenerationConfig {
     GenerationConfig {
-        legacy: LegacyPolicy::RecordedQuality,
+        allow_imported: true,
         analysis: AnalysisSchedule::Stages(vec![Stage {
             depth,
             selectivity: Selectivity::Full,
@@ -164,8 +164,8 @@ fn unknown_frontier_bounds_and_model_mismatch_are_not_played() {
     .unwrap();
     assert!(p.choose(b).is_none());
     ed.register_move(b, a).unwrap();
-    let mut upper = estimate(id, 5).as_imported();
-    upper.bound = Bound::Upper;
+    let mut upper = ImportedValue::from(estimate(id, 5));
+    upper.bound = legacy::Bound::Upper;
     let mut bounded = BookEditor::new(id);
     bounded.register_move(b, a).unwrap();
     bounded.record_imported(b, a, upper).unwrap();
@@ -263,11 +263,11 @@ fn small_solved_book_matches_exhaustive_and_survives_model_change() {
     let view = book.probe(b).unwrap();
     assert!(view.all_moves_evaluated());
     assert_eq!(view.value().unwrap().score(), brute(b));
-    assert!(view.value().unwrap().quality().solved);
+    assert!(view.value().unwrap().is_solved());
     for c in view.candidates() {
         assert_eq!(c.value.unwrap().score(), -brute(b.play(c.action).unwrap()));
     }
-    // Fixed-depth Bound::Exact was not enough; these candidates are terminal proofs.
+    // Fixed-depth Bound::Point was not enough; these candidates are terminal proofs.
     let mut other = engine();
     other.set_probcut_rules(vec![]).unwrap();
     let mut p = BookPlayer::new(&other, Some(Arc::new(book)), compat_policy(), 1).unwrap();
@@ -591,7 +591,7 @@ fn manual_evidence_is_separate_and_not_overwritten_by_generation() {
     let a = actions(b)[0];
     let mut e = BookEditor::for_engine(&eng).unwrap();
     e.register_move(b, a).unwrap();
-    let mut manual = estimate(e.identity(), 42).as_imported();
+    let mut manual = ImportedValue::from(estimate(e.identity(), 42));
     manual.origin = ValueOrigin::Manual;
     e.record_imported(b, a, manual).unwrap();
     e.configure_generation(&[b], config(2, 1)).unwrap();
@@ -604,7 +604,7 @@ fn manual_evidence_is_separate_and_not_overwritten_by_generation() {
             .find(|c| c.action == a)
             .unwrap()
             .value,
-        Some(Assessment::import(manual).unwrap())
+        Some(Evaluation::import(manual).unwrap())
     );
     let temp = Temp::new();
     e.save(temp.file("manual")).unwrap();
@@ -619,7 +619,7 @@ fn manual_evidence_is_separate_and_not_overwritten_by_generation() {
             .find(|c| c.action == a)
             .unwrap()
             .value,
-        Some(Assessment::import(manual).unwrap())
+        Some(Evaluation::import(manual).unwrap())
     );
 }
 #[test]
@@ -636,12 +636,12 @@ fn stage_upgrade_and_explicit_reanalysis_keep_completed_quality() {
     let r = e.generate(&mut eng, budget(), StopHandle::new()).unwrap();
     assert_eq!(r.reason, GenerationStop::Exhausted);
     assert!(
-        e.export().unwrap().probe(b).unwrap().candidates().all(|c| c
-            .value
+        e.export()
             .unwrap()
-            .quality()
-            .depth
-            >= 4)
+            .probe(b)
+            .unwrap()
+            .candidates()
+            .all(|c| ImportedValue::from(c.value.unwrap()).quality.depth >= 4)
     );
     let mut c = config(2, 1);
     c.reuse_completed = false;
@@ -649,12 +649,12 @@ fn stage_upgrade_and_explicit_reanalysis_keep_completed_quality() {
     let r = e.generate(&mut eng, budget(), StopHandle::new()).unwrap();
     assert!(r.nodes > 0);
     assert!(
-        e.export().unwrap().probe(b).unwrap().candidates().all(|c| c
-            .value
+        e.export()
             .unwrap()
-            .quality()
-            .depth
-            >= 4)
+            .probe(b)
+            .unwrap()
+            .candidates()
+            .all(|c| ImportedValue::from(c.value.unwrap()).quality.depth >= 4)
     );
 }
 #[test]
@@ -749,7 +749,7 @@ fn an_inactive_registered_branch_is_skipped_and_can_reactivate() {
     let mut e = BookEditor::for_engine(&eng).unwrap();
     for (i, &a) in aa.iter().enumerate() {
         e.register_move(b, a).unwrap();
-        let mut v = estimate(e.identity(), if i == 1 { 10 } else { -10 }).as_imported();
+        let mut v = ImportedValue::from(estimate(e.identity(), if i == 1 { 10 } else { -10 }));
         v.quality.selectivity = Selectivity::Full;
         e.record_imported(b, a, v).unwrap();
     }
@@ -771,7 +771,7 @@ fn an_inactive_registered_branch_is_skipped_and_can_reactivate() {
             .unwrap()
             .all_moves_evaluated()
     );
-    let mut v = estimate(e.identity(), 20).as_imported();
+    let mut v = ImportedValue::from(estimate(e.identity(), 20));
     v.quality.selectivity = Selectivity::Full;
     e.record_imported(b, aa[0], v).unwrap();
     e.generate(&mut eng, budget(), StopHandle::new()).unwrap();
@@ -794,7 +794,7 @@ fn generation_tracks_side_widths_and_persists_contexts_without_duplicate_nodes()
     let prepare = || {
         let mut e = BookEditor::new(id);
         for (i, &a) in moves.iter().enumerate() {
-            let mut v = estimate(id, -(i as i16)).as_imported();
+            let mut v = ImportedValue::from(estimate(id, -(i as i16)));
             v.quality.selectivity = Selectivity::Full;
             e.record_imported(b, a, v).unwrap();
         }
@@ -877,7 +877,7 @@ fn generation_combines_incomparable_depth_and_selectivity_without_losing_progres
     let mut engine = engine();
     let b = position(222, 10);
     let mut ed = BookEditor::for_engine(&engine).unwrap();
-    let mut old = estimate(ed.identity(), 0).as_imported();
+    let mut old = ImportedValue::from(estimate(ed.identity(), 0));
     old.quality.depth = 2;
     old.quality.selectivity = Selectivity::Full;
     for a in actions(b) {
@@ -892,7 +892,7 @@ fn generation_combines_incomparable_depth_and_selectivity_without_losing_progres
     assert_eq!(report.reason, GenerationStop::Exhausted);
     let book = ed.export().unwrap();
     assert!(book.probe(b).unwrap().candidates().all(|c| {
-        let q = c.value.unwrap().quality();
+        let q = ImportedValue::from(c.value.unwrap()).quality;
         q.depth >= 4 && q.selectivity == Selectivity::Full
     }));
     // The converse change (shallower but less selective) must also preserve
@@ -908,7 +908,7 @@ fn generation_combines_incomparable_depth_and_selectivity_without_losing_progres
         .unwrap();
     let book = ed.export().unwrap();
     assert!(book.probe(b).unwrap().candidates().all(|c| {
-        let q = c.value.unwrap().quality();
+        let q = ImportedValue::from(c.value.unwrap()).quality;
         q.depth >= 4 && q.selectivity == Selectivity::Full
     }));
 }
@@ -951,13 +951,13 @@ fn levels_resolve_at_children_and_survive_interruption_and_reconfiguration() {
     for c in book.probe(b).unwrap().candidates() {
         let v = c.value.unwrap();
         let exact = -brute(b.play(c.action).unwrap());
-        if v.bound() == Bound::Exact {
-            assert!(v.quality().solved);
+        if v.bound() == Bound::Point {
+            assert!(v.is_solved());
             assert_eq!(v.score(), exact);
         } else {
-            assert_eq!(v.bound(), Bound::ProvenUpper);
+            assert_eq!(v.bound(), Bound::Upper);
             assert!(v.score() >= exact);
-            assert!(!v.quality().solved);
+            assert!(!v.is_solved());
         }
     }
     ed.configure_generation(
@@ -1000,7 +1000,7 @@ fn level_quality_records_actual_child_depth_instead_of_level_number() {
     );
     let book = ed.export().unwrap();
     assert!(book.probe(b).unwrap().candidates().all(|c| {
-        c.value.unwrap().quality()
+        ImportedValue::from(c.value.unwrap()).quality
             == AnalysisQuality {
                 depth: 3,
                 selectivity: Selectivity::Full,
@@ -1080,14 +1080,14 @@ fn cumulative_and_leaf_limits_control_new_links_and_reactivate_existing_paths() 
     assert!(child_actions.len() > 1);
     let mut ed = BookEditor::for_engine(&eng).unwrap();
     let evidence = |score| {
-        Assessment::import(ImportedValue {
+        Evaluation::import(ImportedValue {
             score,
             quality: AnalysisQuality {
                 depth: 25,
                 selectivity: Selectivity::Full,
                 solved: false,
             },
-            bound: Bound::Exact,
+            bound: legacy::Bound::Exact,
             identity: ed.identity(),
             origin: ValueOrigin::Search,
         })
@@ -1120,7 +1120,7 @@ fn cumulative_and_leaf_limits_control_new_links_and_reactivate_existing_paths() 
         })
         .collect();
     for (&a, v) in root_actions.iter().zip(root_values) {
-        let mut v = v.as_imported();
+        let mut v = ImportedValue::from(v);
         v.quality.depth = 28;
         v.origin = ValueOrigin::Manual;
         ed.record_imported(b, a, v).unwrap();
@@ -1151,7 +1151,7 @@ fn cumulative_and_leaf_limits_control_new_links_and_reactivate_existing_paths() 
         !registered(&ed, child, child_actions[0]),
         "3+3 exceeds cumulative 5"
     );
-    let mut v = estimate(ed.identity(), -2).as_imported();
+    let mut v = ImportedValue::from(estimate(ed.identity(), -2));
     v.quality = AnalysisQuality {
         depth: 25,
         selectivity: Selectivity::Full,
@@ -1173,7 +1173,7 @@ fn cumulative_and_leaf_limits_control_new_links_and_reactivate_existing_paths() 
     let mut fresh = BookEditor::for_engine(&eng).unwrap();
     for c in ed.export().unwrap().probe(b).unwrap().candidates() {
         fresh
-            .record_imported(b, c.action, c.value.unwrap().as_imported())
+            .record_imported(b, c.action, ImportedValue::from(c.value.unwrap()))
             .unwrap();
     }
     fresh.configure_generation(&[b], strict.clone()).unwrap();
@@ -1235,7 +1235,7 @@ fn old_search_identity_requires_retarget_and_retains_proofs_links_and_manual_rec
     let mut ed = BookEditor::new(old_id);
     ed.register_move(b, a).unwrap();
     ed.record_candidate(b, a, estimate(old_id, 3)).unwrap();
-    let mut manual = estimate(old_id, 4).as_imported();
+    let mut manual = ImportedValue::from(estimate(old_id, 4));
     manual.origin = ValueOrigin::Manual;
     ed.record_imported(b, a, manual).unwrap();
     let solved = position(99, 3);
@@ -1243,14 +1243,14 @@ fn old_search_identity_requires_retarget_and_retains_proofs_links_and_manual_rec
         ed.record_candidate(
             solved,
             a,
-            Assessment::import(ImportedValue {
+            Evaluation::import(ImportedValue {
                 score: -brute(solved.play(a).unwrap()),
                 quality: AnalysisQuality {
                     depth: solved.empty_count(),
                     selectivity: Selectivity::Full,
                     solved: true,
                 },
-                bound: Bound::Exact,
+                bound: legacy::Bound::Exact,
                 identity: old_id,
                 origin: ValueOrigin::Search,
             })
@@ -1274,8 +1274,8 @@ fn old_search_identity_requires_retarget_and_retains_proofs_links_and_manual_rec
         .unwrap();
     assert!(candidate.registered);
     assert_eq!(
-        ed.candidate_evidence(b, a).unwrap().manual,
-        Some(Assessment::import(manual).unwrap())
+        ed.move_values(b, a).unwrap().manual,
+        Some(Evaluation::import(manual).unwrap())
     );
     assert!(
         candidate.value.is_none(),
@@ -1285,7 +1285,7 @@ fn old_search_identity_requires_retarget_and_retains_proofs_links_and_manual_rec
         book.probe(solved)
             .unwrap()
             .candidates()
-            .all(|c| c.value.unwrap().quality().solved)
+            .all(|c| c.value.unwrap().is_solved())
     );
 }
 
@@ -1326,12 +1326,12 @@ fn level_selective_endgame_results_do_not_become_proven_through_book_backup() {
         let v = c.value.unwrap();
         assert_eq!(v.score(), -brute(child));
         if !child.is_terminal() {
-            assert_eq!(v.quality().depth, 24);
-            assert_eq!(v.quality().selectivity, Selectivity::Percent98);
-            assert!(!v.quality().solved);
+            assert_eq!(v.depth(), 24);
+            assert_eq!(v.selectivity(), Selectivity::Percent98);
+            assert!(!v.is_solved());
         }
     }
-    assert!(!book.probe(b).unwrap().value().unwrap().quality().solved);
+    assert!(!book.probe(b).unwrap().value().unwrap().is_solved());
 }
 
 #[test]
@@ -1360,13 +1360,8 @@ fn terminal_children_need_no_mpc_calibration_even_when_the_level_would_be_select
     assert_eq!(report.reason, GenerationStop::Exhausted);
     assert_eq!(report.nodes, 0);
     assert!(
-        ed.export()
-            .unwrap()
-            .probe(b)
-            .unwrap()
-            .value()
-            .unwrap()
-            .quality()
+        ImportedValue::from(ed.export().unwrap().probe(b).unwrap().value().unwrap())
+            .quality
             .solved
     );
 }
@@ -1381,59 +1376,56 @@ fn book_backup_policy_keeps_search_evidence_and_never_downgrades_proofs() {
     let direct = estimate(ed.identity(), 12);
     ed.record_candidate(b, a, direct).unwrap();
     for reply in actions(child) {
-        let mut v = estimate(ed.identity(), 4).as_imported();
+        let mut v = ImportedValue::from(estimate(ed.identity(), 4));
         v.quality.depth = 2;
         ed.record_imported(child, reply, v).unwrap();
     }
     ed.register_move(b, a).unwrap();
-    let q = ed.candidate_evidence(b, a).unwrap();
+    let q = ed.move_values(b, a).unwrap();
     assert_eq!(q.direct, Some(direct));
-    assert_eq!(q.propagated.unwrap().score(), -4);
-    assert_eq!(q.source, Some(ValueSource::Propagated));
-    let backed_up = ed.candidate_evidence(b, a).unwrap();
-    assert_eq!(backed_up.source, Some(ValueSource::Propagated));
-    assert_eq!(backed_up.effective.unwrap().quality().depth, 3);
-    assert!(!backed_up.effective.unwrap().quality().solved);
+    assert_eq!(q.child.unwrap().score(), -4);
+    assert_eq!(q.selected_from, Some(SelectedFrom::Child));
+    let backed_up = ed.move_values(b, a).unwrap();
+    assert_eq!(backed_up.selected_from, Some(SelectedFrom::Child));
+    assert_eq!(backed_up.selected.unwrap().depth(), 3);
+    assert!(!backed_up.selected.unwrap().is_solved());
     assert_eq!(backed_up.direct, Some(direct));
     let temp = Temp::new();
     let path = temp.file("backup.work");
     ed.save(&path).unwrap();
     let mut loaded = BookEditor::load(&path, ReadLimits::default()).unwrap();
-    assert_eq!(loaded.candidate_evidence(b, a), Some(backed_up));
+    assert_eq!(loaded.move_values(b, a), Some(backed_up));
     loaded.repair().unwrap();
     loaded.save(&path).unwrap();
     let bytes = std::fs::read(&path).unwrap();
     loaded.repair().unwrap();
     loaded.save(&path).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
-    assert_eq!(
-        loaded.candidate_evidence(b, a).unwrap().effective,
-        backed_up.propagated
-    );
-    let mut proof = direct.as_imported();
-    proof.score = 2;
-    proof.quality = AnalysisQuality {
+    assert_eq!(loaded.move_values(b, a).unwrap().selected, backed_up.child);
+    let mut final_score = ImportedValue::from(direct);
+    final_score.score = 2;
+    final_score.quality = AnalysisQuality {
         depth: b.empty_count(),
         selectivity: Selectivity::Full,
         solved: true,
     };
-    loaded.record_imported(b, a, proof).unwrap();
+    loaded.record_imported(b, a, final_score).unwrap();
     assert_eq!(
-        loaded.candidate_evidence(b, a).unwrap().effective,
-        Some(Assessment::import(proof).unwrap())
+        loaded.move_values(b, a).unwrap().selected,
+        Some(Evaluation::import(final_score).unwrap())
     );
-    let mut manual = estimate(loaded.identity(), 7).as_imported();
+    let mut manual = ImportedValue::from(estimate(loaded.identity(), 7));
     manual.origin = ValueOrigin::Manual;
     loaded.record_imported(b, a, manual).unwrap();
-    let e = loaded.candidate_evidence(b, a).unwrap();
-    assert_eq!(e.source, Some(ValueSource::Manual));
-    assert_eq!(e.direct, Some(Assessment::import(proof).unwrap()));
-    assert_eq!(e.effective, Some(Assessment::import(manual).unwrap()));
+    let e = loaded.move_values(b, a).unwrap();
+    assert_eq!(e.selected_from, Some(SelectedFrom::Manual));
+    assert_eq!(e.direct, Some(Evaluation::import(final_score).unwrap()));
+    assert_eq!(e.selected, Some(Evaluation::import(manual).unwrap()));
     // The public evidence API uses input coordinates under every symmetry.
     for t in Symmetry::all() {
-        assert_eq!(loaded.candidate_evidence(t.board(b), t.action(a)), Some(e));
+        assert_eq!(loaded.move_values(t.board(b), t.action(a)), Some(e));
     }
-    assert!(loaded.candidate_evidence(b, Action::Pass).is_none());
+    assert!(loaded.move_values(b, Action::Pass).is_none());
 }
 
 #[test]
@@ -1456,17 +1448,17 @@ fn workspace_statistics_count_frontier_quality_lines_and_transpositions() {
     assert!(!stats.lines_saturated);
     assert_eq!(stats.leaf_positions, 1);
     assert_eq!(stats.registered_moves, 4);
-    assert_eq!(stats.propagated_values_used, 4);
+    assert_eq!(stats.child_values_used, 4);
     assert_eq!(stats.complete_positions, 2);
-    assert_eq!(stats.frontier_candidates, actions(child).len() as u64);
-    assert_eq!(stats.unknown_frontier_candidates, 0);
+    assert_eq!(stats.unregistered_candidates, actions(child).len() as u64);
+    assert_eq!(stats.unknown_unregistered_candidates, 0);
     assert_eq!(stats.unknown_candidates, 0);
     assert_eq!(stats.qualities.iter().map(|b| b.candidates).sum::<u64>(), 7);
     assert_eq!(
         stats
             .qualities
             .iter()
-            .map(|b| b.frontier_candidates)
+            .map(|b| b.unregistered_candidates)
             .sum::<u64>(),
         3
     );
@@ -1488,7 +1480,7 @@ fn frontier_recalculation_is_resumable_and_does_not_analyze_or_expand_registered
     let a = actions(b)[0];
     let child = b.play(a).unwrap();
     let mut ed = BookEditor::for_engine(&eng).unwrap();
-    let mut direct = estimate(ed.identity(), -12).as_imported();
+    let mut direct = ImportedValue::from(estimate(ed.identity(), -12));
     direct.quality = AnalysisQuality {
         depth: 4,
         selectivity: Selectivity::Full,
@@ -1497,7 +1489,7 @@ fn frontier_recalculation_is_resumable_and_does_not_analyze_or_expand_registered
     ed.record_imported(b, a, direct).unwrap();
     ed.register_move(b, a).unwrap();
     let cfg = GenerationConfig {
-        frontier_only: true,
+        unregistered_only: true,
         reuse_completed: false,
         analysis: AnalysisSchedule::Levels(vec![1]),
         max_plies: 1,
@@ -1530,8 +1522,8 @@ fn frontier_recalculation_is_resumable_and_does_not_analyze_or_expand_registered
         .unwrap();
     assert_eq!(interrupted.reason, GenerationStop::NodeLimit);
     assert_eq!(
-        ed.candidate_evidence(b, a).unwrap().direct,
-        Some(Assessment::import(direct).unwrap())
+        ed.move_values(b, a).unwrap().direct,
+        Some(Evaluation::import(direct).unwrap())
     );
     let temp = Temp::new();
     let path = temp.file("frontier.work");
@@ -1546,8 +1538,8 @@ fn frontier_recalculation_is_resumable_and_does_not_analyze_or_expand_registered
     assert_eq!(loaded.len(), 2);
     assert_eq!(loaded.stats().registered_moves, 1);
     assert_eq!(
-        loaded.candidate_evidence(b, a).unwrap().direct,
-        Some(Assessment::import(direct).unwrap())
+        loaded.move_values(b, a).unwrap().direct,
+        Some(Evaluation::import(direct).unwrap())
     );
     assert!(
         loaded
@@ -1560,7 +1552,7 @@ fn frontier_recalculation_is_resumable_and_does_not_analyze_or_expand_registered
         "leaf pass must reach a registered child even when its parent was incomplete or outside current loss limits"
     );
     for c in loaded.export().unwrap().probe(child).unwrap().candidates() {
-        assert_eq!(c.value.unwrap().quality().depth, 2);
+        assert_eq!(c.value.unwrap().depth(), 2);
         assert!(!c.registered);
     }
     assert_eq!(
@@ -1580,13 +1572,13 @@ fn child_updates_reschedule_registered_branches_without_a_policy_switch() {
     let child = b.play(aa[0]).unwrap();
     let mut ed = BookEditor::for_engine(&eng).unwrap();
     for (i, &a) in aa.iter().enumerate() {
-        let mut v = estimate(ed.identity(), if i == 0 { -10 } else { 0 }).as_imported();
+        let mut v = ImportedValue::from(estimate(ed.identity(), if i == 0 { -10 } else { 0 }));
         v.quality.selectivity = Selectivity::Full;
         ed.record_imported(b, a, v).unwrap();
         ed.register_move(b, a).unwrap();
     }
     for a in actions(child) {
-        let mut v = estimate(ed.identity(), -20).as_imported();
+        let mut v = ImportedValue::from(estimate(ed.identity(), -20));
         v.quality = AnalysisQuality {
             depth: 2,
             selectivity: Selectivity::Full,
@@ -1598,11 +1590,7 @@ fn child_updates_reschedule_registered_branches_without_a_policy_switch() {
     cfg.expansion_loss = 0;
     ed.configure_generation(&[b], cfg).unwrap();
     assert_eq!(
-        ed.candidate_evidence(b, aa[0])
-            .unwrap()
-            .effective
-            .unwrap()
-            .score(),
+        ed.move_values(b, aa[0]).unwrap().selected.unwrap().score(),
         20
     );
     let report = ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
@@ -1638,7 +1626,7 @@ fn planning_without_calibration_can_reuse_or_strengthen_existing_full_width_evid
     ));
     let mut ed = BookEditor::for_engine(&eng).unwrap();
     for a in actions(b) {
-        let mut v = estimate(ed.identity(), 0).as_imported();
+        let mut v = ImportedValue::from(estimate(ed.identity(), 0));
         v.quality = AnalysisQuality {
             depth: 2,
             selectivity: Selectivity::Full,
@@ -1669,7 +1657,7 @@ fn planning_without_calibration_can_reuse_or_strengthen_existing_full_width_evid
             .probe(b)
             .unwrap()
             .candidates()
-            .all(|c| c.value.unwrap().quality().selectivity == Selectivity::Full)
+            .all(|c| c.value.unwrap().selectivity() == Selectivity::Full)
     );
 }
 
@@ -1688,7 +1676,7 @@ fn frontier_scheduling_finishes_the_same_small_solved_graph_after_budget_resume(
     );
     let mut ed = BookEditor::for_engine(&eng).unwrap();
     let mut cfg = config(6, 2);
-    cfg.schedule = SchedulePolicy::Frontier;
+    cfg.schedule = SchedulePolicy::Promising;
     ed.configure_generation(&[b], cfg).unwrap();
     assert_eq!(
         ed.generate(
@@ -1726,12 +1714,12 @@ fn frontier_scheduling_finishes_the_same_small_solved_graph_after_budget_resume(
         let e = expected.probe(board).unwrap();
         let a = actual.probe(board).unwrap();
         assert_eq!(
-            e.value().map(|v| v.as_imported()),
-            a.value().map(|v| v.as_imported())
+            e.value().map(ImportedValue::from),
+            a.value().map(ImportedValue::from)
         );
         let entries = |e: BookEntry<'_>| {
             e.candidates()
-                .map(|c| (c.action, c.registered, c.value.map(|v| v.as_imported())))
+                .map(|c| (c.action, c.registered, c.value.map(ImportedValue::from)))
                 .collect::<Vec<_>>()
         };
         assert_eq!(entries(e), entries(a));
@@ -1739,8 +1727,8 @@ fn frontier_scheduling_finishes_the_same_small_solved_graph_after_budget_resume(
             let value = candidate.value.unwrap();
             let exact = -brute(board.play(candidate.action).unwrap());
             match value.bound() {
-                Bound::Exact => assert_eq!(value.score(), exact),
-                Bound::ProvenUpper => assert!(value.score() >= exact),
+                Bound::Point => assert_eq!(value.score(), exact),
+                Bound::Upper => assert!(value.score() >= exact),
                 _ => panic!("full endgame must produce exact points or certified upper bounds"),
             }
             if candidate.registered {

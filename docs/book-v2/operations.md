@@ -50,7 +50,7 @@ target/release/book verify --work next.dbook-work
 target/release/book resume --model NEW_MODEL --work next.dbook-work --seconds 60
 ```
 
-reanalyzeは互換性のない推定・pendingを無効化し、局面、登録リンク、手動の原記録、証明済みの直接結果を保持する。手動記録のidentityが古ければ有効値には使わない。--nodes 0後は推定が空になることがあるので、その段階のbookを品質確認なしに配布しない。
+reanalyzeは互換性のない推定と古い仕事を無効化し、局面、登録リンク、手動の原記録、証明済みの直接結果を保持する。手動記録のidentityが古ければ有効値には使わない。--nodes 0後は推定が空になることがあるので、その段階のbookを品質確認なしに配布しない。
 
 校正や探索featureを変えた場合も同じ手順を使う。詳細は[互換性](compatibility.md)を参照。バイナリの--versionとinspectのidentityを運用記録へ残す。
 

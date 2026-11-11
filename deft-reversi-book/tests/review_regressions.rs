@@ -1,4 +1,4 @@
-use deft_reversi_book::ImportedValue;
+use deft_reversi_book::legacy::{self, AnalysisQuality, ImportedValue, ValueOrigin};
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{
@@ -105,7 +105,7 @@ fn generate(ed: &mut BookEditor, engine: &mut Engine) {
 }
 fn proven_value(ed: &BookEditor, board: Board, expected: i16) {
     let value = ed.export().unwrap().probe(board).unwrap().value().unwrap();
-    assert!(value.quality().solved, "lost certificate: {value:?}");
+    assert!(value.is_solved(), "lost certificate: {value:?}");
     assert_eq!(value.score(), expected);
 }
 
@@ -162,7 +162,7 @@ fn full_root_certificate_survives_lower_depth_extension_and_restart() {
         let book = ed.export().unwrap();
         book.save(temp.file("play")).unwrap();
         let book = Book::load(temp.file("play"), ReadLimits::default()).unwrap();
-        assert!(book.probe(board).unwrap().value().unwrap().quality().solved);
+        assert!(book.probe(board).unwrap().value().unwrap().is_solved());
         let mut player = BookPlayer::new(
             &engine,
             Some(Arc::new(book)),
@@ -175,7 +175,7 @@ fn full_root_certificate_survives_lower_depth_extension_and_restart() {
         )
         .unwrap();
         let choice = player.choose(board).unwrap();
-        assert!(choice.value.quality().solved);
+        assert!(choice.value.is_solved());
         assert_eq!(-brute(board.play(choice.action).unwrap()), expected);
     }
 }
@@ -194,30 +194,30 @@ fn retiring_frontier_during_record_or_unregister_preserves_all_certificates() {
             .probe(board)
             .unwrap()
             .candidates()
-            .find(|c| c.value.unwrap().bound() == Bound::Exact)
+            .find(|c| c.value.unwrap().bound() == Bound::Point)
             .unwrap()
             .action;
         let other = book
             .probe(board)
             .unwrap()
             .candidates()
-            .find(|c| c.value.unwrap().bound() == Bound::ProvenUpper)
+            .find(|c| c.value.unwrap().bound() == Bound::Upper)
             .unwrap()
             .action;
         if unregister {
             ed.register_move(board, best).unwrap();
             ed.unregister_move(board, best).unwrap();
         } else {
-            let mut value = book
-                .probe(board)
-                .unwrap()
-                .candidates()
-                .find(|c| c.action == other)
-                .unwrap()
-                .value
-                .unwrap()
-                .as_imported();
-            value.bound = Bound::Exact;
+            let mut value = ImportedValue::from(
+                book.probe(board)
+                    .unwrap()
+                    .candidates()
+                    .find(|c| c.action == other)
+                    .unwrap()
+                    .value
+                    .unwrap(),
+            );
+            value.bound = legacy::Bound::Exact;
             value.score = 0;
             value.quality = AnalysisQuality {
                 depth: 2,
@@ -259,7 +259,7 @@ fn book_policy_prefers_actual_child_backup_over_estimated_frontier() {
         .probe(board)
         .unwrap()
         .candidates()
-        .find(|c| c.value.is_some_and(|v| v.bound() == Bound::Exact))
+        .find(|c| c.value.is_some_and(|v| v.bound() == Bound::Point))
         .unwrap()
         .action;
     let child = board.play(action).unwrap();
@@ -272,14 +272,14 @@ fn book_policy_prefers_actual_child_backup_over_estimated_frontier() {
         ed.record_candidate(
             child,
             a,
-            Assessment::import(ImportedValue {
+            Evaluation::import(ImportedValue {
                 score: -result.score.unwrap() as i16,
                 quality: AnalysisQuality {
                     depth: 2,
                     selectivity: Selectivity::Full,
                     solved: false,
                 },
-                bound: Bound::Exact,
+                bound: legacy::Bound::Exact,
                 identity: ed.identity(),
                 origin: ValueOrigin::Search,
             })
@@ -287,24 +287,24 @@ fn book_policy_prefers_actual_child_backup_over_estimated_frontier() {
         )
         .unwrap();
     }
-    let before = ed.candidate_evidence(board, action).unwrap();
+    let before = ed.move_values(board, action).unwrap();
     assert_ne!(
         before.direct.unwrap().score(),
-        before.propagated.unwrap().score()
+        before.child.unwrap().score()
     );
-    assert_eq!(before.effective, before.propagated);
-    let ev = ed.candidate_evidence(board, action).unwrap();
-    assert_eq!(ev.effective, ev.propagated);
-    assert_eq!(ev.source, Some(ValueSource::Propagated));
+    assert_eq!(before.selected, before.child);
+    let ev = ed.move_values(board, action).unwrap();
+    assert_eq!(ev.selected, ev.child);
+    assert_eq!(ev.selected_from, Some(SelectedFrom::Child));
     assert_eq!(ev.direct, before.direct);
-    assert_eq!(ev.frontier, before.frontier);
+    assert_eq!(ev.move_search, before.move_search);
     let temp = Temp::new();
     ed.save(temp.file("work")).unwrap();
     let ed = BookEditor::load(temp.file("work"), ReadLimits::default()).unwrap();
-    assert_eq!(ed.candidate_evidence(board, action).unwrap(), ev);
+    assert_eq!(ed.move_values(board, action).unwrap(), ev);
     assert_eq!(
-        ed.candidate_evidence(board, action).unwrap().effective,
-        before.propagated
+        ed.move_values(board, action).unwrap().selected,
+        before.child
     );
 }
 
@@ -341,7 +341,7 @@ fn registration_after_configuration_obeys_boundary_and_survives_restart() {
             assert!(value.is_none());
         } else {
             let value = value.unwrap();
-            assert!(value.quality().solved);
+            assert!(value.is_solved());
             assert_eq!(value.score(), brute(child));
         }
     }
@@ -366,11 +366,11 @@ fn newly_connected_retained_subgraph_is_scheduled_to_the_placement_boundary() {
         ed.register_move(board, action).unwrap();
         generate(&mut ed, &mut engine);
         let book = ed.export().unwrap();
-        assert!(book.probe(child).unwrap().value().unwrap().quality().solved);
+        assert!(book.probe(child).unwrap().value().unwrap().is_solved());
         let value = book.probe(descendant).unwrap().value();
         assert_eq!(value.is_some(), plies == 2);
         if let Some(value) = value {
-            assert!(value.quality().solved);
+            assert!(value.is_solved());
             assert_eq!(value.score(), brute(descendant));
         }
     }
@@ -394,14 +394,14 @@ fn registered_lower_certificate_keeps_its_upper_coverage_when_subset_changes() {
         ed.record_candidate(
             board,
             retained,
-            Assessment::import(ImportedValue {
+            Evaluation::import(ImportedValue {
                 score: -64,
                 quality: AnalysisQuality {
                     depth: 6,
                     selectivity: Selectivity::Full,
                     solved: false,
                 },
-                bound: Bound::ProvenLower,
+                bound: legacy::Bound::ProvenLower,
                 identity: ed.identity(),
                 origin: ValueOrigin::Imported,
             })
@@ -412,12 +412,12 @@ fn registered_lower_certificate_keeps_its_upper_coverage_when_subset_changes() {
         generate(&mut ed, &mut engine);
         proven_value(&ed, board, expected);
         assert_eq!(
-            ed.candidate_evidence(board, retained)
+            ed.move_values(board, retained)
                 .unwrap()
                 .direct
                 .unwrap()
                 .bound(),
-            Bound::ProvenLower
+            Bound::Lower
         );
         ed.configure_generation(&[board], config(2, 1)).unwrap();
         let result = ed
@@ -435,7 +435,7 @@ fn registered_lower_certificate_keeps_its_upper_coverage_when_subset_changes() {
             .candidates()
             .find(|c| {
                 c.value
-                    .is_some_and(|v| v.quality().solved && v.score() == expected)
+                    .is_some_and(|v| v.is_solved() && v.score() == expected)
             })
             .unwrap();
         // A no-op replacement and a link removal must keep the aggregate's

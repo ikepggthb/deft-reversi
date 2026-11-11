@@ -10,7 +10,7 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 @media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
 </style></head>
 <body><a class="skip" href="#content">本文へ</a><div class="layout">
-<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html" aria-current="page">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="maintainability.html">理解の負担を減らすための見直し</a></li><li><a href="training.html" aria-current="page">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Bookの検証</a></li></ol></nav>
 <main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
 <aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">1. バイナリとモデルを準備する</a></li><li><a href="#section-3">2. 候補を小さく広く集める</a></li><li><a href="#section-4">3. 同じ仕事を続ける</a></li><li><a href="#section-5">4. 有力進行を伸ばす</a></li><li><a href="#section-6">5. レベルを上げて終盤を解析する</a></li><li><a href="#section-7">6. 改善を親へ戻す</a></li><li><a href="#section-8">7. 新しい分岐の前に末端を再計算する</a></li><li><a href="#section-9">8. 任意局面から育てる</a></li><li><a href="#section-10">9. 対局へ投入する</a></li></ul></aside>
 <h1 id="section-1">Bookを継続して育てる手順</h1>
@@ -38,14 +38,14 @@ target/release/book verify --book openings.dbook
 <pre><code class="language-sh">target/release/book resume --model MODEL --work openings.dbook-work \
   --book openings.dbook --seconds 300 --threads 4 --tt-mib 512
 </code></pre>
-<p>resumeは保存されたレベル・損失・登録距離・方針とFrontier・PVジョブを使う。時間・ノード予算、探索スレッド数、TT容量は変更できる。--levelsなどを付けて設定を変えることはできない。</p>
+<p>resumeは保存されたレベル・損失・登録距離・方針と集合探索の記録・PVの優先仕事を使う。時間・ノード予算、探索スレッド数、TT容量は変更できる。--levelsなどを付けて設定を変えることはできない。</p>
 <p>Ctrl-Cは実行中の探索を停止し、その終了後に正本と必要なスナップショットを保存する。強制終了や電源断では、最後の正常なチェックポイント以降の計算は失う。保存間隔は長い候補探索を強制的に分割する期限ではない。</p>
 <h2 id="section-5">4. 有力進行を伸ばす</h2>
 <pre><code class="language-sh">target/release/book extend --model MODEL --work openings.dbook-work \
   --book openings.dbook --levels 4,8 --max-plies 12 \
   --loss 2 --cumulative-loss 6 --leaf-loss 2 --schedule frontier --seconds 300
 </code></pre>
-<p>extendは設定を置き換えて処理する。同じidentityで必要品質を満たす完成済みの直接値は再利用する。旧pendingの完了スロットを共通の公開処理で独立証拠へ取り込んでから、設定やキューを置き換える。未完了の目標を完成扱いにしない。新方式の完了した集合探索はFrontierと独立証拠として保持する。</p>
+<p>extendは設定を置き換えて処理する。同じidentityで必要品質を満たす完成済みの直接値は再利用する。旧形式の完了済みの候補は読込中に取り込まれる。設定や仕事一覧を変更しても、それらの評価を保持する。未完了の目標を完成扱いにしない。新方式の完了した集合探索は集合探索と個別評価として保持する。</p>
 <p>損失を狭めても古いリンクは削除しない。現在の有力経路から外れた枝を自動強化から外し、再び有力になれば再開できるよう保持する。許容差を大きくした場合は候補数と保存容量が急増し得る。inspectと予算を併用する。</p>
 <p>--black-lossと--white-lossで片側だけ広くすることもできる。共通--lossより色別指定が優先される。CLIで設定を引き継いだ際、--lossを変えただけでは既存の色別指定は消えない。解除が必要ならAPIでNoneへ設定するか、CLIで両色へ新しい共通値を明示する。</p>
 <h2 id="section-6">5. レベルを上げて終盤を解析する</h2>

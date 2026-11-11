@@ -10,14 +10,14 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 @media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
 </style></head>
 <body><a class="skip" href="#content">本文へ</a><div class="layout">
-<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html" aria-current="page">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="maintainability.html">理解の負担を減らすための見直し</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html" aria-current="page">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Bookの検証</a></li></ol></nav>
 <main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
 <aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">選択と既定値</a></li><li><a href="#section-3">順序の定義</a></li><li><a href="#section-4">索引・保存・費用</a></li><li><a href="#section-5">検証</a></li><li><a href="#section-6">最良進行の連続伸長</a></li></ul></aside>
 <h1 id="section-1">有力進行と不確かな末端の優先順位</h1>
 <h2 id="section-2">選択と既定値</h2>
-<p><code>GenerationConfig.schedule</code>またはCLI <code>--schedule breadth|frontier</code>で選ぶ。既定のBreadthは従来の距離・解析段階順を保つ。Frontierは同じ新規/深掘りの配分の中で候補を優先する。</p>
+<p><code>GenerationConfig.schedule</code>またはCLI <code>--schedule breadth|promising</code>で選ぶ。既定のBreadthは従来の距離・解析段階順を保つ。Promisingは同じ新規/深掘りの配分の中で候補を優先する。旧CLI表記のfrontierも受理する。</p>
 <pre><code class="language-sh">target/release/book extend --model MODEL --work openings.dbook-work \
-  --levels 4,8,12 --max-plies 24 --schedule frontier --seconds 60
+  --levels 4,8,12 --max-plies 24 --schedule promising --seconds 60
 </code></pre>
 <p>優先順位はヒューリスティックであり、統計的な誤差確率や棋力の証明ではない。条件を満たす有限のジョブ集合を処理し終えれば、探索目標と展開条件はBreadthと同じである。途中の予算で得られるグラフは異なり得る。</p>
 <h2 id="section-3">順序の定義</h2>
@@ -35,9 +35,9 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 <h2 id="section-4">索引・保存・費用</h2>
 <p>通常キューを正本とし、Context別の仕事索引と優先順位別のBTreeSetを派生キャッシュとして持つ。通常の挿入・取り出しはO(log Q)。初回はQ件から索引を構築する。評価変更後はそのContextと登録された子の優先順位を更新する。優先値の計算は局面内の候補と登録された親候補を調べる。仕事ごとに全キューを走査しない。</p>
 <p>索引の見積もり容量をメモリ制限に含める。索引はworkに保存せず、読込後の最初の取り出しで再構築する。未処理キュー、iteration、schedule設定は保存する。保存の前後で同じ正本から次のジョブが選ばれることを試験する。</p>
-<p>work形式v5はconfig末尾にscheduleのu8（0=Breadth、1=Frontier）を追加する。v1〜v4はBreadthとして読む。現在のwork v8・対局用v4の追加は<a href="compatibility.html">互換性</a>を参照。resumeでscheduleを変更せず、extend/reanalyze/leavesで変更する。</p>
+<p>work形式v5はconfig末尾にscheduleのu8（0=Breadth、1=Promising）を追加する。v1〜v4はBreadthとして読む。現在のwork v8・対局用v4の追加は<a href="compatibility.html">互換性</a>を参照。resumeでscheduleを変更せず、extend/reanalyze/leavesで変更する。</p>
 <h2 id="section-5">検証</h2>
-<p>未評価末端の優先、品質更新による順位変更、親評価変化による流入手の再順位付け、直接値と伝播値の差、新規/深掘りの配分、定期的な通常順、保存前後の順序を試験する。独立した完全列挙と比較できる小終盤では、ノード予算で中断し保存再開したFrontierと、完了したBreadthのグラフ・評価を比較する。</p>
+<p>未評価末端の優先、品質更新による順位変更、親評価変化による流入手の再順位付け、直接値と伝播値の差、新規/深掘りの配分、定期的な通常順、保存前後の順序を試験する。独立した完全列挙と比較できる小終盤では、ノード予算で中断し保存再開したPromisingと、完了したBreadthのグラフ・評価を比較する。</p>
 <h2 id="section-6">最良進行の連続伸長</h2>
 <p>全候補の点評価をそろえる生成器を、最良の未展開手と残り候補の上限を使う方式へ一本化した。最良手を新規登録できたら、その子の解析を優先し、PVの次の手を正規化座標へ変換してEngineの手順付けヒントへ渡す。ヒントはスコアの証拠には使わない。損失条件は各登録の直前に現在値で確認する。</p>
 <p><code>--line-plies 8</code>（既定）は連続優先の予算。0ならこの優先を無効にする。優先予算は子ジョブ数で数え、パスも1件とする。16ジョブに1回の通常順と新規/深掘りの配分で逸脱処理も進める。PVジョブは通常キューに存在する仕事だけを優先し、古い仕事を実行しない。PVキューと残量・ヒントはwork v8へ保存する。</p>

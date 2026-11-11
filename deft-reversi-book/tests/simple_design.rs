@@ -1,3 +1,4 @@
+use deft_reversi_book::legacy::{self, AnalysisQuality, ImportedValue, ValueOrigin};
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{
@@ -57,24 +58,24 @@ fn typed_old_work_converts_without_losing_current_records_and_saves_only_new_for
         let a = current.probe(b).unwrap();
         let c = played.probe(b).unwrap();
         assert_eq!(a.value(), c.value());
-        assert_eq!(a.proof(), c.proof());
+        assert_eq!(a.final_score(), c.final_score());
         assert_eq!(
             a.candidates()
-                .map(|c| (c.action, c.registered, c.value, c.certificate))
+                .map(|c| (c.action, c.registered, c.value, c.final_score))
                 .collect::<Vec<_>>(),
             a.moves()
                 .map(|c| (
                     c.action,
                     c.registered,
                     c.value.map(EvaluationRef::to_owned),
-                    c.certificate.map(EvaluationRef::to_owned)
+                    c.final_score.map(EvaluationRef::to_owned)
                 ))
                 .collect::<Vec<_>>()
         );
         for candidate in a.candidates() {
             assert_eq!(
-                editor.candidate_evidence(b, candidate.action),
-                loaded.candidate_evidence(b, candidate.action)
+                editor.move_values(b, candidate.action),
+                loaded.move_values(b, candidate.action)
             );
         }
     }
@@ -97,17 +98,21 @@ fn old_play_keeps_its_values_and_typed_search_information_without_history_api() 
         assert_eq!(a.value(), c.value());
         assert_eq!(
             a.candidates()
-                .map(|v| (v.action, v.registered, v.value, v.certificate))
+                .map(|v| (v.action, v.registered, v.value, v.final_score))
                 .collect::<Vec<_>>(),
             c.candidates()
-                .map(|v| (v.action, v.registered, v.value, v.certificate))
+                .map(|v| (v.action, v.registered, v.value, v.final_score))
                 .collect::<Vec<_>>()
         );
         searches += a
             .candidates()
             .filter(|v| {
-                v.value
-                    .is_some_and(|v| matches!(v.analysis(), ValueAnalysis::Search { .. }))
+                v.value.is_some_and(|v| {
+                    matches!(
+                        v.source(),
+                        EvaluationSource::Search(_) | EvaluationSource::SearchMove(_)
+                    )
+                })
             })
             .count();
     }
@@ -124,10 +129,10 @@ fn manual_values_need_explicit_opt_in_and_do_not_claim_a_search_depth() {
     let b = Board::new().canonical();
     let a = Action::Place(b.legal_moves().next().unwrap());
     e.set_manual(b, a, 5).unwrap();
-    let value = e.candidate_evidence(b, a).unwrap().manual.unwrap();
+    let value = e.move_values(b, a).unwrap().manual.unwrap();
     assert!(matches!(
-        value.analysis(),
-        ValueAnalysis::Manual { depth: 0, .. }
+        value.source(),
+        EvaluationSource::Manual { depth: 0, .. }
     ));
     assert_eq!(
         UsePolicy::default().check(value, e.identity()),
@@ -146,9 +151,9 @@ fn manual_values_need_explicit_opt_in_and_do_not_claim_a_search_depth() {
         e.record_manual(
             b,
             a,
-            Assessment::import(ImportedValue {
+            Evaluation::import(ImportedValue {
                 origin: ValueOrigin::Search,
-                ..value.as_imported()
+                ..ImportedValue::from(value)
             })
             .unwrap()
         )
@@ -167,9 +172,9 @@ fn manual_values_need_explicit_opt_in_and_do_not_claim_a_search_depth() {
         &r,
     )
     .unwrap();
-    assert_eq!(e.candidate_evidence(b, a).unwrap().effective, Some(value));
+    assert_eq!(e.move_values(b, a).unwrap().selected, Some(value));
     e.clear_manual(b, a).unwrap();
-    assert!(e.candidate_evidence(b, a).unwrap().manual.is_none());
+    assert!(e.move_values(b, a).unwrap().manual.is_none());
 }
 #[test]
 fn one_schedule_is_validated_and_round_trips_without_inactive_settings() {
@@ -241,7 +246,7 @@ fn manual_input_does_not_lower_the_required_quality_of_real_searches() {
                         selectivity: Selectivity::Full,
                         solved: false,
                     },
-                    bound: Bound::Exact,
+                    bound: legacy::Bound::Exact,
                     identity: e.identity(),
                     origin: ValueOrigin::Imported,
                 },
@@ -255,7 +260,7 @@ fn manual_input_does_not_lower_the_required_quality_of_real_searches() {
         let value = book.probe(b).unwrap().value().unwrap();
         let policy = UsePolicy {
             allow_manual: true,
-            legacy: LegacyPolicy::RecordedQuality,
+            allow_imported: true,
             ..UsePolicy::default()
         };
         assert_eq!(policy.check(value, e.identity()), Ok(()));

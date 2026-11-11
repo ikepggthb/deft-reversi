@@ -5,8 +5,8 @@
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{path::Path, sync::Arc, time::Duration};
-fn scalar(v: Option<Assessment>) -> Option<(ValueClaim, AnalysisQuality)> {
-    v.map(|v| (v.claim(), v.quality()))
+fn scalar(v: Option<Evaluation>) -> Option<(Score, u8, Selectivity, bool)> {
+    v.map(|v| (v.result(), v.depth(), v.selectivity(), v.is_solved()))
 }
 fn main() {
     let args: Vec<_> = std::env::args().collect();
@@ -33,22 +33,22 @@ fn main() {
                 let a = before.probe(b).unwrap();
                 let c = after.probe(b).unwrap();
                 assert_eq!(a.value(), c.value());
-                assert_eq!(a.proof(), c.proof());
+                assert_eq!(a.final_score(), c.final_score());
                 assert_eq!(a.all_moves_evaluated(), c.all_moves_evaluated());
                 assert_eq!(
                     a.candidates()
-                        .map(|c| (c.action, c.registered, c.value, c.certificate))
+                        .map(|c| (c.action, c.registered, c.value, c.final_score))
                         .collect::<Vec<_>>(),
                     c.candidates()
-                        .map(|c| (c.action, c.registered, c.value, c.certificate))
+                        .map(|c| (c.action, c.registered, c.value, c.final_score))
                         .collect::<Vec<_>>()
                 );
                 for c in a.candidates() {
                     candidates += 1;
                     registered += u64::from(c.registered);
                     assert_eq!(
-                        input.candidate_evidence(b, c.action),
-                        loaded.candidate_evidence(b, c.action)
+                        input.move_values(b, c.action),
+                        loaded.move_values(b, c.action)
                     );
                 }
             }
@@ -96,7 +96,7 @@ fn main() {
                 expansion_loss: 4,
                 cumulative_loss: Some(4),
                 leaf_loss: Some(4),
-                schedule: SchedulePolicy::Frontier,
+                schedule: SchedulePolicy::Promising,
                 ..GenerationConfig::default()
             };
             editor.configure_generation(&[Board::new()], cfg).unwrap();
@@ -159,7 +159,7 @@ fn main() {
                 panic!("fresh book must offer a qualified move: {choice:?}")
             };
             assert!(Board::new().play(chosen.action).is_ok());
-            assert!(!chosen.value.analysis().summary().has_legacy());
+            assert!(!chosen.value.conditions().has_imported());
             let mut migrated_new = 0;
             if let Some(path) = args.get(4) {
                 let mut old = BookEditor::load(path, limits).unwrap();

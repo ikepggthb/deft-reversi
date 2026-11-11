@@ -4,7 +4,7 @@
 //! 一巡の流れはprepare（対象手集合を決める）→BatchPool::run（探索）→publish
 //! （完了結果を反映）→expand_and_schedule（登録と次の仕事）。
 //! 仕事一覧・損失条件はgenerate.rs、採用する候補値と親への更新はeditor.rsを参照。
-use super::editor::{Frontier, dominates};
+use super::editor::{MoveSearch, dominates};
 use super::generate::*;
 use super::*;
 use deft_reversi_engine::{
@@ -26,13 +26,13 @@ struct Work {
     planned: SearchKind,
 }
 fn quality_ok(
-    v: Assessment,
+    v: Evaluation,
     identity: AnalysisIdentity,
-    target: AnalysisQuality,
+    target: Stage,
     empties: u8,
-    legacy: LegacyPolicy,
+    allow_imported: bool,
 ) -> bool {
-    if v.proven() {
+    if v.is_final() {
         return true;
     }
     if v.identity() != identity {
@@ -49,11 +49,11 @@ fn quality_ok(
         }
     };
     v.meets(kind)
-        || legacy == LegacyPolicy::RecordedQuality
+        || allow_imported
             && target.depth < empties
-            && v.analysis().summary().has_legacy()
-            && v.quality().depth >= target.depth
-            && v.quality().selectivity >= target.selectivity
+            && v.conditions().has_imported()
+            && v.depth() >= target.depth
+            && v.selectivity() >= target.selectivity
 }
 
 // 登録した子の評価を再利用し、足りない候補を一回の集合探索にまとめる。
@@ -86,7 +86,7 @@ fn prepare(
     // retargeted root could remain unevaluable forever.
     let boundary_link = |e: &super::editor::Edge| {
         e.registered
-            && !state.config.frontier_only
+            && !state.config.unregistered_only
             && !state.distances.contains_key(&Context {
                 key: e.child,
                 side: context.side.other(),
@@ -98,30 +98,29 @@ fn prepare(
         .filter(|e| !e.registered || boundary_link(e))
     {
         if let Some(v) = editor.values.opt(edge.direct()) {
-            if v.proven() && v.bound() != Bound::Exact {
+            if v.is_final() && v.bound() != Bound::Point {
                 // A final-score bound cannot be replaced by a finite-horizon
                 // point. Complete the subset at Full to refine it safely.
                 target.depth = board.empty_count();
                 target.selectivity = Selectivity::Full;
-            } else if !v.proven() {
-                target.depth = target.depth.max(v.quality().depth);
-                if (v.quality().selectivity as u8) > (target.selectivity as u8) {
-                    target.selectivity = v.quality().selectivity;
+            } else if !v.is_final() {
+                target.depth = target.depth.max(v.depth());
+                if (v.selectivity() as u8) > (target.selectivity as u8) {
+                    target.selectivity = v.selectivity();
                 }
             }
         }
     }
-    if let Some(f) = &node.frontier {
-        if editor.values.get(f.value).proven() {
+    if let Some(f) = &node.move_search {
+        if editor.values.get(f.value).is_final() {
             // Its non-best moves are final-score certificates too. Refining
             // the remaining subset must not replace them with horizon values.
             target.depth = target.depth.max(board.empty_count());
             target.selectivity = Selectivity::Full;
         } else {
-            target.depth = target.depth.max(editor.values.get(f.value).quality().depth);
-            if (editor.values.get(f.value).quality().selectivity as u8) > (target.selectivity as u8)
-            {
-                target.selectivity = editor.values.get(f.value).quality().selectivity;
+            target.depth = target.depth.max(editor.values.get(f.value).depth());
+            if (editor.values.get(f.value).selectivity() as u8) > (target.selectivity as u8) {
+                target.selectivity = editor.values.get(f.value).selectivity();
             }
         }
     }
@@ -135,41 +134,41 @@ fn prepare(
         if e.registered && !boundary_link(e) {
             continue;
         }
-        let ev = editor.evidence(context.key, e);
+        let ev = editor.move_values_at(context.key, e);
         if e.registered {
-            let sufficient = ev.effective.is_some_and(|v| {
+            let sufficient = ev.selected.is_some_and(|v| {
                 quality_ok(
                     v,
                     editor.identity,
                     target,
                     board.empty_count(),
-                    state.config.legacy,
-                ) && (v.bound() == Bound::Exact
+                    state.config.allow_imported,
+                ) && (v.bound() == Bound::Point
                     || (editor
                         .values
                         .opt(node.value)
-                        .is_some_and(|v| v.bound() == Bound::Exact)
-                        && matches!(v.bound(), Bound::Upper | Bound::ProvenUpper)))
+                        .is_some_and(|v| v.bound() == Bound::Point)
+                        && matches!(v.bound(), Bound::Upper)))
             });
             if reuse && sufficient {
                 continue;
             }
             repair_registered = true;
         }
-        if let Some(v) = ev.effective.filter(|v| {
+        if let Some(v) = ev.selected.filter(|v| {
             quality_ok(
                 *v,
                 editor.identity,
                 target,
                 board.empty_count(),
-                state.config.legacy,
+                state.config.allow_imported,
             )
         }) {
             match v.bound() {
-                Bound::Exact => {
+                Bound::Point => {
                     best_point = Some(best_point.map_or(v.score(), |s: i16| s.max(v.score())))
                 }
-                Bound::Upper | Bound::ProvenUpper => max_upper = max_upper.max(v.score()),
+                Bound::Upper => max_upper = max_upper.max(v.score()),
                 _ => ready = false,
             }
         } else {
@@ -180,15 +179,15 @@ fn prepare(
             .opt(e.manual())
             .is_some_and(|v| v.identity() == editor.identity)
             || editor.values.opt(e.direct()).is_some_and(|v| {
-                v.bound() == Bound::Exact
+                v.bound() == Bound::Point
                     && quality_ok(
                         v,
                         editor.identity,
                         target,
                         board.empty_count(),
-                        state.config.legacy,
+                        state.config.allow_imported,
                     )
-                    && (reuse || v.proven())
+                    && (reuse || v.is_final())
             });
         if !fixed {
             mask |= 1u64 << i;
@@ -208,7 +207,7 @@ fn prepare(
         && let Some(best) = editor
             .values
             .opt(node.value)
-            .filter(|v| v.bound() == Bound::Exact)
+            .filter(|v| v.bound() == Bound::Point)
     {
         let tolerance = state
             .config
@@ -228,9 +227,9 @@ fn prepare(
         return Ok(None);
     }
     if let Some(f) = node
-        .frontier
+        .move_search
         .as_ref()
-        .filter(|f| editor.values.get(f.value).proven())
+        .filter(|f| editor.values.get(f.value).is_final())
     {
         // A direct certified lower and this aggregate's upper are independent
         // certificates. One direct slot cannot store both. Keep such moves in
@@ -241,7 +240,7 @@ fn prepare(
                 && editor
                     .values
                     .opt(edge.direct())
-                    .is_some_and(|v| v.bound() == Bound::ProvenLower)
+                    .is_some_and(|v| v.is_final() && v.bound() == Bound::Lower)
             {
                 mask |= 1u64 << i;
                 if let Action::Place(square) = edge.action {
@@ -259,7 +258,7 @@ fn prepare(
     if let Some(Action::Place(square)) = state
         .hints
         .get(&context)
-        .or_else(|| node.frontier.as_ref().and_then(|f| f.pv.first()))
+        .or_else(|| node.move_search.as_ref().and_then(|f| f.pv.first()))
     {
         request = request.preferred_move(*square);
     }
@@ -295,7 +294,7 @@ fn prepare(
 }
 
 // バッチ内でも先行結果が他局面を更新し得る。編集世代が変わった仕事は採用せず再投入。
-// 採用時は最良手にだけ点評価を付け、残りはFrontier経由の上限として扱う。
+// 採用時は最良手にだけ点評価を付け、残りはMoveSearch経由の上限として扱う。
 // 手の登録はここで行わず、expand側で損失・手数・予算を確認してから行う。
 fn publish(
     editor: &mut BookEditor,
@@ -319,30 +318,27 @@ fn publish(
         .ok_or_else(|| invalid("frontier search returned no quality"))?;
     let completed = SearchKind::from_result(kind);
     let claim = if result.is_subset_solved() {
-        ValueClaim::Certified(ScoreInterval::point(score as i16)?)
+        Score::Final(ScoreInterval::point(score as i16)?)
     } else {
-        ValueClaim::Estimate {
+        Score::Estimate {
             score: score as i16,
-            bound: EstimateBound::Point,
+            bound: Bound::Point,
         }
     };
-    let value = Assessment::new(
+    let value = Evaluation::new(
         claim,
-        ValueAnalysis::Search {
-            trace: CompletedSearch {
-                requested: work.requested,
-                planned: work.planned,
-                completed,
-                root: [key.0, key.1],
-                moves: result.root_moves,
-                best: action_code(best),
-                result_score: score as i16,
-                run: editor.active_run,
-                nodes: result.stats.nodes,
-                elapsed_micros: result.elapsed.as_micros().min(u128::from(u64::MAX)) as u64,
-            },
-            projection: SearchProjection::Maximum,
-        },
+        EvaluationSource::Search(CompletedSearch {
+            requested: work.requested,
+            planned: work.planned,
+            completed,
+            root: [key.0, key.1],
+            moves: result.root_moves,
+            best: action_code(best),
+            result_score: score as i16,
+            run: editor.active_run,
+            nodes: result.stats.nodes,
+            elapsed_micros: result.elapsed.as_micros().min(u128::from(u64::MAX)) as u64,
+        }),
         editor.identity,
     )?;
     value.validate_at(key.board())?;
@@ -354,19 +350,19 @@ fn publish(
     if work.mask & (1u64 << index) == 0 {
         return Err(invalid("frontier returned an excluded move"));
     }
-    let frontier = Frontier::new(work.mask, best, value, result.pv, &mut editor.values)?;
+    let frontier = MoveSearch::new(work.mask, best, value, result.pv, &mut editor.values)?;
     let old = editor.checkpoint(key);
     editor.bump()?;
     let n = editor.nodes.get_mut(&key).unwrap();
-    n.preserve_frontier_proofs(&mut editor.values);
+    n.preserve_search_final_scores(&mut editor.values);
     if n.edges[index]
         .direct()
         .is_none_or(|old| dominates(value, editor.values.get(old)))
     {
         n.edges[index].set_direct(Some(frontier.point));
     }
-    n.frontier = Some(frontier);
-    n.pending = None;
+    n.move_search = Some(frontier);
+
     n.revision = editor.revision;
     editor.extensions.clear();
     for k in editor.commit_checkpoint(old)? {
@@ -470,10 +466,10 @@ fn expand_and_schedule(
     report: &mut GenerationReport,
     burst: u8,
 ) -> Result<()> {
-    if state.config.frontier_only {
+    if state.config.unregistered_only {
         return Ok(());
     }
-    let selected = editor.nodes[&c.key].frontier.as_ref().and_then(|f| {
+    let selected = editor.nodes[&c.key].move_search.as_ref().and_then(|f| {
         editor.nodes[&c.key]
             .edges
             .iter()
@@ -515,7 +511,7 @@ fn expand_and_schedule(
     }
     let count = state.config.stage_count();
     let s = editor.nodes[&c.key].completed_stages;
-    // After child backups, a formerly rejected remaining subset can become
+    // After child values_for_parent, a formerly rejected remaining subset can become
     // relevant again. Reopen the last target rather than trusting old masks.
     if s >= count
         && !c.key.board().is_terminal()
@@ -538,7 +534,7 @@ pub(super) fn generate(
     if editor
         .generation
         .as_ref()
-        .is_some_and(|g| g.config.frontier_only)
+        .is_some_and(|g| g.config.unregistered_only)
         && limits.time.is_none()
         && limits.nodes.is_none()
     {
@@ -551,7 +547,6 @@ pub(super) fn generate(
             "engine/model/search semantics do not match workspace; use retarget or CLI reanalyze",
         ));
     }
-    editor.normalize_pending()?;
     // 実行中は仕事一覧を取り出して更新する。保存コールバックの直前と終了処理で
     // editorへ戻すので、保存側から未完の仕事が消えて見える状態を避ける。
     let mut state = editor
@@ -750,7 +745,7 @@ pub(super) fn generate(
             let timer = Instant::now();
             let results = pool.run(engine, &jobs, limits, &report, started, &stop)?;
             report.profile.engine_wall += timer.elapsed();
-            report.profile.frontier_searches += jobs.len() as u64;
+            report.profile.move_searches += jobs.len() as u64;
             report.profile.max_parallel_jobs = report.profile.max_parallel_jobs.max(jobs.len());
             for (work, result) in jobs.iter().zip(results) {
                 let c = work.context;
@@ -813,7 +808,7 @@ pub(super) fn generate(
                 }
                 if report.reason == GenerationStop::Exhausted {
                     let timer = Instant::now();
-                    let done = state.config.frontier_only
+                    let done = state.config.unregistered_only
                         || prepare(engine, editor, &state, c, d, s, true)?.is_none();
                     report.profile.planning_wall += timer.elapsed();
                     if done {
@@ -1069,71 +1064,8 @@ mod tests {
         ed.register(c.key, ed.nodes[&c.key].edges[0].action)
             .unwrap();
         assert!(!publish(&mut ed, &mut state, &work, result).unwrap());
-        assert!(ed.nodes[&c.key].frontier.is_none());
+        assert!(ed.nodes[&c.key].move_search.is_none());
         assert_eq!(ed.nodes[&c.key].completed_stages, 0);
         assert!(state.fresh.contains(&(0, c)));
-    }
-    #[test]
-    fn rejected_legacy_pending_import_keeps_its_evidence_and_generation_state() {
-        let mut eng = engine();
-        let mut ed = BookEditor::for_engine(&eng).unwrap();
-        let board = Board::new();
-        ed.configure_generation(
-            &[board],
-            GenerationConfig {
-                analysis: AnalysisSchedule::Stages(vec![Stage {
-                    depth: 2,
-                    selectivity: Selectivity::Full,
-                }]),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let key = Key::new(board).0;
-        let action = ed.nodes[&key].edges[0].action;
-        let upper = ImportedValue {
-            score: 0,
-            quality: AnalysisQuality {
-                depth: 60,
-                selectivity: Selectivity::Full,
-                solved: false,
-            },
-            bound: Bound::ProvenUpper,
-            identity: ed.identity(),
-            origin: ValueOrigin::Imported,
-        };
-        ed.record_imported(key.board(), action, upper).unwrap();
-        let mut point = upper;
-        point.score = 2;
-        point.bound = Bound::Exact;
-        point.quality.solved = true;
-        let node = ed.nodes.get_mut(&key).unwrap();
-        let mut values = vec![None; node.edges.len()];
-        values[0] = Some(ed.values.intern(Assessment::import(point).unwrap()));
-        node.pending = Some(super::super::editor::Pending {
-            stage: 0,
-            revision: node.revision,
-            values,
-        });
-        ed.pending_count = 1;
-        let revision = ed.revision();
-        let original = ed.candidate_evidence(key.board(), action);
-        assert!(
-            ed.generate(
-                &mut eng,
-                GenerationLimits {
-                    nodes: Some(0),
-                    ..Default::default()
-                },
-                StopHandle::new()
-            )
-            .is_err()
-        );
-        assert_eq!(ed.revision(), revision);
-        assert_eq!(ed.candidate_evidence(key.board(), action), original);
-        assert!(ed.generation.is_some());
-        assert!(ed.nodes[&key].pending.is_some());
-        assert_eq!(ed.pending_count, 1);
-        ed.validate().unwrap();
     }
 }

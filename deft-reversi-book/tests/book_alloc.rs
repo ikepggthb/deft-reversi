@@ -1,4 +1,5 @@
 //! Allocation regression for the actual public play path, including symmetry lookup.
+use deft_reversi_book::legacy::{self, AnalysisQuality, ImportedValue, ValueOrigin};
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{
@@ -51,14 +52,14 @@ fn book_hit_performs_no_heap_allocations() {
         .record_candidate(
             board,
             action,
-            Assessment::import(ImportedValue {
+            Evaluation::import(ImportedValue {
                 score: 0,
                 quality: AnalysisQuality {
                     depth: 12,
                     selectivity: Selectivity::Full,
                     solved: false,
                 },
-                bound: Bound::Exact,
+                bound: legacy::Bound::Exact,
                 identity: editor.identity(),
                 origin: ValueOrigin::Search,
             })
@@ -70,7 +71,7 @@ fn book_hit_performs_no_heap_allocations() {
         &engine,
         Some(book),
         UsePolicy {
-            legacy: LegacyPolicy::RecordedQuality,
+            allow_imported: true,
             moves: MovePolicy::RandomWithinLoss { max_loss: 2 },
             ..UsePolicy::default()
         },
@@ -91,7 +92,7 @@ fn book_hit_performs_no_heap_allocations() {
         .record_candidate(
             root,
             action,
-            Assessment::from_search_result(
+            Evaluation::from_search_result(
                 root,
                 RequestedAnalysis::External,
                 SearchKind::Midgame {
@@ -102,7 +103,7 @@ fn book_hit_performs_no_heap_allocations() {
                 typed.identity(),
             )
             .unwrap()
-            .project(SearchProjection::BestMove)
+            .best_move_value()
             .unwrap(),
         )
         .unwrap();

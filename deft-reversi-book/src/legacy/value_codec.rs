@@ -6,53 +6,53 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
-pub(super) fn byte(w: &mut dyn Write, n: u8) -> Result<()> {
+pub(crate) fn byte(w: &mut dyn Write, n: u8) -> Result<()> {
     w.write_all(&[n])?;
     Ok(())
 }
-pub(super) fn read_byte(r: &mut impl Read) -> Result<u8> {
+pub(crate) fn read_byte(r: &mut impl Read) -> Result<u8> {
     let mut b = [0];
     r.read_exact(&mut b)?;
     Ok(b[0])
 }
-pub(super) fn n64(w: &mut dyn Write, n: u64) -> Result<()> {
+pub(crate) fn n64(w: &mut dyn Write, n: u64) -> Result<()> {
     w.write_all(&n.to_le_bytes())?;
     Ok(())
 }
-pub(super) fn r64(r: &mut impl Read) -> Result<u64> {
+pub(crate) fn r64(r: &mut impl Read) -> Result<u64> {
     let mut b = [0; 8];
     r.read_exact(&mut b)?;
     Ok(u64::from_le_bytes(b))
 }
-pub(super) fn rootw(w: &mut dyn Write, p: [u64; 2]) -> Result<()> {
+pub(crate) fn rootw(w: &mut dyn Write, p: [u64; 2]) -> Result<()> {
     n64(w, p[0])?;
     n64(w, p[1])
 }
-pub(super) fn rootr(r: &mut impl Read) -> Result<[u64; 2]> {
+pub(crate) fn rootr(r: &mut impl Read) -> Result<[u64; 2]> {
     Ok([r64(r)?, r64(r)?])
 }
-pub(super) fn scorew(w: &mut dyn Write, v: i16) -> Result<()> {
+pub(crate) fn scorew(w: &mut dyn Write, v: i16) -> Result<()> {
     w.write_all(&v.to_le_bytes())?;
     Ok(())
 }
-pub(super) fn scorer(r: &mut impl Read) -> Result<i16> {
+pub(crate) fn scorer(r: &mut impl Read) -> Result<i16> {
     let mut b = [0; 2];
     r.read_exact(&mut b)?;
     Ok(i16::from_le_bytes(b))
 }
-pub(super) fn idr(r: &mut impl Read) -> Result<[u8; 32]> {
+pub(crate) fn idr(r: &mut impl Read) -> Result<[u8; 32]> {
     let mut b = [0; 32];
     r.read_exact(&mut b)?;
     Ok(b)
 }
-pub(super) fn boolr(r: &mut impl Read) -> Result<bool> {
+pub(crate) fn boolr(r: &mut impl Read) -> Result<bool> {
     match read_byte(r)? {
         0 => Ok(false),
         1 => Ok(true),
         _ => Err(invalid("boolean")),
     }
 }
-pub(super) fn originw(v: ValueOrigin) -> u8 {
+pub(crate) fn originw(v: ValueOrigin) -> u8 {
     match v {
         ValueOrigin::Search => 0,
         ValueOrigin::Manual => 1,
@@ -61,7 +61,7 @@ pub(super) fn originw(v: ValueOrigin) -> u8 {
         ValueOrigin::Derived => 4,
     }
 }
-pub(super) fn originr(v: u8) -> Result<ValueOrigin> {
+pub(crate) fn originr(v: u8) -> Result<ValueOrigin> {
     match v {
         0 => Ok(ValueOrigin::Search),
         1 => Ok(ValueOrigin::Manual),
@@ -71,7 +71,7 @@ pub(super) fn originr(v: u8) -> Result<ValueOrigin> {
         _ => Err(invalid("origin")),
     }
 }
-pub(super) fn kindw(w: &mut dyn Write, v: SearchKind) -> Result<()> {
+pub(crate) fn kindw(w: &mut dyn Write, v: SearchKind) -> Result<()> {
     match v {
         SearchKind::Midgame { depth, selectivity } => {
             byte(w, 0)?;
@@ -84,7 +84,7 @@ pub(super) fn kindw(w: &mut dyn Write, v: SearchKind) -> Result<()> {
         }
     }
 }
-pub(super) fn kindr(r: &mut impl Read) -> Result<SearchKind> {
+pub(crate) fn kindr(r: &mut impl Read) -> Result<SearchKind> {
     match read_byte(r)? {
         0 => Ok(SearchKind::Midgame {
             depth: read_byte(r)?,
@@ -96,7 +96,7 @@ pub(super) fn kindr(r: &mut impl Read) -> Result<SearchKind> {
         _ => Err(invalid("search kind")),
     }
 }
-pub(super) fn requestedw(w: &mut dyn Write, v: RequestedAnalysis) -> Result<()> {
+pub(crate) fn requestedw(w: &mut dyn Write, v: RequestedAnalysis) -> Result<()> {
     match v {
         RequestedAnalysis::External => byte(w, 0),
         RequestedAnalysis::ChildLevel(n) => {
@@ -114,7 +114,7 @@ pub(super) fn requestedw(w: &mut dyn Write, v: RequestedAnalysis) -> Result<()> 
         }
     }
 }
-pub(super) fn requestedr(r: &mut impl Read) -> Result<RequestedAnalysis> {
+pub(crate) fn requestedr(r: &mut impl Read) -> Result<RequestedAnalysis> {
     match read_byte(r)? {
         0 => Ok(RequestedAnalysis::External),
         1 => Ok(RequestedAnalysis::ChildLevel(read_byte(r)?)),
@@ -128,7 +128,7 @@ pub(super) fn requestedr(r: &mut impl Read) -> Result<RequestedAnalysis> {
         _ => Err(invalid("requested analysis")),
     }
 }
-pub(super) fn summaryw(w: &mut dyn Write, q: QualitySummary) -> Result<()> {
+pub(crate) fn summaryw(w: &mut dyn Write, q: QualitySummary) -> Result<()> {
     for v in [
         q.families,
         q.horizon,
@@ -142,7 +142,7 @@ pub(super) fn summaryw(w: &mut dyn Write, q: QualitySummary) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn summaryr(r: &mut impl Read) -> Result<QualitySummary> {
+pub(crate) fn summaryr(r: &mut impl Read) -> Result<QualitySummary> {
     let q = QualitySummary {
         families: read_byte(r)?,
         horizon: read_byte(r)?,
@@ -155,7 +155,7 @@ pub(super) fn summaryr(r: &mut impl Read) -> Result<QualitySummary> {
     q.validate()?;
     Ok(q)
 }
-pub(super) fn write(w: &mut dyn Write, value: &Assessment) -> Result<()> {
+pub(crate) fn write(w: &mut dyn Write, value: &Assessment) -> Result<()> {
     match value.claim() {
         ValueClaim::Estimate { score, bound } => {
             byte(w, 0)?;
@@ -262,7 +262,7 @@ pub(super) fn write(w: &mut dyn Write, value: &Assessment) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn read(r: &mut impl Read) -> Result<Assessment> {
+pub(crate) fn read(r: &mut impl Read) -> Result<Assessment> {
     let claim = match read_byte(r)? {
         0 => {
             let score = scorer(r)?;
@@ -361,7 +361,7 @@ pub(super) fn read(r: &mut impl Read) -> Result<Assessment> {
     };
     Assessment::new(claim, analysis, identity)
 }
-pub(super) fn fingerprint(value: &Assessment) -> Result<[u8; 32]> {
+pub(crate) fn fingerprint(value: &Assessment) -> Result<[u8; 32]> {
     struct Sink(Sha256);
     impl Write for Sink {
         fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {

@@ -10,7 +10,7 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 @media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
 </style></head>
 <body><a class="skip" href="#content">本文へ</a><div class="layout">
-<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html" aria-current="page">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="maintainability.html">理解の負担を減らすための見直し</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html" aria-current="page">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Bookの検証</a></li></ol></nav>
 <main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
 <aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">個別局面を見る</a></li><li><a href="#section-3">全体の統計</a></li><li><a href="#section-4">残りの未登録候補を再計算する</a></li><li><a href="#section-5">生成時間とメモリ</a></li></ul></aside>
 <h1 id="section-1">品質、保存状態、処理時間を調べる</h1>
@@ -48,7 +48,7 @@ book inspect --book openings.dbook --positions roots.obf
 <td>登録した出辺を持たない局面</td>
 </tr>
 <tr>
-<td>frontier_candidates / unknown_frontier_candidates</td>
+<td>unregistered_candidates / unknown_unregistered_candidates</td>
 <td>未登録候補と、そのうち点評価がない候補</td>
 </tr>
 <tr>
@@ -56,7 +56,7 @@ book inspect --book openings.dbook --positions roots.obf
 <td>上限・下限のみの候補</td>
 </tr>
 <tr>
-<td>direct_values_used / propagated_values_used / manual_values_used / frontier_values_used</td>
+<td>direct_values_used / child_values_used / manual_values_used / move_search_values_used</td>
 <td>現在使う値の採用元</td>
 </tr>
 <tr>

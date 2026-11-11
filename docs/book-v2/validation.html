@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Book構造修正の検証 · Deft Book</title><style>
+<title>Bookの検証 · Deft Book</title><style>
 :root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
 *{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
 a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
@@ -10,118 +10,111 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 @media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
 </style></head>
 <body><a class="skip" href="#content">本文へ</a><div class="layout">
-<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html" aria-current="page">Book構造修正の検証</a></li></ol></nav>
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="maintainability.html">理解の負担を減らすための見直し</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html" aria-current="page">Bookの検証</a></li></ol></nav>
 <main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
-<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">操作と確認方法</a></li><li><a href="#section-3">同じbookの費用</a></li><li><a href="#section-4">再現と未検証</a></li></ul></aside>
-<h1 id="section-1">Book構造修正の検証</h1>
-<p>2026-11-12。現在の<a href="architecture.html">保存場所とAPI</a>、<a href="value-model.html">評価の意味</a>、<a href="compatibility.html">旧形式の移行</a>を対象にする。前段のwork v7 / play v3実装を比較基準として、現在のwork v8 / play v4を確認した。</p>
-<h2 id="section-2">操作と確認方法</h2>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">保守性を見直した後の確認</a></li><li><a href="#section-3">同じ実bookの費用</a></li><li><a href="#section-4">再現と限界</a></li></ul></aside>
+<h1 id="section-1">Bookの検証</h1>
+<h2 id="section-2">保守性を見直した後の確認</h2>
+<p>比較元は69051e8。評価の階層と重複した表示情報、通常の局面にあった旧途中状態、使わない旧採用方式の保持欄を除いた。<a href="maintainability.html">変更理由と残る複雑さ</a>を参照。</p>
+<p>全workspace・全featureのrelease試験205成功、既存の負荷試験1件は実行対象外。book既定feature＋CLIは109成功。Clippy全target・全feature、警告をエラーにした非公開項目を含むRustdoc生成、整形検査も成功した。HTMLは15ページを生成・リンク検査した。</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
-<th>対象</th>
-<th>確認</th>
+<th>確認対象</th>
+<th>結果</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>探索記録の共有</td>
-<td>values.rs：集合最大値・最良手・他の手の上限が一件の探索記録を共有し、新codecで往復する</td>
+<td>評価の対象範囲</td>
+<td>一部の手の最大値や特定の手の評価を、子局面全体の値へ読み替えない。現行Evaluationと旧形式の検査でそれぞれ確認</td>
 </tr>
 <tr>
-<td>メモリと寿命</td>
-<td>editor.rs：未評価候補の追加領域は確保しない。不要な記録を解放しても現在の全候補の値は変わらない</td>
+<td>推定と確定</td>
+<td>中盤Fullや選択的終盤から最終石差の確定情報を作らない。手動指定とは独立した最終石差の情報を維持</td>
 </tr>
 <tr>
-<td>探索条件</td>
-<td>value_contract.rs：要求・予定・完了条件、中盤・終盤・混在、部分集合・対象外手・パスを区別する</td>
+<td>編集・登録・解除</td>
+<td>小終盤の独立した区間計算と96段階の操作列、矛盾時の復元、子からの反映を継続して確認</td>
 </tr>
 <tr>
-<td>値の更新</td>
-<td>book.rs / review_regressions.rs：子からの値の反映、完全読みの情報の保持、登録後の仕事の追加、矛盾時の復元</td>
-</tr>
-<tr>
-<td>編集と保存再開</td>
-<td>独立した区間計算と96段階の操作列を比較。途中の保存・再読込も検査</td>
+<td>中断と再開</td>
+<td>探索中の途中値は完了扱いにせず、仕事を戻す。旧途中結果は読込中だけで取り込む</td>
 </tr>
 <tr>
 <td>旧形式</td>
-<td>simple_design.rsと固定入力：v7/v3の型付き情報を引継ぎ、新形式で再保存。format.rs：旧方式の仕事一覧を開始局面から組み直す</td>
+<td>固定v6/v2・v7/v3を読み込める。手動値と旧探索を混ぜたv3の品質は、旧情報の検査後に再集計</td>
 </tr>
 <tr>
-<td>手動値</td>
-<td>探索結果の入口では拒否。明示許可した場合も、一緒に使う実際の探索の品質を落として表示しない</td>
-</tr>
-<tr>
-<td>対局利用</td>
-<td>借用した通常参照と、詳細を展開した結果が一致。手の選択で問い合わせごとのメモリ確保0回</td>
+<td>既存v8/v4</td>
+<td>改修前のバイナリで作った固定入力を読み込み、再保存した全バイトが一致</td>
 </tr>
 <tr>
 <td>実book</td>
-<td>全26,527局面・289,881候補・26,851登録手をコピーで変換。全候補記録と対局用の値が保存再読込で一致。元ファイルのハッシュ不変</td>
+<td>26,527局面・289,881候補・26,851登録手を旧形式と既存v8の両方から全件照合。既存v8/v4の実bookも再保存後の全バイトが一致。元ファイルのSHA-256は不変</td>
 </tr>
 <tr>
 <td>実モデル</td>
-<td>v3-pen、18スレッドで新規生成・保存・再開・設定変更・対局利用。旧bookも短い予算で再開</td>
+<td>v3-pen・18スレッドで、新規生成・保存再開・設定変更・既存bookへの追加・合法な対局手の選択を確認</td>
+</tr>
+<tr>
+<td>完了する固定探索</td>
+<td>6局面・67候補の既知の値・品質・登録が3回とも改修前と一致</td>
+</tr>
+<tr>
+<td>対局利用</td>
+<td>通常の手の選択で問い合わせごとのメモリ確保0回を維持</td>
 </tr>
 </tbody>
 </table></div>
-<p>全workspace・全featureのrelease試験200成功、既存の負荷試験1件は実行対象外。book既定feature＋CLIは104成功。Clippy全target・全featureと、CLIなし全targetのcheckも成功。</p>
-<p>その後の自己レビューでは、手動値と旧探索が混在する旧play v3を読み込むと、旧版と現行版の品質集計の違いにより拒否してしまう問題を再現した。旧情報の検査後に品質を集計し直す修正と回帰試験を追加した。下記のメモリ・速度は構造変更時の測定値であり、この互換性修正後の再測定値ではない。</p>
-<p>自己レビュー修正後は、全workspace・全featureのrelease試験201成功（既存の負荷試験1件は実行対象外）、book既定feature＋CLIは105成功。Clippy全target・全feature、整形検査、警告をエラーにした非公開項目を含むRustdoc生成、ガイドHTML全14ページの再生成・リンク検査も成功した。</p>
-<h2 id="section-3">同じbookの費用</h2>
+<h2 id="section-3">同じ実bookの費用</h2>
+<p>同じv8/v4を使い、69051e8から再ビルドした測定用プログラムと現在版を交互に測定。3回の中央値。</p>
 <div class="table-wrap"><table>
 <thead>
 <tr>
 <th>項目</th>
-<th style="text-align:right">修正前</th>
-<th style="text-align:right">修正後</th>
+<th style="text-align:right">69051e8</th>
+<th style="text-align:right">今回</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>生成・更新用bookデータのメモリ見積もり MiB</td>
-<td style="text-align:right">308.6</td>
+<td>生成用データ見積もり MiB</td>
 <td style="text-align:right">90.9</td>
+<td style="text-align:right">89.8</td>
 </tr>
 <tr>
-<td>対局用データの常駐見積もり MiB</td>
-<td style="text-align:right">19.0</td>
+<td>対局用データ見積もり MiB</td>
+<td style="text-align:right">8.6</td>
 <td style="text-align:right">8.6</td>
 </tr>
 <tr>
-<td>対局用ファイルの読込 ms</td>
-<td style="text-align:right">217.8</td>
-<td style="text-align:right">42.0</td>
+<td>play読込 ms</td>
+<td style="text-align:right">41.5</td>
+<td style="text-align:right">44.0</td>
 </tr>
 <tr>
-<td>生成再開用ファイルの読込 ms</td>
-<td style="text-align:right">327.0</td>
-<td style="text-align:right">156.4</td>
+<td>work読込 ms</td>
+<td style="text-align:right">154.7</td>
+<td style="text-align:right">148.0</td>
 </tr>
 <tr>
-<td>対局用ファイルの保存 ms</td>
-<td style="text-align:right">25.4</td>
-<td style="text-align:right">17.2</td>
+<td>play保存 ms</td>
+<td style="text-align:right">17.5</td>
+<td style="text-align:right">17.8</td>
 </tr>
 <tr>
-<td>局面参照＋候補の点数走査 ns/回</td>
-<td style="text-align:right">39.6</td>
-<td style="text-align:right">33.2</td>
-</tr>
-<tr>
-<td>検証プログラム最大RSS MiB</td>
-<td style="text-align:right">279.4</td>
-<td style="text-align:right">62.8</td>
+<td>局面参照＋候補の点数走査 ns</td>
+<td style="text-align:right">33.0</td>
+<td style="text-align:right">33.3</td>
 </tr>
 </tbody>
 </table></div>
-<p>3回の中央値。メモリ見積もりにはbookの局面・記録・仕事一覧等を含む。旧方式の移行では仕事一覧も再構成する。RSSは実際の物理メモリ使用量で、検証プログラムが対局用データを保持して生成再開用を読む最大値。エンジン・モデル・探索表を含む生成中の全使用量とは別である。</p>
-<p>通常参照は局面検索と全候補の点数走査。現在のmoves()は、必要のない詳細な探索記録を展開しない。二つのメモリ見積もりは修正前の半分以下、読込と通常参照は10%を超える悪化なし。</p>
-<p>固定6局面・深さ8 Fullの完了探索は全67候補の既知の値・品質・登録が3回とも一致し、生成時間の中央値は0.048秒→0.051秒。4秒の育成量は長時間の速度や棋力へ一般化しない。</p>
-<h2 id="section-4">再現と未検証</h2>
-<p>この環境の詳細、コマンド、モデル・バイナリ・ソースのハッシュは<code>local/work/book-simple-redesign/RESULTS.md</code>と同ディレクトリのJSON・ログに保存した。正式な機能試験はリポジトリのtestsと各モジュール内にあり、旧入力はtests/fixturesへ固定した。計測用の例はexamples/measure_book.rs、examples/audit_book.rs。</p>
-<p>過去の計算入力を辿る機能は後続合意で廃止した。旧形式の連鎖は読込時だけ検査し、現在の計算は保存情報から再構築する。外部入力が申告した探索結果の真偽までverifyで再探索することはしない。</p>
-<p>長時間・大規模の生成と棋力は未検証。将来の中盤レベル＝要求深さへの切替も未実装。HTMLは再生成・リンク検査を行い、ブラウザでの見た目の確認は行っていない。</p>
+<p>生成用の見積もりは局面・評価・仕事一覧などの保持分。Engine・モデル・探索表を含む総使用量ではない。参照速度はmoves()の点数走査であり、詳しい記録の表示や手の選択全体の費用ではない。メモリ見積もりの増加はなく、読込・通常参照に10%を超える悪化はなかった。理解の容易さを、この速度の結果だけで判断しない。</p>
+<p>固定6局面・深さ8 Full・18スレッド・TT128MiBの完了探索は、生成処理の中央値0.049秒。新旧で経過時間の短い標本なので、長時間生成の倍率へ一般化しない。</p>
+<h2 id="section-4">再現と限界</h2>
+<p>機能試験はtestsと各モジュール内。既存形式の入力はtests/fixturesへ固定した。今回の実bookの監査・測定・コマンド・ハッシュは<code>local/work/book-maintainability-review/RESULTS.md</code>と同ディレクトリのJSON・ログに保存した。以前の構造変更の測定とは比較元が異なる。<a href="https://github.com/ikepggthb/deft-reversi/blob/69051e880cbf5a8dc639d7bc8e3a8a74268bcc72/docs/book-v2/validation.md">以前の検証記録</a>も参照できる。</p>
+<p>長時間・大規模の生成、棋力、外部入力の申告を再探索して確かめること、スマホ実機の見た目は未検証。今回もEngineの再帰探索・レベル表・探索revisionは変えていない。将来の中盤レベル＝同じ探索元での要求深さへの切替は未実装である。</p>
+<p>Rust APIには変更があるため<a href="compatibility.html">移行表</a>を参照。保存形式を変更したり、旧ファイルの検査を緩めたりした改修ではない。</p>
 <footer>正本：<a href="validation.md">validation.md</a> · 再生成：tools/render_book_docs.py</footer></main>
 </div></body></html>

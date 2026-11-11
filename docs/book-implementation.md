@@ -2,7 +2,7 @@
 
 現行仕様は[Book v2ガイド](book-v2/index.md)と[HTML版](book-v2/index.html)にまとめた。bookは独立したdeft_reversi_bookクレートで実装し、既存のEngineを利用する。
 
-実装のレビューは[ソースの読み方](book-v2/source-review.md)を入口にする。型・関数と対応する試験まで案内している。
+理解に必要な分類を減らした変更は[保守性の見直し](book-v2/maintainability.md)に記録した。実装のレビューは[ソースの読み方](book-v2/source-review.md)を入口にする。型・関数と対応する試験まで案内している。
 
 - BookEditorは局面、登録した進行、直接評価・手動値、候補の集合探索結果、生成の仕事一覧を持つ元データ。
 - Bookは読取専用スナップショット。BookPlayerが品質と登録を確認して着手を返し、使えない場合の探索は呼出し元が行う。

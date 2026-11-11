@@ -1,14 +1,20 @@
 //! Versioned, bounded streaming codec. No Rust layout or unbounded serde vectors.
 //!
 //! 現行の書込はsave_editor（work v8）とsave_book（play v4）。読込側は旧版も扱う。
-//! 現行の共有評価一覧はvalues.rs、評価の個々の部品と旧形式はvalue_codec.rsを使う。
-//! 手数や盤面の検査に加え、旧形式の入力関係はvalidate_catalogで検査してから捨てる。
+//! メモリの共有一覧はvalues.rs、バイト表現と旧分類の検査はlegacy内を使う。
+//! 手数や盤面の検査に加え、旧形式の入力関係はlegacy::validate_catalogで検査してから捨てる。
 //! 形式を追う順序と保存項目はdocs/book-v2/source-review.mdにまとめている。
 use super::*;
+use crate::legacy::{
+    AnalysisQuality, Assessment, Bound, Derivation, ImportedValue, PropagationPolicy,
+    QualitySummary, ReadCatalog, ValueAnalysis, ValueClaim, ValueOrigin, combine_values,
+    legacy_summary, rebuild_legacy_play_quality, validate_catalog, value_codec,
+};
+
 use super::{
-    editor::{Edge, Frontier, Node, Pending},
+    editor::{Edge, MoveSearch, Node},
     generate::{Context, GenerationState},
-    snapshot::{Record, SnapshotMetadata, StoredCandidate, ValuePool},
+    snapshot::{Record, SnapshotMetadata, StoredCandidate},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -18,11 +24,130 @@ use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
+// 0始まりの一時参照番号。内容を整列してから番号を振り直し、保存結果を安定させる。
+// ValueStoreの1始まりのValueIdとは共有しない。
+#[derive(Default)]
+pub(super) struct ValuePool {
+    pub values: Vec<Assessment>,
+    index: std::collections::BTreeMap<Assessment, u32>,
+}
+impl ValuePool {
+    pub fn intern(&mut self, value: Assessment) -> u32 {
+        if let Some(&id) = self.index.get(&value) {
+            return id;
+        }
+        let id = u32::try_from(self.values.len()).expect("bounded value pool");
+        self.values.push(value);
+        self.index.insert(value, id);
+        id
+    }
+    pub fn editor(editor: &BookEditor) -> Self {
+        let mut pool = Self::default();
+        for (&key, n) in &editor.nodes {
+            for v in n
+                .value
+                .into_iter()
+                .chain(n.values_for_parent.into_iter().flatten())
+            {
+                pool.intern(Assessment::from(editor.values.get(v)));
+            }
+            if let Some(v) = n.final_score {
+                pool.intern(Assessment::from(editor.values.get(v)));
+            }
+            if let Some(values) = &n.final_score_for_parent {
+                for &v in values.iter() {
+                    pool.intern(Assessment::from(editor.values.get(v)));
+                }
+            }
+            for e in &n.edges {
+                for v in [
+                    editor.values.opt(e.direct()).map(Assessment::from),
+                    editor.values.opt(e.manual()).map(Assessment::from),
+                    editor.values.opt(e.final_score()).map(Assessment::from),
+                    editor.selected(key, e).map(Assessment::from),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    pool.intern(v);
+                }
+            }
+            if let Some(f) = &n.move_search {
+                pool.intern(Assessment::from(editor.values.get(f.value)));
+                pool.intern(Assessment::from(editor.values.get(f.point)));
+                pool.intern(Assessment::from(editor.values.get(f.upper)));
+            }
+        }
+        pool.values.sort_unstable();
+        pool.index = pool
+            .values
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (v, i as u32))
+            .collect();
+        pool
+    }
+    pub fn id(&self, v: Assessment) -> u32 {
+        self.index[&v]
+    }
+}
 const BOOK: &[u8; 8] = b"DFTBK001";
 const WORK: &[u8; 8] = b"DFTBW001";
 // 8バイト識別子 + u32形式版 + u32ルール版 + u64本文長 + SHA-256(本文)32バイト。
 // 数値はリトルエンディアン。Rustの構造体のメモリ配置はそのまま書かない。
 const HEADER: u64 = 56;
+/// 旧版に保存された完了候補。読込中だけ保持し、現行の局面には欄を設けない。
+struct PendingImport {
+    stage: usize,
+    revision: u64,
+    values: Vec<Option<ValueId>>,
+}
+fn import_completed_candidates(
+    editor: &mut BookEditor,
+    pending: &BTreeMap<Key, PendingImport>,
+) -> Result<()> {
+    let mut affected = BTreeSet::new();
+    for (key, pending) in pending {
+        let node = &editor.nodes[key];
+        if pending.revision != node.revision || pending.values.len() != node.edges.len() {
+            return Err(invalid("stale pending stage"));
+        }
+        for id in pending.values.iter().flatten() {
+            let v = editor.values.get(*id);
+            v.validate_at(key.board())?;
+            if !v.is_final() && v.identity() != editor.identity {
+                return Err(invalid("foreign pending value"));
+            }
+        }
+        let old = editor.checkpoint(*key);
+        editor.bump()?;
+        let node = editor.nodes.get_mut(key).unwrap();
+        node.preserve_search_final_scores(&mut editor.values);
+        for (edge, value) in node.edges.iter_mut().zip(&pending.values) {
+            if let Some(id) = *value {
+                let value = editor.values.get(id);
+                if value.is_manual() {
+                    if edge.manual().is_none() {
+                        edge.set_manual(Some(editor.values.intern(value)));
+                    }
+                } else if edge.direct().is_none_or(|old| {
+                    crate::editor::dominates(value, editor.values.get(old))
+                        || value.is_final() && editor.values.get(old).is_final()
+                }) {
+                    edge.set_direct(Some(editor.values.intern(value)));
+                }
+            }
+        }
+        node.revision = editor.revision;
+        node.move_search = node
+            .move_search
+            .take()
+            .filter(|f| editor.values.get(f.value).is_final());
+        affected.extend(editor.commit_checkpoint(old)?);
+    }
+    editor.reschedule_edit(&affected.into_iter().collect::<Vec<_>>());
+    Ok(())
+}
 static TEMP: AtomicU64 = AtomicU64::new(0);
 struct TempFile(PathBuf);
 impl Drop for TempFile {
@@ -210,6 +335,9 @@ fn keyr(r: &mut impl Read) -> Result<Key> {
     }
     Ok(k)
 }
+fn terminal_value(b: Board) -> Assessment {
+    Assessment::rules(b)
+}
 fn stopw(w: &mut dyn Write, v: GenerationStop) -> Result<()> {
     u8w(
         w,
@@ -306,8 +434,8 @@ fn catalogw(w: &mut dyn Write, c: &catalog::Catalog) -> Result<()> {
     u64w(w, 0)?;
     Ok(())
 }
-fn catalogr(r: &mut impl Read, limits: ReadLimits, modern: bool) -> Result<catalog::Catalog> {
-    let mut c = catalog::Catalog::default();
+fn catalogr(r: &mut impl Read, limits: ReadLimits, modern: bool) -> Result<ReadCatalog> {
+    let mut c = ReadCatalog::default();
     for _ in 0..limited_count(r, (limits.max_bytes / 128).min(65536) as usize)? {
         let identity = idr(r)?;
         let version = stringr(r)?;
@@ -448,264 +576,8 @@ fn catalogr(r: &mut impl Read, limits: ReadLimits, modern: bool) -> Result<catal
     }
     Ok(c)
 }
-fn provenance_inputs(c: &catalog::Catalog, value: Assessment) -> Result<Vec<[u8; 32]>> {
-    Ok(match value.analysis() {
-        ValueAnalysis::Derived {
-            basis: Derivation::Maximum { inputs, .. },
-            ..
-        } => c
-            .derivations
-            .get(&inputs)
-            .ok_or_else(|| invalid("missing derivation input list"))?
-            .clone(),
-        ValueAnalysis::Derived {
-            basis: Derivation::Child { input, .. },
-            ..
-        } => vec![input],
-        ValueAnalysis::Derived {
-            basis: Derivation::Intersection { inputs, .. },
-            ..
-        } => inputs.to_vec(),
-        _ => Vec::new(),
-    })
-}
-
-fn legacy_summary(values: impl IntoIterator<Item = Assessment>) -> QualitySummary {
-    let mut q = QualitySummary::empty();
-    for v in values {
-        let b = v.analysis().summary();
-        q.families |= b.families;
-        q.horizon = q.horizon.min(b.horizon);
-        q.mid_depth = q.mid_depth.min(b.mid_depth);
-        q.mid_sel = q.mid_sel.min(b.mid_sel);
-        q.end_sel = q.end_sel.min(b.end_sel);
-        q.legacy_depth = q.legacy_depth.min(b.legacy_depth);
-        q.legacy_sel = q.legacy_sel.min(b.legacy_sel);
-    }
-    q
-}
-// 旧playの計算元を検査した後、現在の品質集計で説明を作り直す。
-// 手動値の表示深さを旧探索の最低深さへ混ぜていた版も受け入れるが、旧検査は緩めない。
-// 入力関係を子から処理するので、複数段の計算でも古い集計結果を引き継がない。
-fn rebuild_legacy_play_quality(c: &catalog::Catalog, values: &mut [Assessment]) -> Result<bool> {
-    if !values
-        .iter()
-        .any(|v| matches!(v.analysis(), ValueAnalysis::Derived { .. }))
-    {
-        return Ok(false);
-    }
-    let mut indexes = BTreeMap::new();
-    for (i, v) in values.iter().enumerate() {
-        indexes.insert(v.content_id(), i);
-    }
-    let mut remaining = vec![0; values.len()];
-    let mut parents = vec![Vec::new(); values.len()];
-    let mut ready = VecDeque::new();
-    for (i, &v) in values.iter().enumerate() {
-        let ids = provenance_inputs(c, v)?;
-        remaining[i] = ids.len();
-        if ids.is_empty() {
-            ready.push_back(i);
-        }
-        for id in ids {
-            let input = *indexes
-                .get(&id)
-                .ok_or_else(|| invalid("missing evidence input"))?;
-            parents[input].push(i);
-        }
-    }
-    let mut seen = 0;
-    let mut changed = false;
-    while let Some(i) = ready.pop_front() {
-        seen += 1;
-        let value = values[i];
-        if let ValueAnalysis::Derived { basis, .. } = value.analysis() {
-            let ids = provenance_inputs(c, value)?;
-            let mut summary = QualitySummary::empty();
-            for id in ids {
-                summary.include(values[indexes[&id]].analysis().summary());
-            }
-            if let Derivation::Child { placement, .. } = basis {
-                summary = summary.shifted(placement);
-            }
-            changed |= summary != value.analysis().summary();
-            values[i] = Assessment::new(
-                value.claim(),
-                ValueAnalysis::Derived { basis, summary },
-                value.identity(),
-            )?;
-        }
-        for &parent in &parents[i] {
-            remaining[parent] -= 1;
-            if remaining[parent] == 0 {
-                ready.push_back(parent);
-            }
-        }
-    }
-    if seen != values.len() {
-        return Err(invalid("cyclic evidence inputs"));
-    }
-    Ok(changed)
-}
-// 旧形式の「どの評価から計算したか」という入力関係を、当時の規則で検査する。
-// 先にValueStoreへ入れると旧入力IDが消えるため、必ず変換前に呼ぶ。
-fn validate_catalog(c: &catalog::Catalog, values: &[Assessment]) -> Result<()> {
-    let historical = values.iter().any(|v| {
-        matches!(
-            v.analysis(),
-            ValueAnalysis::Derived {
-                basis: Derivation::Maximum { .. }
-                    | Derivation::Child { .. }
-                    | Derivation::Intersection { .. },
-                ..
-            }
-        )
-    });
-    if !historical {
-        if !c.derivations.is_empty() {
-            return Err(invalid("unexpected historical derivations"));
-        }
-        for &v in values {
-            v.validate()?;
-            if let ValueAnalysis::Search { trace, .. } = v.analysis()
-                && let Some(i) = trace.run
-            {
-                let run = c
-                    .runs
-                    .get(i as usize)
-                    .ok_or_else(|| invalid("search run reference"))?;
-                if run.identity != v.identity() || !c.profiles.contains_key(&v.identity()) {
-                    return Err(invalid("search profile reference"));
-                }
-            }
-        }
-        return Ok(());
-    }
-    let map: BTreeMap<_, _> = values.iter().map(|&v| (v.content_id(), v)).collect();
-    // Each derivation is checked from its immediate immutable inputs. Exact
-    // content IDs bind every link; cycles are rejected by a separate walk.
-    for &v in values {
-        v.validate()?;
-        let ids = provenance_inputs(c, v)?;
-        let inputs: Vec<_> = ids
-            .iter()
-            .map(|id| {
-                map.get(id)
-                    .copied()
-                    .ok_or_else(|| invalid("missing evidence input"))
-            })
-            .collect::<Result<_>>()?;
-        match v.analysis() {
-            ValueAnalysis::Search { trace, .. } => {
-                if let Some(id) = trace.run {
-                    let run = c
-                        .runs
-                        .get(id as usize)
-                        .ok_or_else(|| invalid("search run reference"))?;
-                    if run.identity != v.identity() || !c.profiles.contains_key(&v.identity()) {
-                        return Err(invalid("search profile reference"));
-                    }
-                }
-            }
-            ValueAnalysis::Derived {
-                basis: Derivation::Maximum { root, policy, .. },
-                ..
-            } => {
-                let key = Key(root[0], root[1]);
-                let actions = legal_actions(key.board());
-                if inputs.len() != actions.len() || actions.is_empty() {
-                    return Err(invalid("maximum coverage"));
-                }
-                for (&input, action) in inputs.iter().zip(actions) {
-                    input.validate_candidate(key, action)?;
-                }
-                let policy = match policy {
-                    0 => PropagationPolicy::Quality,
-                    1 => PropagationPolicy::Book,
-                    _ => return Err(invalid("derivation policy")),
-                };
-                let old_summary = legacy_summary(inputs.iter().copied());
-                if combine_values(inputs.into_iter().map(Some), v.identity(), key, policy)
-                    .0
-                    .map(|a| (a.claim(), old_summary))
-                    != Some((v.claim(), v.analysis().summary()))
-                {
-                    return Err(invalid("derived maximum"));
-                }
-            }
-            ValueAnalysis::Derived {
-                basis: Derivation::Child { placement, .. },
-                ..
-            } => {
-                if !inputs[0].whole_position() || {
-                    let a = inputs[0].child_to_parent(placement);
-                    (a.claim(), a.analysis().summary()) != (v.claim(), v.analysis().summary())
-                } {
-                    return Err(invalid("derived child backup"));
-                }
-            }
-            ValueAnalysis::Derived {
-                basis: Derivation::Intersection { root, action, .. },
-                summary,
-            } => {
-                let key = Key(root[0], root[1]);
-                let action = action_from(action)?;
-                for &input in &inputs {
-                    input.validate_candidate(key, action)?;
-                }
-                let mut expected = inputs[0].analysis().summary();
-                expected.include(inputs[1].analysis().summary());
-                let a = inputs[0]
-                    .claim()
-                    .certificate()
-                    .ok_or_else(|| invalid("unproven intersection"))?;
-                let b = inputs[1]
-                    .claim()
-                    .certificate()
-                    .ok_or_else(|| invalid("unproven intersection"))?;
-                if v.claim() != ValueClaim::Certified(a.intersect(b)?) || summary != expected {
-                    return Err(invalid("derived intersection"));
-                }
-            }
-            _ => {}
-        }
-    }
-    // Kahn's algorithm bounds both time and stack usage on untrusted files.
-    let mut remaining: BTreeMap<_, usize> = BTreeMap::new();
-    let mut parents: BTreeMap<_, Vec<[u8; 32]>> = BTreeMap::new();
-    let mut ready = VecDeque::new();
-    for &v in values {
-        let id = v.content_id();
-        let inputs = provenance_inputs(c, v)?;
-        if inputs.is_empty() {
-            ready.push_back(id);
-        }
-        remaining.insert(id, inputs.len());
-        for input in inputs {
-            parents.entry(input).or_default().push(id);
-        }
-    }
-    let mut seen = 0;
-    while let Some(id) = ready.pop_front() {
-        seen += 1;
-        if let Some(ps) = parents.get(&id) {
-            for p in ps {
-                let n = remaining.get_mut(p).unwrap();
-                *n -= 1;
-                if *n == 0 {
-                    ready.push_back(*p);
-                }
-            }
-        }
-    }
-    if seen != values.len() {
-        return Err(invalid("cyclic evidence"));
-    }
-    Ok(())
-}
-// 一時的なAssessment一覧を現行の共有一覧へ変換する。values.rsが探索記録を分離して書く。
 fn poolw(w: &mut dyn Write, values: &[Assessment]) -> Result<()> {
-    let (store, ids) = ValueStore::from_values(values.iter().copied());
+    let (store, ids) = legacy::ValueStore::from_values(values.iter().copied());
     if ids
         .iter()
         .enumerate()
@@ -726,7 +598,7 @@ fn remaining_limits(limits: ReadLimits, used: u64) -> ReadLimits {
 }
 fn poolr(r: &mut impl Read, limits: ReadLimits, modern: bool) -> Result<ValuePool> {
     if modern {
-        let store = ValueStore::read(r, limits)?;
+        let store = legacy::ValueStore::read(r, limits)?;
         let mut pool = ValuePool::default();
         for (i, v) in store.iter().enumerate() {
             if pool.intern(v) as usize != i {
@@ -746,7 +618,7 @@ fn poolr(r: &mut impl Read, limits: ReadLimits, modern: bool) -> Result<ValuePoo
     let mut pool = ValuePool::default();
     reserve(&mut pool.values, count)?;
     for i in 0..count {
-        let v = super::value_codec::read(r)?;
+        let v = value_codec::read(r)?;
         if matches!(
             v.analysis(),
             ValueAnalysis::Derived {
@@ -846,23 +718,26 @@ fn reserve<T>(v: &mut Vec<T>, n: usize) -> Result<()> {
 pub(super) fn save_book(book: &Book, path: &Path) -> Result<()> {
     atomic_save(path, BOOK, 4, |w| {
         w.write_all(&book.identity)?;
-        u8w(w, book.propagation as u8)?;
+        u8w(w, 1)?;
         stringw(w, &book.producer)?;
         u64w(w, book.records.len() as u64)?;
         u64w(w, book.candidates.len() as u64)?;
-        poolw(w, &book.values.iter().collect::<Vec<_>>())?;
+        poolw(
+            w,
+            &book.values.iter().map(Assessment::from).collect::<Vec<_>>(),
+        )?;
         catalogw(w, &book.catalog)?;
         for record in &book.records {
             keyw(w, record.key)?;
             u8w(w, record.len as u8)?;
             u8w(w, u8::from(record.complete))?;
             refw(w, record.value)?;
-            refw(w, record.proof)?;
+            refw(w, record.final_score)?;
             for c in &book.candidates[record.start..record.start + record.len] {
                 u8w(w, action_code(c.action))?;
                 u8w(w, u8::from(c.registered))?;
                 refw(w, c.value)?;
-                refw(w, c.certificate)?;
+                refw(w, c.final_score)?;
             }
         }
         extensionsw(w, &book.extensions)
@@ -903,7 +778,7 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
             version >= 4,
         )?
     } else {
-        catalog::Catalog::default()
+        ReadCatalog::default()
     };
     validate_catalog(&catalog, &pool.values)?;
     let mut records = Vec::new();
@@ -926,7 +801,7 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
         } else {
             valuer(&mut input, identity, false)?.map(|v| pool.intern(v))
         };
-        let proof = if version >= 3 {
+        let final_score = if version >= 3 {
             refr(&mut input, &pool.values)?
         } else {
             None
@@ -949,7 +824,7 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
             candidates.push(StoredCandidate {
                 action,
                 registered,
-                certificate: if version >= 3 {
+                final_score: if version >= 3 {
                     refr(&mut input, &pool.values)?
                 } else {
                     value.filter(|i| pool.values[*i as usize].proven())
@@ -963,7 +838,7 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
             len,
             complete,
             value,
-            proof,
+            final_score,
         });
     }
     if candidates.len() != total {
@@ -978,7 +853,7 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
                 .collect();
             let certificates: Vec<_> = entries
                 .iter()
-                .map(|c| c.certificate.map(|i| pool.values[i as usize]))
+                .map(|c| c.final_score.map(|i| pool.values[i as usize]))
                 .collect();
             let expected = if entries.is_empty() {
                 Some(terminal_value(rec.key.board()))
@@ -992,12 +867,12 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
             {
                 return Err(invalid("legacy position summary"));
             }
-            let proof = if entries.is_empty() {
+            let final_score = if entries.is_empty() {
                 Some(terminal_value(rec.key.board()))
             } else {
                 combine_values(certificates.iter().copied(), identity, rec.key, propagation).0
             };
-            for (value, inputs) in [(expected, &effective), (proof, &certificates)] {
+            for (value, inputs) in [(expected, &effective), (final_score, &certificates)] {
                 if let Some(v) = value
                     && let ValueAnalysis::Derived {
                         basis: Derivation::Maximum { inputs: digest, .. },
@@ -1011,7 +886,7 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
                 }
             }
             rec.value = expected.map(|v| pool.intern(v));
-            rec.proof = proof.map(|v| pool.intern(v));
+            rec.final_score = final_score.map(|v| pool.intern(v));
         }
     }
     validate_catalog(&catalog, &pool.values)?;
@@ -1031,11 +906,10 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
     let book = Book::from_parts(
         SnapshotMetadata {
             identity,
-            propagation,
-            catalog,
+            catalog: catalog.into_current(),
             producer,
         },
-        pool.values,
+        pool.values.into_iter().map(Evaluation::from).collect(),
         extensions,
         records,
         candidates,
@@ -1051,33 +925,39 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
             }
         }
         for c in entries {
-            if let Some(i) = c.certificate {
-                let v = book.values.at(i as usize);
+            if let Some(i) = c.final_score {
+                let v = Assessment::from(book.values.at(i as usize));
                 v.validate_candidate(rec.key, c.action)?;
                 if !v.proven() {
                     return Err(invalid("unproven candidate certificate"));
                 }
             }
         }
-        let proof = if entries.is_empty() {
+        let final_score = if entries.is_empty() {
             Some(terminal_value(rec.key.board()))
         } else {
             combine_values(
-                entries
-                    .iter()
-                    .map(|c| c.certificate.map(|i| book.values.at(i as usize))),
+                entries.iter().map(|c| {
+                    c.final_score
+                        .map(|i| Assessment::from(book.values.at(i as usize)))
+                }),
                 identity,
                 rec.key,
-                book.propagation,
+                propagation,
             )
             .0
         };
-        if rec.proof.map(|i| book.values.at(i as usize)) != proof {
-            return Err(invalid("position proof summary"));
+        if rec
+            .final_score
+            .map(|i| Assessment::from(book.values.at(i as usize)))
+            != final_score
+        {
+            return Err(invalid("position final_score summary"));
         }
         let all = entries.iter().all(|c| {
-            c.value
-                .is_some_and(|v| book.values.at(v as usize).bound() == Bound::Exact)
+            c.value.is_some_and(|v| {
+                Assessment::from(book.values.at(v as usize)).bound() == Bound::Exact
+            })
         });
         if rec.complete != all {
             return Err(invalid("coverage summary"));
@@ -1086,16 +966,19 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
             Some(terminal_value(rec.key.board()))
         } else {
             combine_values(
-                entries
-                    .iter()
-                    .map(|c| c.value.map(|v| book.values.at(v as usize))),
+                entries.iter().map(|c| {
+                    c.value
+                        .map(|v| Assessment::from(book.values.at(v as usize)))
+                }),
                 identity,
                 rec.key,
-                book.propagation,
+                propagation,
             )
             .0
         };
-        let actual = rec.value.map(|v| book.values.at(v as usize));
+        let actual = rec
+            .value
+            .map(|v| Assessment::from(book.values.at(v as usize)));
         if if version >= 3 {
             expected != actual
         } else {
@@ -1108,13 +991,13 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
     Ok(book)
 }
 // workは直接評価・手動値・確定情報・集合探索・仕事一覧を保存する。
-// Node.value/backups、parents、優先順位などの補助データは読込後に再計算する。
+// Node.value/values_for_parent、parents、優先順位などの補助データは読込後に再計算する。
 pub(super) fn save_editor(editor: &BookEditor, path: &Path) -> Result<()> {
     editor.validate()?;
     let pool = ValuePool::editor(editor);
     atomic_save(path, WORK, 8, |w| {
         w.write_all(&editor.identity)?;
-        u8w(w, editor.propagation as u8)?;
+        u8w(w, 1)?;
         stringw(w, &editor.producer)?;
         u64w(w, editor.revision)?;
         u64w(w, editor.nodes.len() as u64)?;
@@ -1129,23 +1012,28 @@ pub(super) fn save_editor(editor: &BookEditor, path: &Path) -> Result<()> {
             for e in &n.edges {
                 u8w(w, action_code(e.action))?;
                 u8w(w, u8::from(e.registered))?;
-                evidencew(w, editor.values.opt(e.direct()), &pool)?;
-                evidencew(w, editor.values.opt(e.manual()), &pool)?;
-                evidencew(w, editor.values.opt(e.certificate()), &pool)?;
+                evidencew(
+                    w,
+                    editor.values.opt(e.direct()).map(Assessment::from),
+                    &pool,
+                )?;
+                evidencew(
+                    w,
+                    editor.values.opt(e.manual()).map(Assessment::from),
+                    &pool,
+                )?;
+                evidencew(
+                    w,
+                    editor.values.opt(e.final_score()).map(Assessment::from),
+                    &pool,
+                )?;
             }
-            u8w(w, u8::from(n.pending.is_some()))?;
-            if let Some(p) = &n.pending {
-                u64w(w, p.stage as u64)?;
-                u64w(w, p.revision)?;
-                for &v in &p.values {
-                    evidencew(w, editor.values.opt(v), &pool)?;
-                }
-            }
-            u8w(w, u8::from(n.frontier.is_some()))?;
-            if let Some(f) = &n.frontier {
+            u8w(w, 0)?; // Legacy per-candidate staging slot; current generation never creates it.
+            u8w(w, u8::from(n.move_search.is_some()))?;
+            if let Some(f) = &n.move_search {
                 u64w(w, f.mask)?;
                 u8w(w, action_code(f.best))?;
-                evidencew(w, Some(editor.values.get(f.value)), &pool)?;
+                evidencew(w, Some(Assessment::from(editor.values.get(f.value))), &pool)?;
                 u8w(w, f.pv.len() as u8)?;
                 for &a in &f.pv {
                     u8w(w, action_code(a))?;
@@ -1222,10 +1110,11 @@ fn legacy_values(
         let node = &editor.nodes[&key];
         let mut inputs = Vec::with_capacity(node.edges.len());
         for (index, e) in node.edges.iter().enumerate() {
-            let direct = editor.values.opt(e.direct());
+            let direct = editor.values.opt(e.direct()).map(Assessment::from);
             let manual = editor
                 .values
                 .opt(e.manual())
+                .map(Assessment::from)
                 .filter(|v| v.identity() == editor.identity);
             let child = if e.registered {
                 cache
@@ -1242,7 +1131,7 @@ fn legacy_values(
                     (Some(d), _) if d.quality().solved => (Some(d), false),
                     (Some(d), Some(p))
                         if (!d.proven() || p.proven())
-                            && (policy == PropagationPolicy::Book || editor::dominates(p, d)) =>
+                            && (policy == PropagationPolicy::Book || legacy::dominates(p, d)) =>
                     {
                         (Some(p), true)
                     }
@@ -1252,26 +1141,28 @@ fn legacy_values(
                 }
             };
             if manual.is_none() {
-                if let Some(f) = node.frontier.as_ref()
-                    && let Some(v) = f.assessment(index, e.action, &editor.values)
+                if let Some(f) = node.move_search.as_ref()
+                    && let Some(v) = f
+                        .evaluation(index, e.action, &editor.values)
+                        .map(Assessment::from)
                     && !(policy == PropagationPolicy::Book && backed && !v.proven())
                     && value.is_none_or(|d| {
                         if d.quality().solved {
                             false
                         } else if d.proven() {
                             v.proven()
-                                && (editor::dominates(v, d)
+                                && (legacy::dominates(v, d)
                                     || (v.bound() == Bound::ProvenUpper
                                         && d.bound() == Bound::ProvenLower))
                         } else {
-                            editor::dominates(editor.values.get(f.value), d)
+                            legacy::dominates(Assessment::from(editor.values.get(f.value)), d)
                         }
                     })
                 {
                     value = Some(v);
                     backed = false;
                 }
-                if let Some(v) = editor.values.opt(e.certificate()) {
+                if let Some(v) = editor.values.opt(e.final_score()).map(Assessment::from) {
                     value = Some(v);
                 }
             }
@@ -1342,16 +1233,15 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
             version >= 8,
         )?
     } else {
-        catalog::Catalog::default()
+        ReadCatalog::default()
     };
     validate_catalog(&catalog, &pool.values)?;
     let mut editor = BookEditor::new(identity);
-    editor.catalog = catalog;
-    editor.catalog.derivations.clear();
+    editor.catalog = catalog.into_current();
     editor.producer = producer;
     let _old_propagation = propagation;
-    editor.propagation = PropagationPolicy::Book;
     let mut count = 0;
+    let mut pending_imports = BTreeMap::new();
     for _ in 0..n {
         let key = keyr(&mut input)?;
         if editor.nodes.contains_key(&key) {
@@ -1378,14 +1268,14 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
             let registered = boolr(&mut input)?;
             let direct = editor
                 .values
-                .put(evidencer(&mut input, identity, version >= 7, &pool)?);
+                .put(evidencer(&mut input, identity, version >= 7, &pool)?.map(Evaluation::from));
             let manual = editor
                 .values
-                .put(evidencer(&mut input, identity, version >= 7, &pool)?);
+                .put(evidencer(&mut input, identity, version >= 7, &pool)?.map(Evaluation::from));
             let certificate = if version >= 7 {
                 editor
                     .values
-                    .put(evidencer(&mut input, identity, true, &pool)?)
+                    .put(evidencer(&mut input, identity, true, &pool)?.map(Evaluation::from))
             } else {
                 None
             };
@@ -1407,14 +1297,11 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
             let mut values = Vec::new();
             reserve(&mut values, len)?;
             for _ in 0..len {
-                values.push(editor.values.put(evidencer(
-                    &mut input,
-                    identity,
-                    version >= 7,
-                    &pool,
-                )?));
+                values.push(editor.values.put(
+                    evidencer(&mut input, identity, version >= 7, &pool)?.map(Evaluation::from),
+                ));
             }
-            Some(Pending {
+            Some(PendingImport {
                 stage,
                 revision,
                 values,
@@ -1435,7 +1322,13 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
             for _ in 0..length {
                 pv.push(action_from(u8r(&mut input)?)?);
             }
-            Some(Frontier::new(mask, best, value, pv, &mut editor.values)?)
+            Some(MoveSearch::new(
+                mask,
+                best,
+                value.into(),
+                pv,
+                &mut editor.values,
+            )?)
         } else {
             None
         };
@@ -1447,14 +1340,15 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
             edges,
             value: None,
             complete: false,
-            backups: [None; 2],
-            proof: None,
-            proof_backups: None,
+            values_for_parent: [None; 2],
+            final_score: None,
+            final_score_for_parent: None,
             completed_stages: stages,
-            pending,
-            frontier,
+            move_search: frontier,
         };
-        editor.pending_count += usize::from(n.pending.is_some());
+        if let Some(pending) = pending {
+            pending_imports.insert(key, pending);
+        }
     }
     if count != total {
         return Err(invalid("candidate total"));
@@ -1530,12 +1424,12 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
                 return Err(invalid("expansion queue"));
             }
         }
-        for n in editor.nodes.values() {
+        for (&key, n) in &editor.nodes {
             if n.completed_stages > config.stage_count()
-                || n.pending.as_ref().is_some_and(|p| {
+                || pending_imports.get(&key).is_some_and(|p| {
                     p.stage != n.completed_stages
                         || p.stage >= config.stage_count()
-                        || (config.frontier_only
+                        || (config.unregistered_only
                             && n.edges
                                 .iter()
                                 .zip(&p.values)
@@ -1588,7 +1482,7 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
             expansions,
             expanded: BTreeMap::new(),
         });
-    } else if editor.nodes.values().any(|n| n.pending.is_some()) {
+    } else if !pending_imports.is_empty() {
         return Err(invalid("pending analysis without generation settings"));
     }
     let used = resident
@@ -1610,16 +1504,18 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
         None
     };
     editor.repair()?;
-    editor.normalize_if_pending()?;
+    import_completed_candidates(&mut editor, &pending_imports)?;
     if let Some(previous) = previous {
         let mut changed_position_values = 0;
         let mut changed_candidate_values = 0;
         for (&key, node) in &editor.nodes {
             let (old, candidates) = &previous[&key];
-            changed_position_values +=
-                u64::from(compared(*old) != compared(editor.values.opt(node.value)));
+            changed_position_values += u64::from(
+                compared(*old) != compared(editor.values.opt(node.value).map(Assessment::from)),
+            );
             for (e, old) in node.edges.iter().zip(candidates) {
-                changed_candidate_values += u64::from(compared(editor.effective(key, e)) != *old);
+                changed_candidate_values +=
+                    u64::from(compared(editor.selected(key, e).map(Assessment::from)) != *old);
             }
         }
         let changes_rules = propagation == PropagationPolicy::Quality
@@ -1687,17 +1583,11 @@ fn configw(w: &mut dyn Write, c: &GenerationConfig) -> Result<()> {
     u32w(w, c.checkpoint_interval.subsec_nanos())?;
     u32w(w, c.cumulative_loss.map_or(u32::MAX, u32::from))?;
     u8w(w, c.leaf_loss.unwrap_or(255))?;
-    u8w(w, u8::from(c.frontier_only))?;
+    u8w(w, u8::from(c.unregistered_only))?;
     u8w(w, c.schedule as u8)?;
     u8w(w, c.line_plies)?;
     u32w(w, u32::from(c.max_parallel_jobs))?;
-    u8w(
-        w,
-        match c.legacy {
-            LegacyPolicy::Reject => 0,
-            LegacyPolicy::RecordedQuality => 1,
-        },
-    )
+    u8w(w, u8::from(c.allow_imported))
 }
 fn configr(r: &mut impl Read, version: u32) -> Result<GenerationConfig> {
     let reuse_completed = boolr(r)?;
@@ -1789,11 +1679,11 @@ fn configr(r: &mut impl Read, version: u32) -> Result<GenerationConfig> {
     } else {
         (None, None)
     };
-    let frontier_only = version >= 4 && boolr(r)?;
+    let unregistered_only = version >= 4 && boolr(r)?;
     let schedule = if version >= 5 {
         match u8r(r)? {
             0 => SchedulePolicy::Breadth,
-            1 => SchedulePolicy::Frontier,
+            1 => SchedulePolicy::Promising,
             _ => return Err(invalid("schedule policy")),
         }
     } else {
@@ -1807,21 +1697,21 @@ fn configr(r: &mut impl Read, version: u32) -> Result<GenerationConfig> {
     } else {
         (8, 0)
     };
-    let legacy = if version >= 7 {
+    let allow_imported = if version >= 7 {
         match u8r(r)? {
-            0 => LegacyPolicy::Reject,
-            1 => LegacyPolicy::RecordedQuality,
+            0 => false,
+            1 => true,
             _ => return Err(invalid("legacy reuse policy")),
         }
     } else {
-        LegacyPolicy::RecordedQuality
+        true
     };
     let c = GenerationConfig {
-        legacy,
+        allow_imported,
         line_plies,
         max_parallel_jobs,
         reuse_completed,
-        frontier_only,
+        unregistered_only,
         schedule,
         analysis,
         expansion_loss,
@@ -1931,6 +1821,8 @@ fn contextr(r: &mut impl Read) -> Result<Context> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::legacy::{EstimateBound, SearchProjection};
+
     #[test]
     fn old_play_with_manual_and_legacy_searches_rebuilds_quality_after_validation() {
         let key = Key::new(Board::new()).0;
@@ -1976,7 +1868,7 @@ mod tests {
             identity,
         )
         .unwrap();
-        let mut catalog = catalog::Catalog::default();
+        let mut catalog = ReadCatalog::default();
         catalog.derivations.insert(digest, ids);
         let mut pool = ValuePool::default();
         for &v in &inputs {
@@ -2032,7 +1924,7 @@ mod tests {
         assert!(loaded.extensions.is_empty());
         let value = loaded.probe(key.board()).unwrap().value().unwrap();
         assert_eq!(value.score(), 4);
-        assert_eq!(value.analysis().summary().legacy_depth, 12);
+        assert_eq!(value.conditions().legacy_depth, 12);
         loaded.save(&path).unwrap();
         assert_eq!(
             load_book(&path, ReadLimits::default())
@@ -2076,7 +1968,7 @@ mod tests {
     #[test]
     fn generation_config_reads_v1_v2_and_bounds_v3_settings() {
         let original = GenerationConfig {
-            legacy: LegacyPolicy::RecordedQuality,
+            allow_imported: true,
             ..Default::default()
         };
         let mut bytes = Vec::new();
@@ -2095,8 +1987,8 @@ mod tests {
         cfg.analysis = AnalysisSchedule::Levels(vec![2, 4]);
         cfg.cumulative_loss = Some(5);
         cfg.leaf_loss = Some(2);
-        cfg.frontier_only = true;
-        cfg.schedule = SchedulePolicy::Frontier;
+        cfg.unregistered_only = true;
+        cfg.schedule = SchedulePolicy::Promising;
         let mut bytes = Vec::new();
         legacy_configw(&mut bytes, &cfg).unwrap();
         assert_eq!(configr(&mut bytes.as_slice(), 5).unwrap(), cfg);
@@ -2139,7 +2031,7 @@ mod tests {
             origin: ValueOrigin::Manual,
         })
         .unwrap();
-        editor.record_manual(board, action, value).unwrap();
+        editor.record_manual(board, action, value.into()).unwrap();
         editor.retarget(&engine).unwrap();
         let dir = std::env::temp_dir().join(format!("deft-book-retarget-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -2152,8 +2044,8 @@ mod tests {
             .iter()
             .find(|e| e.action == t.action(action))
             .unwrap();
-        assert_eq!(loaded.values.opt(edge.manual()), Some(value));
-        assert_eq!(loaded.effective(key, edge), None);
+        assert_eq!(loaded.values.opt(edge.manual()), Some(value.into()));
+        assert_eq!(loaded.selected(key, edge), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -2180,7 +2072,7 @@ mod tests {
             legacy[16..24].copy_from_slice(&size.to_le_bytes());
             signed_write(&path, &mut legacy);
             let loaded = BookEditor::load(&path, ReadLimits::default()).unwrap();
-            assert_eq!(loaded.propagation, PropagationPolicy::Book);
+            assert!(loaded.migration_report().is_some());
             assert_eq!(loaded.len(), 1);
         }
         std::fs::remove_dir_all(dir).unwrap();
@@ -2257,7 +2149,7 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn subset_and_candidate_evidence_cannot_be_reinterpreted_as_a_whole_child() {
+    fn subset_and_move_values_cannot_be_reinterpreted_as_a_whole_child() {
         use deft_reversi_engine::{EngineOptions, Goal, Model, PatternModel, SearchRequest};
         let mut engine = Engine::new(
             Model::from_pattern(PatternModel::zero()),
@@ -2293,7 +2185,7 @@ mod tests {
         let subset = make(one);
         let whole = make(all);
         let candidate = whole.project(SearchProjection::BestMove).unwrap();
-        let catalog = catalog::Catalog::default();
+        let catalog = ReadCatalog::default();
         for input in [subset, candidate] {
             assert!(input.try_child_to_parent(true).is_err());
         }
@@ -2304,6 +2196,7 @@ mod tests {
 #[cfg(test)]
 mod migration_queue_tests {
     use super::*;
+
     #[test]
     fn old_quality_work_rebuilds_jobs_without_losing_completed_search_records() {
         let bytes = include_bytes!("../tests/fixtures/search-v7.work");
@@ -2321,12 +2214,73 @@ mod migration_queue_tests {
             }
         }
         assert!(editor.nodes.values().all(|n| n.completed_stages == 0));
-        assert!(
-            editor
-                .values
-                .iter()
-                .any(|v| matches!(v.analysis(), ValueAnalysis::Search { .. }))
-        );
+        assert!(editor.values.iter().any(|v| matches!(
+            v.source(),
+            EvaluationSource::Search(_) | EvaluationSource::SearchMove(_)
+        )));
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod imported_jobs_tests {
+    use super::*;
+    #[test]
+    fn rejected_legacy_pending_import_keeps_its_evidence_and_generation_state() {
+        let eng = Engine::new(
+            deft_reversi_engine::Model::from_pattern(deft_reversi_engine::PatternModel::zero()),
+            deft_reversi_engine::EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let mut ed = BookEditor::for_engine(&eng).unwrap();
+        let board = Board::new();
+        ed.configure_generation(
+            &[board],
+            GenerationConfig {
+                analysis: AnalysisSchedule::Stages(vec![Stage {
+                    depth: 2,
+                    selectivity: Selectivity::Full,
+                }]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let key = Key::new(board).0;
+        let action = ed.nodes[&key].edges[0].action;
+        let upper = ImportedValue {
+            score: 0,
+            quality: AnalysisQuality {
+                depth: 60,
+                selectivity: Selectivity::Full,
+                solved: false,
+            },
+            bound: legacy::Bound::ProvenUpper,
+            identity: ed.identity(),
+            origin: ValueOrigin::Imported,
+        };
+        ed.record_imported(key.board(), action, upper).unwrap();
+        let mut point = upper;
+        point.score = 2;
+        point.bound = legacy::Bound::Exact;
+        point.quality.solved = true;
+        let node_revision = ed.nodes[&key].revision;
+        let mut values = vec![None; ed.nodes[&key].edges.len()];
+        values[0] = Some(ed.values.intern(Evaluation::import(point).unwrap()));
+        let pending = BTreeMap::from([(
+            key,
+            PendingImport {
+                stage: 0,
+                revision: node_revision,
+                values,
+            },
+        )]);
+        let revision = ed.revision();
+        let original = ed.move_values(key.board(), action);
+        assert!(import_completed_candidates(&mut ed, &pending).is_err());
+        assert_eq!(ed.revision(), revision);
+        assert_eq!(ed.move_values(key.board(), action), original);
+        assert!(ed.generation.is_some());
+        assert!(pending[&key].values[0].is_some());
+        ed.validate().unwrap();
     }
 }

@@ -20,7 +20,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs/book-v2"
-ORDER = ["index", "source-review", "training", "operations", "architecture", "value-model", "levels", "loss-control",
+ORDER = ["index", "source-review", "maintainability", "training", "operations", "architecture", "value-model", "levels", "loss-control",
          "scheduling", "propagation", "diagnostics", "compatibility", "design", "validation"]
 STYLE = """
 :root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
