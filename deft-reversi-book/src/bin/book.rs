@@ -1,4 +1,9 @@
 //! Offline book adapter. No application history, file policy, or signals in search.
+//!
+//! CLIは引数→GenerationConfig/GenerationLimitsへの変換、モデル・ファイルの読書き、
+//! Ctrl-Cと定期保存を担当する。評価の採否や生成順序の実装はライブラリ側に置く。
+//! run内のコマンド別分岐から、configure_generation_roots / generate_with_checkpoint、
+//! export / save / loadへ進むとCLIと実装の対応を追える。
 use deft_reversi_book::*;
 use deft_reversi_engine::{Board, Engine, EngineOptions, Model, Selectivity, StopHandle};
 use std::{collections::BTreeMap, error::Error, path::Path, time::Duration};
@@ -8,12 +13,36 @@ fn main() {
         std::process::exit(1);
     }
 }
+fn load_work(path: impl AsRef<Path>, limits: ReadLimits) -> deft_reversi_book::Result<BookEditor> {
+    let editor = BookEditor::load(path, limits)?;
+    if let Some(m) = editor.migration_report() {
+        eprintln!(
+            "converted work v{}: positions={} registered_moves={} changed_position_values={} changed_candidate_values={} jobs_rebuilt={}; child values are now propagated; source file is unchanged until saved",
+            m.source_version,
+            m.positions,
+            m.registered_moves,
+            m.changed_position_values,
+            m.changed_candidate_values,
+            m.jobs_rebuilt
+        );
+    }
+    Ok(editor)
+}
 fn run() -> std::result::Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let Some(command) = args.next() else {
         help();
         return Ok(());
     };
+    if command == "--version" || command == "version" {
+        println!(
+            "deft_reversi_book {} search_revision={} endgame_pattern_ordering={}",
+            env!("CARGO_PKG_VERSION"),
+            deft_reversi_engine::SEARCH_SEMANTICS_REVISION,
+            cfg!(feature = "endgame-pattern-ordering")
+        );
+        return Ok(());
+    }
     if command == "--help" || command == "help" {
         help();
         return Ok(());
@@ -24,10 +53,18 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         "book",
         "positions",
         "stages",
+        "levels",
+        "legacy-values",
+        "schedule",
+        "line-plies",
+        "jobs",
+        "propagation",
         "selectivity",
         "loss",
         "black-loss",
         "white-loss",
+        "cumulative-loss",
+        "leaf-loss",
         "new-weight",
         "deepen-weight",
         "max-plies",
@@ -63,7 +100,7 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
     }
     if matches!(
         command.as_str(),
-        "build" | "extend" | "reanalyze" | "resume" | "export"
+        "build" | "extend" | "reanalyze" | "resume" | "leaves" | "export" | "repair"
     ) && let (Some(work), Some(book)) = (flags.get("work"), flags.get("book"))
         && destination(work)? == destination(book)?
     {
@@ -83,15 +120,53 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
             .unwrap_or(default))
     };
     let mib = |n: u64| n.checked_mul(1024 * 1024).ok_or("memory size overflow");
+    if flags.contains_key("propagation") {
+        return Err(
+            "--propagation was removed: registered child values are always propagated".into(),
+        );
+    }
     let limits = ReadLimits {
         max_bytes: mib(num("read-mib", 512)?)?,
         max_positions: num("read-positions", 2_000_000)?,
         max_candidates: num("read-candidates", 32_000_000)?,
     };
+    if matches!(command.as_str(), "inspect" | "verify" | "export" | "repair") {
+        let allowed = [
+            "work",
+            "book",
+            "read-mib",
+            "read-positions",
+            "read-candidates",
+        ];
+        if flags.keys().any(|key| {
+            !allowed.contains(&key.as_str())
+                && !(command == "repair" && key == "propagation")
+                && !(command == "inspect" && key == "positions")
+        }) {
+            return Err("option is not applicable to this command".into());
+        }
+    }
     if matches!(command.as_str(), "inspect" | "verify") {
+        if flags.contains_key("work") == flags.contains_key("book") {
+            return Err("specify exactly one of --work or --book".into());
+        }
         if let Some(path) = flags.get("work") {
-            let e = BookEditor::load(path, limits)?;
+            let e = load_work(path, limits)?;
             e.validate()?;
+            if command == "inspect" {
+                let identity: String = e.identity().iter().map(|b| format!("{b:02x}")).collect();
+                println!("identity={identity} propagation={:?}", "child-values");
+                println!("generation={:?}", e.generation_config());
+                println!("profiles={:#?}", e.analysis_profiles().collect::<Vec<_>>());
+                println!("runs={:#?}", e.generation_runs());
+                println!("{:#?}", e.stats());
+                if let Some(path) = flags.get("positions") {
+                    let snapshot = e.export()?;
+                    for root in read_positions(path)? {
+                        inspect_position(&snapshot, Some(&e), root.board);
+                    }
+                }
+            }
             println!(
                 "workspace positions={} revision={} managed_bytes={}",
                 e.len(),
@@ -101,17 +176,43 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         } else {
             let b = Book::load(required("book")?, limits)?;
             println!("{:?}", b.stats());
+            if command == "inspect" {
+                println!(
+                    "profiles={:#?}\nruns={:#?}",
+                    b.analysis_profiles().collect::<Vec<_>>(),
+                    b.generation_runs()
+                );
+                if let Some(path) = flags.get("positions") {
+                    for root in read_positions(path)? {
+                        inspect_position(&b, None, root.board);
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+    if flags.contains_key("propagation") {
+        return Err(
+            "--propagation was removed: registered child values are always propagated".into(),
+        );
+    }
+    if command == "repair" {
+        let mut editor = load_work(required("work")?, limits)?;
+        editor.repair()?;
+        editor.save(required("work")?)?;
+        if let Some(path) = flags.get("book") {
+            editor.export()?.save(path)?;
         }
         return Ok(());
     }
     if command == "export" {
-        let e = BookEditor::load(required("work")?, limits)?;
+        let e = load_work(required("work")?, limits)?;
         e.export()?.save(required("book")?)?;
         return Ok(());
     }
     if !matches!(
         command.as_str(),
-        "build" | "extend" | "reanalyze" | "resume"
+        "build" | "extend" | "reanalyze" | "resume" | "leaves"
     ) {
         return Err("unknown command".into());
     }
@@ -137,19 +238,37 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         }
         BookEditor::for_engine(&engine)?
     } else {
-        BookEditor::load(work, limits)?
+        load_work(work, limits)?
     };
     let previous_roots = editor.generation_starts();
     let previous_config = editor.generation_config().cloned();
     if command == "reanalyze" {
         editor.retarget(&engine)?;
     }
+    if editor.identity() == analysis_identity(&engine)? {
+        editor.set_model_label(required("model")?.to_string())?;
+        use sha2::{Digest, Sha256};
+        let bytes = std::fs::read(std::env::current_exe()?)?;
+        let build = Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        editor.set_build_label(format!("host-executable-sha256/{build}"))?;
+    }
     let config_flags = [
         "stages",
+        "levels",
+        "legacy-values",
+        "schedule",
+        "line-plies",
+        "jobs",
+        "propagation",
         "selectivity",
         "loss",
         "black-loss",
         "white-loss",
+        "cumulative-loss",
+        "leaf-loss",
         "new-weight",
         "deepen-weight",
         "max-plies",
@@ -162,6 +281,30 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
     }
     if command != "resume" {
         let mut config = previous_config.unwrap_or_default();
+        config.frontier_only = command == "leaves";
+        config.line_plies = u8::try_from(num("line-plies", u64::from(config.line_plies))?)?;
+        config.max_parallel_jobs =
+            u16::try_from(num("jobs", u64::from(config.max_parallel_jobs))?)?;
+        if let Some(value) = flags.get("schedule") {
+            config.schedule = match value.as_str() {
+                "breadth" => SchedulePolicy::Breadth,
+                "frontier" => SchedulePolicy::Frontier,
+                _ => return Err("schedule must be breadth or frontier".into()),
+            };
+        }
+        if flags.contains_key("levels")
+            && (flags.contains_key("stages") || flags.contains_key("selectivity"))
+        {
+            return Err("--levels conflicts with --stages/--selectivity".into());
+        }
+        if let Some(levels) = flags.get("levels") {
+            config.analysis = AnalysisSchedule::Levels(
+                levels
+                    .split(',')
+                    .map(str::parse)
+                    .collect::<std::result::Result<_, _>>()?,
+            );
+        }
         if let Some(s) = flags.get("stages") {
             let sel = match num("selectivity", 95)? {
                 68 => Selectivity::Percent68,
@@ -173,15 +316,16 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
                 100 => Selectivity::Full,
                 _ => return Err("selectivity must be 68/77/85/95/98/99/100".into()),
             };
-            config.stages = s
-                .split(',')
-                .map(|d| {
-                    Ok(Stage {
-                        depth: d.parse()?,
-                        selectivity: sel,
+            config.analysis = AnalysisSchedule::Stages(
+                s.split(',')
+                    .map(|d| {
+                        Ok(Stage {
+                            depth: d.parse()?,
+                            selectivity: sel,
+                        })
                     })
-                })
-                .collect::<std::result::Result<Vec<_>, Box<dyn Error>>>()?;
+                    .collect::<std::result::Result<Vec<_>, Box<dyn Error>>>()?,
+            );
         } else if flags.contains_key("selectivity") {
             return Err("--selectivity requires --stages".into());
         }
@@ -190,6 +334,12 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         }
         if let Some(v) = flags.get("white-loss") {
             config.white_loss = Some(v.parse()?);
+        }
+        if let Some(v) = flags.get("cumulative-loss") {
+            config.cumulative_loss = if v == "none" { None } else { Some(v.parse()?) };
+        }
+        if let Some(v) = flags.get("leaf-loss") {
+            config.leaf_loss = if v == "none" { None } else { Some(v.parse()?) };
         }
         config.new_job_weight = u8::try_from(num("new-weight", u64::from(config.new_job_weight))?)?;
         config.deepen_job_weight =
@@ -201,8 +351,13 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
             "checkpoint-seconds",
             config.checkpoint_interval.as_secs(),
         )?);
-        if command == "reanalyze" {
-            config.reuse_completed = false;
+        config.reuse_completed = !matches!(command.as_str(), "reanalyze" | "leaves");
+        if let Some(value) = flags.get("legacy-values") {
+            config.legacy = match value.as_str() {
+                "reject" => LegacyPolicy::Reject,
+                "recorded" => LegacyPolicy::RecordedQuality,
+                _ => return Err("legacy-values must be reject or recorded".into()),
+            };
         }
         let roots = if let Some(p) = flags.get("positions") {
             read_positions(p)?
@@ -260,7 +415,61 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         report.elapsed.as_secs_f64(),
         editor.len()
     );
+    let p = &report.profile;
+    println!(
+        "profile searches={} parallel={} engine={:.6}s resources={:.6}s expand={:.6}s schedule={:.6}s plan={:.6}s reachability={:.6}s publish={:.6}s checkpoint={:.6}s reach_hits={} reach_misses={}",
+        p.frontier_searches,
+        p.max_parallel_jobs,
+        p.engine_wall.as_secs_f64(),
+        p.resources_wall.as_secs_f64(),
+        p.expansion_wall.as_secs_f64(),
+        p.scheduling_wall.as_secs_f64(),
+        p.planning_wall.as_secs_f64(),
+        p.reachability_wall.as_secs_f64(),
+        p.publish_wall.as_secs_f64(),
+        p.checkpoint_wall.as_secs_f64(),
+        p.reachability_hits,
+        p.reachability_misses
+    );
     Ok(())
+}
+fn inspect_value(label: &str, value: Option<Assessment>) {
+    if let Some(value) = value {
+        println!(
+            "  {label} claim={:?} analysis={:?}",
+            value.claim(),
+            value.analysis()
+        );
+    }
+}
+fn inspect_position(book: &Book, editor: Option<&BookEditor>, board: Board) {
+    println!(
+        "position player={:016x} opponent={:016x}",
+        board.player_bits(),
+        board.opponent_bits()
+    );
+    let Some(entry) = book.probe(board) else {
+        println!("  missing");
+        return;
+    };
+    inspect_value("position-value", entry.value());
+    inspect_value("position-proof", entry.proof());
+    for c in entry.candidates() {
+        println!(" move={:?} registered={}", c.action, c.registered);
+        inspect_value("effective", c.value);
+        inspect_value("certificate", c.certificate);
+        if let Some(editor) = editor {
+            let ev = editor
+                .candidate_evidence(board, c.action)
+                .expect("snapshot/editor candidate match");
+            println!("  source={:?}", ev.source);
+            inspect_value("direct", ev.direct);
+            inspect_value("frontier", ev.frontier);
+            inspect_value("manual", ev.manual);
+            inspect_value("propagated", ev.propagated);
+            inspect_value("propagated-certificate", ev.propagated_certificate);
+        }
+    }
 }
 fn read_positions(path: &str) -> std::result::Result<Vec<GenerationRoot>, Box<dyn Error>> {
     let mut result = Vec::new();
@@ -320,8 +529,8 @@ fn destination(path: &str) -> std::io::Result<std::path::PathBuf> {
 }
 fn help() {
     println!(
-        "book build|extend|reanalyze|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
-  --threads 1 --tt-mib 256 --memory-mib 512 --checkpoint-seconds 60\n  --legacy-main-mpc\nbook export --work FILE --book FILE\nbook inspect|verify --work FILE | --book FILE\n  --read-mib 512 --read-positions 2000000 --read-candidates 32000000
+        "book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --levels 4,8,12 (alternative to --stages/--selectivity)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
+  --threads 1 --tt-mib 256 --memory-mib 512 --checkpoint-seconds 60\n  --memory-mib limits estimated book data and job storage; engine/TT and temporary I/O memory are separate\n  --legacy-main-mpc\nbook repair --work FILE [--book FILE]\nbook export --work FILE --book FILE\nbook inspect|verify --work FILE | --book FILE\n  inspect --positions OBF (candidate evidence and completed modes)\n  --read-mib 512 --read-positions 2000000 --read-candidates 32000000
   (read/allocation bounds; resume retains stored generation settings)"
     );
 }

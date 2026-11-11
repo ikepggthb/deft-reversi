@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>展開の損失制御 · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html" aria-current="page">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">三つの独立した制限</a></li><li><a href="#section-3">経路と転置</a></li><li><a href="#section-4">メモリと検証</a></li></ul></aside>
+<h1 id="section-1">展開の損失制御</h1>
+<h2 id="section-2">三つの独立した制限</h2>
+<p>点評価と残り候補の上限から局面値bestを再構成し、候補の局所損失をmax(0, best−candidate)とする。符号はその局面の手番視点でそろえる。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>設定</th>
+<th>API</th>
+<th>対象</th>
+<th>既定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1手の損失</td>
+<td>expansion_loss、black_loss、white_loss</td>
+<td>新規リンクと既存経路の双方</td>
+<td>共通2、色別指定なし</td>
+</tr>
+<tr>
+<td>累積損失</td>
+<td>cumulative_loss: Option&lt;u16&gt;</td>
+<td>rootからの局所損失の和、黒白双方を含む</td>
+<td>制限なし</td>
+</tr>
+<tr>
+<td>leaf誤差</td>
+<td>leaf_loss: Option&lt;u8&gt;</td>
+<td>未登録候補を新しくリンクにする時</td>
+<td>制限なし</td>
+</tr>
+</tbody>
+</table></div>
+<p>CLIは--loss、--black-loss、--white-loss、--cumulative-loss、--leaf-loss。後二つはnoneで制限を解除できる。例えば--loss 3 --cumulative-loss 5 --leaf-loss 2では、既存の3石差リンクは通れるが、新しいリンクは2石差まで。既存リンクを消す操作ではない。</p>
+<p>現在のDeftは最良の未展開手の点評価をleaf評価として使い、他の候補を上限で覆う。上限だけの手は登録せず、許容範囲内なら次の最良手を探索して点評価を得る。leafの独立再計算は<a href="diagnostics.html">leavesモード</a>で実装した。<a href="scheduling.html">優先スケジューリング</a>も選択できる。</p>
+<h2 id="section-3">経路と転置</h2>
+<p>盤面と絶対手番色のContextに対し、(rootからの着手数、累積損失)の非劣な組を持つ。距離2・損失3と、距離4・損失0なら両方必要。距離上限と損失上限をそれぞれ別の経路で満たしても、その二つを合成して架空の距離2・損失0にはしない。同じ距離では最小損失だけを残す。各Contextで最大61組となる。</p>
+<p>root到達時は距離0・損失0にリセットする。複数rootのどれかから条件を満たせば処理できる。パスは手番色を反転し、着手距離は加算しない。強制パスは唯一の合法Actionなので局所損失0。</p>
+<p>保存キューの距離はヒントであり、実行時には逆リンクから現在の評価で経路を再判定する。評価変更で外れた枝は保存し、自動強化から外す。再び条件を満たすと既存の完了値を使って処理を再開する。展開済みのキャッシュには経路の組と候補の損失を含め、候補集合が同じでも残り損失予算が変わった場合は子を再スケジュールする。</p>
+<h2 id="section-4">メモリと検証</h2>
+<p>到達判定は祖先をメモ化する逐次処理。同じrevision・到達集合ならメモを再利用し、登録や評価が変われば無効化する。Editorの見積もりには一時メモの各Context最大61組と展開キャッシュの容量を含める。プロセスRSSのハード上限ではなく、EngineやI/Oバッファは別管理。大規模育成時の計算量・メモリは引き続き計測が必要。</p>
+<p>試験は3+3を上限5で拒否、3+2への改善で再活性化、leaf制限と既存リンクの独立性、保存往復、転置で短い高損失経路と長い低損失経路を保持、パスの距離0と色反転を確認している。制限変更にはextendを使う。resumeは設定変更を拒否する。</p>
+<footer>正本：<a href="loss-control.md">loss-control.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

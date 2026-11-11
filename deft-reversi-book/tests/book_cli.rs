@@ -25,7 +25,16 @@ fn text(p: &Path) -> &str {
 }
 #[test]
 fn cli_generation_resume_export_extend_and_retarget() {
-    let dir = std::env::temp_dir().join(format!("deft-book-cli-{}", std::process::id()));
+    let version = success(&["--version"]);
+    assert!(String::from_utf8_lossy(&version.stdout).contains(&format!(
+        "endgame_pattern_ordering={}",
+        cfg!(feature = "endgame-pattern-ordering")
+    )));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("deft-book-cli-{}-{nonce}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let model = dir.join("model.dpr2");
     let mut bytes = Vec::new();
@@ -62,6 +71,8 @@ fn cli_generation_resume_export_extend_and_retarget() {
         text(&positions),
         "--stages",
         "2",
+        "--selectivity",
+        "100",
         "--max-plies",
         "1",
         "--nodes",
@@ -84,6 +95,25 @@ fn cli_generation_resume_export_extend_and_retarget() {
         "1",
     ]);
     success(&["inspect", "--work", text(&work)]);
+    let detail = success(&[
+        "inspect",
+        "--work",
+        text(&work),
+        "--positions",
+        text(&positions),
+    ]);
+    let detail = String::from_utf8_lossy(&detail.stdout);
+    assert!(detail.contains("requested: ParentDepth"));
+    assert!(detail.contains("completed: Midgame { depth: 2"));
+    assert!(detail.contains("analysis=Derived"));
+    let detail = success(&[
+        "inspect",
+        "--book",
+        text(&book),
+        "--positions",
+        text(&positions),
+    ]);
+    assert!(String::from_utf8_lossy(&detail.stdout).contains("position player="));
     success(&["verify", "--book", text(&book)]);
     success(&["export", "--work", text(&work), "--book", text(&copied)]);
     assert_eq!(
@@ -120,11 +150,84 @@ fn cli_generation_resume_export_extend_and_retarget() {
         text(&work),
         "--stages",
         "4",
+        "--selectivity",
+        "100",
         "--nodes",
         "50000",
         "--tt-mib",
         "1",
     ]);
+    success(&[
+        "extend",
+        "--model",
+        text(&model),
+        "--work",
+        text(&work),
+        "--levels",
+        "1,2",
+        "--schedule",
+        "frontier",
+        "--cumulative-loss",
+        "5",
+        "--leaf-loss",
+        "2",
+        "--nodes",
+        "50000",
+        "--tt-mib",
+        "1",
+    ]);
+    assert_eq!(
+        BookEditor::load(&work, ReadLimits::default())
+            .unwrap()
+            .generation_config()
+            .unwrap()
+            .analysis,
+        AnalysisSchedule::Levels(vec![1, 2])
+    );
+    let loss_config = BookEditor::load(&work, ReadLimits::default())
+        .unwrap()
+        .generation_config()
+        .unwrap()
+        .clone();
+    assert_eq!(loss_config.schedule, SchedulePolicy::Frontier);
+    assert_eq!(loss_config.cumulative_loss, Some(5));
+    assert_eq!(loss_config.leaf_loss, Some(2));
+    for extra in [
+        vec!["--levels", "2"],
+        vec!["--cumulative-loss", "5"],
+        vec!["--schedule", "breadth"],
+        vec!["--leaf-loss", "2"],
+        vec!["--levels", "2", "--stages", "3"],
+    ] {
+        let mut args = vec![
+            "resume",
+            "--model",
+            text(&model),
+            "--work",
+            text(&work),
+            "--nodes",
+            "0",
+        ];
+        args.extend(extra);
+        assert!(!call(&args).status.success());
+    }
+    assert!(
+        !call(&[
+            "extend",
+            "--model",
+            text(&model),
+            "--work",
+            text(&work),
+            "--levels",
+            "2",
+            "--stages",
+            "3",
+            "--nodes",
+            "0"
+        ])
+        .status
+        .success()
+    );
     let n = bytes.len();
     bytes[n - 2..].copy_from_slice(&128i16.to_le_bytes());
     std::fs::write(&model, &bytes).unwrap();
@@ -136,6 +239,8 @@ fn cli_generation_resume_export_extend_and_retarget() {
         text(&work),
         "--stages",
         "2",
+        "--selectivity",
+        "100",
         "--nodes",
         "50000",
         "--tt-mib",
@@ -160,5 +265,87 @@ fn cli_generation_resume_export_extend_and_retarget() {
         .status
         .success()
     );
+    let registered_before = editor.stats().registered_moves;
+    success(&["repair", "--work", text(&work), "--book", text(&book)]);
+    let inspected = success(&["inspect", "--work", text(&work)]);
+    assert!(String::from_utf8_lossy(&inspected.stdout).contains("root_lines"));
+    assert!(
+        !call(&[
+            "resume",
+            "--model",
+            text(&model),
+            "--work",
+            text(&work),
+            "--nodes",
+            "0",
+            "--propagation",
+            "quality"
+        ])
+        .status
+        .success()
+    );
+    assert!(
+        !call(&["repair", "--work", text(&work), "--book", text(&work)])
+            .status
+            .success()
+    );
+    success(&[
+        "leaves",
+        "--model",
+        text(&model),
+        "--work",
+        text(&work),
+        "--levels",
+        "1",
+        "--nodes",
+        "1",
+        "--tt-mib",
+        "1",
+    ]);
+    assert!(
+        BookEditor::load(&work, ReadLimits::default())
+            .unwrap()
+            .generation_config()
+            .unwrap()
+            .frontier_only
+    );
+    success(&[
+        "resume",
+        "--model",
+        text(&model),
+        "--work",
+        text(&work),
+        "--nodes",
+        "50000",
+        "--tt-mib",
+        "1",
+    ]);
+    assert_eq!(
+        BookEditor::load(&work, ReadLimits::default())
+            .unwrap()
+            .stats()
+            .registered_moves,
+        registered_before
+    );
+    success(&[
+        "extend",
+        "--model",
+        text(&model),
+        "--work",
+        text(&work),
+        "--levels",
+        "1",
+        "--nodes",
+        "0",
+        "--tt-mib",
+        "1",
+    ]);
+    let config = BookEditor::load(&work, ReadLimits::default())
+        .unwrap()
+        .generation_config()
+        .unwrap()
+        .clone();
+    assert!(!config.frontier_only);
+    assert!(config.reuse_completed);
     std::fs::remove_dir_all(dir).unwrap();
 }

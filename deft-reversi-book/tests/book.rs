@@ -1,3 +1,4 @@
+use deft_reversi_book::ImportedValue;
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{
@@ -62,8 +63,15 @@ fn brute(b: Board) -> i16 {
         .max()
         .unwrap()
 }
+fn compat_policy() -> UsePolicy {
+    UsePolicy {
+        legacy: LegacyPolicy::RecordedQuality,
+        allow_manual: true,
+        ..UsePolicy::default()
+    }
+}
 fn estimate(identity: AnalysisIdentity, score: i16) -> Assessment {
-    Assessment {
+    Assessment::import(ImportedValue {
         score,
         quality: AnalysisQuality {
             depth: 12,
@@ -73,14 +81,16 @@ fn estimate(identity: AnalysisIdentity, score: i16) -> Assessment {
         bound: Bound::Exact,
         identity,
         origin: ValueOrigin::Search,
-    }
+    })
+    .unwrap()
 }
 fn config(depth: u8, plies: u8) -> GenerationConfig {
     GenerationConfig {
-        stages: vec![Stage {
+        legacy: LegacyPolicy::RecordedQuality,
+        analysis: AnalysisSchedule::Stages(vec![Stage {
             depth,
             selectivity: Selectivity::Full,
-        }],
+        }]),
         max_plies: plies,
         expansion_loss: 128,
         ..GenerationConfig::default()
@@ -99,7 +109,7 @@ fn transforms_restore_board_and_moves_and_share_one_key() {
     let mut e = BookEditor::new(id);
     for (i, a) in actions(b).into_iter().enumerate() {
         e.register_move(b, a).unwrap();
-        e.record(b, a, estimate(id, i as i16)).unwrap();
+        e.record_candidate(b, a, estimate(id, i as i16)).unwrap();
     }
     let book = e.export().unwrap();
     for t in Symmetry::all() {
@@ -123,15 +133,16 @@ fn sparse_book_defaults_to_registered_candidates_and_strict_falls_back() {
     let b = position(17, 40);
     let a = actions(b)[0];
     ed.register_move(b, a).unwrap();
-    ed.record(b, a, estimate(ed.identity(), 4)).unwrap();
+    ed.record_candidate(b, a, estimate(ed.identity(), 4))
+        .unwrap();
     let book = Arc::new(ed.export().unwrap());
     assert!(!book.probe(b).unwrap().all_moves_evaluated());
-    let mut p = BookPlayer::new(&eng, Some(book), UsePolicy::default(), 0).unwrap();
+    let mut p = BookPlayer::new(&eng, Some(book), compat_policy(), 0).unwrap();
     let r = p.choose(b);
     assert!(matches!(r,Some(BookChoice{action,..}) if action==a));
     p.set_policy(UsePolicy {
         require_all_evaluated: true,
-        ..UsePolicy::default()
+        ..compat_policy()
     })
     .unwrap();
     assert!(p.choose(b).is_none());
@@ -143,26 +154,26 @@ fn unknown_frontier_bounds_and_model_mismatch_are_not_played() {
     let a = actions(b)[0];
     let mut ed = BookEditor::for_engine(&eng).unwrap();
     let id = ed.identity();
-    ed.record(b, a, estimate(id, 3)).unwrap();
+    ed.record_candidate(b, a, estimate(id, 3)).unwrap();
     let mut p = BookPlayer::new(
         &eng,
         Some(Arc::new(ed.export().unwrap())),
-        UsePolicy::default(),
+        compat_policy(),
         1,
     )
     .unwrap();
     assert!(p.choose(b).is_none());
     ed.register_move(b, a).unwrap();
-    let mut upper = estimate(id, 5);
+    let mut upper = estimate(id, 5).as_imported();
     upper.bound = Bound::Upper;
     let mut bounded = BookEditor::new(id);
     bounded.register_move(b, a).unwrap();
-    bounded.record(b, a, upper).unwrap();
+    bounded.record_imported(b, a, upper).unwrap();
     p.set_book(Some(Arc::new(bounded.export().unwrap())));
     assert!(p.choose(b).is_none());
     let mut wrong = BookEditor::new([9; 32]);
     wrong.register_move(b, a).unwrap();
-    wrong.record(b, a, estimate([9; 32], 64)).unwrap();
+    wrong.record_candidate(b, a, estimate([9; 32], 64)).unwrap();
     p.set_book(Some(Arc::new(wrong.export().unwrap())));
     assert!(p.choose(b).is_none());
 }
@@ -173,12 +184,13 @@ fn terminal_and_unknown_positions_return_no_book_move() {
     let b = Board::new();
     for a in actions(b) {
         ed.register_move(b, a).unwrap();
-        ed.record(b, a, estimate(ed.identity(), 0)).unwrap();
+        ed.record_candidate(b, a, estimate(ed.identity(), 0))
+            .unwrap();
     }
     let mut p = BookPlayer::new(
         &eng,
         Some(Arc::new(ed.export().unwrap())),
-        UsePolicy::default(),
+        compat_policy(),
         1,
     )
     .unwrap();
@@ -196,14 +208,16 @@ fn a_registered_move_known_to_lose_more_than_allowed_is_not_played() {
     let mut e = BookEditor::for_engine(&eng).unwrap();
     // The registered move is two discs worse than an evaluated frontier move.
     e.register_move(b, aa[0]).unwrap();
-    e.record(b, aa[0], estimate(e.identity(), 2)).unwrap();
-    e.record(b, aa[1], estimate(e.identity(), 4)).unwrap();
+    e.record_candidate(b, aa[0], estimate(e.identity(), 2))
+        .unwrap();
+    e.record_candidate(b, aa[1], estimate(e.identity(), 4))
+        .unwrap();
     let book = Arc::new(e.export().unwrap());
-    let mut best = BookPlayer::new(&eng, Some(book.clone()), UsePolicy::default(), 1).unwrap();
+    let mut best = BookPlayer::new(&eng, Some(book.clone()), compat_policy(), 1).unwrap();
     assert!(best.choose(b).is_none());
     let tolerant = UsePolicy {
         moves: MovePolicy::RandomWithinLoss { max_loss: 2 },
-        ..UsePolicy::default()
+        ..compat_policy()
     };
     let mut within = BookPlayer::new(&eng, Some(book), tolerant, 1).unwrap();
     assert_eq!(within.choose(b).unwrap().action, aa[0]);
@@ -216,13 +230,13 @@ fn random_selection_is_seeded_and_stays_within_loss() {
     assert!(aa.len() >= 3);
     for (i, &a) in aa.iter().enumerate() {
         e.register_move(b, a).unwrap();
-        e.record(b, a, estimate(e.identity(), 10 - i as i16))
+        e.record_candidate(b, a, estimate(e.identity(), 10 - i as i16))
             .unwrap();
     }
     let book = Arc::new(e.export().unwrap());
     let policy = UsePolicy {
         moves: MovePolicy::RandomWithinLoss { max_loss: 1 },
-        ..UsePolicy::default()
+        ..compat_policy()
     };
     let mut p = BookPlayer::new(&engine(), Some(book.clone()), policy, 123).unwrap();
     let mut q = BookPlayer::new(&engine(), Some(book), policy, 123).unwrap();
@@ -231,7 +245,7 @@ fn random_selection_is_seeded_and_stays_within_loss() {
         let Some(a) = p.choose(b) else { panic!() };
         let Some(c) = q.choose(b) else { panic!() };
         assert_eq!(a.action, c.action);
-        assert!(a.value.score >= 9);
+        assert!(a.value.score() >= 9);
         seen.push(a.action);
     }
     assert!(seen.contains(&aa[0]) && seen.contains(&aa[1]));
@@ -248,17 +262,17 @@ fn small_solved_book_matches_exhaustive_and_survives_model_change() {
     let book = e.export().unwrap();
     let view = book.probe(b).unwrap();
     assert!(view.all_moves_evaluated());
-    assert_eq!(view.value().unwrap().score, brute(b));
-    assert!(view.value().unwrap().quality.solved);
+    assert_eq!(view.value().unwrap().score(), brute(b));
+    assert!(view.value().unwrap().quality().solved);
     for c in view.candidates() {
-        assert_eq!(c.value.unwrap().score, -brute(b.play(c.action).unwrap()));
+        assert_eq!(c.value.unwrap().score(), -brute(b.play(c.action).unwrap()));
     }
     // Fixed-depth Bound::Exact was not enough; these candidates are terminal proofs.
     let mut other = engine();
     other.set_probcut_rules(vec![]).unwrap();
-    let mut p = BookPlayer::new(&other, Some(Arc::new(book)), UsePolicy::default(), 1).unwrap();
+    let mut p = BookPlayer::new(&other, Some(Arc::new(book)), compat_policy(), 1).unwrap();
     let Some(choice) = p.choose(b) else { panic!() };
-    assert_eq!(choice.value.score, brute(b));
+    assert_eq!(choice.value.score(), brute(b));
 }
 #[test]
 fn forced_pass_and_terminal_round_trip() {
@@ -286,25 +300,25 @@ fn forced_pass_and_terminal_round_trip() {
     let book = e.export().unwrap();
     let v = book.probe(b).unwrap();
     assert_eq!(v.candidates().next().unwrap().action, Action::Pass);
-    assert_eq!(v.value().unwrap().score, brute(b));
+    assert_eq!(v.value().unwrap().score(), brute(b));
     // A pass changes absolute side without consuming a placement: this child
     // must use White's zero-loss width rather than Black's unrestricted width.
     let child = book.probe(b.play(Action::Pass).unwrap()).unwrap();
     let best = child
         .candidates()
-        .map(|c| c.value.unwrap().score)
+        .map(|c| c.value.unwrap().score())
         .max()
         .unwrap();
     assert!(
         child
             .candidates()
-            .all(|c| c.registered == (c.value.unwrap().score == best))
+            .all(|c| c.registered == (c.value.unwrap().score() == best))
     );
     let temp = Temp::new();
     let p = temp.file("pass.dbook");
     book.save(&p).unwrap();
     let loaded = Book::load(p, ReadLimits::default()).unwrap();
-    assert_eq!(loaded.probe(b).unwrap().value().unwrap().score, brute(b));
+    assert_eq!(loaded.probe(b).unwrap().value().unwrap().score(), brute(b));
     let t = Board::from_bits(u64::MAX, 0).unwrap();
     e.insert_position(t).unwrap();
     let book = e.export().unwrap();
@@ -577,9 +591,9 @@ fn manual_evidence_is_separate_and_not_overwritten_by_generation() {
     let a = actions(b)[0];
     let mut e = BookEditor::for_engine(&eng).unwrap();
     e.register_move(b, a).unwrap();
-    let mut manual = estimate(e.identity(), 42);
+    let mut manual = estimate(e.identity(), 42).as_imported();
     manual.origin = ValueOrigin::Manual;
-    e.record(b, a, manual).unwrap();
+    e.record_imported(b, a, manual).unwrap();
     e.configure_generation(&[b], config(2, 1)).unwrap();
     e.generate(&mut eng, budget(), StopHandle::new()).unwrap();
     let book = e.export().unwrap();
@@ -590,7 +604,7 @@ fn manual_evidence_is_separate_and_not_overwritten_by_generation() {
             .find(|c| c.action == a)
             .unwrap()
             .value,
-        Some(manual)
+        Some(Assessment::import(manual).unwrap())
     );
     let temp = Temp::new();
     e.save(temp.file("manual")).unwrap();
@@ -605,7 +619,7 @@ fn manual_evidence_is_separate_and_not_overwritten_by_generation() {
             .find(|c| c.action == a)
             .unwrap()
             .value,
-        Some(manual)
+        Some(Assessment::import(manual).unwrap())
     );
 }
 #[test]
@@ -614,7 +628,7 @@ fn stage_upgrade_and_explicit_reanalysis_keep_completed_quality() {
     let b = position(222, 9);
     let mut e = BookEditor::for_engine(&eng).unwrap();
     let mut c = config(2, 1);
-    c.stages.push(Stage {
+    c.analysis.stages_mut().unwrap().push(Stage {
         depth: 4,
         selectivity: Selectivity::Full,
     });
@@ -622,12 +636,12 @@ fn stage_upgrade_and_explicit_reanalysis_keep_completed_quality() {
     let r = e.generate(&mut eng, budget(), StopHandle::new()).unwrap();
     assert_eq!(r.reason, GenerationStop::Exhausted);
     assert!(
-        e.export()
+        e.export().unwrap().probe(b).unwrap().candidates().all(|c| c
+            .value
             .unwrap()
-            .probe(b)
-            .unwrap()
-            .candidates()
-            .all(|c| c.value.unwrap().quality.depth >= 4)
+            .quality()
+            .depth
+            >= 4)
     );
     let mut c = config(2, 1);
     c.reuse_completed = false;
@@ -635,12 +649,12 @@ fn stage_upgrade_and_explicit_reanalysis_keep_completed_quality() {
     let r = e.generate(&mut eng, budget(), StopHandle::new()).unwrap();
     assert!(r.nodes > 0);
     assert!(
-        e.export()
+        e.export().unwrap().probe(b).unwrap().candidates().all(|c| c
+            .value
             .unwrap()
-            .probe(b)
-            .unwrap()
-            .candidates()
-            .all(|c| c.value.unwrap().quality.depth >= 4)
+            .quality()
+            .depth
+            >= 4)
     );
 }
 #[test]
@@ -705,9 +719,10 @@ fn weight_fingerprint_and_player_engine_replacement_are_checked() {
     let a = actions(board)[0];
     let mut e = BookEditor::for_engine(&first).unwrap();
     e.register_move(board, a).unwrap();
-    e.record(board, a, estimate(e.identity(), 4)).unwrap();
+    e.record_candidate(board, a, estimate(e.identity(), 4))
+        .unwrap();
     let book = Arc::new(e.export().unwrap());
-    let mut player = BookPlayer::new(&first, Some(book), UsePolicy::default(), 1).unwrap();
+    let mut player = BookPlayer::new(&first, Some(book), compat_policy(), 1).unwrap();
     let mut bytes = Vec::new();
     PatternModel::zero().write_to(&mut bytes).unwrap();
     let n = bytes.len();
@@ -734,9 +749,9 @@ fn an_inactive_registered_branch_is_skipped_and_can_reactivate() {
     let mut e = BookEditor::for_engine(&eng).unwrap();
     for (i, &a) in aa.iter().enumerate() {
         e.register_move(b, a).unwrap();
-        let mut v = estimate(e.identity(), if i == 1 { 10 } else { -10 });
+        let mut v = estimate(e.identity(), if i == 1 { 10 } else { -10 }).as_imported();
         v.quality.selectivity = Selectivity::Full;
-        e.record(b, a, v).unwrap();
+        e.record_imported(b, a, v).unwrap();
     }
     let mut c = config(2, 2);
     c.expansion_loss = 0;
@@ -756,9 +771,9 @@ fn an_inactive_registered_branch_is_skipped_and_can_reactivate() {
             .unwrap()
             .all_moves_evaluated()
     );
-    let mut v = estimate(e.identity(), 20);
+    let mut v = estimate(e.identity(), 20).as_imported();
     v.quality.selectivity = Selectivity::Full;
-    e.record(b, aa[0], v).unwrap();
+    e.record_imported(b, aa[0], v).unwrap();
     e.generate(&mut eng, budget(), StopHandle::new()).unwrap();
     assert!(
         e.export()
@@ -779,9 +794,9 @@ fn generation_tracks_side_widths_and_persists_contexts_without_duplicate_nodes()
     let prepare = || {
         let mut e = BookEditor::new(id);
         for (i, &a) in moves.iter().enumerate() {
-            let mut v = estimate(id, -(i as i16));
+            let mut v = estimate(id, -(i as i16)).as_imported();
             v.quality.selectivity = Selectivity::Full;
-            e.record(b, a, v).unwrap();
+            e.record_imported(b, a, v).unwrap();
         }
         e
     };
@@ -862,14 +877,14 @@ fn generation_combines_incomparable_depth_and_selectivity_without_losing_progres
     let mut engine = engine();
     let b = position(222, 10);
     let mut ed = BookEditor::for_engine(&engine).unwrap();
-    let mut old = estimate(ed.identity(), 0);
+    let mut old = estimate(ed.identity(), 0).as_imported();
     old.quality.depth = 2;
     old.quality.selectivity = Selectivity::Full;
     for a in actions(b) {
-        ed.record(b, a, old).unwrap();
+        ed.record_imported(b, a, old).unwrap();
     }
     let mut cfg = config(4, 0);
-    cfg.stages[0].selectivity = Selectivity::Percent95;
+    cfg.analysis.stages_mut().unwrap()[0].selectivity = Selectivity::Percent95;
     ed.configure_generation(&[b], cfg).unwrap();
     let report = ed
         .generate(&mut engine, budget(), StopHandle::new())
@@ -877,7 +892,7 @@ fn generation_combines_incomparable_depth_and_selectivity_without_losing_progres
     assert_eq!(report.reason, GenerationStop::Exhausted);
     let book = ed.export().unwrap();
     assert!(book.probe(b).unwrap().candidates().all(|c| {
-        let q = c.value.unwrap().quality;
+        let q = c.value.unwrap().quality();
         q.depth >= 4 && q.selectivity == Selectivity::Full
     }));
     // The converse change (shallower but less selective) must also preserve
@@ -886,14 +901,851 @@ fn generation_combines_incomparable_depth_and_selectivity_without_losing_progres
     old.quality.depth = 4;
     old.quality.selectivity = Selectivity::Percent95;
     for a in actions(b) {
-        ed.record(b, a, old).unwrap();
+        ed.record_imported(b, a, old).unwrap();
     }
     ed.configure_generation(&[b], config(2, 0)).unwrap();
     ed.generate(&mut engine, budget(), StopHandle::new())
         .unwrap();
     let book = ed.export().unwrap();
     assert!(book.probe(b).unwrap().candidates().all(|c| {
-        let q = c.value.unwrap().quality;
+        let q = c.value.unwrap().quality();
         q.depth >= 4 && q.selectivity == Selectivity::Full
     }));
+}
+
+#[test]
+fn levels_resolve_at_children_and_survive_interruption_and_reconfiguration() {
+    let mut engine = engine();
+    let b = position(222, 8);
+    let mut ed = BookEditor::for_engine(&engine).unwrap();
+    let cfg = GenerationConfig {
+        analysis: AnalysisSchedule::Levels(vec![1, 4]),
+        max_plies: 0,
+        ..Default::default()
+    };
+    ed.configure_generation(&[b], cfg.clone()).unwrap();
+    let stopped = ed
+        .generate(
+            &mut engine,
+            GenerationLimits {
+                nodes: Some(1),
+                ..Default::default()
+            },
+            StopHandle::new(),
+        )
+        .unwrap();
+    assert_eq!(stopped.reason, GenerationStop::NodeLimit);
+    assert!(!ed.export().unwrap().probe(b).unwrap().all_moves_evaluated());
+    let temp = Temp::new();
+    let path = temp.file("levels.work");
+    ed.save(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(u32::from_le_bytes(bytes[8..12].try_into().unwrap()), 8);
+    let mut ed = BookEditor::load(&path, ReadLimits::default()).unwrap();
+    assert_eq!(ed.generation_config(), Some(&cfg));
+    let r = ed
+        .generate(&mut engine, budget(), StopHandle::new())
+        .unwrap();
+    assert_eq!(r.reason, GenerationStop::Exhausted);
+    let book = ed.export().unwrap();
+    for c in book.probe(b).unwrap().candidates() {
+        let v = c.value.unwrap();
+        let exact = -brute(b.play(c.action).unwrap());
+        if v.bound() == Bound::Exact {
+            assert!(v.quality().solved);
+            assert_eq!(v.score(), exact);
+        } else {
+            assert_eq!(v.bound(), Bound::ProvenUpper);
+            assert!(v.score() >= exact);
+            assert!(!v.quality().solved);
+        }
+    }
+    ed.configure_generation(
+        &[b],
+        GenerationConfig {
+            analysis: AnalysisSchedule::Levels(vec![1]),
+            max_plies: 0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let r = ed
+        .generate(&mut engine, budget(), StopHandle::new())
+        .unwrap();
+    assert_eq!(
+        r.nodes, 0,
+        "proven results must be reused after level changes"
+    );
+}
+
+#[test]
+fn level_quality_records_actual_child_depth_instead_of_level_number() {
+    let mut engine = engine();
+    let b = Board::new();
+    let mut ed = BookEditor::for_engine(&engine).unwrap();
+    ed.configure_generation(
+        &[b],
+        GenerationConfig {
+            analysis: AnalysisSchedule::Levels(vec![2]),
+            max_plies: 0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        ed.generate(&mut engine, budget(), StopHandle::new())
+            .unwrap()
+            .reason,
+        GenerationStop::Exhausted
+    );
+    let book = ed.export().unwrap();
+    assert!(book.probe(b).unwrap().candidates().all(|c| {
+        c.value.unwrap().quality()
+            == AnalysisQuality {
+                depth: 3,
+                selectivity: Selectivity::Full,
+                solved: false,
+            }
+    }));
+    for levels in [vec![], vec![0], vec![61], vec![2, 2], vec![3, 1]] {
+        assert!(
+            GenerationConfig {
+                analysis: AnalysisSchedule::Levels(levels),
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn engine_plan_distinguishes_selective_endgame_from_proof() {
+    let engine = engine();
+    for (empties, level, expected) in [
+        (
+            60,
+            16,
+            ResultKind::Depth {
+                depth: 12,
+                selectivity: Selectivity::Percent95,
+            },
+        ),
+        (
+            24,
+            12,
+            ResultKind::Endgame {
+                selectivity: Selectivity::Percent98,
+            },
+        ),
+        (
+            20,
+            12,
+            ResultKind::Endgame {
+                selectivity: Selectivity::Full,
+            },
+        ),
+    ] {
+        let b = position(123, empties);
+        assert_eq!(b.empty_count(), empties);
+        assert_eq!(
+            engine
+                .search_plan(b, &SearchRequest::new(Goal::Level(level)))
+                .unwrap(),
+            expected
+        );
+    }
+    assert!(
+        engine
+            .search_plan(Board::new(), &SearchRequest::new(Goal::Level(0)))
+            .is_err()
+    );
+    assert!(
+        engine
+            .search_plan(
+                Board::new(),
+                &SearchRequest::new(Goal::Level(2)).selectivity(Selectivity::Full)
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn cumulative_and_leaf_limits_control_new_links_and_reactivate_existing_paths() {
+    let mut eng = engine();
+    let b = position(94, 30);
+    let root_actions = actions(b);
+    let child = b.play(root_actions[0]).unwrap();
+    let child_actions = actions(child);
+    assert!(child_actions.len() > 1);
+    let mut ed = BookEditor::for_engine(&eng).unwrap();
+    let evidence = |score| {
+        Assessment::import(ImportedValue {
+            score,
+            quality: AnalysisQuality {
+                depth: 25,
+                selectivity: Selectivity::Full,
+                solved: false,
+            },
+            bound: Bound::Exact,
+            identity: ed.identity(),
+            origin: ValueOrigin::Search,
+        })
+        .unwrap()
+    };
+    let root_values: Vec<_> = root_actions
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            evidence(if i == 0 {
+                -3
+            } else if i == 1 {
+                0
+            } else {
+                -64
+            })
+        })
+        .collect();
+    let child_values: Vec<_> = child_actions
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            evidence(if i == 0 {
+                -3
+            } else if i == 1 {
+                0
+            } else {
+                -64
+            })
+        })
+        .collect();
+    for (&a, v) in root_actions.iter().zip(root_values) {
+        let mut v = v.as_imported();
+        v.quality.depth = 28;
+        v.origin = ValueOrigin::Manual;
+        ed.record_imported(b, a, v).unwrap();
+    }
+    for (&a, v) in child_actions.iter().zip(child_values) {
+        ed.record_candidate(child, a, v).unwrap();
+    }
+    let cfg = GenerationConfig {
+        expansion_loss: 3,
+        cumulative_loss: Some(5),
+        leaf_loss: Some(3),
+        ..config(2, 2)
+    };
+    ed.configure_generation(&[b], cfg.clone()).unwrap();
+    ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
+    let registered = |ed: &BookEditor, board, a| {
+        ed.export()
+            .unwrap()
+            .probe(board)
+            .unwrap()
+            .candidates()
+            .find(|c| c.action == a)
+            .unwrap()
+            .registered
+    };
+    assert!(registered(&ed, b, root_actions[0]));
+    assert!(
+        !registered(&ed, child, child_actions[0]),
+        "3+3 exceeds cumulative 5"
+    );
+    let mut v = estimate(ed.identity(), -2).as_imported();
+    v.quality = AnalysisQuality {
+        depth: 25,
+        selectivity: Selectivity::Full,
+        solved: false,
+    };
+    ed.record_imported(child, child_actions[0], v).unwrap();
+    ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
+    assert!(
+        registered(&ed, child, child_actions[0]),
+        "3+2 must reactivate without reconfiguration"
+    );
+    // A strict leaf threshold only prevents new links; it does not discard an
+    // existing continuation whose per-move and cumulative losses are allowed.
+    let mut strict = cfg;
+    strict.leaf_loss = Some(0);
+    ed.configure_generation(&[b], strict.clone()).unwrap();
+    ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
+    assert!(registered(&ed, b, root_actions[0]));
+    let mut fresh = BookEditor::for_engine(&eng).unwrap();
+    for c in ed.export().unwrap().probe(b).unwrap().candidates() {
+        fresh
+            .record_imported(b, c.action, c.value.unwrap().as_imported())
+            .unwrap();
+    }
+    fresh.configure_generation(&[b], strict.clone()).unwrap();
+    fresh
+        .generate(&mut eng, budget(), StopHandle::new())
+        .unwrap();
+    assert!(
+        !registered(&fresh, b, root_actions[0]),
+        "leaf 0 blocks a new loss-3 link even when per-move and cumulative limits allow it"
+    );
+    let temp = Temp::new();
+    let path = temp.file("loss.work");
+    ed.save(&path).unwrap();
+    let mut loaded = BookEditor::load(&path, ReadLimits::default()).unwrap();
+    assert_eq!(loaded.generation_config(), Some(&strict));
+    assert_eq!(
+        loaded
+            .generate(&mut eng, budget(), StopHandle::new())
+            .unwrap()
+            .nodes,
+        0
+    );
+    assert!(
+        GenerationConfig {
+            cumulative_loss: Some(7681),
+            ..Default::default()
+        }
+        .validate()
+        .is_err()
+    );
+    assert!(
+        GenerationConfig {
+            leaf_loss: Some(129),
+            ..Default::default()
+        }
+        .validate()
+        .is_err()
+    );
+}
+
+#[test]
+fn old_search_identity_requires_retarget_and_retains_proofs_links_and_manual_records() {
+    use sha2::{Digest, Sha256};
+    let mut eng = engine();
+    let mut model = Vec::new();
+    eng.write_evaluation_model(&mut model).unwrap();
+    let mut settings = Vec::new();
+    eng.write_analysis_settings(&mut settings).unwrap();
+    let prefix = b"deft-search-semantics".len() + 4;
+    assert_eq!(&settings[..prefix - 4], b"deft-search-semantics");
+    let mut legacy_hash = Sha256::new();
+    legacy_hash.update(model);
+    legacy_hash.update(b"deft-book-analysis-v1");
+    legacy_hash.update(&settings[prefix..]);
+    let old_id: AnalysisIdentity = legacy_hash.finalize().into();
+    assert_ne!(old_id, analysis_identity(&eng).unwrap());
+    let b = position(123, 8);
+    let a = actions(b)[0];
+    let mut ed = BookEditor::new(old_id);
+    ed.register_move(b, a).unwrap();
+    ed.record_candidate(b, a, estimate(old_id, 3)).unwrap();
+    let mut manual = estimate(old_id, 4).as_imported();
+    manual.origin = ValueOrigin::Manual;
+    ed.record_imported(b, a, manual).unwrap();
+    let solved = position(99, 3);
+    for a in actions(solved) {
+        ed.record_candidate(
+            solved,
+            a,
+            Assessment::import(ImportedValue {
+                score: -brute(solved.play(a).unwrap()),
+                quality: AnalysisQuality {
+                    depth: solved.empty_count(),
+                    selectivity: Selectivity::Full,
+                    solved: true,
+                },
+                bound: Bound::Exact,
+                identity: old_id,
+                origin: ValueOrigin::Search,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    ed.configure_generation(&[b], config(2, 1)).unwrap();
+    assert!(ed.generate(&mut eng, budget(), StopHandle::new()).is_err());
+    ed.retarget(&eng).unwrap();
+    let temp = Temp::new();
+    let path = temp.file("retarget.work");
+    ed.save(&path).unwrap();
+    let ed = BookEditor::load(&path, ReadLimits::default()).unwrap();
+    let book = ed.export().unwrap();
+    let candidate = book
+        .probe(b)
+        .unwrap()
+        .candidates()
+        .find(|c| c.action == a)
+        .unwrap();
+    assert!(candidate.registered);
+    assert_eq!(
+        ed.candidate_evidence(b, a).unwrap().manual,
+        Some(Assessment::import(manual).unwrap())
+    );
+    assert!(
+        candidate.value.is_none(),
+        "old estimates and manual overrides must be inactive"
+    );
+    assert!(
+        book.probe(solved)
+            .unwrap()
+            .candidates()
+            .all(|c| c.value.unwrap().quality().solved)
+    );
+}
+
+#[test]
+fn level_selective_endgame_results_do_not_become_proven_through_book_backup() {
+    let mut eng = engine();
+    // Forty occupied cells, only two opposing discs at the open frontier.
+    // The game finishes after a few placements/passes despite 24 empty cells,
+    // so a selective-endgame request is exercised without a large search.
+    let occupied = u64::MAX << 24;
+    let opponent = (1u64 << 27) | (1u64 << 28);
+    let b = Board::from_bits(occupied ^ opponent, opponent).unwrap();
+    assert_eq!(b.empty_count(), 24);
+    assert!(
+        actions(b)
+            .iter()
+            .any(|a| !b.play(*a).unwrap().is_terminal())
+    );
+    let mut ed = BookEditor::for_engine(&eng).unwrap();
+    ed.configure_generation(
+        &[b],
+        GenerationConfig {
+            analysis: AnalysisSchedule::Levels(vec![12]),
+            max_plies: 0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        ed.generate(&mut eng, budget(), StopHandle::new())
+            .unwrap()
+            .reason,
+        GenerationStop::Exhausted
+    );
+    let book = ed.export().unwrap();
+    for c in book.probe(b).unwrap().candidates() {
+        let child = b.play(c.action).unwrap();
+        let v = c.value.unwrap();
+        assert_eq!(v.score(), -brute(child));
+        if !child.is_terminal() {
+            assert_eq!(v.quality().depth, 24);
+            assert_eq!(v.quality().selectivity, Selectivity::Percent98);
+            assert!(!v.quality().solved);
+        }
+    }
+    assert!(!book.probe(b).unwrap().value().unwrap().quality().solved);
+}
+
+#[test]
+fn terminal_children_need_no_mpc_calibration_even_when_the_level_would_be_selective() {
+    let mut eng = Engine::new(
+        Model::from_pattern(PatternModel::zero()),
+        EngineOptions::default().tt_mib(1),
+    )
+    .unwrap();
+    let occupied = u64::MAX << 24;
+    let opponent = 1u64 << 27;
+    let b = Board::from_bits(occupied ^ opponent, opponent).unwrap();
+    assert!(!actions(b).is_empty());
+    assert!(actions(b).iter().all(|a| b.play(*a).unwrap().is_terminal()));
+    let mut ed = BookEditor::for_engine(&eng).unwrap();
+    ed.configure_generation(
+        &[b],
+        GenerationConfig {
+            analysis: AnalysisSchedule::Levels(vec![12]),
+            max_plies: 0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let report = ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
+    assert_eq!(report.reason, GenerationStop::Exhausted);
+    assert_eq!(report.nodes, 0);
+    assert!(
+        ed.export()
+            .unwrap()
+            .probe(b)
+            .unwrap()
+            .value()
+            .unwrap()
+            .quality()
+            .solved
+    );
+}
+
+#[test]
+fn book_backup_policy_keeps_search_evidence_and_never_downgrades_proofs() {
+    let eng = engine();
+    let b = position(94, 30);
+    let a = actions(b)[0];
+    let child = b.play(a).unwrap();
+    let mut ed = BookEditor::for_engine(&eng).unwrap();
+    let direct = estimate(ed.identity(), 12);
+    ed.record_candidate(b, a, direct).unwrap();
+    for reply in actions(child) {
+        let mut v = estimate(ed.identity(), 4).as_imported();
+        v.quality.depth = 2;
+        ed.record_imported(child, reply, v).unwrap();
+    }
+    ed.register_move(b, a).unwrap();
+    let q = ed.candidate_evidence(b, a).unwrap();
+    assert_eq!(q.direct, Some(direct));
+    assert_eq!(q.propagated.unwrap().score(), -4);
+    assert_eq!(q.source, Some(ValueSource::Propagated));
+    let backed_up = ed.candidate_evidence(b, a).unwrap();
+    assert_eq!(backed_up.source, Some(ValueSource::Propagated));
+    assert_eq!(backed_up.effective.unwrap().quality().depth, 3);
+    assert!(!backed_up.effective.unwrap().quality().solved);
+    assert_eq!(backed_up.direct, Some(direct));
+    let temp = Temp::new();
+    let path = temp.file("backup.work");
+    ed.save(&path).unwrap();
+    let mut loaded = BookEditor::load(&path, ReadLimits::default()).unwrap();
+    assert_eq!(loaded.candidate_evidence(b, a), Some(backed_up));
+    loaded.repair().unwrap();
+    loaded.save(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    loaded.repair().unwrap();
+    loaded.save(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(
+        loaded.candidate_evidence(b, a).unwrap().effective,
+        backed_up.propagated
+    );
+    let mut proof = direct.as_imported();
+    proof.score = 2;
+    proof.quality = AnalysisQuality {
+        depth: b.empty_count(),
+        selectivity: Selectivity::Full,
+        solved: true,
+    };
+    loaded.record_imported(b, a, proof).unwrap();
+    assert_eq!(
+        loaded.candidate_evidence(b, a).unwrap().effective,
+        Some(Assessment::import(proof).unwrap())
+    );
+    let mut manual = estimate(loaded.identity(), 7).as_imported();
+    manual.origin = ValueOrigin::Manual;
+    loaded.record_imported(b, a, manual).unwrap();
+    let e = loaded.candidate_evidence(b, a).unwrap();
+    assert_eq!(e.source, Some(ValueSource::Manual));
+    assert_eq!(e.direct, Some(Assessment::import(proof).unwrap()));
+    assert_eq!(e.effective, Some(Assessment::import(manual).unwrap()));
+    // The public evidence API uses input coordinates under every symmetry.
+    for t in Symmetry::all() {
+        assert_eq!(loaded.candidate_evidence(t.board(b), t.action(a)), Some(e));
+    }
+    assert!(loaded.candidate_evidence(b, Action::Pass).is_none());
+}
+
+#[test]
+fn workspace_statistics_count_frontier_quality_lines_and_transpositions() {
+    let mut ed = BookEditor::new([0; 32]);
+    let b = Board::new();
+    let aa = actions(b);
+    for &a in &aa {
+        ed.register_move(b, a).unwrap();
+    }
+    // Initial moves share one canonical child. Every incoming path counts.
+    assert_eq!(ed.len(), 2);
+    let child = b.play(aa[0]).unwrap();
+    for reply in actions(child) {
+        ed.record_candidate(child, reply, estimate([0; 32], 3))
+            .unwrap();
+    }
+    let stats = ed.stats();
+    assert_eq!(stats.root_lines, 4);
+    assert!(!stats.lines_saturated);
+    assert_eq!(stats.leaf_positions, 1);
+    assert_eq!(stats.registered_moves, 4);
+    assert_eq!(stats.propagated_values_used, 4);
+    assert_eq!(stats.complete_positions, 2);
+    assert_eq!(stats.frontier_candidates, actions(child).len() as u64);
+    assert_eq!(stats.unknown_frontier_candidates, 0);
+    assert_eq!(stats.unknown_candidates, 0);
+    assert_eq!(stats.qualities.iter().map(|b| b.candidates).sum::<u64>(), 7);
+    assert_eq!(
+        stats
+            .qualities
+            .iter()
+            .map(|b| b.frontier_candidates)
+            .sum::<u64>(),
+        3
+    );
+    let temp = Temp::new();
+    let path = temp.file("stats.work");
+    ed.save(&path).unwrap();
+    assert_eq!(
+        BookEditor::load(&path, ReadLimits::default())
+            .unwrap()
+            .stats(),
+        stats
+    );
+}
+
+#[test]
+fn frontier_recalculation_is_resumable_and_does_not_analyze_or_expand_registered_links() {
+    let mut eng = engine();
+    let b = position(94, 30);
+    let a = actions(b)[0];
+    let child = b.play(a).unwrap();
+    let mut ed = BookEditor::for_engine(&eng).unwrap();
+    let mut direct = estimate(ed.identity(), -12).as_imported();
+    direct.quality = AnalysisQuality {
+        depth: 4,
+        selectivity: Selectivity::Full,
+        solved: false,
+    };
+    ed.record_imported(b, a, direct).unwrap();
+    ed.register_move(b, a).unwrap();
+    let cfg = GenerationConfig {
+        frontier_only: true,
+        reuse_completed: false,
+        analysis: AnalysisSchedule::Levels(vec![1]),
+        max_plies: 1,
+        expansion_loss: 0,
+        cumulative_loss: Some(0),
+        leaf_loss: Some(0),
+        ..Default::default()
+    };
+    ed.configure_generation(&[b], cfg.clone()).unwrap();
+    assert!(
+        ed.generate(
+            &mut eng,
+            GenerationLimits {
+                new_positions: Some(1),
+                ..Default::default()
+            },
+            StopHandle::new()
+        )
+        .is_err()
+    );
+    let interrupted = ed
+        .generate(
+            &mut eng,
+            GenerationLimits {
+                nodes: Some(1),
+                ..Default::default()
+            },
+            StopHandle::new(),
+        )
+        .unwrap();
+    assert_eq!(interrupted.reason, GenerationStop::NodeLimit);
+    assert_eq!(
+        ed.candidate_evidence(b, a).unwrap().direct,
+        Some(Assessment::import(direct).unwrap())
+    );
+    let temp = Temp::new();
+    let path = temp.file("frontier.work");
+    ed.save(&path).unwrap();
+    let mut loaded = BookEditor::load(&path, ReadLimits::default()).unwrap();
+    assert_eq!(loaded.generation_config(), Some(&cfg));
+    let r = loaded
+        .generate(&mut eng, budget(), StopHandle::new())
+        .unwrap();
+    assert_eq!(r.reason, GenerationStop::Exhausted);
+    assert_eq!(r.new_positions, 0);
+    assert_eq!(loaded.len(), 2);
+    assert_eq!(loaded.stats().registered_moves, 1);
+    assert_eq!(
+        loaded.candidate_evidence(b, a).unwrap().direct,
+        Some(Assessment::import(direct).unwrap())
+    );
+    assert!(
+        loaded
+            .export()
+            .unwrap()
+            .probe(child)
+            .unwrap()
+            .value()
+            .is_some(),
+        "leaf pass must reach a registered child even when its parent was incomplete or outside current loss limits"
+    );
+    for c in loaded.export().unwrap().probe(child).unwrap().candidates() {
+        assert_eq!(c.value.unwrap().quality().depth, 2);
+        assert!(!c.registered);
+    }
+    assert_eq!(
+        loaded
+            .generate(&mut eng, budget(), StopHandle::new())
+            .unwrap()
+            .nodes,
+        0
+    );
+}
+
+#[test]
+fn child_updates_reschedule_registered_branches_without_a_policy_switch() {
+    let mut eng = engine();
+    let b = position(94, 30);
+    let aa = actions(b);
+    let child = b.play(aa[0]).unwrap();
+    let mut ed = BookEditor::for_engine(&eng).unwrap();
+    for (i, &a) in aa.iter().enumerate() {
+        let mut v = estimate(ed.identity(), if i == 0 { -10 } else { 0 }).as_imported();
+        v.quality.selectivity = Selectivity::Full;
+        ed.record_imported(b, a, v).unwrap();
+        ed.register_move(b, a).unwrap();
+    }
+    for a in actions(child) {
+        let mut v = estimate(ed.identity(), -20).as_imported();
+        v.quality = AnalysisQuality {
+            depth: 2,
+            selectivity: Selectivity::Full,
+            solved: false,
+        };
+        ed.record_imported(child, a, v).unwrap();
+    }
+    let mut cfg = config(2, 1);
+    cfg.expansion_loss = 0;
+    ed.configure_generation(&[b], cfg).unwrap();
+    assert_eq!(
+        ed.candidate_evidence(b, aa[0])
+            .unwrap()
+            .effective
+            .unwrap()
+            .score(),
+        20
+    );
+    let report = ed.generate(&mut eng, budget(), StopHandle::new()).unwrap();
+    assert!(
+        report.completed_stages >= 1,
+        "the inactive child must now publish its retained analysis stage"
+    );
+    assert_eq!(
+        report.nodes, 0,
+        "all compatible direct values can be reused"
+    );
+}
+
+#[test]
+fn planning_without_calibration_can_reuse_or_strengthen_existing_full_width_evidence() {
+    let mut eng = Engine::new(
+        Model::from_pattern(PatternModel::zero()),
+        EngineOptions::default().tt_mib(1),
+    )
+    .unwrap();
+    let b = Board::new();
+    let selective = SearchRequest::new(Goal::Depth(2)).selectivity(Selectivity::Percent95);
+    assert_eq!(
+        eng.search_plan(b, &selective).unwrap(),
+        ResultKind::Depth {
+            depth: 2,
+            selectivity: Selectivity::Percent95
+        }
+    );
+    assert!(matches!(
+        eng.search(b, &selective),
+        Err(EngineError::InvalidCalibration(_))
+    ));
+    let mut ed = BookEditor::for_engine(&eng).unwrap();
+    for a in actions(b) {
+        let mut v = estimate(ed.identity(), 0).as_imported();
+        v.quality = AnalysisQuality {
+            depth: 2,
+            selectivity: Selectivity::Full,
+            solved: false,
+        };
+        ed.record_imported(b, a, v).unwrap();
+    }
+    let mut cfg = config(2, 0);
+    cfg.analysis.stages_mut().unwrap()[0].selectivity = Selectivity::Percent95;
+    ed.configure_generation(&[b], cfg.clone()).unwrap();
+    assert_eq!(
+        ed.generate(&mut eng, budget(), StopHandle::new())
+            .unwrap()
+            .nodes,
+        0
+    );
+    cfg.analysis.stages_mut().unwrap()[0].depth = 3;
+    ed.configure_generation(&[b], cfg).unwrap();
+    assert_eq!(
+        ed.generate(&mut eng, budget(), StopHandle::new())
+            .unwrap()
+            .reason,
+        GenerationStop::Exhausted
+    );
+    assert!(
+        ed.export()
+            .unwrap()
+            .probe(b)
+            .unwrap()
+            .candidates()
+            .all(|c| c.value.unwrap().quality().selectivity == Selectivity::Full)
+    );
+}
+
+#[test]
+fn frontier_scheduling_finishes_the_same_small_solved_graph_after_budget_resume() {
+    let b = position(123, 6);
+    let mut eng = engine();
+    let mut expected = BookEditor::for_engine(&eng).unwrap();
+    expected.configure_generation(&[b], config(6, 2)).unwrap();
+    assert_eq!(
+        expected
+            .generate(&mut eng, budget(), StopHandle::new())
+            .unwrap()
+            .reason,
+        GenerationStop::Exhausted
+    );
+    let mut ed = BookEditor::for_engine(&eng).unwrap();
+    let mut cfg = config(6, 2);
+    cfg.schedule = SchedulePolicy::Frontier;
+    ed.configure_generation(&[b], cfg).unwrap();
+    assert_eq!(
+        ed.generate(
+            &mut eng,
+            GenerationLimits {
+                nodes: Some(1),
+                ..Default::default()
+            },
+            StopHandle::new()
+        )
+        .unwrap()
+        .reason,
+        GenerationStop::NodeLimit
+    );
+    let temp = Temp::new();
+    let path = temp.file("priority.work");
+    ed.save(&path).unwrap();
+    let mut ed = BookEditor::load(&path, ReadLimits::default()).unwrap();
+    assert_eq!(
+        ed.generate(&mut eng, budget(), StopHandle::new())
+            .unwrap()
+            .reason,
+        GenerationStop::Exhausted
+    );
+    let expected = expected.export().unwrap();
+    let actual = ed.export().unwrap();
+    assert_eq!(expected.stats().positions, actual.stats().positions);
+    let mut todo = vec![b];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(board) = todo.pop() {
+        let canonical = board.canonical();
+        if !seen.insert((canonical.player_bits(), canonical.opponent_bits())) {
+            continue;
+        }
+        let e = expected.probe(board).unwrap();
+        let a = actual.probe(board).unwrap();
+        assert_eq!(
+            e.value().map(|v| v.as_imported()),
+            a.value().map(|v| v.as_imported())
+        );
+        let entries = |e: BookEntry<'_>| {
+            e.candidates()
+                .map(|c| (c.action, c.registered, c.value.map(|v| v.as_imported())))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(entries(e), entries(a));
+        for candidate in actual.probe(board).unwrap().candidates() {
+            let value = candidate.value.unwrap();
+            let exact = -brute(board.play(candidate.action).unwrap());
+            match value.bound() {
+                Bound::Exact => assert_eq!(value.score(), exact),
+                Bound::ProvenUpper => assert!(value.score() >= exact),
+                _ => panic!("full endgame must produce exact points or certified upper bounds"),
+            }
+            if candidate.registered {
+                todo.push(board.play(candidate.action).unwrap());
+            }
+        }
+    }
 }

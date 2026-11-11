@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>保存・運用・障害対応 · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html" aria-current="page">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">予算を分ける</a></li><li><a href="#section-3">チェックポイントと停止</a></li><li><a href="#section-4">単一ライターと配布</a></li><li><a href="#section-5">モデル・探索更新時の手順</a></li><li><a href="#section-6">エラーへの対応</a></li><li><a href="#section-7">大規模化の判断</a></li></ul></aside>
+<h1 id="section-1">保存・運用・障害対応</h1>
+<h2 id="section-2">予算を分ける</h2>
+<p>ここでいうbookの保持メモリは、生成・更新・再開のためRAM上に持つデータの使用量である。手動編集だけの領域ではない。RSSは、プロセスが実際に使用する物理メモリの測定値。TTは探索で得た局面結果を再利用する表。いずれも別の量として扱う。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>設定</th>
+<th>制限するもの</th>
+<th>注意</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>--seconds</td>
+<td>1回のgenerateで使う探索・処理時間</td>
+<td>モデル読込や最終保存を含むプロセス全体の期限ではない</td>
+</tr>
+<tr>
+<td>--nodes</td>
+<td>集合探索の実ノード数の合計</td>
+<td>バッチ内要求へ残量を分配し、停止までの実績を加算</td>
+</tr>
+<tr>
+<td>--new-positions</td>
+<td>その呼出しで追加した局面数</td>
+<td>既存局面の再解析時間を制限しない</td>
+</tr>
+<tr>
+<td>--memory-mib</td>
+<td>bookの局面・記録・仕事一覧などの保持メモリ見積もり</td>
+<td>プログラム全体の最大使用量の上限ではない</td>
+</tr>
+<tr>
+<td>--tt-mib</td>
+<td>探索中に得た局面結果を再利用する表の公称容量</td>
+<td>Editorのメモリ制限とは別</td>
+</tr>
+<tr>
+<td>--threads</td>
+<td>内側・外側を合わせた探索スレッド数</td>
+<td>独立ジョブ数に合わせて分配</td>
+</tr>
+</tbody>
+</table></div>
+<p>少なくとも一つの実行予算が必要。leavesでは時間またはノード予算を必須とする。限られた機器ではノード・時間と管理メモリの双方を指定する。read側の上限も生成側と合わせ、Engine、モデル、スナップショット、I/Oバッファの分を別に確保する。</p>
+<pre><code class="language-sh">target/release/book resume --model MODEL --work openings.dbook-work \
+  --nodes 100000 --seconds 60 --tt-mib 128 --threads 2 \
+  --read-mib 1024 --read-positions 2000000 --read-candidates 32000000
+</code></pre>
+<p>--read-mibはファイル長と読込時の割当制限にも使う。--memory-mibを上げただけでは大きいworkを読めるようにならない。resumeで管理メモリ設定を変更したいときはextendへの再設定が必要で、その前に旧形式の完了結果を取り込む。初期設定時から必要な余裕を見積もる。</p>
+<h2 id="section-3">チェックポイントと停止</h2>
+<p>バッチ探索の終了境界と正常停止時にコールバックで保存する。--checkpoint-secondsの既定は60秒。候補探索自体が長ければ保存間隔を超える。厳しい復旧時間が必要なら探索の時間・ノード予算も小さく分割し、resumeを繰り返す。</p>
+<p>Ctrl-Cは共有StopHandleを立て、実行中の探索が停止してから保存する。二回目の強制終了やkill -9では最後の完了チェックポイントまで戻る。コールバックやファイル保存が失敗した場合はCLIの終了コードと標準エラーを確認する。エラーを無視して次の育成を上書き実行しない。</p>
+<p>保存は同じディレクトリの排他的な一時ファイルへ書き、flush・sync・renameする。Unixでは親ディレクトリもsyncする。workとplayは別々に原子的更新を行う。playの更新に失敗したら、保存済みworkをverifyしてexportし直す。二ファイルを同時に更新するトランザクションではない。</p>
+<h2 id="section-4">単一ライターと配布</h2>
+<p>同じworkを複数プロセスで同時に編集しない。ファイルロックでジョブを調停する実装ではなく、それぞれが別の正本から最終保存すると後勝ちになる。ジョブスケジューラや運用で単一ライターを保証する。複数機器で育成する場合は別の出力先を使う。結合コマンドはこの版にはない。</p>
+<p>対局プロセスにはverify済みの.dbookだけを配布する。書き換え中のEditorを共有しない。Arc&lt;Book&gt;を複数対局で共有し、更新時は新しいスナップショットを読み込んで切り替える。Editor正本とモデルのバックアップは対局用bookとは別に残す。</p>
+<h2 id="section-5">モデル・探索更新時の手順</h2>
+<pre><code class="language-sh"># 新しい名前へコピーし、旧正本を残す。
+cp openings.dbook-work next.dbook-work
+target/release/book verify --work next.dbook-work
+# まずretargetだけを保存して構造を確認する。
+target/release/book reanalyze --model NEW_MODEL --work next.dbook-work --nodes 0
+target/release/book verify --work next.dbook-work
+# 保存設定と再解析を続行する。
+target/release/book resume --model NEW_MODEL --work next.dbook-work --seconds 60
+</code></pre>
+<p>reanalyzeは互換性のない推定・pendingを無効化し、局面、登録リンク、手動の原記録、証明済みの直接結果を保持する。手動記録のidentityが古ければ有効値には使わない。--nodes 0後は推定が空になることがあるので、その段階のbookを品質確認なしに配布しない。</p>
+<p>校正や探索featureを変えた場合も同じ手順を使う。詳細は<a href="compatibility.html">互換性</a>を参照。バイナリの--versionとinspectのidentityを運用記録へ残す。</p>
+<h2 id="section-6">エラーへの対応</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>症状</th>
+<th>確認と対応</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>identity不一致</td>
+<td>モデル・校正・feature・探索revisionを照合。resumeで強行せず、コピーにreanalyze</td>
+</tr>
+<tr>
+<td>ProbCut校正不足</td>
+<td>モデルを確認。適切な校正を用意するか、目的に合うFull探索を明示</td>
+</tr>
+<tr>
+<td>resumeが設定変更を拒否</td>
+<td>同じ仕事の続行なら余計な設定を外す。変更するならextend</td>
+</tr>
+<tr>
+<td>MemoryLimit</td>
+<td>workを保存し、Engine/Editor/読込制限を別々に見直す。RSSと見積もりを混同しない</td>
+</tr>
+<tr>
+<td>NodeLimit/TimeLimit</td>
+<td>正常な中断。完成証拠と未処理キューを残してresume</td>
+</tr>
+<tr>
+<td>PositionLimit</td>
+<td>新規展開の中断。既存局面の再解析予算も必要なら時間/ノードを併用</td>
+</tr>
+<tr>
+<td>checksum・形式・合法性エラー</td>
+<td>バックアップから復旧。repairは破損を無条件で通す機能ではない</td>
+</tr>
+<tr>
+<td>対局でbookが使われない</td>
+<td>登録手の有無、identity、UsePolicyの深さ・選択率、未登録有力手との損失差を確認</td>
+</tr>
+</tbody>
+</table></div>
+<p>エラーが繰り返される場合は、元workを残し、最小のコピーとモデルハッシュ、--version、inspect、コマンドと標準エラーを保存する。record_imported等で虚偽の証明を入力したデータは、verifyだけでは再証明できない。</p>
+<h2 id="section-7">大規模化の判断</h2>
+<p>inspectの品質分布、末端数、管理見積もりとプロセスRSS、保存・読込時間、1段階あたりのノード数を記録する。Priority索引は増分更新するが、到達資格の判定には祖先グラフを調べる。転置が多い大きなグラフでの費用は別途測る。スケジューラの変更だけで全ての大規模性能問題が解消するとは判断しない。</p>
+<p>削減・部分抽出・結合は後続機能。外側の局面並列は--jobsで制御する。不要枝を削除して容量を抑える運用が必要な場合は、この版の完成済み機能として扱わず別途設計する。手動のunregister_moveはリンクを外すAPIであり、到達しない局面を一括削除するものではない。</p>
+<footer>正本：<a href="operations.md">operations.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

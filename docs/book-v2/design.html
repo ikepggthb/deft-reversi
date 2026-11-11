@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Edax・Egaroucidを土台にした構造 · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html" aria-current="page">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">取り入れた考え方</a></li><li><a href="#section-3">Deftで必要な追加情報</a></li><li><a href="#section-4">生成と資源配分</a></li><li><a href="#section-5">検証の順序</a></li></ul></aside>
+<h1 id="section-1">Edax・Egaroucidを土台にした構造</h1>
+<h2 id="section-2">取り入れた考え方</h2>
+<p>Edaxは局面、その局面につながる登録済みの手、最良の未登録手を中心にする。登録済みの各手には主に着手位置と点数を持つ。<a href="https://github.com/abulmo/edax-reversi/blob/713a434f13b3d15fb69c61b9ba3641aed82c496c/src/book.c#L59-L117">参照したEdaxの定義</a></p>
+<p>Egaroucidは、手を進めた先の局面を検索してその手の値を求め、登録済みの手の一覧を省略する。局面の評価・計算レベル・最良の未登録手などを持つ。<a href="https://www.egaroucid.nyanyan.dev/ja/usage/book/">公式の構造説明</a></p>
+<p>Deftでは、登録を外しても局面と探索結果を保持する必要があるため、登録状態は明示する。子の座標を繰り返し正規化しないための補助データも残す。一方、詳細な探索記録は各候補に複製せず、一覧に一件だけ置く。</p>
+<h2 id="section-3">Deftで必要な追加情報</h2>
+<p>実際の中盤深さ・終盤方式・選択率、点と上下限、対象手集合、モデル等を識別する情報を追加する。レベル番号だけで品質を表さない。探索記録を共有することで、集合最大値・最良手・他の手の上限に同じ探索条件を複製しない。</p>
+<p>登録先の子の値を親へ戻す方式は一つに統一する。現在の品質は説明できるようにするが、過去の計算入力の全経路は保存しない。完全読み切りで分かった最終石差の情報は、手動値や登録解除とは独立して保持する。</p>
+<h2 id="section-4">生成と資源配分</h2>
+<p>未登録手の集合から最良手を探し、条件内の手を登録する。登録後は有望な進行を一定数続けて伸ばし、別の候補にも計算を配分する。読み筋は次の手を優先するヒントであり、探索済みの評価の代わりにはしない。</p>
+<p>独立した複数局面の同時探索と、一局面の内部並列を仕事量に応じて使い分ける。スレッド数と主な探索表の公称容量を分配し、登録と値の公開は順番に行う。古い局面状態に対する探索結果はやり直す。</p>
+<p>Edaxの誤差条件やEgaroucidのレベル番号を、Deftの数値へそのまま対応させない。Deftの1手・累積・未登録手追加の損失条件を維持する。</p>
+<h2 id="section-5">検証の順序</h2>
+<p>情報の配置を試作して既存bookのメモリを測り、保存・更新・対局利用へ移行する。旧bookの元ファイルを保ち、コピーで既知の記録と登録を比較する。最後に同じモデル・スレッド数・探索条件の完了探索、読込、通常参照を測る。</p>
+<p><a href="architecture.html">API</a>、<a href="compatibility.html">旧形式の移行</a>、<a href="validation.html">試験と費用</a>へ続く。</p>
+<footer>正本：<a href="design.md">design.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

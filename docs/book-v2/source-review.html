@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>bookのソースを読む · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html" aria-current="page">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">最初に把握する三つの型</a></li><li><a href="#section-3">読む順序とファイルの担当</a></li><li><a href="#section-4">ソース内の名前と意味</a></li><li><a href="#section-5">一つの評価はどこに置かれるか</a></li><li><a href="#section-6">値を一つ変更したときの流れ</a></li><li><a href="#section-7">生成を一巡する流れ</a></li><li><a href="#section-9">保存と再開で何が残るか</a></li><li><a href="#section-10">旧形式の処理を読むとき</a></li><li><a href="#section-11">対局の一手が選ばれるまで</a></li><li><a href="#section-12">変更する箇所に対応する試験</a></li></ul></aside>
+<h1 id="section-1">bookのソースを読む</h1>
+<p>対象は<code>deft-reversi-book</code>の現在の実装（work v8 / play v4）。この文書は、各処理の入口、共有する情報、変更時に守る条件、対応する試験を案内する。操作方法は<a href="operations.html">運用</a>、値そのものの意味は<a href="value-model.html">評価の意味</a>を参照する。</p>
+<h2 id="section-2">最初に把握する三つの型</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>型</th>
+<th>所有する情報</th>
+<th>主な入口</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BookEditor</code></td>
+<td>局面、登録した進行、評価記録、生成の設定と再開する仕事</td>
+<td><code>record_search</code>、<code>register_move</code>、<code>generate</code>、<code>save/load</code></td>
+</tr>
+<tr>
+<td><code>Book</code></td>
+<td>対局で読む局面・候補と、その採用値・探索条件</td>
+<td><code>BookEditor::export</code>で作り、<code>probe</code>で読む</td>
+</tr>
+<tr>
+<td><code>BookPlayer</code></td>
+<td>使用するBookへの参照、評価の利用条件、手を選ぶ乱数の状態</td>
+<td><code>decide</code>は着手または使えない理由、<code>choose</code>は着手またはNoneを返す</td>
+</tr>
+</tbody>
+</table></div>
+<p>BookEditorを変更しても、以前にexportしたBookは変わらない。対局側へ新しい内容を渡すには再度exportし、<code>BookPlayer::set_book</code>などで差し替える。Engineの再帰探索はbookを参照しない。bookの手が使えなければ、呼出し側が通常探索する。</p>
+<h2 id="section-3">読む順序とファイルの担当</h2>
+<p>まず<a href="../../deft-reversi-book/src/lib.rs">lib.rs</a>の公開型と<code>combine_values</code>を読み、次の順で進む。コードの行番号は編集で変わるため、この文書では関数・型名を目印にする。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>順序</th>
+<th>ソース</th>
+<th>確認する内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><a href="../../deft-reversi-book/src/evidence.rs">evidence.rs</a></td>
+<td><code>ValueClaim</code>、<code>ValueAnalysis</code>、<code>CompletedSearch</code>、<code>SearchProjection</code>。点数と探索条件の区別</td>
+</tr>
+<tr>
+<td>2</td>
+<td><a href="../../deft-reversi-book/src/values.rs">values.rs</a></td>
+<td><code>ValueStore::intern/get</code>。評価・探索記録・モデル識別値の共有と参照番号</td>
+</tr>
+<tr>
+<td>3</td>
+<td><a href="../../deft-reversi-book/src/editor.rs">editor.rs</a></td>
+<td><code>Node/Edge</code>、<code>evidence</code>、<code>refresh_from</code>。どの値を採用し、親へどう反映するか</td>
+</tr>
+<tr>
+<td>4</td>
+<td><a href="../../deft-reversi-book/src/generate.rs">generate.rs</a></td>
+<td>設定、仕事一覧、<code>candidate_plan</code>、<code>active_paths</code>、<code>expand</code>。探索条件と登録範囲</td>
+</tr>
+<tr>
+<td>5</td>
+<td><a href="../../deft-reversi-book/src/grow.rs">grow.rs</a></td>
+<td><code>generate</code>、<code>prepare</code>、<code>publish</code>、<code>BatchPool::run</code>。生成を一巡する処理</td>
+</tr>
+<tr>
+<td>6</td>
+<td><a href="../../deft-reversi-book/src/schedule.rs">schedule.rs</a></td>
+<td><code>priority_job</code>と<code>priority</code>。次に調べる局面の選択</td>
+</tr>
+<tr>
+<td>7</td>
+<td><a href="../../deft-reversi-book/src/snapshot.rs">snapshot.rs</a> / <a href="../../deft-reversi-book/src/player.rs">player.rs</a></td>
+<td><code>from_editor</code>→<code>probe</code>→<code>moves</code>→<code>choose</code>。対局用への変換と利用条件</td>
+</tr>
+<tr>
+<td>8</td>
+<td><a href="../../deft-reversi-book/src/format.rs">format.rs</a></td>
+<td><code>save_editor/load_editor</code>、<code>save_book/load_book</code>。現行の保存と旧版の検査・移行</td>
+</tr>
+</tbody>
+</table></div>
+<p>補助ファイルの担当は次のとおり。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>ソース</th>
+<th>担当</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../../deft-reversi-book/src/catalog.rs">catalog.rs</a></td>
+<td>モデル等の説明と、生成を一回実行した際の設定・使用資源・停止理由</td>
+</tr>
+<tr>
+<td><a href="../../deft-reversi-book/src/value_codec.rs">value_codec.rs</a></td>
+<td>評価の部品のバイナリ表現、旧形式の評価の読書きとハッシュ</td>
+</tr>
+<tr>
+<td><a href="../../deft-reversi-book/src/symmetry.rs">symmetry.rs</a></td>
+<td>盤面と着手の回転・反転、逆変換</td>
+</tr>
+<tr>
+<td><a href="../../deft-reversi-book/src/stats.rs">stats.rs</a></td>
+<td>全局面を走査する明示的な診断。対局の通常参照には使わない</td>
+</tr>
+<tr>
+<td><a href="../../deft-reversi-book/src/bin/book.rs">bin/book.rs</a></td>
+<td>引数、モデル・ファイルの読書き、Ctrl-C、定期保存。生成の本体はライブラリへ委譲</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="section-4">ソース内の名前と意味</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>名前</th>
+<th>この実装での意味と用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Key</code></td>
+<td>手番側と相手側の石を、回転・反転で同じ配置へそろえた局面。黒白の絶対色は含まない</td>
+</tr>
+<tr>
+<td><code>Context</code></td>
+<td>Keyと手番の絶対色の組。色別の損失条件で仕事を選ぶために使う。局面自体を二重に持つわけではない</td>
+</tr>
+<tr>
+<td><code>registered</code></td>
+<td>その親からその手をbookの進行として登録したか。子が別経路から存在するだけでは登録にならない</td>
+</tr>
+<tr>
+<td><code>Assessment</code></td>
+<td>値と探索条件をまとめた、検査済みの読取結果。内部の全候補がこの大きな型を直接持つわけではない</td>
+</tr>
+<tr>
+<td><code>ValueId</code></td>
+<td>BookEditor内の共有評価を指す番号。1始まりの4バイト。圧縮時に変わるため外部へ公開しない</td>
+</tr>
+<tr>
+<td><code>direct</code></td>
+<td>その手を独立に調べた評価。登録した子の値を採用しても、元の直接評価を消さない</td>
+</tr>
+<tr>
+<td><code>propagated</code> / <code>backups</code></td>
+<td>子の値を親の手番から見た値へ変換したもの。backupsは変換済みの値を再利用するための保持欄</td>
+</tr>
+<tr>
+<td><code>Frontier</code></td>
+<td>一回の対象手集合の探索結果。集合の最良手の点評価と、それ以外の手の上限を提供する</td>
+</tr>
+<tr>
+<td><code>effective</code></td>
+<td>直接評価・子の値・手動値などの中から、現在採用する値。<code>CandidateEvidence::source</code>で選択元を確認する</td>
+</tr>
+<tr>
+<td><code>certificate</code> / <code>proof</code></td>
+<td>最終石差について確定した点または上下限。certificateは候補の手、proofは局面全体。推定や手動指定とは別に保つ</td>
+</tr>
+<tr>
+<td><code>revision</code></td>
+<td>変更の世代番号。BookEditor全体の番号は到達条件のキャッシュを無効にする。Nodeの番号は直接記録・登録状態の編集を表し、探索開始後に変わればその仕事をやり直す</td>
+</tr>
+<tr>
+<td><code>stage</code></td>
+<td>利用者が設定したレベルまたは深さ系列の段階番号。探索の深さそのものではない</td>
+</tr>
+<tr>
+<td><code>TT</code></td>
+<td>探索中に調べた局面の結果を再利用する置換表。bookデータのメモリ予算とは別</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="section-5">一つの評価はどこに置かれるか</h2>
+<p>局面Pの候補A・B・Cをまとめて探索し、Aが最良で+4だったとする。</p>
+<ol>
+<li><code>CompletedSearch</code>一件が、P、対象手集合、A、+4、要求・予定・完了した探索条件を持つ。</li>
+<li><code>StoredAnalysis::Search</code>が、この探索記録の番号と<code>SearchProjection</code>を持つ。集合最大値・Aの点評価・他手の上限という三つの使い方を区別する。</li>
+<li><code>StoredValue</code>が、点または上下限、説明の番号、モデル等の番号を持つ。</li>
+<li><code>Node.frontier</code>が必要な評価の番号を保持する。各候補は集合の中での位置に応じて点評価または上限を読む。BとCを+4の点評価として扱わない。</li>
+</ol>
+<p>これにより探索記録の盤面や条件を候補ごとに丸ごと複製しない。ただし、更新中に同じ内容を探す<code>ValueStore</code>の索引はキーを別に持つ。また、<code>Assessment</code>を返す際、保存形式の組立てや旧形式の検査では、展開した値を一時的に持つ。複製が一切ない設計という意味ではない。</p>
+<p><code>CandidateNotes</code>は個別の直接評価・手動値・最終石差の情報がある手だけに確保する。手が登録済みであること、子のKey、合法手としての位置は<code>Edge</code>に持つ。</p>
+<p><code>BookEditor::compact_evidence</code>は、現在参照される評価だけを新しい一覧へ移し、全参照番号を付け替える。保持するValueIdを追加したら、この走査への追加が必要。<code>Book</code>への変換では未参照の値と更新用の索引を除き、<code>EvaluationRef</code>で借用して読む。</p>
+<h2 id="section-6">値を一つ変更したときの流れ</h2>
+<p>入口は<code>record_search</code>、<code>record_candidate</code>、<code>set_manual</code>、<code>register_move</code>など。これらを分けて、集合の探索結果、個別の手の評価、手動指定を混同しないようにしている。</p>
+<ol>
+<li>入力盤面・合法手・対象手集合・モデル識別値などを検査する。探索結果を直接渡す<code>record_search</code>は盤面と結果が正規化座標である必要がある。<code>record_candidate</code>は入力のboard/actionを正規化するが、評価内の対象盤面・着手は正規化済みのものを検査する。</li>
+<li><code>checkpoint</code>で変更前の対象局面を保持し、編集世代を進めて変更する。</li>
+<li><code>commit_checkpoint</code>→<code>refresh_from</code>へ進む。<code>reconcile_certificates</code>で最終石差の各情報の共通範囲を求め、<code>evidence</code>で候補の採用値を決める。</li>
+<li><code>calculate</code>→<code>combine_values</code>で局面の最大値を計算する。手動値と独立した確定情報は<code>calculate_proof</code>で別にも計算する。</li>
+<li>値・確定情報・全候補の評価状態が変われば、登録した親へ進む。<code>order</code>は子を先に処理し、パスによって空きマス数が同じになる場合も順序を決める。</li>
+<li>成功後に必要な仕事を再投入する。途中の祖先で確定情報が矛盾した場合は、<code>refresh_from</code>が更新した局面群を戻し、<code>commit_checkpoint</code>が編集元を戻す。新規の子の削除などは操作側の後始末も読む。</li>
+</ol>
+<p>基本の採用は、現在の手動値、確定した直接値、登録した子の値、直接値の順。ただし最終石差の上下限や集合探索の扱いが加わるため、最終的な条件は<code>evidence</code>と<a href="propagation.html">子からの更新</a>で確認する。深さの大きい推定を常に選ぶ規則ではない。</p>
+<p>例えば子の手番から見て-4なら、親の手の値は+4。区間[−6,−2]なら親では[+2,+6]。パスでも符号を反転するが、石を置いていないため到達深さを増やさない。これらは<code>try_child_to_parent</code>と<code>QualitySummary::shifted</code>が担当する。</p>
+<h2 id="section-7">生成を一巡する流れ</h2>
+<p>公開入口<code>generate_with_checkpoint</code>は<code>grow::generate</code>へ進む。設定の入口は<code>configure_generation_roots</code>。設定し直すと、既存の評価は残して段階の完了印と仕事を組み直す。</p>
+<ol>
+<li>Engineのモデル等が一致することを確認し、仕事一覧をBookEditorから一時的に取り出す。</li>
+<li>登録範囲を再確認する仕事<code>expansions</code>を処理し、探索待ちの<code>fresh/deepen</code>から次の仕事を選ぶ。優先順位は探索順を変えるだけで、手の登録は許可しない。</li>
+<li><code>prepare</code>は登録した子の評価を再利用し、未登録手や範囲境界で評価が不足した手を探索対象へまとめる。十分な点評価と上限があれば探索を省ける。</li>
+<li><code>BatchPool::run</code>で独立した局面を探索する。同じ局面の仕事は同一バッチに重ねない。全体のスレッド数・TT・残りノードを分け、探索元ごとに全予算を使わせない。</li>
+<li>完了結果だけを<code>publish</code>する。対象局面の編集世代が変わっていれば再投入する。中断結果は診断用の記録に残し、候補の完了値にはしない。</li>
+<li><code>expand_and_schedule</code>→<code>expand</code>で、現在の1手損失、累積損失、新規手のleaf_loss、手数、残り資源を確認して登録する。子から値が戻るたびに残り候補を再確認する。</li>
+<li>必要ならPV（探索が返す最良の進行）に沿う次の仕事を優先する。段階が完了したら次へ進む。終了時は取り出した未完の仕事を戻し、Engineの資源設定を復元する。</li>
+</ol>
+<p>子の値が親へ戻っただけでは、親のNode.revisionは変えない。親の盤面と探索対象の手集合に対する独立した探索結果は引き続き使えるためである。結果の採用後、新しい手を登録する前には、変化後の局面値で損失条件を改めて確認する。</p>
+<p><code>candidate_plan</code>で現在のレベル指定を解決する。現状は候補を打った子でレベルを解決して親の深さへ戻している。将来の「中盤レベル＝同じ探索元での要求深さ」はまだ実装していない。<a href="levels.html">レベル</a>を参照。</p>
+<h3 id="section-8">合流する進行と損失制限</h3>
+<p>同じ局面へ、手数が短く損失が大きい進行と、手数が長く損失が小さい進行が合流することがある。<code>distances</code>の最短手数だけでは新規登録の根拠にならない。</p>
+<p><code>active_paths</code>は現在の条件を満たす実在の進行を調べ、手数・累積損失の組を残す。<code>pareto</code>は両条件で劣る組だけを除く。片方の最小値だけを選んで、存在しない好都合な進行を作ってはいけない。</p>
+<p><code>analysis_distance</code>は、値が不明になった既存の枝を調べ直すために範囲を広げる判定。新規登録には<code>active_paths</code>の確認が別途必要となる。<a href="loss-control.html">損失制限</a>も参照。</p>
+<h2 id="section-9">保存と再開で何が残るか</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>対象</th>
+<th>workでの扱い</th>
+<th>主なコード</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>盤面・合法手・登録状態</td>
+<td>保存する。子のKeyは着手から作り直す</td>
+<td><code>save_editor/load_editor</code></td>
+</tr>
+<tr>
+<td>直接評価・手動値・候補の確定情報・集合探索</td>
+<td>共有一覧とその参照を保存する</td>
+<td><code>ValuePool::editor</code>、<code>ValueStore::write/read</code></td>
+</tr>
+<tr>
+<td>局面の現在値、親向けの値、親の逆引き</td>
+<td>局面欄の値としては保存せず、読込後に再計算する。一時的な保存用評価一覧にはこれらの記録も含まれる</td>
+<td><code>repair</code>、<code>rebuild_parents</code></td>
+</tr>
+<tr>
+<td>開始局面・色・設定・段階・探索待ち・登録確認待ち・PVの優先仕事と手のヒント</td>
+<td>保存する</td>
+<td><code>configw/configr</code>、<code>save_editor/load_editor</code></td>
+</tr>
+<tr>
+<td>優先順位の索引・到達条件のキャッシュ・登録確認済みの印</td>
+<td>作り直す</td>
+<td><code>PriorityIndex</code>、<code>ReachabilityCache</code>、<code>ExpansionStamp</code></td>
+</tr>
+<tr>
+<td>モデル等の説明・実行の設定と停止理由</td>
+<td>保存する</td>
+<td><code>catalogw/catalogr</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>playはその時点の採用値と確定情報を保持し、生成再開の仕事を持たない。<code>ValuePool</code>は保存・変換中の一時一覧であり、常駐する共有一覧<code>ValueStore</code>と同じものではない。内部ValueIdは1始まり、playの配列とファイルの値参照は0始まり。番号の変換箇所を飛ばして読まない。</p>
+<p><code>atomic_save</code>は同じディレクトリの一時ファイルへ本文を書き、長さとハッシュを付け、同期後に置換する。<code>open</code>は全体長とハッシュを先に確認し、各読込処理が件数・割当上限・盤面・参照先・評価の意味も検査する。ハッシュ一致だけで正しいbookとはしない。</p>
+<p>定期保存は<code>grow::save</code>が仕事一覧をeditorへ戻してからコールバックを呼ぶ。コールバック失敗時も一覧を実行側へ戻す。エラー終了では最後の保存コールバックを保証しないため、呼出し側は必要に応じて終了後のeditorを明示的に保存する。</p>
+<h2 id="section-10">旧形式の処理を読むとき</h2>
+<p>現行の処理と混同しやすいものを挙げる。対応版の一覧と移行操作は<a href="compatibility.html">互換性</a>を参照。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>残っている名前</th>
+<th>残す理由と使用範囲</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PropagationPolicy::Quality</code></td>
+<td>旧workで何が採用されていたかを再現して比較するため。現在の編集・生成はBookに固定</td>
+</tr>
+<tr>
+<td><code>Derivation::Maximum/Child/Intersection</code>、<code>Catalog::derivations</code></td>
+<td>旧v7/v3の計算元の関係を検査するため。検査後に過去の入力関係を捨て、現在の対象を表すCurrentへ変換</td>
+</tr>
+<tr>
+<td><code>Pending</code></td>
+<td>旧方式に残った完了済みの候補結果を取り込むため。現在の生成器は新規作成せず、現行workの読込でも許可しない</td>
+</tr>
+<tr>
+<td><code>LegacyUnknown</code></td>
+<td>旧bookや外部入力に探索方法が残っていないことを表す。深さから中盤・終盤を推測して埋めない</td>
+</tr>
+<tr>
+<td><code>MigrationReport</code></td>
+<td>変換元の版、採用値の変更件数、仕事を作り直したかを利用者へ知らせる。対局の選択条件には使わない</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>load_editor</code>は旧形式を検査してから現在の値を再計算し、以前の採用値と比較する。採用規則や値が変わる場合は、完了した評価記録を残して開始局面・設定から仕事を作り直す。読み込むだけでは元ファイルを更新しない。</p>
+<p>旧形式のハッシュは旧形式のバイト列から計算する。<code>value_codec::write/fingerprint</code>や<code>validate_catalog</code>の当時の解釈を、現行形式に合わせて不用意に書き換えない。</p>
+<p>旧play v3で手動値と旧探索を合成した値は、当時の集計で手動値の表示深さが探索の最低深さへ混ざる場合がある。旧入力関係を検査した後、<code>rebuild_legacy_play_quality</code>で入力から順番に現在の品質を集計し直す。旧形式の検査を省いたり、現行v4の不一致を許可したりはしない。</p>
+<h2 id="section-11">対局の一手が選ばれるまで</h2>
+<p><code>Book::probe</code>で正規化した局面を探し、<code>BookEntry::moves</code>で入力座標の着手と借用した評価を列挙する。評価内の盤面は正規化座標のまま。<code>candidates()</code>は詳細なAssessmentへ展開する診断用の入口。</p>
+<p><code>UsePolicy::check_parts</code>は、中盤・終盤・旧データ・手動値の条件を分けて確認する。子から計算した値に複数の探索方法が混ざる場合も、それぞれの最低条件を確認する。最終石差の確定情報と推定値のモデル互換性は同じ扱いにしない。</p>
+<p><code>player::choose</code>は、利用条件を満たす点評価と上限から基準点を求め、許容損失以内の登録手で点評価があるものを選ぶ。未登録手も基準点に関わる。例えば登録手A=+4、未登録手B&lt;=+6なら、BestではAを選ぶ根拠が不足するため通常探索へ戻す。許容損失4ならAは基準+6から2以内で候補になる。</p>
+<p>選んだ手だけ詳細を展開する。通常の手の選択で問い合わせごとのヒープ確保は行わない。</p>
+<h2 id="section-12">変更する箇所に対応する試験</h2>
+<p>最初は次の対応で読み、個々の期待値も確認する。テスト成功だけで設計の妥当性が確定するわけではない。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>確認する条件</th>
+<th>試験の所在と目印</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>集合最大値・最良手・他手の上限が一件の探索を共有する</td>
+<td>values.rs内の<code>projections_share_one_completed_search_and_survive_the_shared_codec</code></td>
+</tr>
+<tr>
+<td>局面全体と候補・一部の手集合を取り違えない</td>
+<td><a href="../../deft-reversi-book/tests/value_contract.rs">value_contract.rs</a>の<code>a4_subset_search_cannot_be_recorded_as_a_full_position_or_excluded_move</code></td>
+</tr>
+<tr>
+<td>上限を各候補の点数にしない</td>
+<td><a href="../../deft-reversi-book/tests/frontier.rs">frontier.rs</a>の<code>one_root_search_covers_unexpanded_moves_without_fabricating_point_values</code></td>
+</tr>
+<tr>
+<td>矛盾が祖先で見つかっても編集を戻す</td>
+<td>value_contract.rsの<code>conflicts_during_ancestor_propagation_and_registration_roll_back_the_edit</code></td>
+</tr>
+<tr>
+<td>手動の採用値とは別に最終石差を残す</td>
+<td>value_contract.rsの<code>independent_position_proof_survives_manual_book_values_and_propagates_separately</code></td>
+</tr>
+<tr>
+<td>子の値を、深い直接推定で上書きし直さない</td>
+<td><a href="../../deft-reversi-book/tests/review_regressions.rs">review_regressions.rs</a>の<code>book_policy_prefers_actual_child_backup_over_estimated_frontier</code></td>
+</tr>
+<tr>
+<td>合流した進行の手数と損失を両方保つ</td>
+<td>generate.rs内の<code>transposition_retains_short_costly_and_long_cheap_root_paths</code></td>
+</tr>
+<tr>
+<td>古い世代のバッチ結果を採用しない</td>
+<td>grow.rs内の<code>stale_batch_result_is_requeued_without_publishing_or_advancing_stage</code></td>
+</tr>
+<tr>
+<td>中断・保存エラー後も再開できる</td>
+<td>frontier.rsの<code>pv_growth_stop_and_checkpoint_error_leave_all_work_resumable</code></td>
+</tr>
+<tr>
+<td>旧形式の評価を残し、仕事を組み直す</td>
+<td>format.rs内の<code>old_quality_work_rebuilds_jobs_without_losing_completed_search_records</code>、<a href="../../deft-reversi-book/tests/simple_design.rs">simple_design.rs</a>、<a href="../../deft-reversi-book/tests/fixtures/README.md">固定入力の説明</a></td>
+</tr>
+<tr>
+<td>手動値を含む旧play v3の品質を、旧情報の検査後に集計し直す</td>
+<td>format.rs内の<code>old_play_with_manual_and_legacy_searches_rebuilds_quality_after_validation</code></td>
+</tr>
+<tr>
+<td>通常の対局参照でメモリ確保しない</td>
+<td><a href="../../deft-reversi-book/tests/book_alloc.rs">book_alloc.rs</a>の<code>book_hit_performs_no_heap_allocations</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>リポジトリのルートで、関心のある名前を末尾に付ければ絞って実行できる。</p>
+<pre><code class="language-sh">cargo test --offline --locked --release -p deft_reversi_book --features book-cli
+cargo doc --offline --locked -p deft_reversi_book --all-features --no-deps --document-private-items
+python3 tools/render_book_docs.py --check
+</code></pre>
+<p>Rustの型・関数をたどるHTMLは<code>target/doc/deft_reversi_book/index.html</code>へ生成される。日本語ガイドのHTMLは<code>tools/requirements-book-docs.txt</code>の依存を入れた環境で<code>tools/render_book_docs.py</code>を実行して更新する。</p>
+<p>実book・メモリ・速度の測定範囲と未検証の事項は<a href="validation.html">検証</a>に分けている。今回のコメント・文書整備は処理を変更するものではなく、それらの性能測定を再実施したという意味ではない。</p>
+<footer>正本：<a href="source-review.md">source-review.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deft Reversi Book v2 運用・設計ガイド · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html" aria-current="page">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">読む順序</a></li><li><a href="#section-3">基本の流れ</a></li></ul></aside>
+<h1 id="section-1">Deft Reversi Book v2 運用・設計ガイド</h1>
+<p>bookの生成、追加、深掘り、保存再開、対局利用を扱う。局面の値と最良の未登録手を中心にし、詳細な探索結果は一件ずつ共有する。現在の保存はwork v8 / play v4。</p>
+<h2 id="section-2">読む順序</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>文書</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="source-review.html">ソースの読み方</a></td>
+<td>レビューの読む順序、処理の入口、内部の名前、守る条件と対応する試験</td>
+</tr>
+<tr>
+<td><a href="training.html">育成手順</a></td>
+<td>モデル、候補収集、展開、深掘り、末端の再計算</td>
+</tr>
+<tr>
+<td><a href="operations.html">運用</a></td>
+<td>停止、保存、予算、復旧</td>
+</tr>
+<tr>
+<td><a href="architecture.html">保存場所とAPI</a></td>
+<td>何を保存し、どの操作で更新するか</td>
+</tr>
+<tr>
+<td><a href="value-model.html">評価の意味</a></td>
+<td>点と上下限、中盤と終盤、探索条件の読み方</td>
+</tr>
+<tr>
+<td><a href="levels.html">レベル</a></td>
+<td>現在の変換方法と将来のレベル＝深さ</td>
+</tr>
+<tr>
+<td><a href="loss-control.html">損失制限</a></td>
+<td>1手、累積、未登録手の追加条件</td>
+</tr>
+<tr>
+<td><a href="scheduling.html">探索の優先順</a></td>
+<td>有望な進行と別の候補へ計算を配分する方法</td>
+</tr>
+<tr>
+<td><a href="propagation.html">子からの更新</a></td>
+<td>直接探索、子の値、手動値、確定情報</td>
+</tr>
+<tr>
+<td><a href="diagnostics.html">診断</a></td>
+<td>統計、個別局面、生成時間の内訳</td>
+</tr>
+<tr>
+<td><a href="compatibility.html">互換性</a></td>
+<td>旧bookの引継ぎとモデル変更</td>
+</tr>
+<tr>
+<td><a href="design.html">設計</a></td>
+<td>Edax・Egaroucidから取り入れた構造</td>
+</tr>
+<tr>
+<td><a href="validation.html">検証</a></td>
+<td>試験と費用の比較、未検証の範囲</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="section-3">基本の流れ</h2>
+<p>校正済みモデルで小さい予算から生成する。範囲と損失条件を調整して有望な分岐を追加し、必要に応じてレベルを上げる。子を育てた結果は自動で親へ戻る。<code>leaves</code>で既存局面の未登録候補を再計算し、<code>inspect</code>で品質を確認する。</p>
+<p><code>.dbook-work</code>は生成・更新の元データと再開状態を保存するファイル。<code>.dbook</code>は対局用の読み取りデータを出力する任意のファイルで、生成再開には使わない。対局中に勝手に生成・保存しない。使えるbookの手がなければ通常探索へ戻す。</p>
+<p>既定の対局条件は中盤12手・95%以上、選択的終盤85%以上。これはAPIの既定値であり、棋力を最適化した推奨値ではない。完全読み切り、選択的終盤、中盤推定を区別して使う。短時間の生成や参照速度だけで強いbookが完成したとは扱わない。</p>
+<footer>正本：<a href="index.md">index.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

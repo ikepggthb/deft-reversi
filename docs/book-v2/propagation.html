@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>子の値を親へ反映する · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html" aria-current="page">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">どの値を使うか</a></li><li><a href="#section-3">変更の手順</a></li><li><a href="#section-4">保存結果から作り直す</a></li></ul></aside>
+<h1 id="section-1">子の値を親へ反映する</h1>
+<p>更新方式は一つに統一した。登録先の子局面に利用できる値があれば、それを親から見た値へ変換する。以前その手を直接探索した深さが大きいことを理由に更新を止めない。</p>
+<h2 id="section-2">どの値を使うか</h2>
+<ol>
+<li>現在のモデル等に対応する手動値があれば、手動指定として採用する。完全読み切りで得た別の情報は消さない。</li>
+<li>手動指定がなければ、保持している最終石差の確定情報を未確定の推定で置き換えない。</li>
+<li>登録された手で、子に利用できる値があれば、子から求めた値を使う。</li>
+<li>子が未評価なら、その手を直接調べた利用可能な結果を使い、子を解析対象にする。</li>
+<li>未登録手では、個別に得た結果と、残り候補をまとめて調べた結果を使う。最良手以外には上限だけを与える。</li>
+</ol>
+<p>点確定や最終石差の上下限は、採用する推定とは別にも保持する。上限だけの手を、その点数が得られる手として選ばない。矛盾する確定情報はエラーとして拒否する。</p>
+<p>子からの値を採用した場合、品質の説明もその値のものへ更新する。以前の深い直接探索の条件を、現在使う値の品質として表示しない。<a href="value-model.html">評価の意味</a>を参照。</p>
+<h2 id="section-3">変更の手順</h2>
+<p>値の追加、登録、登録解除、手動値の設定・解除、探索結果の取り込みは共通の更新手順を通す。変更した局面から、影響する全ての親へ再計算を進める。複数の親へ合流する同一局面も扱う。</p>
+<p>更新に成功したら、必要な仕事を探索待ちへ戻す。矛盾で失敗したら、値・登録状態・更新世代と関連する計算結果を戻す。探索中に局面が更新された場合、古い世代に対する結果を公開せず、仕事をやり直す。</p>
+<p>登録解除は、その枝を進行として使わなくする操作である。過去の確定情報や、他から参照される局面を自動で消す操作ではない。</p>
+<h2 id="section-4">保存結果から作り直す</h2>
+<pre><code class="language-sh">target/release/book repair --work openings.dbook-work --book openings.dbook
+</code></pre>
+<p><code>repair</code>は探索せず、現在の登録・記録から値と補助データを再計算する。繰り返しても結果を変えない。破損した入力を無条件に受理する機能ではない。</p>
+<p>以前の<code>--propagation quality|book</code>と、Rustの<code>set_propagation_policy</code>は廃止した。CLIで旧引数を指定すると、方式を統一したことを説明して拒否する。古いファイルは読み、現在の方式で採用値を計算し直す。変更件数は<a href="compatibility.html">移行結果</a>で確認できる。</p>
+<footer>正本：<a href="propagation.md">propagation.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

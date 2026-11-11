@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     deft_reversi_engine::Action::Pass => 64,
                     deft_reversi_engine::Action::Place(s) => u64::from(s.index()),
                 })
-                .wrapping_add(c.value.map_or(0, |v| i64::from(v.score) as u64))
+                .wrapping_add(c.value.map_or(0, |v| i64::from(v.score()) as u64))
             });
             black_box(checksum);
             hits += 1;

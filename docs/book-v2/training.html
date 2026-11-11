@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bookを継続して育てる手順 · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html" aria-current="page">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">1. バイナリとモデルを準備する</a></li><li><a href="#section-3">2. 候補を小さく広く集める</a></li><li><a href="#section-4">3. 同じ仕事を続ける</a></li><li><a href="#section-5">4. 有力進行を伸ばす</a></li><li><a href="#section-6">5. レベルを上げて終盤を解析する</a></li><li><a href="#section-7">6. 改善を親へ戻す</a></li><li><a href="#section-8">7. 新しい分岐の前に末端を再計算する</a></li><li><a href="#section-9">8. 任意局面から育てる</a></li><li><a href="#section-10">9. 対局へ投入する</a></li></ul></aside>
+<h1 id="section-1">Bookを継続して育てる手順</h1>
+<p>ここでいう学習は、固定した評価モデルで局面を事前探索し、bookの候補と分岐を増やす作業である。ニューラルネットやパターン評価の重み更新ではない。モデル学習を行った後のbook更新は、互換性を確認して明示的に再解析する。</p>
+<h2 id="section-2">1. バイナリとモデルを準備する</h2>
+<pre><code class="language-sh">cargo build --locked --release -p deft_reversi_book --features book-cli --bin book
+target/release/book --version
+</code></pre>
+<p>通常はモデル固有のMPC校正を持つDPR2を使う。v1由来で校正のないモデルを選択探索へ使うと拒否される。旧main向けの規則を明示的に使う場合だけ--legacy-main-mpcを生成系コマンドの各呼出しへ付ける。校正を黙って推測したり、エラーを避けるために無条件に旧校正へ切り替えたりしない。</p>
+<p>以下のMODELは実在するモデルパスへ置き換える。出力先は新しいディレクトリへ作り、モデルのハッシュ、バイナリ版、feature、コマンド、実行時間を記録する。校正表や探索revisionを変えたら同じ解析ではなくなる。</p>
+<h2 id="section-3">2. 候補を小さく広く集める</h2>
+<pre><code class="language-sh">target/release/book build --model MODEL \
+  --work openings.dbook-work --book openings.dbook \
+  --levels 2,4 --max-plies 4 --loss 3 --cumulative-loss 6 --leaf-loss 3 \
+  --schedule breadth --seconds 60 --threads 1 --tt-mib 256 --memory-mib 512
+</code></pre>
+<p>未登録候補をまとめて探索し、最良手の点評価と他候補の上限を保持する。損失制限を満たす手を登録し、PVに沿って子を伸ばしながら残り候補も処理する。全手の個別点評価は強制しない。</p>
+<p>max_pliesは各開始局面からの登録距離であり、解析の先読み深さではない。パスは着手距離を増やさない。levelsは候補を指した子で解決され、保存品質は親基準へ換算する。例えば子の深さ2は通常、親から深さ3の候補評価になる。</p>
+<p>buildは既存workの上書きを拒否する。初回から長い育成を始めず、保存と再開を確認する。</p>
+<pre><code class="language-sh">target/release/book inspect --work openings.dbook-work
+target/release/book verify --work openings.dbook-work
+target/release/book verify --book openings.dbook
+</code></pre>
+<h2 id="section-4">3. 同じ仕事を続ける</h2>
+<pre><code class="language-sh">target/release/book resume --model MODEL --work openings.dbook-work \
+  --book openings.dbook --seconds 300 --threads 4 --tt-mib 512
+</code></pre>
+<p>resumeは保存されたレベル・損失・登録距離・方針とFrontier・PVジョブを使う。時間・ノード予算、探索スレッド数、TT容量は変更できる。--levelsなどを付けて設定を変えることはできない。</p>
+<p>Ctrl-Cは実行中の探索を停止し、その終了後に正本と必要なスナップショットを保存する。強制終了や電源断では、最後の正常なチェックポイント以降の計算は失う。保存間隔は長い候補探索を強制的に分割する期限ではない。</p>
+<h2 id="section-5">4. 有力進行を伸ばす</h2>
+<pre><code class="language-sh">target/release/book extend --model MODEL --work openings.dbook-work \
+  --book openings.dbook --levels 4,8 --max-plies 12 \
+  --loss 2 --cumulative-loss 6 --leaf-loss 2 --schedule frontier --seconds 300
+</code></pre>
+<p>extendは設定を置き換えて処理する。同じidentityで必要品質を満たす完成済みの直接値は再利用する。旧pendingの完了スロットを共通の公開処理で独立証拠へ取り込んでから、設定やキューを置き換える。未完了の目標を完成扱いにしない。新方式の完了した集合探索はFrontierと独立証拠として保持する。</p>
+<p>損失を狭めても古いリンクは削除しない。現在の有力経路から外れた枝を自動強化から外し、再び有力になれば再開できるよう保持する。許容差を大きくした場合は候補数と保存容量が急増し得る。inspectと予算を併用する。</p>
+<p>--black-lossと--white-lossで片側だけ広くすることもできる。共通--lossより色別指定が優先される。CLIで設定を引き継いだ際、--lossを変えただけでは既存の色別指定は消えない。解除が必要ならAPIでNoneへ設定するか、CLIで両色へ新しい共通値を明示する。</p>
+<h2 id="section-6">5. レベルを上げて終盤を解析する</h2>
+<pre><code class="language-sh">target/release/book extend --model MODEL --work openings.dbook-work \
+  --book openings.dbook --levels 8,12,16 --max-plies 20 --seconds 300
+</code></pre>
+<p>同じレベルでも残り空き数に応じ、中盤深さ・選択的終盤・完全読みに切り替わる。序盤補正もDeftの計画に従う。大きいレベル番号だけで「証明済み」「高品質」と判断しない。</p>
+<p>完全読みが終わるとsolvedとして保存する。選択的終盤は終局深さまで読んでも推定のままで、選択率と実深さを記録する。最良点評価の証明と、他候補がそれ以下である証明がそろえば親局面も証明済みになる。他候補は個別点評価でなくProvenUpperでもよい。</p>
+<p>登録距離を下げて再設定することもできる。既存グラフを削除せず、その範囲内の育成へ計算を集中する。モデルを変えない通常のレベル変更で、保持した証明を再探索する必要はない。</p>
+<h2 id="section-7">6. 改善を親へ戻す</h2>
+<p>子を育てた結果は自動で親へ反映する。以前の直接探索が深かったことを理由に更新を止める方式は廃止した。品質の説明も、現在使う値に合わせる。</p>
+<pre><code class="language-sh">target/release/book repair --work openings.dbook-work --book openings.dbook
+</code></pre>
+<p>この操作は探索せず、保存情報から現在の値を作り直す。旧<code>--propagation</code>は使わない。<a href="propagation.html">更新規則</a>を参照。</p>
+<h2 id="section-8">7. 新しい分岐の前に末端を再計算する</h2>
+<pre><code class="language-sh">target/release/book leaves --model MODEL --work openings.dbook-work \
+  --levels 8 --schedule frontier --seconds 60
+target/release/book resume --model MODEL --work openings.dbook-work --seconds 60
+</code></pre>
+<p>保存グラフの未登録候補だけを再探索する。この修復パスでは休止中の登録枝もたどり、1手・累積損失で選別しない。新しい局面・リンクは追加しない。強い既存解析を弱い値で上書きせず、必要なら新旧両方の品質を満たす探索へ引き上げる。</p>
+<p>末端の評価が改善すると、通常育成で新しく有力になる分岐も変わる。次にextendで通常育成へ戻し、登録距離と損失条件を指定して分岐を追加する。leavesの再計算設定で処理を続けたいときはresumeを使う。</p>
+<h2 id="section-9">8. 任意局面から育てる</h2>
+<p>--positions FILE.obfをbuildまたは明示的な再設定に渡す。1行は64文字の盤面と手番X/Oで、盤面はX/O/-などOBFの表記に従う。開始Contextは絶対手番色を保持する。盤面の正規化は手番側/相手側の相対表現で行い、同じ盤面を重複保存しない。</p>
+<p>パスで絶対色を切り替える。複数開始局面から合流しても、距離と累積損失をそれぞれ満たす実在の経路を保持する。異なる経路の最短距離と最小損失だけを組み合わせた架空の資格は作らない。</p>
+<h2 id="section-10">9. 対局へ投入する</h2>
+<pre><code class="language-sh">target/release/book export --work openings.dbook-work --book openings.dbook
+target/release/book verify --book openings.dbook
+</code></pre>
+<p>BookPlayerは探索を呼ばず、利用できる登録手がないとNoneを返す。呼出し側はそのとき通常のEngineまたはEngineWorkerで探索する。既定のBestは、適格な全候補の最善評価に並ぶ登録手から選ぶ。RandomWithinLossは未登録候補も含む基準の最善値から許容損失内の登録手を選ぶ。</p>
+<p>bookの有効性を確認する対局では、book外へ出る率、book最終手の品質、相手が未登録手を選んだ後の探索への移行も記録する。保存された評価の改善を、そのままEloの向上と読み替えない。</p>
+<footer>正本：<a href="training.md">training.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

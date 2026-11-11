@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>保存形式と旧bookの引継ぎ · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html">bookのソースを読む</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html" aria-current="page">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Book構造修正の検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">現在の形式</a></li><li><a href="#section-3">変換で残すもの</a></li><li><a href="#section-4">ファイル互換性と探索の互換性</a></li><li><a href="#section-5">旧APIからの変更</a></li></ul></aside>
+<h1 id="section-1">保存形式と旧bookの引継ぎ</h1>
+<h2 id="section-2">現在の形式</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>ファイル</th>
+<th>読込可能</th>
+<th>新しく保存する版</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>.dbook-work</td>
+<td>v1〜v8</td>
+<td>v8</td>
+<td>生成・更新の元データと再開状態</td>
+</tr>
+<tr>
+<td>.dbook</td>
+<td>v1〜v4</td>
+<td>v4</td>
+<td>対局用の読み取りデータ。生成再開には使わない</td>
+</tr>
+</tbody>
+</table></div>
+<p>二つの用途で、点数・探索方式・品質の意味は共通である。workから直接<code>export()</code>して対局に使えるため、playファイルの出力は任意。</p>
+<p>新形式は、モデル等、完了した探索、値の説明、評価値をそれぞれの一覧へ保存し、番号で対応付ける。一回の探索を、最良手の値と他の手の上限に使っても、元の探索記録は一件だけとなる。過去の計算に使った入力記録の連鎖は保存しない。</p>
+<p>ヘッダーは識別文字8バイト、形式版u32、ルール版u32、本文長u64、本文のSHA-256の32バイト。合計56バイトで、数値はlittle-endian。Rustの構造体配置をそのままファイルへ書かない。</p>
+<p>生成設定は、レベル系列か深さ・選択率系列かを表すタグと、選んだ系列だけを保存する。旧版の二つの設定欄は読込時だけ解釈する。</p>
+<h2 id="section-3">変換で残すもの</h2>
+<p>局面、登録した手、直接探索の既知の値・条件、手動値、最終石差について分かっている上下限、生成設定を残す。旧形式に残った完了済みの結果も更新手順を通して取り込み、未完了の仕事は続行対象にする。</p>
+<p>失われた方式は不明のまま。深さが空き升数と同じという理由で終盤探索や完全読み切りへ変更しない。旧v7/v3の計算元参照は読込時に検査し、新しい保存へは引き継がない。計算した値は現在の情報から作り直す。</p>
+<p>旧play v3で手動値と旧探索の評価を合成した場合、旧版では手動値の表示深さも探索の最低深さへ含めていた。旧入力関係を当時の規則で検査してから、入力に残る探索条件を現在の方法で集計し直す。点数と各手の情報は保ち、探索品質を変更した場合は、旧品質を前提にしているか判断できない任意拡張を破棄する。</p>
+<p>旧workは子の値を親へ反映する方式へ移行する。以前の直接探索結果は残すが、採用値やその品質が変わる場合がある。CLIは変換元の版、局面数、登録手数、採用する局面値・候補値が変わった件数を標準エラーへ報告する。評価採用方式が変わる場合は、完了した探索結果を保ったまま、開始局面から必要な仕事を組み直す。古い方式の待ち行列や拡張キャッシュはそのまま使わず、意味の変化を解釈できない任意拡張も破棄する。<code>jobs_rebuilt</code>で組み直しの有無を表示する。Rustでは<code>migration_report()</code>で取得できる。変換報告自体は再開データの意味に影響しない。</p>
+<p>元ファイルはコピーで保護する。</p>
+<pre><code class="language-sh">cp openings.dbook-work next.dbook-work
+target/release/book verify --work next.dbook-work
+target/release/book repair --work next.dbook-work --book next.dbook
+target/release/book verify --work next.dbook-work
+target/release/book verify --book next.dbook
+</code></pre>
+<p>verifyは入力を書き換えない。repairは指定先を新形式で保存する。旧バイナリは新形式を読めないので、元ファイルを保持する。保存途中の失敗で既存ファイルを壊さない方式を維持する。</p>
+<h2 id="section-4">ファイル互換性と探索の互換性</h2>
+<p>ファイルが読めることと、その推定を現在のモデルと混ぜてよいことは別である。<code>analysis_identity</code>はモデル重み、校正、sigma、探索feature、探索仕様のrevisionから作る識別情報。</p>
+<p>今回、再帰探索とレベル表を変更していないため探索revisionは2のまま。レベルの意味・枝刈り・点数の意味が変わる場合は、別途revisionの更新を判断する。</p>
+<p>モデル等が変わる場合はコピーに<code>reanalyze</code>を使う。互換性のない推定は無効にし、登録・手動の原記録・ルールが一致する最終石差の確定情報は残す。古いモデルの手動値は黙って現在の値として使わない。探索自体の不具合で過去の確定情報が誤っていた場合は、別途監査・再構築が必要。</p>
+<p>読込時は、長さ、件数、割当上限、盤面、合法手・パス、参照番号、探索対象、品質、上下限、登録先を検査する。不明な必須拡張は拒否する。未知の任意拡張は無編集の往復で保持し、意味の変わる更新では破棄する。</p>
+<h2 id="section-5">旧APIからの変更</h2>
+<p><code>GenerationConfig.levels / stages</code>は<code>analysis</code>へ統合した。汎用の<code>record</code>は、<code>record_search</code>、<code>record_candidate</code>、<code>record_imported</code>、<code>set_manual / record_manual</code>へ分けた。評価のフィールドを旧表示へ自動で読み替える仕組みは廃止し、<code>score()</code>、<code>claim()</code>、<code>analysis()</code>などで明示的に読む。</p>
+<p>旧入力用の<code>LegacyAssessment</code>は<code>ImportedValue</code>へ変更した。外部入力を<code>Assessment::import</code>で明示的に扱う。<code>evidence_inputs / evidence_by_id</code>による過去の計算経路の参照は廃止した。</p>
+<p><a href="architecture.html">保存場所とAPI</a>、<a href="propagation.html">値の更新</a>、<a href="validation.html">試験・実測</a>も参照。</p>
+<footer>正本：<a href="compatibility.md">compatibility.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>
