@@ -2,6 +2,7 @@
 mod ai_panel;
 mod analysis_panel;
 mod board;
+mod editor;
 mod files;
 mod new_game;
 mod record;

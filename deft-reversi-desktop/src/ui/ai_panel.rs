@@ -3,6 +3,7 @@
 use super::{root::RootView, theme, widgets};
 use crate::{
     app::{Command, EngineStatus, Status},
+    domain::editor,
     i18n::Strings,
     services::engine::{Reading, Report},
 };
@@ -107,6 +108,9 @@ impl RootView {
             );
         }
         let position = c.history().current();
+        if (c.has_ai() || c.analyzing()) && !editor::searchable(position) {
+            lines.push(muted(s.too_few_discs.into()).into_any_element());
+        }
         if c.analyzing() && c.analyzer().is_searching(position) {
             let detail = c.analyzer().live(position).map(|r| report_text(s, r));
             lines.push(

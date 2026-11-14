@@ -1,6 +1,6 @@
 //! The window: toolbar, the record on the left, the board in the middle and
 //! the AI on the right (§9.2 of the plan), and the dialogs over them.
-use super::{theme, widgets};
+use super::{editor::EditorState, theme, widgets};
 use crate::{
     app::{Command, Controller, Effect, Status},
     domain::Settings,
@@ -32,6 +32,8 @@ actions!(
         TogglePause,
         MoveNow,
         ToggleAnalysis,
+        OpenEditor,
+        CancelEditor,
         FocusBoard,
         BoardLeft,
         BoardRight,
@@ -63,6 +65,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("space", TogglePause, workspace),
         KeyBinding::new("ctrl-enter", MoveNow, workspace),
         KeyBinding::new("f2", ToggleAnalysis, workspace),
+        KeyBinding::new("f3", OpenEditor, workspace),
+        KeyBinding::new("escape", CancelEditor, workspace),
         KeyBinding::new("tab", FocusBoard, workspace),
         KeyBinding::new("left", BoardLeft, board),
         KeyBinding::new("right", BoardRight, board),
@@ -106,6 +110,8 @@ pub struct RootView {
     pub(super) games: Option<Vec<GameSummary>>,
     /// A game whose delete button was pressed once.
     pub(super) delete_pending: Option<String>,
+    /// The position editor, while it is open.
+    pub(super) editor: Option<EditorState>,
     _quit: Option<Subscription>,
     focus: FocusHandle,
     dialog_focus: FocusHandle,
@@ -197,6 +203,7 @@ impl RootView {
             menu_open: false,
             games: None,
             delete_pending: None,
+            editor: None,
             _quit: quit,
             focus,
             dialog_focus: cx.focus_handle(),
@@ -212,6 +219,10 @@ impl RootView {
     }
 
     pub(super) fn run(&mut self, command: Command, cx: &mut Context<Self>) {
+        // The game waits while the editor is open.
+        if self.editor.is_some() {
+            return;
+        }
         self.notice = None;
         let effects = self.controller.apply(command);
         self.dispatch(effects, cx);
@@ -259,6 +270,9 @@ impl RootView {
 
     /// Focus follows on the next render.
     pub(super) fn open_dialog(&mut self, dialog: Dialog, cx: &mut Context<Self>) {
+        if self.editor.is_some() {
+            return;
+        }
         if matches!(dialog, Dialog::Games) {
             self.games = None;
             self.delete_pending = None;
@@ -316,6 +330,12 @@ impl RootView {
                 "new-game",
                 s.new_game,
                 open(|| Dialog::NewGame),
+                cx,
+            ))
+            .child(widgets::link(
+                "edit-position",
+                s.edit_position,
+                widgets::handler(|this, cx| this.open_editor(cx)),
                 cx,
             ))
             .child(
@@ -379,6 +399,8 @@ impl Render for RootView {
             }))
             .on_action(cx.listener(|this, _: &MoveNow, _, cx| this.run(Command::MoveNow, cx)))
             .on_action(cx.listener(|this, _: &ToggleAnalysis, _, cx| this.toggle_analysis(cx)))
+            .on_action(cx.listener(|this, _: &OpenEditor, _, cx| this.open_editor(cx)))
+            .on_action(cx.listener(|this, _: &CancelEditor, _, cx| this.cancel_editor(cx)))
             .on_action(cx.listener(|this, _: &FocusBoard, window, cx| {
                 window.focus(&this.board_focus, cx);
                 cx.notify();
@@ -386,7 +408,19 @@ impl Render for RootView {
             .size_full()
             .flex()
             .flex_col()
-            .child(self.render_toolbar(cx))
+            .child(if self.editor.is_some() {
+                div()
+                    .h(px(TOOLBAR_HEIGHT))
+                    .px(px(12.))
+                    .flex()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(theme::hairline())
+                    .child(self.render_editor_bar(cx).flex_1())
+                    .into_any_element()
+            } else {
+                self.render_toolbar(cx).into_any_element()
+            })
             .child(
                 div()
                     .flex_1()
@@ -396,41 +430,64 @@ impl Render for RootView {
                     .gap(px(GAP))
                     .px(px(20.))
                     .py(px(16.))
-                    .child(self.render_record(cx).w(px(LEFT_WIDTH)))
                     .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .child(
-                                div()
-                                    .key_context("Board")
-                                    .track_focus(&self.board_focus)
-                                    .on_action(cx.listener(|this, _: &BoardLeft, _, cx| {
-                                        this.move_board_cursor(-1, 0, cx)
-                                    }))
-                                    .on_action(cx.listener(|this, _: &BoardRight, _, cx| {
-                                        this.move_board_cursor(1, 0, cx)
-                                    }))
-                                    .on_action(cx.listener(|this, _: &BoardUp, _, cx| {
-                                        this.move_board_cursor(0, -1, cx)
-                                    }))
-                                    .on_action(cx.listener(|this, _: &BoardDown, _, cx| {
-                                        this.move_board_cursor(0, 1, cx)
-                                    }))
-                                    .on_action(cx.listener(|this, _: &BoardPlay, _, cx| {
-                                        this.run(Command::Play(this.board_cursor), cx)
-                                    }))
-                                    .on_action(cx.listener(|this, _: &LeaveBoard, window, cx| {
-                                        window.focus(&this.focus, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(self.render_board(cell, window, cx)),
-                            )
-                            .child(self.render_navigation(cell, cx)),
+                        if self.editor.is_some() {
+                            self.render_editor_tools(cx)
+                        } else {
+                            self.render_record(cx)
+                        }
+                        .w(px(LEFT_WIDTH)),
                     )
-                    .child(self.render_ai(cx).w(px(RIGHT_WIDTH))),
+                    .when(self.editor.is_some(), |el| {
+                        el.child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .child(self.render_editor_board(cell, cx)),
+                        )
+                        // The AI column stays empty, so the board does not move.
+                        .child(div().w(px(RIGHT_WIDTH)))
+                    })
+                    .when(self.editor.is_none(), |el| {
+                        el.child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .key_context("Board")
+                                        .track_focus(&self.board_focus)
+                                        .on_action(cx.listener(|this, _: &BoardLeft, _, cx| {
+                                            this.move_board_cursor(-1, 0, cx)
+                                        }))
+                                        .on_action(cx.listener(|this, _: &BoardRight, _, cx| {
+                                            this.move_board_cursor(1, 0, cx)
+                                        }))
+                                        .on_action(cx.listener(|this, _: &BoardUp, _, cx| {
+                                            this.move_board_cursor(0, -1, cx)
+                                        }))
+                                        .on_action(cx.listener(|this, _: &BoardDown, _, cx| {
+                                            this.move_board_cursor(0, 1, cx)
+                                        }))
+                                        .on_action(cx.listener(|this, _: &BoardPlay, _, cx| {
+                                            this.run(Command::Play(this.board_cursor), cx)
+                                        }))
+                                        .on_action(cx.listener(
+                                            |this, _: &LeaveBoard, window, cx| {
+                                                window.focus(&this.focus, cx);
+                                                cx.notify();
+                                            },
+                                        ))
+                                        .child(self.render_board(cell, window, cx)),
+                                )
+                                .child(self.render_navigation(cell, cx)),
+                        )
+                        .child(self.render_ai(cx).w(px(RIGHT_WIDTH)))
+                    }),
             );
         let dialog = self.dialog.as_ref().map(|dialog| {
             let panel = match dialog {

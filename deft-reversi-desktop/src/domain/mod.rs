@@ -1,4 +1,5 @@
 //! Game state without GPUI: the record of a game, its players and rules.
+pub mod editor;
 pub mod game;
 pub mod history;
 pub mod openings;

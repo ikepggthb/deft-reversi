@@ -1,7 +1,7 @@
 //! The controller: commands in, state changes and effects out. It does not
 //! touch GPUI or threads, so it is tested without a window or an engine.
 use crate::{
-    domain::{GameInfo, Grouping, History, Player, Strength},
+    domain::{GameInfo, Grouping, History, Player, Strength, editor},
     persistence::record::LoadedGame,
     services::engine::{EngineEvent, Report, Resources, SearchId, SearchJob},
 };
@@ -203,10 +203,11 @@ impl Controller {
         self.players.iter().any(|p| p.is_ai())
     }
 
-    /// The AI's strength when an AI is to move in the shown position.
+    /// The AI's strength when an AI is to move in the shown position. An
+    /// edited position with too few discs has no AI move (§9.1).
     pub fn ai_to_move(&self) -> Option<Strength> {
         let position = self.history.current();
-        if position.is_terminal() {
+        if position.is_terminal() || !editor::searchable(position) {
             return None;
         }
         match self.players[index(position.side_to_move())] {
@@ -641,6 +642,22 @@ mod tests {
                 .contains(&Effect::CancelSearch)
         );
         assert_eq!(c.status(), Status::Paused);
+    }
+
+    #[test]
+    fn too_few_discs_keep_the_ai_and_analysis_off() {
+        let bits = |n: &str| n.parse::<Square>().unwrap().bit();
+        // Three discs; Black to move has A3.
+        let start =
+            Position::from_colors(bits("a1"), bits("a2") | bits("b2"), Color::Black).unwrap();
+        let mut c = ready([AI, AI]);
+        let effects = c.apply(Command::NewGame(NewGame {
+            players: [AI, AI],
+            start,
+        }));
+        assert!(started(&effects).is_none());
+        assert!(c.ai_to_move().is_none());
+        assert!(started(&c.apply(Command::SetAnalysis(true))).is_none());
     }
 
     #[test]

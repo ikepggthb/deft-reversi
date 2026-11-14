@@ -72,6 +72,18 @@ pub struct Strings {
     pub batch_time: &'static str,
     pub loss_threshold: &'static str,
     pub discs_or_more: &'static str,
+    pub edit_position: &'static str,
+    pub start_from_here: &'static str,
+    pub erase: &'static str,
+    pub side_to_move: &'static str,
+    pub initial_setup: &'static str,
+    pub clear_all: &'static str,
+    pub paint_hint: &'static str,
+    pub copy: &'static str,
+    pub paste: &'static str,
+    pub paste_failed: &'static str,
+    pub too_few_discs: &'static str,
+    pub finished_position: &'static str,
     move_number: fn(usize) -> String,
     wins_by: fn(Color, i32) -> String,
     color: fn(Color) -> &'static str,
@@ -85,6 +97,7 @@ pub struct Strings {
     exported: fn(&str) -> String,
     load_failed: fn(&str) -> String,
     save_failed: fn(&str) -> String,
+    pass_start: fn(Color) -> String,
 }
 
 impl Strings {
@@ -128,6 +141,10 @@ impl Strings {
     }
     pub fn save_failed(&self, error: &str) -> String {
         (self.save_failed)(error)
+    }
+    /// The side to move cannot, so the other one starts.
+    pub fn pass_start(&self, side: Color) -> String {
+        (self.pass_start)(side)
     }
 }
 
@@ -204,6 +221,19 @@ static JA: Strings = Strings {
     batch_time: "全棋譜の1局面",
     loss_threshold: "悪手として示す損失",
     discs_or_more: "石以上",
+    edit_position: "局面編集",
+    start_from_here: "この局面で始める",
+    erase: "消す",
+    side_to_move: "手番",
+    initial_setup: "初期配置",
+    clear_all: "全消去",
+    paint_hint: "ドラッグで続けて置ける
+右クリックで消す",
+    copy: "コピー",
+    paste: "貼り付け",
+    paste_failed: "貼り付けた文字列は局面として読めません。",
+    too_few_discs: "石が4個未満の局面では、AIと解析は使えません。",
+    finished_position: "どちらも打てないため、終局した局面になります。",
     move_number: |n| format!("{n}手目"),
     wins_by: |winner, margin| {
         let side = (JA.color)(winner);
@@ -229,6 +259,13 @@ static JA: Strings = Strings {
     exported: |path| format!("書き出しました: {path}"),
     load_failed: |error| format!("開けませんでした: {error}"),
     save_failed: |error| format!("保存できませんでした: {error}"),
+    pass_start: |side| {
+        let other = (JA.color)(side.opponent());
+        format!(
+            "{}に打てる手がないため、{other}番から始めます。",
+            (JA.color)(side)
+        )
+    },
 };
 
 static EN: Strings = Strings {
@@ -295,6 +332,19 @@ static EN: Strings = Strings {
     batch_time: "Record, per position",
     loss_threshold: "Mark moves losing",
     discs_or_more: "discs or more",
+    edit_position: "Edit position",
+    start_from_here: "Start from here",
+    erase: "Erase",
+    side_to_move: "To move",
+    initial_setup: "Initial",
+    clear_all: "Clear",
+    paint_hint: "Drag to keep placing
+Right-click to erase",
+    copy: "Copy",
+    paste: "Paste",
+    paste_failed: "The pasted text is not a position.",
+    too_few_discs: "With fewer than 4 discs, the AI and analysis are off.",
+    finished_position: "Neither side can move: the game is over here.",
     move_number: |n| format!("Move {n}"),
     wins_by: |winner, margin| format!("{} wins by {margin}", (EN.color)(winner)),
     color: |color| match color {
@@ -317,4 +367,11 @@ static EN: Strings = Strings {
     exported: |path| format!("Exported to {path}"),
     load_failed: |error| format!("Could not open: {error}"),
     save_failed: |error| format!("Could not save: {error}"),
+    pass_start: |side| {
+        format!(
+            "{} cannot move, so {} starts.",
+            (EN.color)(side),
+            (EN.color)(side.opponent())
+        )
+    },
 };

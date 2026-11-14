@@ -4,7 +4,7 @@
 //! search the same position twice.
 use super::Effect;
 use crate::{
-    domain::History,
+    domain::{History, editor},
     services::engine::{Report, SearchId, SearchJob, SearchSpec},
 };
 use deft_reversi_engine::{Action, Color, Goal, Position, Selectivity};
@@ -63,9 +63,10 @@ pub struct Analyzer {
     batch: Option<(Vec<Position>, usize)>,
 }
 
-/// Positions a search can score: not over, and not a forced pass.
+/// Positions a search can score: not over, not a forced pass, and with
+/// enough discs for the evaluation.
 fn searchable(position: Position) -> bool {
-    !position.is_terminal() && !position.must_pass()
+    !position.is_terminal() && !position.must_pass() && editor::searchable(position)
 }
 
 impl Analyzer {
