@@ -1,0 +1,26 @@
+{
+  "cases": 40,
+  "solved": 40,
+  "search_ms_min": 15.542111,
+  "search_ms_max": 78.64436599999999,
+  "search_ms_mean": 35.7422778,
+  "wall_seconds": 2.308273521019146,
+  "command": [
+    "taskset",
+    "-c",
+    "2",
+    "/home/azure/dev/deft-reversi/target-native/release/examples/gtp",
+    "/home/azure/dev/deft-reversi/local/release/model-v3-pen/deft-eval-v3-pen.dpr2",
+    "--move-ms",
+    "100",
+    "--mid-selectivity",
+    "85",
+    "--endgame-empties",
+    "18",
+    "--endgame-ms",
+    "0",
+    "--tt",
+    "64"
+  ],
+  "gtp_sha256": "d60653a6611d61d61f5d91b5c0bac2eb2278dd12b3926d8ef2cc0976ed885fa5"
+}
