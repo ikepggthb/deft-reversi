@@ -18,7 +18,7 @@ DEFAULTS = {
     # Built with RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native.
     "solve": "target-native/release/examples/solve",
     "gtp": "target-native/release/examples/gtp",
-    "model": "local/release/model-v3-pen/deft-eval-v3-pen.dpr2",
+    "model": "local/release/model-v3-pen-mpc2/deft-eval-v3-pen.dpr2",
     # Edax 4.5.5 as distributed; it reads data/eval.dat next to its bin/.
     "edax": "local/edax-4.5.5/bin/lEdax-x86-64-v3",
     # Egaroucid for Console 7.8.1 built with the official clang++ command.

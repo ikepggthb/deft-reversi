@@ -13,10 +13,14 @@ with XOT=FILE, OPENINGS lines drawn from that XOT list (seed 1;
 positions/xot-openingslarge.txt is the large XOT list).
 Deft is the `gtp` example (DEFT_MODEL, default the release model of
 common.py); with OPPONENT deft, the other side uses OPP_MODEL.
+OPP_GTP is another gtp binary for the other Deft side (e.g. an older build).
 Every engine runs single-threaded; the two engines of a game share one
 physical core (they never search at the same time; no pondering). WORKERS
-games run at once on CPUs 0, 2, 4, 6 (default 1; time modes only 1,
-since games running beside each other change the engines' speed). Hash: Deft 64 MiB, Edax and
+games run at once on CPUs 0, 2, 4, 6, or the list MATCH_CPUS=0,1,..
+(default 1; time modes only 1,
+since games running beside each other change the engines' speed).
+With MATCH_THREADS=N every engine searches with N threads instead: one game
+at a time, on all CPUs or the set MATCH_CPUS (as for taskset -c). Hash: Deft 64 MiB, Edax and
 Egaroucid 2^21 entries. Writes one line per game (resumes OUT.tsv) and a
 summary at the end.
 """
@@ -26,6 +30,7 @@ from pathlib import Path
 from common import paths
 
 TOOLS = paths()
+THREADS = os.environ.get("MATCH_THREADS", "1")
 # The engine's `gtp` example, built with CARGO_TARGET_DIR=target-native.
 DEFT = [str(TOOLS["gtp"]), os.environ.get("DEFT_MODEL", str(TOOLS["model"]))]
 EDAX = str(TOOLS["edax"])
@@ -153,22 +158,22 @@ def engine(kind, mode, cpu):
     if kind == "deft":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
         # DEFT_GTP_LOG=FILE: Deft logs each move's budget and time there.
-        return Gtp([*DEFT, *args, "--tt", "64"], cpu, log=os.environ.get("DEFT_GTP_LOG"))
+        return Gtp([*DEFT, *args, "--tt", "64", "--threads", THREADS], cpu, log=os.environ.get("DEFT_GTP_LOG"))
     if kind == "deft-opp":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
-        return Gtp([DEFT[0], os.environ["OPP_MODEL"], *args, "--tt", "64"], cpu)
+        return Gtp([os.environ.get("OPP_GTP", DEFT[0]), os.environ["OPP_MODEL"], *args, "--tt", "64", "--threads", THREADS], cpu)
     if kind == "edax":
         # EDAX_MOVE_TIME=S: a time per move instead of per game.
         if seconds and os.environ.get("EDAX_MOVE_TIME"):
             limit = ["-move-time", os.environ["EDAX_MOVE_TIME"]]
         else:
             limit = ["-t", f"{seconds:g}"] if seconds else ["-l", str(level)]
-        return Gtp([EDAX, "-gtp", "-eval-file", "data/eval.dat", "-book-usage", "off", "-n", "1",
+        return Gtp([EDAX, "-gtp", "-eval-file", "data/eval.dat", "-book-usage", "off", "-n", THREADS,
                     "-h", "21", "-ponder", "off", *limit], cpu, cwd=Path(EDAX).parent)
     # Egaroucid's GTP genmove ignores -time: in time modes it plays at
     # EGAR_LEVEL, and Deft's time is set to what Egaroucid used.
     extra = ["-l", str(EGAR_LEVEL if seconds else level)]
-    return Gtp([EGAR, "-gtp", "-nobook", "-t", "1", "-hash", "21", *extra], cpu, cwd=Path(EGAR).parent)
+    return Gtp([EGAR, "-gtp", "-nobook", "-t", THREADS, "-hash", "21", *extra], cpu, cwd=Path(EGAR).parent)
 
 
 def play_game(engines, deft_black, opening, mode):
@@ -263,7 +268,15 @@ def main():
             for e in engines.values():
                 e.close()
 
-    threads = [threading.Thread(target=worker, args=(cpu,)) for cpu in (0, 2, 4, 6)[:workers]]
+    if THREADS != "1":
+        if workers != 1:
+            sys.exit("MATCH_THREADS plays one game at a time")
+        cpus = [os.environ.get("MATCH_CPUS", f"0-{os.cpu_count() - 1}")]
+    else:
+        cpus = [int(c) for c in os.environ.get("MATCH_CPUS", "0,2,4,6").split(",")]
+    if workers > len(cpus):
+        sys.exit(f"{workers} workers need as many CPUs; set MATCH_CPUS")
+    threads = [threading.Thread(target=worker, args=(cpu,)) for cpu in cpus[:workers]]
     [t.start() for t in threads]
     [t.join() for t in threads]
     summary(out, opp, mode)

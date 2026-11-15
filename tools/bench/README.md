@@ -16,7 +16,7 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native \
 | キー | 既定の場所 |
 |---|---|
 | `solve`・`gtp` | `target-native/release/examples/` |
-| `model` | `local/release/model-v3-pen/deft-eval-v3-pen.dpr2`（今の Release のモデル） |
+| `model` | `local/release/model-v3-pen-mpc2/deft-eval-v3-pen.dpr2`（今の Release のモデルと同じ重み・規則で、校正を今の形式にしたもの） |
 | `edax` | `local/edax-4.5.5/bin/lEdax-x86-64-v3`（Edax 4.5.5 の配布版） |
 | `egaroucid` | `local/bench-engines/dl-egaroucid-7.8.1/…/Egaroucid_for_Console_clang.out`（Egaroucid 7.8.1、公式の clang の手順でビルド） |
 
@@ -57,7 +57,7 @@ DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=tools/bench/positions/xot-openingslar
   python3 tools/bench/match.py deft time1 250 OUT.tsv
 ```
 
-使い方の詳細はファイルの先頭にあります。
+別のビルドの Deft を相手にするときは、`OPP_GTP` にその `gtp` を指定します。`MATCH_THREADS=N` で各エンジンを N スレッドで動かします（1局ずつ）。使い方の詳細はファイルの先頭にあります。
 
 ## 局面
 

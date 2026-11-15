@@ -13,7 +13,7 @@
                           "mobility_eval": [i16 x 128],
                           "const_eval": i16}
 
-新形式 (`file.rs::read_legacy_pattern_json` が受け付ける形):
+新形式 (tools/convert_pattern_v2.py が DPR2 に変換する形):
     {"evaluator": {"phases": [PhaseData x 60]}}
 
     - `phases[move_count.min(59)]` で引く   (N_PHASES = 60)
