@@ -10,6 +10,13 @@ pub struct Settings {
     pub analysis: AnalysisSettings,
     /// In analysis mode, the candidate moves show their values or dots.
     pub candidate_values: bool,
+    pub theme: ThemeChoice,
+    pub animation: Animation,
+    pub sound: bool,
+    /// 0 to 100.
+    pub volume: u8,
+    /// The window's last size, in logical pixels.
+    pub window_size: Option<(u32, u32)>,
     /// Kept between games, so the dialog opens with the last choices.
     pub new_game: NewGameForm,
 }
@@ -22,9 +29,30 @@ impl Default for Settings {
             resources: engine_loader::default_resources(),
             analysis: AnalysisSettings::default(),
             candidate_values: true,
+            theme: ThemeChoice::System,
+            animation: Animation::Normal,
+            sound: true,
+            volume: 60,
+            window_size: None,
             new_game: NewGameForm::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeChoice {
+    System,
+    Light,
+    Dark,
+}
+
+/// How discs turn over (§9.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Animation {
+    Normal,
+    /// Half as long.
+    Short,
+    Off,
 }
 
 /// The table sizes the settings screen offers.

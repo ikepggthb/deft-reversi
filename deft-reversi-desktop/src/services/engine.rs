@@ -110,7 +110,7 @@ impl From<Progress> for Report {
             score: Some(p.score),
             reading: Some(p.kind.into()),
             pv: p.pv,
-            moves: Vec::new(),
+            moves: p.moves,
             nodes: p.nodes,
             elapsed: p.elapsed,
         }

@@ -110,7 +110,8 @@ fn main() {
         // Held until the process ends; the OS releases it then.
         std::mem::forget(lock);
         ui::bind_keys(cx);
-        let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);
+        let (width, height) = settings.window_size.unwrap_or((1100, 720));
+        let bounds = Bounds::centered(None, size(px(width as f32), px(height as f32)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(800.), px(560.))),

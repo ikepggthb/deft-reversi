@@ -6,20 +6,18 @@ use crate::{
     domain::{
         Preset, Settings,
         player::MOVE_TIMES,
-        settings::{AiChoice, ManualMode, NewGameForm, SideForm, TT_SIZES_MIB},
+        settings::{
+            AiChoice, Animation, ManualMode, NewGameForm, SideForm, TT_SIZES_MIB, ThemeChoice,
+        },
     },
     i18n::Lang,
     services::engine::Resources,
 };
 use serde::{Deserialize, Serialize};
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_BYTES: u64 = 64 * 1024;
-
-/// The choices of the settings screen, in milliseconds.
-pub const ANALYSIS_TIMES: [u64; 5] = [1_000, 2_000, 5_000, 10_000, 30_000];
-pub const BATCH_TIMES: [u64; 4] = [500, 1_000, 2_000, 5_000];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -30,10 +28,18 @@ pub struct SettingsV1 {
     pub threads: usize,
     pub tt_mib: usize,
     pub analysis_level: u8,
-    pub analysis_time_ms: u64,
-    pub batch_time_ms: u64,
+    /// Older files also carry `analysis_time_ms` and `batch_time_ms`, which
+    /// are ignored: analysis is set by level only.
     pub loss_threshold: i32,
     pub candidate_values: bool,
+    /// "system", "light" or "dark".
+    pub theme: String,
+    /// "normal", "short" or "off".
+    pub animation: String,
+    pub sound: bool,
+    pub volume: u8,
+    pub window_width: Option<u32>,
+    pub window_height: Option<u32>,
     pub new_game: NewGameV1,
 }
 
@@ -142,10 +148,24 @@ impl From<Settings> for SettingsV1 {
             threads: s.resources.threads,
             tt_mib: s.resources.tt_mib,
             analysis_level: s.analysis.level,
-            analysis_time_ms: s.analysis.time_limit.as_millis() as u64,
-            batch_time_ms: s.analysis.batch_time.as_millis() as u64,
             loss_threshold: s.analysis.loss_threshold,
             candidate_values: s.candidate_values,
+            theme: match s.theme {
+                ThemeChoice::System => "system",
+                ThemeChoice::Light => "light",
+                ThemeChoice::Dark => "dark",
+            }
+            .into(),
+            animation: match s.animation {
+                Animation::Normal => "normal",
+                Animation::Short => "short",
+                Animation::Off => "off",
+            }
+            .into(),
+            sound: s.sound,
+            volume: s.volume,
+            window_width: s.window_size.map(|(w, _)| w),
+            window_height: s.window_size.map(|(_, h)| h),
             new_game: s.new_game.into(),
         }
     }
@@ -181,19 +201,26 @@ impl SettingsV1 {
                 } else {
                     default.analysis.level
                 },
-                time_limit: if ANALYSIS_TIMES.contains(&self.analysis_time_ms) {
-                    Duration::from_millis(self.analysis_time_ms)
-                } else {
-                    default.analysis.time_limit
-                },
-                batch_time: if BATCH_TIMES.contains(&self.batch_time_ms) {
-                    Duration::from_millis(self.batch_time_ms)
-                } else {
-                    default.analysis.batch_time
-                },
                 loss_threshold: self.loss_threshold.clamp(1, 64),
             },
             candidate_values: self.candidate_values,
+            theme: match self.theme.as_str() {
+                "light" => ThemeChoice::Light,
+                "dark" => ThemeChoice::Dark,
+                _ => ThemeChoice::System,
+            },
+            animation: match self.animation.as_str() {
+                "short" => Animation::Short,
+                "off" => Animation::Off,
+                _ => Animation::Normal,
+            },
+            sound: self.sound,
+            volume: self.volume.min(100),
+            // A size the screen cannot have is dropped.
+            window_size: self
+                .window_width
+                .zip(self.window_height)
+                .filter(|&(w, h)| (800..=10_000).contains(&w) && (560..=10_000).contains(&h)),
             new_game: NewGameForm {
                 sides: [
                     self.new_game.black.to_form(default.new_game.sides[0]),

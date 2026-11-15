@@ -1,9 +1,9 @@
 //! The board with its coordinates, and the record navigation below it.
-use super::{root::RootView, theme};
+use super::{animation::Frame, root::RootView, theme, widgets};
 use crate::app::{Command, Status};
-use deft_reversi_engine::{Action, Square};
+use deft_reversi_engine::{Action, Color, Square};
 use gpui::{
-    ClickEvent, Context, FontWeight, MouseButton, Pixels, Rgba, Window, div, prelude::*, px,
+    ClickEvent, Context, Div, FontWeight, MouseButton, Pixels, Rgba, Window, div, prelude::*, px,
 };
 
 const LABEL: f32 = 18.;
@@ -25,7 +25,10 @@ impl RootView {
             self.controller.ai_to_move().is_none() || self.controller.status() == Status::Paused;
         // In analysis mode the candidate moves carry their values, for the
         // side to move; the best ones are highlighted.
-        let analysis = self.controller.analyzing().then(|| {
+        // Not while the AI is about to move: the values would be a hint.
+        let ai_moving =
+            self.controller.ai_to_move().is_some() && self.controller.status() == Status::Playing;
+        let analysis = (self.controller.analyzing() && !ai_moving).then(|| {
             let analyzer = self.controller.analyzer();
             analyzer
                 .live(position)
@@ -87,7 +90,19 @@ impl RootView {
                     el = el.border_2().border_color(theme::focus_ring());
                 }
                 if let Some(color) = disc {
-                    el = el.child(disc_element(cell, color));
+                    el = el.child(
+                        match self.animation.as_ref().and_then(|a| a.frame(square)) {
+                            Some(Frame::Growing(size)) => {
+                                div().size(cell * 0.8 * size).rounded_full().bg(color)
+                            }
+                            Some(Frame::Turning(width, shown)) => div()
+                                .w(cell * 0.8 * width)
+                                .h(cell * 0.8)
+                                .rounded_full()
+                                .bg(disc_color(shown)),
+                            None => disc_element(cell, color),
+                        },
+                    );
                     if last_move == Some(square) {
                         let dot = cell * 0.16;
                         el = el.child(
@@ -158,12 +173,17 @@ impl RootView {
             .child(div().flex().flex_row().child(ranks).child(frame))
     }
 
+    /// Moving through the record on the left, and the game's own controls
+    /// (pause, resume, one AI move) on the right: both act on what the
+    /// board shows.
     pub(super) fn render_navigation(
         &self,
         cell: Pixels,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let history = self.controller.history();
+        let s = self.settings.lang.strings();
+        let c = &self.controller;
+        let history = c.history();
         let back = history.cursor() > 0;
         let forward = history.can_redo();
         let buttons = [
@@ -174,39 +194,142 @@ impl RootView {
             ("forward-2", "»", forward, Command::Step(2)),
             ("last", "⇥", forward, Command::Last),
         ];
+        // The row stays one line as wide as the board: the buttons narrow
+        // first, then the "Paused" note gives way.
+        let position = history.current();
+        let shows_controls = c.has_ai() && !position.is_terminal();
+        let step_ai = c.status() == Status::Paused && c.ai_to_move().is_some();
+        let row = f32::from(cell) * 8. + 11.;
+        let button_width = |text: &str, padding: f32| text_width(text, 16.) + padding;
+        let controls_width = |note: bool| match (shows_controls, c.status()) {
+            (false, _) => 0.,
+            (true, Status::Playing) => 10. + button_width(s.pause, 26.),
+            (true, Status::Paused) => {
+                10. + button_width(s.resume, 30.)
+                    + if note {
+                        6. + text_width(s.paused, 12.)
+                    } else {
+                        0.
+                    }
+                    + if step_ai {
+                        6. + button_width(s.step_ai, 26.)
+                    } else {
+                        0.
+                    }
+            }
+        };
+        let fits = |note: bool| (row - controls_width(note)) / 6. >= NAV_MIN;
+        let note = fits(true) || !fits(false);
+        let nav_button = ((row - controls_width(note)) / 6.).clamp(NAV_MIN, NAV_MAX);
+        let navigation =
+            div()
+                .flex()
+                .flex_row()
+                .flex_none()
+                .border_1()
+                .border_color(theme::border())
+                .rounded(px(6.))
+                .overflow_hidden()
+                .children(buttons.into_iter().enumerate().map(
+                    |(i, (id, glyph, enabled, command))| {
+                        let el = div()
+                            .id(id)
+                            .w(px(nav_button.floor()))
+                            .h(px(34.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_xl()
+                            .when(i > 0, |el| el.border_l_1().border_color(theme::hairline()))
+                            .child(glyph);
+                        if enabled {
+                            el.text_color(theme::text())
+                                .cursor_pointer()
+                                .hover(|style| style.bg(theme::hover()))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.run(command.clone(), cx)
+                                }))
+                        } else {
+                            el.text_color(theme::text_muted())
+                        }
+                    },
+                ));
+        let controls = shows_controls.then(|| match c.status() {
+            Status::Playing => div().flex_none().child(widgets::button(
+                "pause",
+                s.pause,
+                widgets::handler(|this, cx| this.run(Command::Pause, cx)),
+                cx,
+            )),
+            Status::Paused => div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .when(note, |el| {
+                    el.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_secondary())
+                            .whitespace_nowrap()
+                            .child(s.paused),
+                    )
+                })
+                .when(c.ai_to_move().is_some(), |el| {
+                    el.child(widgets::button(
+                        "step-ai",
+                        s.step_ai,
+                        widgets::handler(|this, cx| this.run(Command::StepAi, cx)),
+                        cx,
+                    ))
+                })
+                .child(widgets::primary(
+                    "resume",
+                    s.resume,
+                    widgets::handler(|this, cx| this.run(Command::Resume, cx)),
+                    cx,
+                )),
+        });
         div()
             .flex()
             .flex_row()
-            .justify_center()
-            .gap(px(4.))
-            .mt(px(10.))
+            .items_center()
+            .gap(px(10.))
+            .mt(px(12.))
             .pl(px(LABEL))
-            .w(cell * 8.)
-            .children(buttons.map(|(id, glyph, enabled, command)| {
-                let el = div()
-                    .id(id)
-                    .w(px(36.))
-                    .h(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(4.))
-                    .text_lg()
-                    .child(glyph);
-                if enabled {
-                    el.text_color(theme::text_secondary())
-                        .cursor_pointer()
-                        .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.run(command.clone(), cx)
-                        }))
+            .w(px(LABEL) + cell * 8. + px(7. + 4.))
+            .map(|el| {
+                if controls.is_some() {
+                    el.justify_between()
                 } else {
-                    el.text_color(theme::text_muted())
+                    el.justify_center()
                 }
-            }))
+            })
+            .child(navigation)
+            .children(controls)
     }
 }
 
-fn disc_element(cell: Pixels, color: Rgba) -> impl IntoElement {
+fn disc_element(cell: Pixels, color: Rgba) -> Div {
     div().size(cell * 0.8).rounded_full().bg(color)
+}
+
+fn disc_color(color: Color) -> Rgba {
+    match color {
+        Color::Black => theme::black_disc(),
+        Color::White => theme::white_disc(),
+    }
+}
+
+/// The navigation buttons' width bounds.
+const NAV_MIN: f32 = 26.;
+const NAV_MAX: f32 = 44.;
+
+/// A rough width of a line of text, enough to share out a row: a full
+/// width character takes its font size, any other a bit over half.
+fn text_width(text: &str, size: f32) -> f32 {
+    text.chars()
+        .map(|c| if c.is_ascii() { 0.6 * size } else { size })
+        .sum()
 }

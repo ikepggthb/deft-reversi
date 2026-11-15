@@ -223,6 +223,20 @@ impl RootView {
                         cx,
                     ))
                     .child(item(
+                        "menu-copy-record",
+                        s.copy_record,
+                        "Ctrl+C",
+                        widgets::handler(|this, cx| this.copy_record(cx)),
+                        cx,
+                    ))
+                    .child(item(
+                        "menu-enter-record",
+                        s.enter_record,
+                        "Ctrl+V",
+                        widgets::handler(|this, cx| this.enter_record(false, cx)),
+                        cx,
+                    ))
+                    .child(item(
                         "menu-games",
                         s.games,
                         "",
@@ -258,12 +272,7 @@ impl RootView {
                     let id = game.id.clone();
                     let is_current = game.id == current;
                     let pending = self.delete_pending.as_deref() == Some(game.id.as_str());
-                    // "2026-11-03T09:25:05Z" → "2026-11-03 09:25 UTC"
-                    let when = format!(
-                        "{} {} UTC",
-                        game.updated_at.get(..10).unwrap_or(""),
-                        game.updated_at.get(11..16).unwrap_or("")
-                    );
+                    let when = local_time(&game.updated_at);
                     let result: SharedString = match game.outcome {
                         Some((black, white)) => format!("{black} – {white}").into(),
                         None => s.in_progress.into(),
@@ -375,15 +384,23 @@ impl RootView {
                         cx,
                     )),
             )
-            .child(
-                div()
-                    .id("games-list")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .children(rows),
-            )
+            .child(widgets::scroll_area(
+                "games-list",
+                &self.games_scroll,
+                div().flex().flex_col().children(rows),
+                cx,
+            ))
+    }
+}
+
+/// "2026-11-03T09:25:05Z" in the local time zone, such as
+/// "2026-11-03 18:25".
+fn local_time(rfc3339: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(rfc3339) {
+        Ok(time) => time
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+        Err(_) => rfc3339.get(..16).unwrap_or(rfc3339).replace('T', " "),
     }
 }

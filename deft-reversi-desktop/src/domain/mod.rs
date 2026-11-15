@@ -5,6 +5,7 @@ pub mod history;
 pub mod openings;
 pub mod player;
 pub mod settings;
+pub mod transcript;
 
 pub use game::GameInfo;
 pub use history::{Grouping, History};

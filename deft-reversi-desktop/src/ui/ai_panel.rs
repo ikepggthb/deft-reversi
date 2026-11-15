@@ -2,7 +2,7 @@
 //! line on what the engine is doing with the controls for it.
 use super::{root::RootView, theme, widgets};
 use crate::{
-    app::{Command, EngineStatus, Status},
+    app::{Command, EngineStatus},
     domain::editor,
     i18n::Strings,
     services::engine::{Reading, Report},
@@ -21,7 +21,7 @@ pub(super) fn reading_text(s: &Strings, reading: Reading) -> String {
     }
 }
 
-fn nodes_text(nodes: u64) -> String {
+pub(super) fn nodes_text(nodes: u64) -> String {
     match nodes {
         n if n >= 1_000_000_000 => format!("{:.1} G", n as f64 / 1e9),
         n if n >= 1_000_000 => format!("{:.1} M", n as f64 / 1e6),
@@ -137,38 +137,6 @@ impl RootView {
                     .children(detail.map(|d| muted(d.into())))
                     .into_any_element(),
             );
-        }
-        if !c.analyzing() && c.has_ai() && !position.is_terminal() {
-            let controls = match c.status() {
-                Status::Playing => div().flex().flex_row().child(widgets::link(
-                    "pause",
-                    s.pause,
-                    widgets::handler(|this, cx| this.run(Command::Pause, cx)),
-                    cx,
-                )),
-                Status::Paused => div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(div().text_color(theme::text_muted()).child(s.paused))
-                    .child(div().flex_1())
-                    .when(c.ai_to_move().is_some(), |el| {
-                        el.child(widgets::link(
-                            "step-ai",
-                            s.step_ai,
-                            widgets::handler(|this, cx| this.run(Command::StepAi, cx)),
-                            cx,
-                        ))
-                    })
-                    .child(widgets::link(
-                        "resume",
-                        s.resume,
-                        widgets::handler(|this, cx| this.run(Command::Resume, cx)),
-                        cx,
-                    )),
-            };
-            lines.push(controls.into_any_element());
         }
         div()
             .flex()

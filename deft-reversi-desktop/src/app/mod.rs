@@ -6,13 +6,8 @@ use crate::{
     services::engine::{EngineEvent, Report, Resources, SearchId, SearchJob},
 };
 use deft_reversi_engine::{Action, Color, Position, Square};
-use std::time::Duration;
-
 mod analysis;
 pub use analysis::{AnalysisSettings, Analyzer};
-
-/// Between two AI moves when both colours are AI, so the game can be followed.
-const AI_VS_AI_PAUSE: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NewGame {
@@ -71,11 +66,7 @@ pub enum Sound {
 /// Work for the services; sounds are played from P6.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
-    /// Sent to the engine after `delay`.
-    StartSearch {
-        job: SearchJob,
-        delay: Duration,
-    },
+    StartSearch { job: SearchJob },
     CancelSearch,
     MoveNow,
     ClearTt,
@@ -102,10 +93,22 @@ pub enum EngineStatus {
 pub struct Thinking {
     id: SearchId,
     revision: u64,
+    strength: Strength,
     /// Stays paused after the move.
     single_step: bool,
     pub color: Color,
     pub report: Option<Report>,
+}
+
+/// One move the AI played, with the search behind it.
+#[derive(Clone, Debug)]
+pub struct AiMove {
+    /// The move number, as in the record.
+    pub number: usize,
+    pub color: Color,
+    pub strength: Strength,
+    pub action: Action,
+    pub report: Report,
 }
 
 pub struct Controller {
@@ -122,6 +125,8 @@ pub struct Controller {
     analyzing: bool,
     analyzer: Analyzer,
     notice: Option<String>,
+    /// Every AI move of this game, oldest first; Undo keeps them.
+    ai_log: Vec<AiMove>,
 }
 
 impl Default for Controller {
@@ -139,6 +144,7 @@ impl Default for Controller {
             analyzing: false,
             analyzer: Analyzer::default(),
             notice: None,
+            ai_log: Vec::new(),
         }
     }
 }
@@ -147,12 +153,6 @@ fn index(color: Color) -> usize {
     match color {
         Color::Black => 0,
         Color::White => 1,
-    }
-}
-
-impl Thinking {
-    pub fn id(&self) -> SearchId {
-        self.id
     }
 }
 
@@ -194,6 +194,10 @@ impl Controller {
         &self.analyzer
     }
 
+    pub fn ai_log(&self) -> &[AiMove] {
+        &self.ai_log
+    }
+
     /// The last search error, until the next command.
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
@@ -222,8 +226,9 @@ impl Controller {
         match command {
             Command::NewGame(new_game) => {
                 self.cancel(&mut effects);
+                // Analysis mode stays on for the new game.
                 self.analyzer.cancel(&mut effects);
-                self.analyzing = false;
+                self.ai_log.clear();
                 self.game = GameInfo::new();
                 self.history = History::new(new_game.start);
                 self.players = new_game.players;
@@ -238,15 +243,13 @@ impl Controller {
             Command::First => self.navigate(|h| h.go_to(0), &mut effects),
             Command::Last => self.navigate(|h| h.go_to(usize::MAX), &mut effects),
             Command::GoTo(index) => self.navigate(|h| h.go_to(index), &mut effects),
-            Command::Resume if !self.analyzing => self.status = Status::Playing,
-            Command::Resume => {}
+            Command::Resume => self.status = Status::Playing,
             Command::Pause => {
                 self.cancel(&mut effects);
                 self.status = Status::Paused;
             }
             Command::StepAi => {
-                if !self.analyzing
-                    && self.status == Status::Paused
+                if self.status == Status::Paused
                     && self.thinking.is_none()
                     && self.engine == EngineStatus::Ready
                     && let Some(strength) = self.ai_to_move()
@@ -275,16 +278,16 @@ impl Controller {
                 self.game = game;
                 self.players = players;
                 self.history = history;
+                self.ai_log.clear();
                 // A loaded game never plays on by itself.
                 self.status = Status::Paused;
                 self.revision += 1;
                 effects.push(Effect::ClearTt);
             }
+            // The game goes on in analysis mode: an AI move takes the engine,
+            // and the analysis searches while a person is to move.
             Command::SetAnalysis(on) => {
-                if on {
-                    self.cancel(&mut effects);
-                    self.status = Status::Paused;
-                } else {
+                if !on {
                     self.analyzer.cancel(&mut effects);
                 }
                 self.analyzing = on;
@@ -332,7 +335,7 @@ impl Controller {
             EngineEvent::Finished { id, report } => {
                 if self.thinking.as_ref().is_some_and(|t| t.id == id) {
                     if let Some(thinking) = self.take_thinking(id) {
-                        self.play_ai(thinking, report.best_move, &mut effects);
+                        self.play_ai(thinking, report, &mut effects);
                     }
                 } else {
                     self.analyzer.on_finished(id, report);
@@ -378,12 +381,8 @@ impl Controller {
         }
     }
 
-    fn play_ai(
-        &mut self,
-        thinking: Thinking,
-        best_move: Option<Action>,
-        effects: &mut Vec<Effect>,
-    ) {
+    fn play_ai(&mut self, thinking: Thinking, report: Report, effects: &mut Vec<Effect>) {
+        let best_move = report.best_move;
         let position = self.history.current();
         let legal = match best_move {
             Some(Action::Place(square)) => position.legal_moves().contains(square),
@@ -393,6 +392,15 @@ impl Controller {
             self.status = Status::Paused;
             return;
         }
+        // Discs on the board count the moves, also from an edited start.
+        let discs = position.disc_count(Color::Black) + position.disc_count(Color::White);
+        self.ai_log.push(AiMove {
+            number: discs as usize - 3,
+            color: thinking.color,
+            strength: thinking.strength,
+            action: best_move.expect("checked legal"),
+            report,
+        });
         // An AI reply undoes together with the human move before it.
         let grouping = if self.players.iter().all(|p| p.is_ai()) {
             Grouping::NewGroup
@@ -439,7 +447,7 @@ impl Controller {
 
     /// The only place an analysis search starts.
     fn pump_analysis(&mut self, effects: &mut Vec<Effect>) {
-        if self.analyzing && self.engine == EngineStatus::Ready {
+        if self.analyzing && self.thinking.is_none() && self.engine == EngineStatus::Ready {
             let shown = self.history.current();
             self.analyzer.pump(shown, &mut self.next_search, effects);
         }
@@ -448,7 +456,6 @@ impl Controller {
     /// The only place a move search starts by itself.
     fn autoplay(&mut self, effects: &mut Vec<Effect>) {
         if self.status != Status::Playing
-            || self.analyzing
             || self.thinking.is_some()
             || self.engine != EngineStatus::Ready
         {
@@ -460,27 +467,24 @@ impl Controller {
     }
 
     fn start_search(&mut self, strength: Strength, single_step: bool, effects: &mut Vec<Effect>) {
+        // The move comes first; the analysis picks up after it.
+        self.analyzer.interrupt(effects);
         let id = SearchId(self.next_search);
         self.next_search += 1;
         let position = self.history.current();
         self.thinking = Some(Thinking {
             id,
             revision: self.revision,
+            strength,
             single_step,
             color: position.side_to_move(),
             report: None,
         });
-        let both_ai = self.players.iter().all(|p| p.is_ai());
         effects.push(Effect::StartSearch {
             job: SearchJob {
                 id,
                 position,
                 spec: strength.spec(),
-            },
-            delay: if both_ai && !single_step {
-                AI_VS_AI_PAUSE
-            } else {
-                Duration::ZERO
             },
         });
     }
@@ -490,6 +494,7 @@ impl Controller {
 mod tests {
     use super::*;
     use crate::domain::Preset;
+    use std::time::Duration;
 
     const AI: Player = Player::Ai(Strength::Preset(Preset::Beginner));
 
@@ -571,6 +576,12 @@ mod tests {
         finish(&mut c, id);
         assert_eq!(c.history().actions().len(), 2);
         assert!(c.thinking().is_none());
+        // The AI move is logged with its number and colour.
+        assert_eq!(c.ai_log().len(), 1);
+        assert_eq!(
+            (c.ai_log()[0].number, c.ai_log()[0].color),
+            (2, Color::White)
+        );
         c.apply(Command::Undo);
         assert_eq!(c.history().cursor(), 0);
         assert_eq!(c.status(), Status::Paused);
@@ -597,17 +608,13 @@ mod tests {
     }
 
     #[test]
-    fn ai_against_ai_pauses_and_steps() {
+    fn ai_against_ai_plays_on_and_steps() {
         let mut c = ready([AI, AI]);
         let effects = c.apply(Command::Resume);
         assert!(effects.is_empty(), "the search started with the game");
         let id = c.thinking().map(|t| t.id).unwrap();
         let effects = finish(&mut c, id);
         let next = started(&effects).expect("the other side starts");
-        assert!(effects.iter().any(|e| matches!(
-            e,
-            Effect::StartSearch { delay, .. } if *delay == AI_VS_AI_PAUSE
-        )));
         assert_eq!(c.apply(Command::Pause), vec![Effect::CancelSearch]);
         finish(&mut c, next);
         assert_eq!(c.history().actions().len(), 1);
@@ -621,27 +628,36 @@ mod tests {
     }
 
     #[test]
-    fn analysis_mode_pauses_play_and_follows_the_shown_position() {
+    fn analysis_mode_keeps_the_game_going() {
         let mut c = ready([Player::Human, AI]);
-        let id = started(&play(&mut c, "f5")).unwrap();
-        let effects = c.apply(Command::SetAnalysis(true));
-        assert_eq!(effects[0], Effect::CancelSearch);
-        let analysis = started(&effects).expect("the shown position is analysed");
-        assert_ne!(analysis, id);
-        // The move search from before is dropped, and the AI waits.
-        finish(&mut c, id);
-        assert_eq!(c.history().actions().len(), 1);
-        assert!(c.apply(Command::Resume).is_empty());
-        // Moving back stops that search and starts one for the new position.
-        let effects = c.apply(Command::First);
+        // A person is to move: the analysis searches.
+        let analysis = started(&c.apply(Command::SetAnalysis(true))).expect("analysed");
+        // The move stops it, and the AI takes the engine.
+        let effects = play(&mut c, "f5");
         assert!(effects.contains(&Effect::CancelSearch));
+        let reply = started(&effects).expect("the AI moves");
+        assert_ne!(reply, analysis);
+        assert_eq!(c.thinking().map(|t| t.id), Some(reply));
+        // After the reply, the new position is analysed.
+        let effects = finish(&mut c, reply);
+        assert_eq!(c.history().actions().len(), 2);
+        assert!(c.thinking().is_none());
         assert!(started(&effects).is_some());
-        // Leaving stops the analysis; the game stays paused.
+        // Moving back pauses the game and analyses there.
+        let effects = c.apply(Command::First);
+        assert!(started(&effects).is_some());
+        assert_eq!(c.status(), Status::Paused);
+        // A new game keeps analysis mode on and clears the AI log.
+        c.apply(Command::NewGame(NewGame {
+            players: [Player::Human, Player::Human],
+            start: Position::initial(),
+        }));
+        assert!(c.analyzing());
+        assert!(c.ai_log().is_empty());
         assert!(
             c.apply(Command::SetAnalysis(false))
                 .contains(&Effect::CancelSearch)
         );
-        assert_eq!(c.status(), Status::Paused);
     }
 
     #[test]

@@ -66,12 +66,30 @@ fn reading_color(reading: ResultKind) -> Rgba {
 /// Stronger pruning shows lighter.
 fn reading_opacity(reading: ResultKind) -> f32 {
     let percent = f32::from(reading.selectivity().percent());
-    0.45 + 0.55 * (percent - 68.) / 32.
+    0.45 + 0.55 * (percent - 83.) / 17.
 }
 
 const STRIP_WIDTH: f32 = 500.;
 
 impl RootView {
+    /// Starts the game the dialog describes and closes it.
+    pub(super) fn start_new_game(&mut self, cx: &mut Context<Self>) {
+        let form = self.settings.new_game;
+        let start = if form.from_current {
+            self.controller.history().current()
+        } else {
+            Position::initial()
+        };
+        self.close_dialog(cx);
+        self.run(
+            Command::NewGame(NewGame {
+                players: [form.sides[0].player(), form.sides[1].player()],
+                start,
+            }),
+            cx,
+        );
+    }
+
     pub(super) fn render_new_game(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
         let form = self.settings.new_game;
@@ -89,22 +107,7 @@ impl RootView {
                 widgets::handler(|this, _| this.settings.new_game.from_current = true),
             ),
         ];
-        let start = widgets::handler(|this, cx| {
-            let form = this.settings.new_game;
-            let start = if form.from_current {
-                this.controller.history().current()
-            } else {
-                Position::initial()
-            };
-            this.close_dialog(cx);
-            this.run(
-                Command::NewGame(NewGame {
-                    players: [form.sides[0].player(), form.sides[1].player()],
-                    start,
-                }),
-                cx,
-            );
-        });
+        let start = widgets::handler(|this, cx| this.start_new_game(cx));
         let manual = [Color::Black, Color::White]
             .into_iter()
             .filter(|&color| {
@@ -181,10 +184,6 @@ impl RootView {
         let s = self.settings.lang.strings();
         let i = side_index(color);
         let side = self.settings.new_game.sides[i];
-        let disc = match color {
-            Color::Black => theme::black_disc(),
-            Color::White => theme::white_disc(),
-        };
         let mut header = div()
             .flex()
             .flex_row()
@@ -192,16 +191,7 @@ impl RootView {
             .gap(px(8.))
             .h(px(28.))
             .mb(px(6.))
-            .child(
-                div()
-                    .size(px(18.))
-                    .rounded(px(3.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(theme::board())
-                    .child(div().size(px(13.)).rounded_full().bg(disc)),
-            )
+            .child(super::analysis_panel::disc(16., color))
             .child(div().font_weight(FontWeight::MEDIUM).child(s.color(color)));
         if color == Color::Black {
             header = header
@@ -514,10 +504,11 @@ mod tests {
             assert_eq!(phases.last().map(|p| p.to), Some(1));
             assert!(phases.windows(2).all(|w| w[0].to == w[1].from + 1));
         }
-        // Level 24: the opening correction, the midgame, three selective
-        // stages, then the exact solve from 24 empties.
+        // Level 24: the midgame, four selective stages (85, 95, 98 and
+        // 99%), then the exact solve from 23 empties.
         let p = phases(24);
         assert_eq!(p.len(), 6);
-        assert_eq!((p[5].from, p[5].to), (24, 1));
+        assert_eq!((p[0].from, p[0].to), (60, 31));
+        assert_eq!((p[5].from, p[5].to), (23, 1));
     }
 }

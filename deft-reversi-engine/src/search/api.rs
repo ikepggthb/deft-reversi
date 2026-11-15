@@ -377,6 +377,9 @@ pub struct Progress {
     /// Nodes so far, across all threads.
     pub nodes: u64,
     pub elapsed: Duration,
+    /// With `all_moves`, after the last iteration: the moves scored so far,
+    /// best first, reported as each one is scored.
+    pub moves: Vec<MoveScore>,
 }
 
 #[derive(Debug)]

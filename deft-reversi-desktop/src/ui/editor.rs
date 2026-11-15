@@ -1,7 +1,7 @@
 //! The position editor (§9.1): the AI column gives way, the left column
 //! holds the tools, and the board takes painted discs. The game waits
 //! untouched until the edit is started or cancelled.
-use super::{analysis_panel::disc_badge, root::RootView, theme, widgets};
+use super::{analysis_panel::disc, root::RootView, theme, widgets};
 use crate::{
     app::{Command, NewGame},
     domain::editor::{Caveat, EditorDraft, Pen},
@@ -86,7 +86,7 @@ impl RootView {
             .gap(px(12.))
             .child(div().font_weight(FontWeight::MEDIUM).child(s.edit_position))
             .child(div().flex_1())
-            .child(widgets::link(
+            .child(widgets::button(
                 "cancel-edit",
                 s.cancel,
                 widgets::handler(|this, cx| this.cancel_editor(cx)),
@@ -108,11 +108,11 @@ impl RootView {
         let draft = editor.draft;
         let pen = |id: usize, choice: Pen, label: &'static str, cx: &mut Context<Self>| {
             let swatch = match choice {
-                Pen::Black => disc_badge(20., Color::Black),
-                Pen::White => disc_badge(20., Color::White),
+                Pen::Black => disc(20., Color::Black),
+                Pen::White => disc(20., Color::White),
                 Pen::Erase => div()
                     .size(px(20.))
-                    .rounded(px(3.))
+                    .rounded_full()
                     .border_1()
                     .border_dashed()
                     .border_color(theme::text_muted()),
@@ -222,7 +222,7 @@ impl RootView {
                         .flex_row()
                         .items_center()
                         .gap(px(6.))
-                        .child(disc_badge(20., color))
+                        .child(disc(20., color))
                         .child(
                             div()
                                 .text_xl()
@@ -235,7 +235,7 @@ impl RootView {
                 div()
                     .mt(px(8.))
                     .text_xs()
-                    .text_color(theme::focus_ring())
+                    .text_color(theme::warning())
                     .child(text)
             }))
     }

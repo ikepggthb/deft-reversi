@@ -1,6 +1,12 @@
 //! The left column: disc counts with the side to move, the move number or
 //! the result, and the record.
-use super::{new_game::strength_label, root::RootView, theme};
+use super::{
+    analysis_panel::disc,
+    new_game::strength_label,
+    root::RootView,
+    theme,
+    widgets::{self, card, heading},
+};
 use crate::{
     app::Command,
     domain::{Player, openings},
@@ -23,55 +29,49 @@ impl RootView {
         let finished = position.is_terminal();
 
         let players = self.controller.players();
-        let count = |color: Color, disc| {
-            // The side to move is underlined instead of being named.
+        // One row per side: disc, count and who plays it. The side to move is
+        // marked by a bar on the left and the brighter count.
+        let row = |color: Color| {
             let to_move = !finished && position.side_to_move() == color;
-            // Only an AI is labelled; a person needs no name here.
-            let label = match players[if color == Color::Black { 0 } else { 1 }] {
-                Player::Ai(strength) => Some(format!("{} · {}", s.ai, strength_label(s, strength))),
-                Player::Human => None,
+            let name: SharedString = match players[if color == Color::Black { 0 } else { 1 }] {
+                Player::Ai(strength) => {
+                    format!("{} · {}", s.ai, strength_label(s, strength)).into()
+                }
+                Player::Human => s.human.into(),
             };
-            let count = div()
+            div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.))
-                .pb(px(2.))
-                .border_b_2()
+                .gap(px(10.))
+                .pl(px(8.))
+                .py(px(2.))
+                .border_l_2()
                 .border_color(if to_move {
-                    theme::text()
+                    theme::accent()
                 } else {
                     theme::background()
                 })
-                // On the board's green, as on the board; a black disc on the
-                // dark page would read as an outline.
+                .child(disc(18., color))
                 .child(
                     div()
-                        .size(px(20.))
-                        .rounded(px(3.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .bg(theme::board())
-                        .child(div().size(px(14.)).rounded_full().bg(disc)),
+                        .w(px(30.))
+                        .text_xl()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(if to_move {
+                            theme::text()
+                        } else {
+                            theme::text_secondary()
+                        })
+                        .child(position.disc_count(color).to_string()),
                 )
                 .child(
                     div()
-                        .text_2xl()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(position.disc_count(color).to_string()),
-                );
-            div()
-                .flex()
-                .flex_col()
-                .child(count)
-                .children(label.map(|l| {
-                    div()
-                        .mt(px(3.))
                         .text_xs()
                         .text_color(theme::text_muted())
-                        .child(l)
-                }))
+                        .whitespace_nowrap()
+                        .child(name),
+                )
         };
         let state: SharedString = if finished {
             match position.final_score(Color::Black) {
@@ -92,6 +92,17 @@ impl RootView {
         let analyzer = self.controller.analyzer();
         let threshold = self.settings.analysis.loss_threshold;
         let analyzing = self.controller.analyzing();
+        let copy_link = widgets::link(
+            "copy-record",
+            if self.record_copied {
+                s.record_copied
+            } else {
+                s.copy
+            },
+            widgets::handler(|this, cx| this.copy_record(cx)),
+            cx,
+        )
+        .text_xs();
         let entries = history.actions().iter().enumerate().map(|(i, action)| {
             let current = i + 1 == cursor;
             let (number, name): (SharedString, SharedString) = match action {
@@ -101,15 +112,19 @@ impl RootView {
                 ),
                 Action::Pass => ("".into(), s.pass.into()),
             };
+            let mover = history.position(i).side_to_move();
             div()
                 .id(("record", i))
                 .w_1_2()
                 .flex()
                 .flex_row()
-                .gap(px(6.))
+                .items_center()
+                .gap(px(5.))
                 .px(px(4.))
+                .py(px(1.))
                 .rounded(px(3.))
                 .cursor_pointer()
+                .when(current, |el| el.bg(theme::selected()))
                 .hover(|style| style.bg(theme::hover()))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.run(Command::GoTo(i + 1), cx)
@@ -117,9 +132,13 @@ impl RootView {
                 .child(
                     div()
                         .w(px(18.))
+                        .flex()
+                        .justify_end()
+                        .text_xs()
                         .text_color(theme::text_muted())
                         .child(number),
                 )
+                .child(disc(9., mover))
                 .child(match (current, action) {
                     (true, _) => div()
                         .text_color(theme::accent())
@@ -149,32 +168,56 @@ impl RootView {
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .gap(px(14.))
-                    .child(count(Color::Black, theme::black_disc()))
-                    .child(count(Color::White, theme::white_disc())),
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(row(Color::Black))
+                    .child(row(Color::White)),
             )
             .child(
                 div()
-                    .mt(px(4.))
-                    .mb(px(18.))
+                    .mt(px(10.))
+                    .pl(px(10.))
+                    .mb(px(16.))
                     .text_color(theme::text_secondary())
                     .child(state),
             )
-            .children(
-                opening.map(|name| div().mb(px(6.)).font_weight(FontWeight::MEDIUM).child(name)),
-            )
-            .child(
+            .children(opening.map(|name| {
                 div()
-                    .id("record-list")
+                    .mb(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(heading(s.opening_heading))
+                    .child(div().font_weight(FontWeight::MEDIUM).child(name))
+            }))
+            .child(
+                card()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .content_start()
-                    .children(entries),
+                    .p(px(8.))
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .px(px(4.))
+                            .mb(px(2.))
+                            .child(heading(s.record_heading).flex_1())
+                            .child(copy_link),
+                    )
+                    .child(
+                        div()
+                            .id("record-list")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .content_start()
+                            .children(entries),
+                    ),
             )
     }
 }

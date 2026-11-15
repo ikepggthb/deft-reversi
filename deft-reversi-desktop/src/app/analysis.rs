@@ -8,15 +8,13 @@ use crate::{
     services::engine::{Report, SearchId, SearchJob, SearchSpec},
 };
 use deft_reversi_engine::{Action, Color, Goal, Position, Selectivity};
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnalysisSettings {
+    /// For the shown position, which also scores every move, and for each
+    /// position of the whole record.
     pub level: u8,
-    /// For the shown position, which also scores every move.
-    pub time_limit: Duration,
-    /// For each position of the whole record.
-    pub batch_time: Duration,
     /// A move that loses this many discs or more is marked in the record.
     pub loss_threshold: i32,
 }
@@ -25,8 +23,6 @@ impl Default for AnalysisSettings {
     fn default() -> Self {
         Self {
             level: 20,
-            time_limit: Duration::from_secs(10),
-            batch_time: Duration::from_secs(1),
             loss_threshold: 3,
         }
     }
@@ -146,6 +142,19 @@ impl Analyzer {
         }
     }
 
+    /// Gives the engine to an AI move: the running search is dropped, and a
+    /// batch position goes back to the queue to be searched afterwards.
+    pub fn interrupt(&mut self, effects: &mut Vec<Effect>) {
+        if let Some(running) = self.running.take() {
+            effects.push(Effect::CancelSearch);
+            if running.job == Job::Batch
+                && let Some((queue, _)) = &mut self.batch
+            {
+                queue.push(running.position);
+            }
+        }
+    }
+
     /// Stops the running search but keeps what it found; ends the batch.
     pub fn stop(&mut self, effects: &mut Vec<Effect>) {
         self.batch = None;
@@ -193,10 +202,7 @@ impl Analyzer {
                 if self.cache.contains_key(&position) {
                     continue;
                 }
-                let spec = SearchSpec {
-                    time_limit: Some(self.settings.batch_time),
-                    ..SearchSpec::new(Goal::Level(self.settings.level))
-                };
+                let spec = SearchSpec::new(Goal::Level(self.settings.level));
                 self.start(Job::Batch, position, spec, next_id, effects);
                 return;
             }
@@ -205,7 +211,6 @@ impl Analyzer {
         let needed = searchable(shown) && self.cache.get(&shown).is_none_or(|a| !a.full);
         if needed {
             let spec = SearchSpec {
-                time_limit: Some(self.settings.time_limit),
                 all_moves: true,
                 ..SearchSpec::new(Goal::Level(self.settings.level))
             };
@@ -231,7 +236,6 @@ impl Analyzer {
         });
         effects.push(Effect::StartSearch {
             job: SearchJob { id, position, spec },
-            delay: Duration::ZERO,
         });
     }
 
@@ -251,11 +255,14 @@ impl Analyzer {
             return false;
         };
         let previous = self.cache.remove(&running.position);
+        // A search stopped while scoring the moves keeps those it scored.
+        let partial = running.live.map(|live| live.moves).unwrap_or_default();
         let keep_moves = |mut report: Report| {
-            if report.moves.is_empty()
-                && let Some(p) = &previous
-            {
-                report.moves = p.report.moves.clone();
+            if report.moves.is_empty() {
+                report.moves = match &previous {
+                    Some(p) if p.report.moves.len() >= partial.len() => p.report.moves.clone(),
+                    _ => partial.clone(),
+                };
             }
             report
         };
@@ -301,6 +308,7 @@ mod tests {
     use super::*;
     use crate::domain::Grouping;
     use deft_reversi_engine::{MoveScore, Square};
+    use std::time::Duration;
 
     fn place(name: &str) -> Action {
         Action::Place(name.parse::<Square>().unwrap())

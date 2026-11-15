@@ -1,15 +1,12 @@
-//! The settings screen (§9.6). It lists only what works so far; the theme,
-//! animation and sound settings come with those features.
+//! The settings screen (§9.6).
 use super::{root::RootView, theme, widgets};
 use crate::{
     app::{AnalysisSettings, Command},
-    domain::settings::TT_SIZES_MIB,
+    domain::settings::{Animation, TT_SIZES_MIB, ThemeChoice},
     i18n::Lang,
-    persistence::settings_file::{ANALYSIS_TIMES, BATCH_TIMES},
     services::engine::Resources,
 };
 use gpui::{Context, Div, FontWeight, IntoElement, SharedString, div, prelude::*, px};
-use std::time::Duration;
 
 impl RootView {
     pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -21,6 +18,9 @@ impl RootView {
             div()
                 .mt(px(14.))
                 .mb(px(2.))
+                .pt(px(10.))
+                .border_t_1()
+                .border_color(theme::hairline())
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(theme::text_secondary())
@@ -31,11 +31,19 @@ impl RootView {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(10.))
-                .min_h(px(32.))
-                .child(div().w(px(140.)).child(label))
-                .child(control)
-                .children(note.map(|n| div().text_xs().text_color(theme::text_muted()).child(n)))
+                .gap(px(12.))
+                .min_h(px(34.))
+                // Indented under the group title.
+                .pl(px(14.))
+                .child(div().w(px(170.)).flex_none().child(label))
+                .child(control.flex_none())
+                .children(note.map(|n| {
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .whitespace_nowrap()
+                        .child(n)
+                }))
         };
         let resources = move |change: fn(&mut Resources)| {
             widgets::handler(move |this, cx| {
@@ -60,12 +68,12 @@ impl RootView {
             "candidate-values",
             vec![
                 (
-                    s.numbers.into(),
+                    s.show.into(),
                     settings.candidate_values,
                     widgets::handler(|this, _| this.settings.candidate_values = true),
                 ),
                 (
-                    s.dots.into(),
+                    s.hide.into(),
                     !settings.candidate_values,
                     widgets::handler(|this, _| this.settings.candidate_values = false),
                 ),
@@ -79,41 +87,6 @@ impl RootView {
             analysis(Box::new(|a| a.level = (a.level + 1).min(60))),
             cx,
         );
-        let seconds = |ms: u64| -> SharedString {
-            if ms.is_multiple_of(1000) {
-                s.seconds(ms / 1000).into()
-            } else {
-                format!("{:.1} s", ms as f64 / 1000.).into()
-            }
-        };
-        let time = widgets::segmented(
-            "analysis-time",
-            ANALYSIS_TIMES
-                .iter()
-                .map(|&ms| {
-                    (
-                        seconds(ms),
-                        settings.analysis.time_limit == Duration::from_millis(ms),
-                        analysis(Box::new(move |a| a.time_limit = Duration::from_millis(ms))),
-                    )
-                })
-                .collect(),
-            cx,
-        );
-        let batch = widgets::segmented(
-            "batch-time",
-            BATCH_TIMES
-                .iter()
-                .map(|&ms| {
-                    (
-                        seconds(ms),
-                        settings.analysis.batch_time == Duration::from_millis(ms),
-                        analysis(Box::new(move |a| a.batch_time = Duration::from_millis(ms))),
-                    )
-                })
-                .collect(),
-            cx,
-        );
         let loss = widgets::stepper(
             "loss-threshold",
             settings.analysis.loss_threshold.to_string(),
@@ -125,6 +98,76 @@ impl RootView {
             })),
             cx,
         );
+
+        let theme_choice = widgets::segmented(
+            "theme",
+            [
+                (ThemeChoice::System, s.theme_system),
+                (ThemeChoice::Light, s.theme_light),
+                (ThemeChoice::Dark, s.theme_dark),
+            ]
+            .into_iter()
+            .map(|(choice, label)| {
+                (
+                    SharedString::from(label),
+                    settings.theme == choice,
+                    widgets::handler(move |this, _| this.settings.theme = choice),
+                )
+            })
+            .collect(),
+            cx,
+        );
+        let animation = widgets::segmented(
+            "animation",
+            [
+                (Animation::Normal, s.animation_normal),
+                (Animation::Short, s.animation_short),
+                (Animation::Off, s.animation_off),
+            ]
+            .into_iter()
+            .map(|(choice, label)| {
+                (
+                    SharedString::from(label),
+                    settings.animation == choice,
+                    widgets::handler(move |this, _| this.settings.animation = choice),
+                )
+            })
+            .collect(),
+            cx,
+        );
+        let sound = div()
+            .flex()
+            .flex_row()
+            .gap(px(10.))
+            .child(widgets::segmented(
+                "sound",
+                vec![
+                    (
+                        s.on.into(),
+                        settings.sound,
+                        widgets::handler(|this, _| this.settings.sound = true),
+                    ),
+                    (
+                        s.off.into(),
+                        !settings.sound,
+                        widgets::handler(|this, _| this.settings.sound = false),
+                    ),
+                ],
+                cx,
+            ))
+            .when(settings.sound, |el| {
+                el.child(widgets::stepper(
+                    "volume",
+                    settings.volume.to_string(),
+                    widgets::handler(|this, _| {
+                        this.settings.volume = this.settings.volume.saturating_sub(10)
+                    }),
+                    widgets::handler(|this, _| {
+                        this.settings.volume = (this.settings.volume + 10).min(100)
+                    }),
+                    cx,
+                ))
+            });
 
         let legal = widgets::segmented(
             "legal-moves",
@@ -191,7 +234,7 @@ impl RootView {
         );
 
         div()
-            .w(px(560.))
+            .w(px(660.))
             .flex()
             .flex_col()
             .px(px(20.))
@@ -221,17 +264,14 @@ impl RootView {
             )
             .child(group(s.board_group))
             .child(row(s.legal_moves, legal, None))
-            .child(row(
-                s.candidate_values,
-                candidate_values,
-                Some(s.in_analysis.into()),
-            ))
+            .child(row(s.candidate_values, candidate_values, None))
+            .child(row(s.flip_animation, animation, None))
+            .child(row(s.sound, sound, None))
             .child(group(s.analysis))
             .child(row(s.analysis_level, level, None))
-            .child(row(s.analysis_time, time, None))
-            .child(row(s.batch_time, batch, None))
             .child(row(s.loss_threshold, loss, Some(s.discs_or_more.into())))
             .child(group(s.appearance))
+            .child(row(s.theme, theme_choice, None))
             .child(row(s.language, language, None))
             .child(group(s.engine_group))
             .child(row(s.threads, threads, Some(s.logical_cpus(cpus).into())))

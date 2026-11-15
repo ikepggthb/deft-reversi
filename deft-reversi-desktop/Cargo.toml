@@ -18,6 +18,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # OS data and config folders.
 dirs = "6"
+# Saved times are shown in the local time zone.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Sound effects are made in code, so only playback is needed.
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
 
 [dev-dependencies]
 # Tests build a small engine from the zero model with known ProbCut rules.

@@ -82,11 +82,13 @@ impl RootSearch {
         }
         outcome
     }
-    /// Scores every root move with a full window, best first.
+    /// Scores every root move with a full window, best first. `on_move` sees
+    /// the moves scored so far, best first, after each one.
     pub(super) fn move_scores(
         &self,
         context: &mut Context,
         spec: SearchSpec,
+        on_move: &mut dyn FnMut(&Context, &[MoveScore]),
     ) -> Result<Vec<MoveScore>, Aborted> {
         let mut moves = Vec::with_capacity(self.candidates.len());
         for candidate in &self.candidates {
@@ -103,6 +105,9 @@ impl RootSearch {
                 action: candidate.action(),
                 score: -child.score,
             });
+            let mut sorted = moves.clone();
+            sorted.sort_by_key(|entry| std::cmp::Reverse(entry.score));
+            on_move(context, &sorted);
         }
         moves.sort_by_key(|entry| std::cmp::Reverse(entry.score));
         Ok(moves)
