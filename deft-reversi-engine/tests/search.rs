@@ -341,6 +341,46 @@ fn selective_preparation_cannot_supply_the_exact_final_score() {
 }
 
 #[test]
+fn selective_endgame_scores_are_even() {
+    // A final score is even, and a ProbCut cut at an odd window edge must not
+    // leak an odd one. The zero model predicts the intercept everywhere, so
+    // these rules cut every null window on one side of it.
+    let rules = |intercept: f64| -> Vec<ProbCutRule> {
+        (12..=15)
+            .map(|empties| ProbCutRule {
+                exact: true,
+                depth: empties,
+                empties,
+                shallow_depth: 0,
+                slope: 1.0,
+                intercept,
+                deviation: 0.0,
+            })
+            .collect()
+    };
+    for threads in [1, 4] {
+        let mut engine = engine(threads);
+        let mut cuts = 0;
+        for intercept in [-9.0, -3.0, 1.0, 5.0, 11.0] {
+            engine.set_probcut_rules(rules(intercept)).unwrap();
+            for seed in [3, 7, 11] {
+                let board = position(seed, 16);
+                let request = exact().selectivity(Selectivity::Percent85).all_moves();
+                let result = engine.search(board, &request).unwrap();
+                assert_eq!(result.stop_reason, StopReason::Completed);
+                cuts += result.stats.probcut_cuts;
+                let score = result.score.unwrap();
+                assert_eq!(score % 2, 0, "seed {seed}: root score {score}");
+                for scored in &result.moves {
+                    assert_eq!(scored.score % 2, 0, "seed {seed}: {scored:?}");
+                }
+            }
+        }
+        assert!(cuts > 0);
+    }
+}
+
+#[test]
 fn stopping_after_selective_preparation_does_not_report_exact() {
     // Exact preparation stops endgame ProbCut below thirteen empties; a rule at
     // thirteen makes it search the same tree as the selective request.

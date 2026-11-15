@@ -620,7 +620,10 @@ impl Context {
             let score = self.probcut_shallow(board, state, bound - 1, bound, rule.shallow_depth)?;
             if score >= bound {
                 self.stats.probcut_cuts += 1;
-                return Ok(Some(beta));
+                // A final score is even, so at least `beta` means at least
+                // the next even number; an odd window edge would otherwise
+                // reach the root as an impossible score.
+                return Ok(Some(if exact { beta + (beta & 1) } else { beta }));
             }
         }
         let low =
@@ -630,7 +633,7 @@ impl Context {
             let score = self.probcut_shallow(board, state, bound, bound + 1, rule.shallow_depth)?;
             if score <= bound {
                 self.stats.probcut_cuts += 1;
-                return Ok(Some(alpha));
+                return Ok(Some(if exact { alpha - (alpha & 1) } else { alpha }));
             }
         }
         Ok(None)
