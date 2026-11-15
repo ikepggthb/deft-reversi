@@ -23,7 +23,7 @@ fn calibration_travels_with_the_model_and_bad_calibrations_are_rejected() {
     let plain = Model::from_pattern(PatternModel::zero());
     assert!(!plain.has_calibration());
     let mut sigmas = ProbCutSigmas::NORMAL;
-    sigmas.midgame[2] = 1.3;
+    sigmas.midgame[0] = 1.3;
     let model = plain
         .clone()
         .with_calibration(legacy_main_rules(), sigmas)
@@ -50,7 +50,7 @@ fn calibration_travels_with_the_model_and_bad_calibrations_are_rejected() {
 
     // Without a calibration, selective searches are refused, full ones run.
     let mut bare = Engine::new(plain.clone(), options).unwrap();
-    let selective = SearchRequest::new(Goal::Depth(4)).selectivity(Selectivity::Percent85);
+    let selective = SearchRequest::new(Goal::Depth(4)).selectivity(Selectivity::Percent83);
     assert!(matches!(
         bare.search(Board::new(), &selective),
         Err(EngineError::InvalidCalibration(_))

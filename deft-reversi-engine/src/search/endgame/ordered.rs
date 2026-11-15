@@ -31,7 +31,7 @@ impl Context {
             return Ok(score);
         }
         if board.empty_count() >= self.runtime.endgame_probcut_min
-            && self.runtime.sigma().is_some()
+            && self.runtime.selective()
             && let Some(score) = self.probcut(
                 board,
                 EvalState::from_board(board),

@@ -198,7 +198,7 @@ fn valuew(w: &mut dyn Write, value: Option<Assessment>, full: bool) -> Result<()
         v.validate()?;
         w.write_all(&v.score.to_le_bytes())?;
         u8w(w, v.quality.depth)?;
-        u8w(w, v.quality.selectivity as u8)?;
+        u8w(w, selectivity_code(v.quality.selectivity))?;
         u8w(w, u8::from(v.quality.solved))?;
         u8w(
             w,
@@ -383,14 +383,12 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
                 .map(|v| v.depth)
                 .min()
                 .unwrap();
-            v.quality.selectivity = selectivity(
-                entries
-                    .iter()
-                    .filter_map(|c| c.value)
-                    .map(|v| v.selectivity)
-                    .min()
-                    .unwrap(),
-            )?;
+            v.quality.selectivity = entries
+                .iter()
+                .filter_map(|c| c.value)
+                .map(|v| v.selectivity)
+                .min()
+                .unwrap();
             v.quality.solved = entries.iter().all(|c| c.value.unwrap().solved);
             if v.quality.solved {
                 v.origin = ValueOrigin::Search;
@@ -678,7 +676,7 @@ fn configw(w: &mut dyn Write, c: &GenerationConfig) -> Result<()> {
     u8w(w, c.stages.len() as u8)?;
     for s in &c.stages {
         u8w(w, s.depth)?;
-        u8w(w, s.selectivity as u8)?;
+        u8w(w, selectivity_code(s.selectivity))?;
     }
     u8w(w, c.new_job_weight)?;
     u8w(w, c.deepen_job_weight)?;

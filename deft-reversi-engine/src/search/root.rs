@@ -166,7 +166,7 @@ impl RootSearch {
     ) -> Result<Line, Aborted> {
         let candidate = self.candidates[index];
         let bound = &mut self.bounds[candidate.square.index() as usize];
-        let reuse = spec.exact && context.runtime.sigma().is_none();
+        let reuse = spec.exact && !context.runtime.selective();
         if reuse && let Some(score) = bound.cutoff(alpha, beta) {
             return Ok(root_line(candidate.action(), score));
         }
@@ -204,7 +204,7 @@ impl RootSearch {
             return context.node(self.position, alpha, beta, spec);
         }
         context.enter()?;
-        let reuse = spec.exact && context.runtime.sigma().is_none();
+        let reuse = spec.exact && !context.runtime.selective();
         let mut best = self.candidate(context, 0, spec, alpha, beta)?;
         if best.score >= beta {
             return Ok(best);

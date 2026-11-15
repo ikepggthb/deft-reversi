@@ -97,9 +97,10 @@ impl GenerationConfig {
         if self.stages.is_empty()
             || self.stages.len() > 60
             || self.stages.iter().any(|s| s.depth < 2 || s.depth > 60)
-            || self.stages.windows(2).any(|s| {
-                s[0].depth >= s[1].depth || (s[0].selectivity as u8) > (s[1].selectivity as u8)
-            })
+            || self
+                .stages
+                .windows(2)
+                .any(|s| s[0].depth >= s[1].depth || s[0].selectivity > s[1].selectivity)
         {
             return Err(invalid(
                 "stages must increase in depth and not decrease in selectivity",
@@ -418,7 +419,7 @@ impl BookEditor {
                     let parent_depth =
                         previous.map_or(target.depth, |v| target.depth.max(v.quality.depth));
                     let selectivity = previous.map_or(target.selectivity, |v| {
-                        if (v.quality.selectivity as u8) > (target.selectivity as u8) {
+                        if v.quality.selectivity > target.selectivity {
                             v.quality.selectivity
                         } else {
                             target.selectivity

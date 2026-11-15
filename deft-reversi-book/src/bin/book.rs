@@ -163,16 +163,11 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
     if command != "resume" {
         let mut config = previous_config.unwrap_or_default();
         if let Some(s) = flags.get("stages") {
-            let sel = match num("selectivity", 95)? {
-                68 => Selectivity::Percent68,
-                77 => Selectivity::Percent77,
-                85 => Selectivity::Percent85,
-                95 => Selectivity::Percent95,
-                98 => Selectivity::Percent98,
-                99 => Selectivity::Percent99,
-                100 => Selectivity::Full,
-                _ => return Err("selectivity must be 68/77/85/95/98/99/100".into()),
-            };
+            let percent = num("selectivity", 95)?;
+            let sel = u8::try_from(percent)
+                .ok()
+                .and_then(Selectivity::from_percent)
+                .ok_or("selectivity must be 83/85/95/98/99/100")?;
             config.stages = s
                 .split(',')
                 .map(|d| {

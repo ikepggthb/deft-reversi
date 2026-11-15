@@ -67,7 +67,7 @@ impl Context {
     }
     /// Fewest empties at which an exact node splits in the current stage.
     pub(super) fn exact_split_empties(&self) -> u8 {
-        if self.runtime.sigma().is_some() {
+        if self.runtime.selective() {
             SPLIT_EMPTIES
         } else {
             self.runtime.split_empties
@@ -110,7 +110,7 @@ impl Context {
         if empties > super::endgame::LOCAL_END_MAX + 1 {
             return true;
         }
-        let selective = self.runtime.sigma().is_some();
+        let selective = self.runtime.selective();
         if empties == super::endgame::LOCAL_END_MAX + 1 {
             // A wide thirteen-empty child still orders moves using its state.
             // The experimental narrow entry seeds its pattern cache from it too.
@@ -174,7 +174,7 @@ impl Context {
         if !exact && depth == 1 {
             return self.one_ply(position, alpha, beta, allow_probcut);
         }
-        let quality = if allow_probcut && self.runtime.sigma().is_some() {
+        let quality = if allow_probcut {
             self.runtime.quality.load(Ordering::Relaxed)
         } else {
             0
@@ -579,7 +579,9 @@ impl Context {
         beta: i32,
         exact: bool,
     ) -> Result<Option<i32>, Aborted> {
-        if self.runtime.sigma().is_none() {
+        // The stage of the iteration; a full-width one does not prune.
+        let quality = self.runtime.quality.load(Ordering::Relaxed);
+        if quality == 0 {
             return Ok(None);
         }
         // Like Edax, only null-window nodes try ProbCut: a wide window is a
@@ -587,9 +589,7 @@ impl Context {
         if beta - alpha > 1 {
             return Ok(None);
         }
-        // Selective iterations tag their quality with the stage plus one.
-        let stage = usize::from(self.runtime.quality.load(Ordering::Relaxed)).saturating_sub(1);
-        let sigma = self.runtime.sigmas.get(exact, stage.min(5));
+        let sigma = self.runtime.sigmas.get(exact, quality);
         let Some(rule) = self
             .runtime
             .rules

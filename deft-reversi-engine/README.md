@@ -15,7 +15,7 @@
 - `model`: DPR2 形式のモデル（重みと、版2では ProbCut の校正、版3では PEN）の読み書き。
 - `mpc`: 旧 main の ProbCut 規則（旧 main から変換したモデル用）。
 - `search/root`: ルート候補ごとの境界、アスピレーションの安定化、最善手順の継承。
-- `search/level`: 元のレベルからの深さ・選択率・終盤への移行と序盤補正。
+- `search/level`: レベルごとの深さ・選択率・終盤への移行。
 - `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。中盤のヌルウィンドウ探索は、残り4手未満で TT を使わず（評価値と着手可能数で手順付け）、残り3手未満で手順付けもしない（旧 main の `SWITCH_SIMPLE_SEARCH_LEVEL`・`SWITCH_NEGAALPHA_SEARCH_LEVEL` と同じ仕組みで、深さは PEN のモデルで測って決めた。[PEN に合わせた調整](../docs/benchmarks/2026-11-06-pen-tuning/README.md)）。MPC の浅い探索は、MPC を使わない中盤探索である。MPC はゼロ窓のノードだけで試す（Edax と同じ。[終盤 MPC の悪手の調査](../docs/benchmarks/2026-11-05-endgame-mpc-quality/README.md)）。MPC の判定は、静的評価から規則で予測した値が境界から離れすぎていれば浅い探索を省く（上側は中盤8石・終盤2石、下側は4石。[中盤探索の高速化](../docs/benchmarks/2026-11-03-midgame-speed/README.md)、[PEN に合わせた調整](../docs/benchmarks/2026-11-06-pen-tuning/README.md)）。
 - `board/stability`: 元実装の辺の全パターン表・満杯のライン・接触による確定石判定。
 - `search/endgame/mod`: 終盤探索の入口と通常窓の処理。
@@ -50,10 +50,26 @@ let result = engine.search(&position, &request)?;
 - 同じEngineへの要求は直列。別Engineは独立したTTとワーカーを持つ。別スレッドで探索するには `EngineWorker` を使う。
 - `Board::from_bits` と `Position::from_colors` は石の重複を拒否する。A1が最下位ビット。
 - `Action::Place(Square)` と `Action::Pass` を区別。`result.best_move == None` は終局。
-- `Goal::Level(n)` は元の1〜60のレベルの探索方式、選択率、序盤補正を適用する。範囲外はエラー。
-- `selectivity` は元の68/77/85/95/98/99/100%の7段階。`result.kind` は最後に完了した反復の深さと選択率を表す。
+- `Goal::Level(n)` は1〜60のレベルごとの探索方式と選択率を適用する。範囲外はエラー。
+- `Goal::Plan(SearchPlan)` は、レベルが決めている内容を自由に指定する。`SearchPlan::midgame(深さ, 選択率)` が中盤探索、`.endgame(選択率, 空きマス)` が「空きがこの数以下なら終盤探索をこの選択率で行う」段階（`Selectivity::Full` が完全読み）。複数の段階が当てはまる局面では、選択率の高い段階を使う。`SearchPlan::level(n)` はレベル n の内容で、そこから一部だけ変えられる。
+
+```rust
+use deft_reversi_engine::{Goal, SearchPlan, SearchRequest, Selectivity};
+
+// レベル24のまま、完全読みを空き26からにする。
+let plan = SearchPlan::level(24)?.endgame(Selectivity::Full, 26);
+// すべて自分で決める：中盤は深さ20（83%）、空き24以下は終盤95%、空き20以下は完全読み。
+let plan = SearchPlan::midgame(20, Selectivity::Percent83)
+    .endgame(Selectivity::Percent95, 24)
+    .endgame(Selectivity::Full, 20);
+let request = SearchRequest::new(Goal::Plan(plan));
+# Ok::<(), deft_reversi_engine::EngineError>(())
+```
+
+- `selectivity` は 83/85/95/98/99/100% の6段階（`Selectivity::ALL`）。名前の数字がそのまま枝刈りの確率で、各段の倍率はモデルの校正が持つ。レベルの中盤探索は83%（エンジンの規定）、レベルの終盤探索は85%以上を使う。元実装の68%・77%は選べない。`result.kind` は最後に完了した反復の深さと選択率を表す。
 - `Goal::Depth(n)` は着手数基準。パスでは深さを減らさない。
-- `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。モデルに校正があれば、その前に元実装と同じ選択性の段階で準備探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
+- 中盤探索と終盤の準備探索の反復深化は、目標深さの偶奇に合わせて通常5または6から2手ずつ進む。`time_limit` で時間切れになると、最後に完了した反復の結果を返す。
+- `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。モデルに校正があれば、その前に83%の中盤探索で準備し、85%から要求の選択率まで段階的に終盤探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
 - 選択率を下げた `Goal::Endgame` はMPCを使う終盤探索で、完全読みの保証を持たない。
 - 中断した完全読み要求の結果は、準備段階の `Depth` や選択的な `Endgame` になることがある。完全読みかどうかは `result.is_solved()` で判定する。
 - `score == None` は完了反復がない状態。合法な代替手は返す。深さ0の着手は探索で選んだ最善手ではない。
@@ -71,7 +87,8 @@ let result = engine.search(&position, &request)?;
 モデルは DPR2 形式の1ファイルで、`Model::from_file` / `Model::from_bytes` で読む。形式の詳細は `src/model.rs` の先頭にある。
 
 - 版1：重みだけ。60段階の i16 の重み（パターン表・合法手数差・バイアス）。
-- 版2：重みのあとに ProbCut の校正（`MPC1`、段ごとの倍率12個、規則の表）を持つ。`deft-reversi-train mpc` と `pack` が書き出す。
+- 版2：重みのあとに ProbCut の校正（`MPC2`：段の数、段ごとに確率・中盤の倍率・終盤の倍率、規則の表）を持つ。`deft-reversi-train mpc` と `pack` が書き出す。段の並びがエンジンの段（`ProbCutSigmas::STAGES`）と違う校正は読まない。
+- 以前の校正（`MPC1`、68〜99%の倍率）を持つモデルは読めない。重みと規則はそのままで、`deft-reversi-train mpc --model 旧モデル --out 出力先 --fit-only` を測定済みの `positions.tsv` がある出力先で実行すると校正を付け直せる（同じ測定から 85〜99% の倍率と規則は以前と同じ値になる）。
 - 版3：重みのあとに `PEN1` と60段階の PEN（パターンの状態ごとの8個の i8、90→32→1 の MLP）を持ち、その後に版2と同じ校正を置ける。`deft-reversi-train train --pen` が書き出す。
 
 校正のあるモデルは、`Engine::new` するだけで、その規則と倍率で選択的に探索する。校正のないモデル（版1、校正のない版3）は、枝刈りなしの探索だけができる。選択的な探索（レベル、選択率を下げた要求）は、校正不足のエラーになる。NNUE は対象外。
@@ -80,7 +97,7 @@ let result = engine.search(&position, &request)?;
 
 以下は `tuning` feature を有効にしたときだけ使える。
 
-- `Model::from_pattern(PatternModel)` は校正のないモデルを作る。`Model::with_calibration(rules, sigmas)` で校正を付け、`Model::write_to` で書き出す。`Model::calibration()` で中身を読む。
+- `Model::from_pattern(PatternModel)` は校正のないモデルを作る。`Model::weights_from_file` は校正を読まずに重みだけを読む（校正の付け直し用）。`Model::with_calibration(rules, sigmas)` で校正を付け、`Model::write_to` で書き出す。`Model::calibration()` で中身を読む。
 - `set_probcut_rules`・`set_probcut_calibration` は、エンジンの規則を差し替える（比較・診断用）。`set_probcut_rules(Vec::new())` は校正を空にする。
 - `set_legacy_main_mpc` は、旧 main の規則に差し替える。旧 main から変換したモデルは、`deft-reversi-train pack --legacy-main` で規則を埋め込んでおけば、指定しなくてよい。例の solve では `--legacy-main-mpc` で指定できる。
 - `legacy_main_rules()` は旧 main の規則を返す。
@@ -109,13 +126,7 @@ OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・
 
 ## 並列測定
 
-```sh
-python3 tools/bench_rewrite_parallel.py --binary target/release/examples/solve --model data/eval/pattern.dpr2 --positions deft-reversi-engine/tests/fixtures/ffo40-44.obf --out parallel.tsv
-```
-
-1/2/4/8/20スレッドを5周、往復順で測る。スレッド数ごとのCPU割当を固定し、全局面のスコア一致を確認する。
-プロセス・TTは各実行で新しくし、モデル読み込みや初期化は探索時間に含めない。TTは1回の実行内の局面間では再利用する。
-生データとバイナリ・モデル・局面のハッシュ、CPU割当、中央値を保存する。
+スレッド数ごとの完全読みの速さは [tools/bench/ffo.py](../tools/bench/README.md) で測る（`--threads` と `--cpus` でスレッド数とCPU割当を決める）。完全読みの値がスレッド数によらず同じになることは、探索のテスト（1/2/4/8/20スレッド）で確かめている。MPC を使う探索や時間・ノードで止めた探索、同点の手の選び方は、スレッド数や実行ごとに変わり得る。
 
 ## 終盤探索の最適化と実験
 

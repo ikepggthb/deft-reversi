@@ -66,9 +66,24 @@ let batch = SearchRequest::new(Goal::Depth(12)).with_stop(stop.clone());  // 1�
 |---|---|
 | `Depth(n)` | n 手先まで読む（0〜60）。パスは手数に数えない |
 | `Endgame` | 終局まで読む。選択率が `Full` なら完全読み |
-| `Level(n)` | 参照実装のレベル（1〜60）。深さ・終盤への切り替え・選択率をレベルが決める |
+| `Level(n)` | レベル（1〜60）。中盤を深さ n・83%で読み、空き数が少なくなったらレベルの表の選択率で終局まで読む |
+| `Plan(SearchPlan)` | レベルが決める内容を自分で決める（下記） |
 
-`.selectivity(Selectivity)` は `Depth` と `Endgame` の確率的な枝刈り（MPC）の強さを決める。既定は `Full`（枝刈りしない）。`Level` と一緒に指定すると要求のエラーになる。
+`.selectivity(Selectivity)` は `Depth` と `Endgame` の確率的な枝刈り（MPC）の強さを決める。段は `Percent83`・`Percent85`・`Percent95`・`Percent98`・`Percent99`・`Full`（83/85/95/98/99/100%、`Selectivity::ALL`）。既定は `Full`（枝刈りしない）。`Level`・`Plan` と一緒に指定すると要求のエラーになる。各段の倍率はモデルの校正が持ち、校正のないモデルでは `Full` 以外は校正不足のエラーになる。
+
+`SearchPlan` は、中盤の深さと選択率、終盤探索の段ごとに「空きがこの数以下なら終局までこの選択率で読む」上限を持つ。複数の段が当てはまる局面では精度の高い段を使う。
+
+```rust
+// レベル24のまま、完全読みを空き26からにする。
+let plan = SearchPlan::level(24)?.endgame(Selectivity::Full, 26);
+// すべて自分で決める：中盤は深さ20・83%、空き24以下は95%、空き20以下は完全読み。
+let plan = SearchPlan::midgame(20, Selectivity::Percent83)
+    .endgame(Selectivity::Percent95, 24)
+    .endgame(Selectivity::Full, 20);
+let request = SearchRequest::new(Goal::Plan(plan));
+```
+
+レベルの表と、その決め方は [docs/benchmarks/2026-11-15-level-table](../../docs/benchmarks/2026-11-15-level-table/README.md) にある。
 
 ### 結果
 
@@ -111,10 +126,10 @@ worker.with(|engine| engine.clear_tt())?;           // 探索中なら終わる�
 
 評価関数やMPCの調整に使う API。通常の利用では不要。
 
-- `PatternModel`・`PatternPhase`・`PATTERN_COUNT`・`PHASE_COUNT`、`Model::from_pattern`・`with_calibration`・`calibration`・`write_to`
+- `PatternModel`・`PatternPhase`・`PATTERN_COUNT`・`PHASE_COUNT`、`Model::from_pattern`・`weights_from_file`（校正を読まずに重みだけ）・`with_calibration`・`calibration`・`write_to`
 - 学習用の `Features::of(&board)`（段階・44個のパターン重みの位置・合法手数差の位置）と `PatternPhase::from_flat`。`Features` が指す重みの和を128で割って丸めると `PatternModel::evaluate` と一致する
 - `ProbCutRule`・`Engine::set_probcut_rules`、旧 main の MPC を使う `Engine::set_legacy_main_mpc` と `legacy_main_rules()`
-- `ProbCutSigmas`・`Engine::set_probcut_calibration(rules, sigmas)`：選択率の段（68%〜99%）ごとに、deviation の何倍で刈るかを、中盤の規則と完全読みの規則で別々に与える。既定の `ProbCutSigmas::NORMAL` は正規分布の値（1.0・1.2・1.44・1.96・2.326・2.576）で、`set_probcut_rules` などはこれを使う。実際の誤差は正規分布より裾が重いので、`deft-reversi-train mpc` は測った値をモデルファイルに入れる。正規分布の値以外を使うと `write_analysis_settings` の出力に加わる
+- `ProbCutSigmas`・`Engine::set_probcut_calibration(rules, sigmas)`：選択的な段（`ProbCutSigmas::STAGES`：83・85・95・98・99%）ごとに、deviation の何倍で刈るかを、中盤の規則と完全読みの規則で別々に与える。既定の `ProbCutSigmas::NORMAL` は正規分布の両側分位点（1.372・1.440・1.960・2.326・2.576）で、`set_probcut_rules` などはこれを使う。実際の誤差は正規分布より裾が重いので、`deft-reversi-train mpc` は測った値をモデルファイルに入れる。正規分布の値以外を使うと `write_analysis_settings` の出力に加わる
 
 ## 呼び出し側に任せるもの
 

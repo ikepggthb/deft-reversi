@@ -115,7 +115,7 @@ impl Assessment {
             && (self.quality.solved
                 || (self.identity == identity
                     && self.quality.depth >= min_depth
-                    && (self.quality.selectivity as u8) >= (min_selectivity as u8)))
+                    && self.quality.selectivity >= min_selectivity))
     }
     fn child_to_parent(mut self, placement: bool) -> Self {
         self.score = -self.score;
@@ -190,19 +190,26 @@ fn terminal_value(b: Board) -> Assessment {
     }
 }
 
-fn selectivity(n: u8) -> Result<Selectivity> {
-    [
-        Selectivity::Percent68,
-        Selectivity::Percent77,
-        Selectivity::Percent85,
-        Selectivity::Percent95,
-        Selectivity::Percent98,
-        Selectivity::Percent99,
-        Selectivity::Full,
-    ]
-    .get(n as usize)
-    .copied()
-    .ok_or_else(|| invalid("selectivity"))
+/// The code of a selectivity stage in book and work files. Codes 2..=6
+/// (85, 95, 98, 99 and 100%) are those of the first files; 83% came later
+/// as 7. Codes 0 and 1 were 68 and 77%, which the engine no longer has, so
+/// files holding them are refused.
+fn selectivity_code(s: Selectivity) -> u8 {
+    match s {
+        Selectivity::Percent85 => 2,
+        Selectivity::Percent95 => 3,
+        Selectivity::Percent98 => 4,
+        Selectivity::Percent99 => 5,
+        Selectivity::Full => 6,
+        Selectivity::Percent83 => 7,
+    }
+}
+
+fn selectivity(code: u8) -> Result<Selectivity> {
+    Selectivity::ALL
+        .into_iter()
+        .find(|&s| selectivity_code(s) == code)
+        .ok_or_else(|| invalid("selectivity"))
 }
 
 // Cold opaque optional sections survive a load/save by an older compatible reader.
@@ -239,4 +246,31 @@ pub fn analysis_identity(engine: &Engine) -> std::io::Result<AnalysisIdentity> {
     writer.0.update(b"deft-book-analysis-v1");
     engine.write_analysis_settings(&mut writer)?;
     Ok(writer.0.finalize().into())
+}
+
+#[cfg(test)]
+mod selectivity_codes {
+    use super::*;
+
+    #[test]
+    fn stage_codes_keep_the_first_files_readable() {
+        // The codes written by the first files must not move.
+        let first = [
+            (2, Selectivity::Percent85),
+            (3, Selectivity::Percent95),
+            (4, Selectivity::Percent98),
+            (5, Selectivity::Percent99),
+            (6, Selectivity::Full),
+        ];
+        for (code, stage) in first {
+            assert_eq!(selectivity_code(stage), code);
+        }
+        for stage in Selectivity::ALL {
+            assert_eq!(selectivity(selectivity_code(stage)).unwrap(), stage);
+        }
+        // 68% and 77% are gone; unknown codes are refused.
+        for code in [0, 1, 8, 255] {
+            assert!(selectivity(code).is_err());
+        }
+    }
 }
