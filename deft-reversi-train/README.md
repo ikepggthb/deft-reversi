@@ -1,38 +1,52 @@
 # deft-reversi-train
 
-`deft_reversi_engine` のパターン評価を `.rd` データセットから学習する。NNUE は対象外。学習から採用までの手順と推奨する設定は [docs/pattern-training.md](../docs/pattern-training.md) にある。
+`deft_reversi_engine` のパターン評価（線形、または PEN を足したもの）を `.rd` データセットから学習する。学習から採用までの手順と推奨する設定は [docs/pattern-training.md](../docs/pattern-training.md) にある。
 
 ```sh
 cargo build --release -p deft_reversi_train
 T=target/release/deft-reversi-train
 
+# Egaroucid の学習データ（棋譜）から rdg 形式のデータセットを作る
+$T convert --transcripts transcripts --out egaroucid-rd
+
 # 学習。--work に途中経過を残し、全段階が終わると --out に DPR2 を書く
-$T train --data egaroucid_rd_data_set --work runs/p1 --out runs/p1/model.dpr2
+$T train --data egaroucid-rd --work runs/p1 --out runs/p1/model.dpr2
+
+# パターン埋め込みネット（PEN）を足して学習する（DPR2 版3）
+$T train --data egaroucid-rd --work runs/pen --out runs/pen/model.dpr2 --pen
 
 # 中断した学習は同じコマンドで再開する。--epochs を増やすと続きから学習する
-$T train --data egaroucid_rd_data_set --work runs/p1 --out runs/p1/model.dpr2 --epochs 6
+$T train --data egaroucid-rd --work runs/p1 --out runs/p1/model.dpr2 --epochs 6
 
 # 縮小の強さを変えて書き出し直す（学習し直さない）
 $T export --work runs/p1 --out runs/p1/model-k64.dpr2 --shrink 64
 
 # test 分割で、エンジンの評価値と最終石差の平均絶対誤差を比べる
-$T eval -m old.dpr2 -m runs/p1/model.dpr2 --data egaroucid_rd_data_set
+$T eval -m old.dpr2 -m runs/p1/model.dpr2 --data egaroucid-rd
 
 # モデルの MPC（ProbCut）を校正し、校正入りのモデル runs/p1/mpc/model.dpr2 を書く
-$T mpc -m runs/p1/model.dpr2 --data egaroucid_rd_data_set --out runs/p1/mpc --positions 1000
+$T mpc -m runs/p1/model.dpr2 --data egaroucid-rd --out runs/p1/mpc --positions 1000
 ```
 
 ## データセット
 
-`phase_<石数>/{train,valid,test}.rd`。各ファイルは `RDGBBVAL1\n` の後に18バイトのレコードが続く。
+[reversi-dataset-gen](https://github.com/ikepggthb/reversi-dataset-gen)（rdg）の形式。`phase_<NN>/{train,valid,test}.rd` で、NN は段階（石数 − 4）の2桁。各ファイルは `RDGBBVAL1\n` の後に18バイトのレコードが続く。コマンドの `--stones` は石数で指定する。
 
 | バイト | 内容 |
 |---|---|
 | 0–7 | 手番側の石（u64 LE、A1 が最下位ビット） |
 | 8–15 | 相手の石（u64 LE） |
-| 16–17 | 手番側から見た最終石差（i16 LE、−64〜64） |
+| 16–17 | 手番側から見た最終石差（i16 LE、−64〜64。空きマスはどちらにも数えない） |
 
 読み込み時に、石数がディレクトリ名と一致すること、石の重なりが無いこと、値が範囲内であることを確かめる。
+
+`convert` は、Egaroucid の学習データ（`<ランダムに打った手数>/*.txt`、1行1局）から、rdg と同じ規則でデータセットを作る。
+
+- ランダムに打った手より前の局面は使わない。それ以降の、手番側に打てる手がある局面をすべて使う。
+- 値は終局の石差（黒 − 白、空きマスは数えない）を手番側から見たもの。
+- train / valid / test は、局面を8通りの対称で正規化したハッシュ（rdg の `canonical_own_opponent_v1`）で分ける（既定 98% / 1% / 1%）。同じ局面とその対称形は、必ず同じ分割に入る。
+- 同じ局面が何度出てきても、すべて残す（別々の対局の結果を持つため）。rdg の生成器は重複を除く。
+- 各段階に `metadata.json` と `stats.json`、全体に `summary.json` を書く。
 
 ## 設計
 
@@ -43,6 +57,7 @@ $T mpc -m runs/p1/model.dpr2 --data egaroucid_rd_data_set --out runs/p1/mpc --po
 - 1局面ごとに更新する。損失は Huber（`--huber-delta` 石を超える誤差は線形）、最適化は AdaGrad（`--lr`）と L2（`--l2`）。対称な配置では複数の向きが同じ重みを指す。その重みは勾配を足し合わせて1回だけ更新する。
 - 定数項は、その段階の最終石差の平均から始める。
 - 書き出し時に重みを128倍して i16 に丸める。出現の少ない重みは `--shrink` で0に寄せる（n 回使われた重みを n / (n + shrink) 倍する）。
+- `--pen` を付けると、パターン埋め込みネット（PEN）を一緒に学習する。パターンの状態ごとに8個の値を持ち、4つの向きを足してから小さい MLP（90 → 32 → 1）に通し、線形の和に足す。エンジンの整数計算（`evaluation/pen.rs`）に合わせて、値と重みを i8 に収まる範囲に保つ。線形の重みと埋め込みは1局面ずつ AdaGrad（`--lr`、`--pen-lr`）、MLP は `--pen-batch` 局面ごとに Adam（`--pen-dense-lr`）で更新する。埋め込みも、出現の少ないものは `--shrink` で初期値に寄せる。`--pen-no-linear` を付けると線形の重みを学習せず、PEN だけで評価値を表す（精度は下がる。[PEN の測定](../docs/benchmarks/2026-11-06-pen/README.md)）。
 - データに無い段階は、学習済みの最も近い段階の重みを写す。既定のデータセットは石数12〜63なので、段階0〜7は段階8の重みになる。train に局面が無い段階はチェックポイントを作らず、同じく近い段階を写す。
 
 ## MPC の校正
@@ -50,9 +65,9 @@ $T mpc -m runs/p1/model.dpr2 --data egaroucid_rd_data_set --out runs/p1/mpc --po
 ProbCut は、浅い探索の値 v から深い探索の値を `slope × v + intercept` と予測し、予測が窓から `sigma × deviation` 以上外れていれば枝を刈る。係数は評価関数の精度で変わるので、モデルごとに測る。
 
 - 中盤の規則（深さ d の探索）：`--split` の局面を、空きマス数（`--empties`、既定 12〜52）ごとに `--positions` 局面（既定64）選ぶ。中盤と終盤で同じ局面を使う。それぞれ深さ0〜`--max-depth`（既定14）を完全な幅で探索し、d = 4〜14 の値をその浅い深さ（参照実装の表）の値と組にする。(空きマス数, d) ごとに最小二乗で直線を引いて、残差の標準偏差を求める。それらを参照実装と同じ回帰式（空きマス数・d・浅い深さの1次式）にまとめ、すべての深さの規則にする。外挿した deviation は、測った値の範囲に収める。
-- 終盤の規則（完全読み）：`--exact-empties`（既定 12〜24）の空きマス数の局面は完全読みもし、浅い探索（main の表の深さ）の値と組にする。空きマス数ごとの値をそのまま使い、それより多い空きマス数は、最後に測った同じ偶奇の値を使う（main の表と同じ）。
-- 段ごとの倍率：ProbCut は、予測の誤差が deviation の t 倍を超えると読み違えるとして、段（68%〜99%）ごとに t を決める。エンジンの既定の t は正規分布の値だが、実際の誤差は裾が重く、99% の段で想定の約2倍を超える。そこで、すべての組の |深い値 − 予測| / deviation を並べ、各段の確率の分位点を t とする（中盤と完全読みで別々）。
-- 出力：`positions.tsv`（局面ごとの深さ0〜`--max-depth` の値と完全読みの値）、`cells.tsv`（空きマス数・深さごとの直線と回帰式の値）、`tails.tsv`（段ごとの t と、正規分布の t・測った t をそれぞれ超えた割合。空きマス数の帯ごと）、`rules.json`（`{"sigmas": {"midgame": [...], "exact": [...]}, "rules": [...]}`）、`model.dpr2`（校正入りのモデル）。`--fit-only` で、`positions.tsv` から当てはめだけをやり直す。
+- 終盤の規則（完全読み）：`--exact-empties`（既定 12〜24）の空きマス数の局面は完全読みもし、深さ0〜`--max-depth` のすべての値と組にする（残りの深さが4以上の組）。傾き・切片・deviation を、空きマス数 e と浅い深さ s の式で当てはめる。式は浅い深さの偶奇ごとに別にする：傾きと切片は (1, e, s) の1次式、deviation² = (c0 + c1·s + c2·s²)·(1 − exp(−(e − s)/λ))。λ は格子で探し、ほかは局面数で重みを付けた最小二乗で求める。規則は、空き12〜60の各空きマス数について、浅い深さの表（空き12〜15は1、16〜19は 4, 5, 6, 5、20以上は偶数8・奇数7）でこの式を評価したものである。浅い深さは測った深さと残りの深さの範囲に収める。測った空きマス数より多い所では、傾きと切片は最後に測った空きマス数の値にする。式の根拠と確認、浅い深さの表の決め方は [docs/benchmarks/2026-11-02-exact-mpc-formula](../docs/benchmarks/2026-11-02-exact-mpc-formula/README.md) にある。
+- 段ごとの倍率：ProbCut は、予測の誤差が deviation の t 倍を超えると読み違えるとして、エンジンの選択的な段（83・85・95・98・99%）ごとに t を決める。エンジンの既定の t は正規分布の値だが、実際の誤差は裾が重く、99% の段で想定の約2倍を超える。そこで、すべての組の |深い値 − 予測| / deviation を並べ、各段の確率の分位点を t とする（中盤と完全読みで別々。完全読みは、表の浅い深さだけでなく、式を当てはめたすべての組で求める）。
+- 出力：`positions.tsv`（局面ごとの深さ0〜`--max-depth` の値と完全読みの値）、`cells.tsv`（空きマス数・深さごとの直線と回帰式の値、末尾に完全読みの式の係数）、`tails.tsv`（段ごとの t と、正規分布の t・測った t をそれぞれ超えた割合。空きマス数の帯ごと）、`rules.json`（`{"stages": [83, 85, 95, 98, 99], "sigmas": {"midgame": [...], "exact": [...]}, "rules": [...]}`。`stages` がエンジンの段と違うファイルは `pack` が拒否する）、`model.dpr2`（校正入りのモデル）。`--fit-only` で、`positions.tsv` から当てはめだけをやり直す。`--model` からは重みだけを読むので、以前の校正（68〜99%の倍率を持つ `MPC1`）を持つモデルにも校正を付け直せる。
 - 測った局面は、ジョブが終わるたびに `positions.tsv` に書き足す。止まっても、同じコマンドで続きから測る。`--positions` を増やすと、同じ並びの続きの局面を足す。測った条件（split・seed・深さ・完全読みの範囲・モデルの大きさ）が違うとエラーにする。
 
 `model.dpr2` は、元のモデルの重みに校正を付けたもの（DPR2 版2）で、エンジンはこれだけで校正を使う。別に作った `rules.json` を付けるには `pack --model M --rules rules.json --out M2` を使う。旧 main から変換したモデルには `pack --legacy-main` で旧 main の規則を付ける。

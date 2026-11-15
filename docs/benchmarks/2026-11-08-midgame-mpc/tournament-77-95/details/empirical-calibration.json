@@ -1,0 +1,52 @@
+{
+  "sigmas": {
+    "77": 1.0904432767305599,
+    "81": 1.20365038009303,
+    "85": 1.343916580839068,
+    "89": 1.522878873567099,
+    "92": 1.7082391076343133,
+    "95": 1.9848425720756617
+  },
+  "positions": 41000,
+  "midgame_pairs": 445000,
+  "anchors": {
+    "68": {
+      "model": 0.8814512920887103,
+      "recomputed": 0.8814512920887103
+    },
+    "77": {
+      "model": 1.0904432767305599,
+      "recomputed": 1.0904432767305599
+    },
+    "85": {
+      "model": 1.343916580839068,
+      "recomputed": 1.343916580839068
+    },
+    "95": {
+      "model": 1.9848425720756617,
+      "recomputed": 1.9848425720756617
+    },
+    "98": {
+      "model": 2.5557201751345633,
+      "recomputed": 2.5557201751345633
+    },
+    "99": {
+      "model": 3.0527832931914984,
+      "recomputed": 3.0527832931914984
+    }
+  },
+  "sources": {
+    "model": {
+      "path": "/home/azure/dev/deft-reversi/local/release/model-v3-pen/deft-eval-v3-pen.dpr2",
+      "sha256": "aa2d7cd9e42e8f8f7df4f547124683fc86d85cb83b83b332637f07dc1d1f05a8"
+    },
+    "rules": {
+      "path": "/home/azure/dev/deft-reversi/local/data/pen-exp/mpc-pen-1000/rules.json",
+      "sha256": "1b7d32b04c592be0532b5d299ea666d46884bc7701a4388158dffc68fdb01897"
+    },
+    "positions": {
+      "path": "/home/azure/dev/deft-reversi/local/data/pen-exp/mpc-pen-1000/positions.tsv",
+      "sha256": "dcefb4bf28695a5e1128932c6f20c9efbf332d28100a5a252ac25be639d64fae"
+    }
+  }
+}

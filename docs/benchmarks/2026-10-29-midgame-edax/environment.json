@@ -1,0 +1,166 @@
+{
+  "date_utc": "2026-10-28T19:58:46Z",
+  "fixture": "/home/azure/dev/deft-reversi-rewrite/deft-reversi-engine/tests/fixtures/midgame.obf",
+  "fixture_sha256": "59bdb48ee0558073824de339e27801bf4b55e7c0a40bd3e20bbe8046cd01e044",
+  "fixture_positions": 24,
+  "cases": [
+    "seed1-p12",
+    "seed1-p24",
+    "seed1-p36",
+    "seed2-p12",
+    "seed2-p24",
+    "seed2-p36",
+    "seed3-p12",
+    "seed3-p24",
+    "seed3-p36",
+    "seed4-p12",
+    "seed4-p24",
+    "seed4-p36",
+    "seed5-p12",
+    "seed5-p24",
+    "seed5-p36",
+    "seed6-p12",
+    "seed6-p24",
+    "seed6-p36",
+    "seed7-p12",
+    "seed7-p24",
+    "seed7-p36",
+    "seed8-p12",
+    "seed8-p24",
+    "seed8-p36"
+  ],
+  "placements_per_seed": [
+    12,
+    24,
+    36
+  ],
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "input_sha256": {
+    "seed1-p12": "c5db5113e331291c3cc9d232fba954a309c3313e694b108be9c089a3a0383c55",
+    "seed1-p24": "c97187d0c9f332ca834dc4c87d239ef18e442f44d0be74b0c355eab3cc23a9c4",
+    "seed1-p36": "abeaae2cf1b4e881bb86a7e587d69f00a14751abb31ce4265d2fa9aa6be83af9",
+    "seed2-p12": "8880018edc0003ac576befe5ea758972c054ee690fa60f3b5154c88a560fb5c7",
+    "seed2-p24": "71143876a1feeb1ced30b85432bb328edbb72971abbf1d74cc16ffb13cace06d",
+    "seed2-p36": "a47c6e0bf20f0460140596d6fdadc07ecfe60e409e88f1b057b97ec5bdd1fb95",
+    "seed3-p12": "36134c6ed5637de3cb56cdb639a9f19eb13dfbf524ed134aeea98c18aebb948f",
+    "seed3-p24": "65ee72a28959702fd6eb4682ed48fdd17c2995a5c7c35921df00cb0cfbf2c95a",
+    "seed3-p36": "abbd485077ed372ea7993e837a4037edf4d651c7bc114a9682f4ac3b1c3d72d8",
+    "seed4-p12": "d8225f2e42bf8483829ef1ea71b9f9add5dbe18a89054a1729e3ad74887f29db",
+    "seed4-p24": "55bc8c109d01c74223cd3161f718f33c37698f766ce345a2810b40ffd38ad367",
+    "seed4-p36": "9e4f7ddfd82af5c321f8bc115406ac511b91456bf24b0c677586dd401a81c883",
+    "seed5-p12": "9442977ffb38dfac6f7b3c64575eb909da48a374895e1d7fe6c705afa8e5edd4",
+    "seed5-p24": "36be0d0f649755596495baacd0c6a07a3e77c882df934793378d452ca8fc8e1b",
+    "seed5-p36": "73940b49261f16b5fb60a8db929bd8ca78cb91a09b38aa8afa92d3cea5ff9f3d",
+    "seed6-p12": "eb6d2b04151584fe1d1c26b9dd64cc121c5cb47afa810236b249b47eeae5369d",
+    "seed6-p24": "770d95980b5d9fadefc0156a07858712a350b1133d335eebc8ee1584aa063f0d",
+    "seed6-p36": "bb3d9b63fa290d4bab7eb1b562f9b4a84091f92d6e3c149b4d6852e90d3371af",
+    "seed7-p12": "649d9374afe964b7cb260979ed1a5728fe85bd6ec48ed4775e9d6b1d345c8fb8",
+    "seed7-p24": "779f19bcce20a98fae240904091a216167818b6cf82ecf8f04a128d618ea8dc3",
+    "seed7-p36": "0f7b13877d23d7173bcd425323a6491178bee1177bd3295ef55bd24ceadcb447",
+    "seed8-p12": "772e2d5c5f572001185dfae657ff11bddc3e2b42b1ba53c44473f652955a703a",
+    "seed8-p24": "989d8918e2f25e280b2fcf3fd2df9cda5161cf1eebefd88552ffb398b3f6bc95",
+    "seed8-p36": "982c7c99721a93d9e21e2f6b92c25c608c0a20c547f02854a51e5e2c46092901"
+  },
+  "model": "/home/azure/dev/deft-reversi-feature/data/eval/eval-v4.bin",
+  "model_sha256": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+  "edax_eval": "/home/azure/dev/edax-4.5.5/bin/data/eval.dat",
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "conditions": [
+    "remote_deft",
+    "edax_4_5_5",
+    "edax_4_6_native"
+  ],
+  "depths": [
+    8,
+    12
+  ],
+  "rounds_per_position_depth": 3,
+  "expected_solves": 432,
+  "binaries": {
+    "remote_deft": {
+      "path": "/tmp/reversi-benchmark-verify/remote/target/release/examples/bench_midgame",
+      "sha256": "e142a93662d2ccb024484b3a6e664e2cb271243919d2e14e8c2bb3659df88b23"
+    },
+    "edax_4_5_5": {
+      "path": "/home/azure/dev/edax-4.5.5/bin/lEdax-x86-64-v3",
+      "sha256": "04d07fdd161dbf0150d45d98277a3ee233e385035e59249e482c2412ebb71476"
+    },
+    "edax_4_6_native": {
+      "path": "/tmp/edax-4.6-native-20261029/source/bin/lEdax-native",
+      "sha256": "406cdfa8aa6e28962d77834e926f72f6a6dec78741f82d1552287761a1d2f0be"
+    }
+  },
+  "expected_binary_sha256": {
+    "remote_deft": "e142a93662d2ccb024484b3a6e664e2cb271243919d2e14e8c2bb3659df88b23",
+    "edax_4_5_5": "04d07fdd161dbf0150d45d98277a3ee233e385035e59249e482c2412ebb71476",
+    "edax_4_6_native": "406cdfa8aa6e28962d77834e926f72f6a6dec78741f82d1552287761a1d2f0be"
+  },
+  "remote_deft": {
+    "commit": "527c906c75bb87f8f9eae0225a451193820069c1",
+    "source_tree_sha256_with_midgame_adapter": "afc8fe0ae6495e5ed3137c664cee70b7ee17c2ffe80913c55ae3768b79c6c478",
+    "source_rs_tree_sha256": "47cd6caf5c99326b8548095b020050563adb6da6e47a4c17f6db4743ca0d4f59",
+    "adapter": "/tmp/reversi-benchmark-verify/remote/deft-reversi-engine/examples/bench_midgame.rs",
+    "adapter_sha256": "79108bb826912c049bda39d573bcbd61432c785cd16aeee4f56611ff6dd96120",
+    "cargo_lock_sha256": "47382e88a4adb4a0c5645ce6e73f2f4cf5f50bfbf3012ed8091972bcebad8f2c",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+    "build_command": "RUSTFLAGS='-C target-cpu=native' cargo build --locked --release -p deft_reversi_engine --example bench_midgame",
+    "cargo_fingerprint": "/tmp/reversi-benchmark-verify/remote/target/release/.fingerprint/deft_reversi_engine-18573f11469a0c37/example-bench_midgame.json",
+    "rustflags": [
+      "-C",
+      "target-cpu=native"
+    ],
+    "model_mpc_loaded": true,
+    "threads": 1,
+    "tt_mib": 256,
+    "pv_mib": 16
+  },
+  "edax": {
+    "version_4_5_5": "Edax 4.5.5 Jun 25 2025 18:39:59 for Linux",
+    "version_4_6_native": "4.6",
+    "native_source_commit": "713a434f13b3d15fb69c61b9ba3641aed82c496c",
+    "native_compiler": "clang version 23.1.4",
+    "native_build_flags": "-O3 -flto -ffast-math -fomit-frame-pointer -DNDEBUG -march=native",
+    "fixed_depth_command": "-solve <one-position-obf> -cpu -n 1 -l 60 -depth {depth} -selectivity 5 -h 23 -book-usage off -eval-file <eval.dat> -verbose 1",
+    "no_selectivity_value": 5,
+    "no_selectivity_evidence": "Saved Edax 4.5.5 source search.c and Edax 4.6 source search.c both define NO_SELECTIVITY=5; Edax 4.6 options.c parses -depth and -selectivity; obftest -solve calls obf_search and applies requested depth with MIN and explicit selectivity.",
+    "iterative_search_semantics": "Selectivity 5 denotes Full at the requested target depth/final result. Stock Edax may use selective reduced-depth probes and IID before reaching that target; this setting does not disable all internal selective probes.",
+    "hash": "h23; Edax table memory is not asserted to match Deft TT/PV memory.",
+    "threads": 1,
+    "book": "off"
+  },
+  "cpu": "Intel Core Ultra 7 265K; CPU 1 P-core (max 5600 MHz)",
+  "affinity": "taskset -c 1 for every solve",
+  "fresh_process_per_run": true,
+  "deft_validation": "SearchMode::Depth(d), requested/completed depth d, Selectivity::Full=100%, stop Completed, selective=false; each displayed Deft PV action is checked through Board::play.",
+  "edax_validation": "Final row must report requested depth; a trust suffix is accepted only when 100%; explicit -selectivity 5 sets target/final selectivity to Full. Earlier stock Edax reduced-depth probes/IID may be selective. All displayed PV tokens are replayed on the input board for legality. PV need not reach terminal.",
+  "search_procedure_caveat": "Deft SearchMode::Depth(d) with Selectivity::Full uses no MPC sigma in every iteration. Edax reaches a Full target result but may use reduced-depth selective probes and IID internally; this is a comparison of stock fixed-depth configurations, not identical internal work.",
+  "cross_engine_score_equality_required": false,
+  "timers": {
+    "deft": "SearchResult.elapsed",
+    "edax": "Edax internal result time printed to milliseconds (depth-8 resolution caveat recorded if zero)."
+  },
+  "primary_metric": "For each depth separately: sum of per-position medians across all 24 positions (three runs each); depth 12 is primary.",
+  "auxiliary_metrics": "Nodes, NPS where time is nonzero, action/score repeatability, paired ratios, and process elapsed. Node/NPS definitions differ by engine.",
+  "execution_order": "Three cyclic rotations across condition \u00d7 position \u00d7 depth \u00d7 round blocks; exact order_index stored per run.",
+  "pilot": "Two-position depth-12 pilot is stored separately in validation/pilot and excluded from formal 432-run rows.",
+  "postrun_binary_sha256": {
+    "remote_deft": "e142a93662d2ccb024484b3a6e664e2cb271243919d2e14e8c2bb3659df88b23",
+    "edax_4_5_5": "04d07fdd161dbf0150d45d98277a3ee233e385035e59249e482c2412ebb71476",
+    "edax_4_6_native": "406cdfa8aa6e28962d77834e926f72f6a6dec78741f82d1552287761a1d2f0be"
+  },
+  "binary_hashes_unchanged": true,
+  "postrun_model_sha256": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+  "postrun_edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "postrun_remote_deft_source_sha256": "afc8fe0ae6495e5ed3137c664cee70b7ee17c2ffe80913c55ae3768b79c6c478",
+  "remote_deft_source_unchanged_during_timing": true
+}

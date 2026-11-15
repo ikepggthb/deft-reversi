@@ -113,18 +113,22 @@ impl PhaseWeights {
             let f = Features::of(&r.board);
             let error = self.predict(&f) - f32::from(r.value);
             m.add(error, s.huber_delta);
-            let grad = error.clamp(-s.huber_delta, s.huber_delta);
-            // Symmetric discs can make two orientations read the same weight;
-            // its gradient is then the sum, applied in one step.
-            let mut indices = f.patterns;
-            indices.sort_unstable();
-            for run in indices.chunk_by(|a, b| a == b) {
-                self.patterns[run[0] as usize].update(grad * run.len() as f32, s);
-            }
-            self.mobility[f.mobility].update(grad, s);
-            self.bias.update(grad, s);
+            self.update(&f, error.clamp(-s.huber_delta, s.huber_delta), s);
         }
         m.finish()
+    }
+
+    /// One step for one sample, with `grad` the clipped error.
+    pub fn update(&mut self, f: &Features, grad: f32, s: &Settings) {
+        // Symmetric discs can make two orientations read the same weight;
+        // its gradient is then the sum, applied in one step.
+        let mut indices = f.patterns;
+        indices.sort_unstable();
+        for run in indices.chunk_by(|a, b| a == b) {
+            self.patterns[run[0] as usize].update(grad * run.len() as f32, s);
+        }
+        self.mobility[f.mobility].update(grad, s);
+        self.bias.update(grad, s);
     }
 
     pub fn validate(&self, records: &[Record], huber_delta: f32) -> Metrics {
@@ -147,14 +151,14 @@ impl PhaseWeights {
 }
 
 #[derive(Default)]
-struct Accumulator {
+pub struct Accumulator {
     loss: f64,
     abs: f64,
     n: u64,
 }
 
 impl Accumulator {
-    fn add(&mut self, error: f32, delta: f32) {
+    pub fn add(&mut self, error: f32, delta: f32) {
         let e = f64::from(error.abs());
         let d = f64::from(delta);
         self.loss += if e <= d {
@@ -166,7 +170,7 @@ impl Accumulator {
         self.n += 1;
     }
 
-    fn finish(self) -> Metrics {
+    pub fn finish(self) -> Metrics {
         let n = self.n.max(1) as f64;
         Metrics {
             loss: self.loss / n,

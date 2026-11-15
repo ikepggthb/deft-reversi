@@ -38,7 +38,6 @@ pub struct Engine {
     generation: u8,
     calibration: Arc<[Option<ProbCutRule>]>,
     sigmas: ProbCutSigmas,
-    cache_sigma: Option<u64>,
     end_cache: EndgameCache,
     /// Tags the local endgame caches that are valid for the current state.
     cache_epoch: u64,
@@ -60,7 +59,6 @@ impl Engine {
             workers,
             options,
             generation: 0,
-            cache_sigma: None,
             end_cache: EndgameCache::default(),
             cache_epoch: new_cache_epoch(),
         })
@@ -131,7 +129,6 @@ impl Engine {
         self.clear_tt()?;
         self.calibration = indexed_rules(rules);
         self.sigmas = sigmas;
-        self.cache_sigma = None;
         Ok(())
     }
     /// Drops the main thread's local endgame cache and, through a new epoch,
@@ -160,17 +157,20 @@ impl Engine {
                 };
                 (mode, selectivity, None)
             }
-            Goal::Level(level) => {
-                if !(1..=60).contains(&level) {
-                    return Err(EngineError::InvalidRequest("level must be 1..=60"));
-                }
+            Goal::Level(_) | Goal::Plan(_) => {
+                let plan = match request.goal {
+                    Goal::Plan(plan) => plan,
+                    Goal::Level(level) => SearchPlan::level(level)?,
+                    _ => unreachable!(),
+                };
+                plan.validate()?;
                 if request.selectivity.is_some() {
                     return Err(EngineError::InvalidRequest(
-                        "a level chooses its own selectivity",
+                        "a level or plan chooses its own selectivity",
                     ));
                 }
-                let (mode, selectivity) = level::level_plan(board.empty_count(), level);
-                (mode, selectivity, Some(level))
+                let (mode, selectivity) = plan.at(board.empty_count());
+                (mode, selectivity, Some(plan.midgame_depth()))
             }
         };
         if selectivity != Selectivity::Full && self.calibration.is_empty() {
@@ -230,13 +230,9 @@ impl Engine {
             result.elapsed = pass_start.elapsed();
             return Ok(result);
         }
-        let target_sigma = job.selectivity.sigma();
-        // Reuse only caches with the same calibration and sigma.
-        let sigma_key = target_sigma.map(f64::to_bits);
-        if self.cache_sigma != sigma_key {
-            self.clear_tt()?;
-            self.cache_sigma = sigma_key;
-        }
+        // Entries carry their stage (`quality`) and exact mode, and a cut
+        // uses only an entry from the same stage, so searches at other
+        // stages keep the tables; a calibration change clears them.
         self.generation = self.generation.wrapping_add(1);
         let start = Instant::now();
         let deadline = match job.time_limit {
@@ -266,7 +262,7 @@ impl Engine {
         let mut last = None;
         for iteration in self.plan(&job) {
             runtime.drain();
-            runtime.set_stage(iteration.sigma, iteration.quality);
+            runtime.set_stage(iteration.selectivity);
             let prediction = result.score.unwrap_or_else(|| self.model.evaluate(&board));
             let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 root.iteration(&mut context, iteration.spec(), prediction)
@@ -298,7 +294,7 @@ impl Engine {
         // the line separately, verifying each suggested move against the value.
         if !context.aborted()
             && let Some(last) = last
-            && last.sigma.is_none()
+            && last.selectivity == Selectivity::Full
             && last.depth > 0
             && let Some(score) = result.score
             && let Ok(pv) =
@@ -327,7 +323,6 @@ impl Engine {
         Ok(result)
     }
     fn runtime(&self, job: &Job, deadline: Option<Instant>) -> Arc<Runtime> {
-        let target_sigma = job.selectivity.sigma();
         Arc::new(Runtime {
             model: self.model.clone(),
             table: self.table.clone(),
@@ -346,8 +341,8 @@ impl Engine {
             pending_lock: Mutex::new(()),
             pending_ready: Padded(std::sync::Condvar::new()),
             parallel: self.options.threads > 1,
+            split_empties: tree::split_empties(self.options.threads),
             // Each iteration sets its own stage before it starts.
-            sigma: AtomicU64::new(target_sigma.map_or(0, f64::to_bits)),
             quality: AtomicU8::new(0),
             rules: self.calibration.clone(),
             sigmas: self.sigmas,
@@ -365,10 +360,19 @@ impl Engine {
     /// endgame requests the selective stages and the final solve.
     fn plan(&self, job: &Job) -> Vec<Iteration> {
         let board = job.board;
-        let target_sigma = job.selectivity.sigma();
         let target = match job.mode {
             SearchMode::Depth(d) => d.min(board.empty_count()),
             SearchMode::Exact | SearchMode::SelectiveEndgame => board.empty_count(),
+        };
+        let midgame = |depth, selectivity| Iteration {
+            depth,
+            exact: false,
+            selectivity,
+        };
+        let endgame = |selectivity| Iteration {
+            depth: board.empty_count(),
+            exact: true,
+            selectivity,
         };
         let exact = matches!(job.mode, SearchMode::Exact | SearchMode::SelectiveEndgame);
         let depths = if exact {
@@ -382,48 +386,29 @@ impl Engine {
         } else {
             iterative_depths(target)
         };
-        let calibrated = !self.calibration.is_empty();
-        let target_stage = job.selectivity as u8;
-        let target_quality = if target_sigma.is_none() {
-            0
+        // Evaluation iterations use the requested selectivity. Before an
+        // endgame search they only prepare the tables and the move order,
+        // so they run at the least accurate stage, and the endgame then
+        // steps from 85% up to the requested stage.
+        let prepare = exact && !self.calibration.is_empty();
+        let warmup = if prepare {
+            Selectivity::Percent83
         } else {
-            target_stage + 1
+            job.selectivity
         };
-        // Eval iterations all use the requested selectivity. Only endgame
-        // preparation fixes it to the reference's level 2.
-        let prepare = calibrated && exact;
         let mut iterations: Vec<Iteration> = depths
             .into_iter()
-            .map(|depth| Iteration {
-                depth,
-                exact: false,
-                sigma: if prepare {
-                    Selectivity::Percent85.sigma()
-                } else {
-                    target_sigma
-                },
-                quality: if prepare { 3 } else { target_quality },
-            })
+            .map(|depth| midgame(depth, warmup))
             .collect();
         if prepare {
-            let mut stage = target_stage.min(2);
-            while stage < target_stage {
-                iterations.push(Iteration {
-                    depth: target,
-                    exact: true,
-                    sigma: Selectivity::from_level(stage).sigma(),
-                    quality: stage + 1,
-                });
-                stage = next_selectivity(stage, target_stage, target);
+            let mut stage = job.selectivity.min(Selectivity::Percent85);
+            while stage < job.selectivity {
+                iterations.push(endgame(stage));
+                stage = next_stage(stage, job.selectivity, target);
             }
         }
         if exact {
-            iterations.push(Iteration {
-                depth: target,
-                exact: true,
-                sigma: target_sigma,
-                quality: target_quality,
-            });
+            iterations.push(endgame(job.selectivity));
         }
         iterations
     }
@@ -434,7 +419,8 @@ struct Job {
     board: Board,
     mode: SearchMode,
     selectivity: Selectivity,
-    /// Set for `Goal::Level`; it also caps the endgame preparation depth.
+    /// The midgame depth of a `Goal::Level` or `Goal::Plan`; it also caps the
+    /// endgame preparation depth.
     level: Option<u8>,
     time_limit: Option<Duration>,
     node_limit: Option<u64>,
@@ -481,9 +467,7 @@ struct Iteration {
     depth: u8,
     /// Searches to the end of the game rather than to an evaluation.
     exact: bool,
-    sigma: Option<f64>,
-    /// TT selectivity tag: 0 exact, otherwise the reference level plus one.
-    quality: u8,
+    selectivity: Selectivity,
 }
 impl Iteration {
     fn spec(self) -> SearchSpec {
@@ -495,11 +479,7 @@ impl Iteration {
     }
     /// Makes `line`, the completed iteration's result, the search result.
     fn record(self, result: &mut SearchResult, line: &Line) {
-        let selectivity = if self.sigma.is_none() {
-            Selectivity::Full
-        } else {
-            Selectivity::from_level(self.quality - 1)
-        };
+        let selectivity = self.selectivity;
         result.kind = Some(if self.exact {
             ResultKind::Endgame { selectivity }
         } else {
@@ -600,13 +580,12 @@ fn indexed_rules(rules: Vec<ProbCutRule>) -> Arc<[Option<ProbCutRule>]> {
     indexed.into()
 }
 
-fn next_selectivity(current: u8, target: u8, empties: u8) -> u8 {
-    let next = current + 1;
-    if (empties < 21 && next >= 1)
-        || (empties < 24 && next >= 2)
-        || (empties < 27 && next >= 3)
-        || (empties < 30 && next >= 4)
-    {
+/// The endgame stage after `current`, which is 85% or above, on the way to
+/// `target`: with fewer than 27 empties the search goes straight to the
+/// target, and with fewer than 30 it does so after 95%.
+fn next_stage(current: Selectivity, target: Selectivity, empties: u8) -> Selectivity {
+    let next = current.next();
+    if empties < 27 || (empties < 30 && next >= Selectivity::Percent98) {
         target
     } else {
         next.min(target)
@@ -614,7 +593,8 @@ fn next_selectivity(current: u8, target: u8, empties: u8) -> u8 {
 }
 
 impl Engine {
-    /// Writes the evaluation weights in the DPR2 format. With
+    /// Writes the evaluation weights, with the pattern embedding networks if
+    /// the model has them, in the DPR2 format (no calibration). With
     /// `write_analysis_settings`, this identifies analyses that are comparable,
     /// for example to tag the values stored in an opening book.
     pub fn write_evaluation_model(&self, out: impl std::io::Write) -> std::io::Result<()> {

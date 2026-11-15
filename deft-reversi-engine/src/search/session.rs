@@ -56,10 +56,14 @@ pub(super) struct Runtime {
     pub(super) pending_lock: Mutex<()>,
     pub(super) pending_ready: Padded<std::sync::Condvar>,
     pub(super) parallel: bool,
-    pub(super) sigma: AtomicU64,
+    /// Fewest empties at which an exact node of the final solve splits
+    /// (`tree::split_empties`).
+    pub(super) split_empties: u8,
+    /// The stage of the running iteration as its table tag
+    /// (`Selectivity::quality`): zero when it does not prune.
     pub(super) quality: AtomicU8,
     pub(super) rules: Arc<[Option<ProbCutRule>]>,
-    /// Deviation multiples per stage; the stage is `quality - 1`.
+    /// Deviation multiples per selective stage.
     pub(super) sigmas: ProbCutSigmas,
     /// Fewest empties at which the local endgame tries ProbCut.
     pub(super) endgame_probcut_min: u8,
@@ -67,15 +71,13 @@ pub(super) struct Runtime {
     pub(super) cache_epoch: u64,
 }
 impl Runtime {
-    pub(super) fn sigma(&self) -> Option<f64> {
-        let bits = self.sigma.load(Ordering::Relaxed);
-        (bits != 0).then(|| f64::from_bits(bits))
+    /// Whether the running iteration prunes with ProbCut.
+    pub(super) fn selective(&self) -> bool {
+        self.quality.load(Ordering::Relaxed) != 0
     }
     /// Called only after all workers from the preceding iteration have joined.
-    pub(super) fn set_stage(&self, sigma: Option<f64>, quality: u8) {
-        self.sigma
-            .store(sigma.map_or(0, f64::to_bits), Ordering::Relaxed);
-        self.quality.store(quality, Ordering::Relaxed);
+    pub(super) fn set_stage(&self, selectivity: Selectivity) {
+        self.quality.store(selectivity.quality(), Ordering::Relaxed);
     }
 
     /// Ends one helper job counted in `pending`. The last one notifies under
@@ -197,7 +199,7 @@ pub(super) fn test_context() -> Context {
         pending_lock: Mutex::new(()),
         pending_ready: Padded(std::sync::Condvar::new()),
         parallel: false,
-        sigma: AtomicU64::new(0),
+        split_empties: u8::MAX,
         quality: AtomicU8::new(0),
         rules: Arc::from([]),
         sigmas: ProbCutSigmas::NORMAL,

@@ -68,3 +68,7 @@ python3 tools/bench/compare_variants.py \
 最終ソースの記録は `source.patch` と `source-sha256.json`。`dual-source.*` は最初の試作時点の記録で、READMEの変更以外の対象ソースは同じ。`tests-native.log`・`tests-feature.log` は採用版の検証、`four-smoke-final/` は採用版での現行ツールの実行確認。`four-smoke/` は保留版での実行確認である。
 
 今回の修正でMPC設定の不整合、局所ハッシュの構造的な相殺、配置と責務の混在、比較ツールの固定パス、ビルド条件の未固定を解消した。速度はほぼ同等であり、今回だけでEdaxを上回ったとは評価しない。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-27-review-fixes/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

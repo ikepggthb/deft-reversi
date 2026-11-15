@@ -1,0 +1,180 @@
+{
+  "date_utc": "2026-10-28T19:24:43Z",
+  "conditions": [
+    "remote_deft",
+    "merged_deft",
+    "edax_4_5_5",
+    "edax_4_6_native"
+  ],
+  "cases": [
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49
+  ],
+  "rounds_per_case": 3,
+  "expected_solves": 120,
+  "expected_scores": {
+    "40": 38,
+    "41": 0,
+    "42": 6,
+    "43": -12,
+    "44": -14,
+    "45": 6,
+    "46": -8,
+    "47": 4,
+    "48": 28,
+    "49": 16
+  },
+  "position_file_sha256": "05d2d5ee2e87d8865d2518f071f40cc9a9749e297c7b862609c115c8deeb4644",
+  "answer_file_sha256": "f4618ac2cac0c97871a456e050bf6d4008cceab4be685723e490f00fcdd8bf88",
+  "per_position_sha256": {
+    "40": "085e974cbace8dcaf105e89728384d9777e9ae9eaf24e7b4a6b2eabff700a988",
+    "41": "7087683cf802f6c981172cc5fd4ce86b7f58a63106d2dd971c82472da9ed5bc3",
+    "42": "47ea0d15ad54d6ff8b29b174845be6b80edf7b3d2cd77350bf8b4a9f54110bec",
+    "43": "1f6f5777915c64f142df809373ffa7412e4263727349cbb06a22bec3293bbeed",
+    "44": "9f59e304b24a0dafaf2af99adcafa4b74809e455df05cc5bb1328d8b1a0f708b",
+    "45": "4f73e2a7efc5b52ca2aa011f1aaa503eafe4ecbf96d7e620a4d5d80830cfca4e",
+    "46": "14b6b51fb78ff8f53021393838b49821b975a0f8dc7cb6106966645e7c06e994",
+    "47": "6daf33023956f4ab75770ae0824031f99e373826e0d112590a27fcdfdb0ac8f7",
+    "48": "eae1429b759586a3524b0bc761a914033c18f757fe6499bf909f3c3633602c20",
+    "49": "20432bede7cd3b8cacabb414e45450be96d5a8edd9cf2db40a7aca3b23699227"
+  },
+  "per_answer_sha256": {
+    "40": "b88349438defdd32bf0f9785263166387e8cd179dddd2e4d90bc27a11fac38f4",
+    "41": "33e0017e1d5094c6bcfcf90ea94e7045cc5908ef8145ba6219c9e3e00237defd",
+    "42": "54db72827fdb573ffed6b21e869ab693ab60ba4094864ccc4aa8e3b8a608d507",
+    "43": "42b242dbc7ff0bd47d9ffa0181c010283d1da30bd781e560b580472627408cc0",
+    "44": "0117f4c677026d8319ed53895a64bc240b9261f5a435cc177d4bf598f31a7b60",
+    "45": "6536ae2942274f1616149ec1390b64173cbdcad30e73b551ac5a7bb7c0a95715",
+    "46": "d12321444754505e9a51d919684d2e48b0fc704d46f582805e0ff587ed142802",
+    "47": "2a34ea7ed7fb50abaa2c5c25c246ceae70ae197fabe57a4dd71d19086f5895a8",
+    "48": "2bf192607c3f6ce96c89f4311ae493308beae4b45b53106aeaec31928d0db36f",
+    "49": "d2996760cebce6d732e6e32735f4ebdc5d6e4888550456ecf77d543daa033c4a"
+  },
+  "model": "/home/azure/dev/deft-reversi-feature/data/eval/eval-v4.bin",
+  "model_sha256": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+  "edax_eval": "/home/azure/dev/edax-4.5.5/bin/data/eval.dat",
+  "edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "binaries": {
+    "remote_deft": {
+      "path": "/tmp/reversi-benchmark-verify/remote/target/release/examples/bench_level",
+      "sha256": "0900ee192506ccf94796ab875c3b511202a20da1924d42c7845c5ee8c1316635"
+    },
+    "merged_deft": {
+      "path": "/home/azure/dev/deft-reversi-rewrite/target/release/examples/bench_level",
+      "sha256": "cd8376e974884666a44a7b9b163d38da8fd782f5bf4a16bf65db325d563c351d"
+    },
+    "edax_4_5_5": {
+      "path": "/home/azure/dev/edax-4.5.5/bin/lEdax-x86-64-v3",
+      "sha256": "04d07fdd161dbf0150d45d98277a3ee233e385035e59249e482c2412ebb71476"
+    },
+    "edax_4_6_native": {
+      "path": "/tmp/edax-4.6-native-20261029/source/bin/lEdax-native",
+      "sha256": "406cdfa8aa6e28962d77834e926f72f6a6dec78741f82d1552287761a1d2f0be"
+    }
+  },
+  "deft_source_tree_sha256": {
+    "remote": "b6c4d5a4bbeb28c1db0a6b65df644346548e3a505360a4b7be540e6ea84e31df",
+    "merged": "259e5a635465669ff7485c92faca00e35a04b55c80ededbf8e84d402a9ffb3dc"
+  },
+  "expected_deft_source_tree_sha256": {
+    "remote": "b6c4d5a4bbeb28c1db0a6b65df644346548e3a505360a4b7be540e6ea84e31df",
+    "merged": "259e5a635465669ff7485c92faca00e35a04b55c80ededbf8e84d402a9ffb3dc"
+  },
+  "deft_source_fingerprints_match_previous_measurement": true,
+  "native_edax": {
+    "version": "4.6",
+    "git_commit": "713a434f13b3d15fb69c61b9ba3641aed82c496c",
+    "source_archive": "/tmp/edax-4.6-native-20261029/source.tar",
+    "source_archive_sha256": "5b8718d90a8ae6eb38451b667f453bcdc1be5da7e31ee63943070b51e68b214f",
+    "source_tree_sha256": "94dc6641130d6f286a558e5e09f2a94be90f69b97bfcef617a3e1540775f7b3e",
+    "build_command": "make CC=clang BUILD=optimize build ARCH=native",
+    "compiler": "clang version 23.1.4",
+    "flags": "-std=c17 -pedantic -W -Wall -Wno-invalid-source-encoding -D_GNU_SOURCE=1 -O3 -flto -ffast-math -fomit-frame-pointer -DNDEBUG -march=native",
+    "exit_status": 0
+  },
+  "host": "Linux-7.2.11-zen1-1-zen-x86_64-with-glibc2.44",
+  "cpu": "Intel Core Ultra 7 265K; CPU 1 is a P-core (5.6 GHz max)",
+  "affinity": "taskset -c 1 for every solve",
+  "threads": 1,
+  "fresh_process_per_solve": true,
+  "deft": {
+    "api": "Engine.solve(board, 60)",
+    "search_level": 60,
+    "tt_mib": 256,
+    "pv_mib": 16,
+    "model_mpc": true,
+    "timer": "SearchResult.elapsed; model loading is outside the measured interval",
+    "pv_validation": "Every returned PV is played to a terminal board; signed final score must equal the reported exact score."
+  },
+  "edax_4_5_5": {
+    "command_options": [
+      "-cpu",
+      "-n",
+      "1",
+      "-l",
+      "60",
+      "-h",
+      "23",
+      "-book-usage",
+      "off",
+      "-eval-file",
+      "/home/azure/dev/edax-4.5.5/bin/data/eval.dat",
+      "-verbose",
+      "1"
+    ],
+    "version": "Edax 4.5.5 Jun 25 2025 18:39:59 for Linux",
+    "hash": "h23 = 2^23 main-table entries; Edax memory use is not claimed to equal Deft TT/PV memory."
+  },
+  "edax_4_6_native": {
+    "command_options": [
+      "-cpu",
+      "-n",
+      "1",
+      "-l",
+      "60",
+      "-h",
+      "23",
+      "-book-usage",
+      "off",
+      "-eval-file",
+      "/home/azure/dev/edax-4.5.5/bin/data/eval.dat",
+      "-verbose",
+      "1"
+    ],
+    "hash": "h23 = 2^23 main-table entries; Edax memory use is not claimed to equal Deft TT/PV memory."
+  },
+  "edax_timing": "Edax internal per-position reported elapsed, parsed to 1 ms resolution.",
+  "edax_validation": "Require final row depth equal to the position empty count with no selective trust percentage, and official score match. Displayed PV is recorded but may be partial and is not claimed as a complete legal PV.",
+  "execution_order": "Four cyclic rotations of the condition list cycle by case-round block; balanced position in the order.",
+  "primary_metric": "Sum over FFO40-49 of each condition per-case median search time across three runs.",
+  "auxiliary_metrics": "Paired ratios within each case-round and round totals.",
+  "builds_and_checks_complete_before_timing": true,
+  "completed_solves": 120,
+  "all_runs_completed": true,
+  "deft_source_tree_sha256_after_timing": {
+    "remote": "b6c4d5a4bbeb28c1db0a6b65df644346548e3a505360a4b7be540e6ea84e31df",
+    "merged": "259e5a635465669ff7485c92faca00e35a04b55c80ededbf8e84d402a9ffb3dc"
+  },
+  "deft_source_unchanged_during_timing": true,
+  "postrun_binary_sha256": {
+    "remote_deft": "0900ee192506ccf94796ab875c3b511202a20da1924d42c7845c5ee8c1316635",
+    "merged_deft": "cd8376e974884666a44a7b9b163d38da8fd782f5bf4a16bf65db325d563c351d",
+    "edax_4_5_5": "04d07fdd161dbf0150d45d98277a3ee233e385035e59249e482c2412ebb71476",
+    "edax_4_6_native": "406cdfa8aa6e28962d77834e926f72f6a6dec78741f82d1552287761a1d2f0be"
+  },
+  "postrun_binary_hashes_match": true,
+  "postrun_model_sha256": "c79636141747ee07483f5498bf017bfd00a93a6884a13f5ad13952844534bff2",
+  "postrun_edax_eval_sha256": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+  "postrun_native_edax_source_tree_sha256": "94dc6641130d6f286a558e5e09f2a94be90f69b97bfcef617a3e1540775f7b3e",
+  "postrun_native_edax_source_unchanged": true,
+  "postrun_source_archive_sha256": "5b8718d90a8ae6eb38451b667f453bcdc1be5da7e31ee63943070b51e68b214f",
+  "postrun_source_archive_unchanged": true
+}

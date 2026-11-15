@@ -75,11 +75,11 @@ deft-reversi-train mpc -m e8.dpr2 --data egaroucid_rd_data_set --out mpc-1000 \
 - **正規分布**：`rules.json:normal`
 - **測った t**：`rules.json`
 
-道具は [tools/](tools/)。`MODEL@rules.json[:normal]` の形でモデルを渡す。`solve` には選択的な終盤探索（`end85` など）を足した。
+道具は `tools/`。`MODEL@rules.json[:normal]` の形でモデルを渡す。`solve` には選択的な終盤探索（`end85` など）を足した。
 
 ### 選択的な終盤探索の値は、完全読みとどれだけずれるか
 
-valid 分割から、校正に使っていない局面を空き20・22・24マスで300局面ずつ選んだ（[accuracy900.obf](accuracy900.obf)）。それぞれを段ごとの選択的な終盤探索と完全読みで読み、根の値を比べた。1スレッド・TT 64 MiB で、[accuracy.sh](accuracy.sh) で実行し、[analyze_accuracy.py](analyze_accuracy.py) で集計した（[accuracy-summary.tsv](accuracy-summary.tsv)）。
+valid 分割から、校正に使っていない局面を空き20・22・24マスで300局面ずつ選んだ（[accuracy900.obf](accuracy900.obf)）。それぞれを段ごとの選択的な終盤探索と完全読みで読み、根の値を比べた。1スレッド・TT 64 MiB で、`accuracy.sh` で実行し、`analyze_accuracy.py` で集計した（[accuracy-summary.tsv](accuracy-summary.tsv)）。
 
 | 段 | 値がずれた割合（正規分布 → 測った t） | 平均の誤差（石） | ノード数の比（測った t / 正規分布） |
 |---|---:|---:|---:|
@@ -94,7 +94,7 @@ valid 分割から、校正に使っていない局面を空き20・22・24マ�
 
 ### 完全読み（test 分割の120局面）
 
-[前回](../2026-10-31-mpc-calibration/README.md)と同じ [end120.obf](end120.obf) を、1スレッド・TT 64 MiB で完全読みした（`end120-*.tsv`、集計は [compare_end120.py](compare_end120.py)）。
+[前回](../2026-10-31-mpc-calibration/README.md)と同じ [end120.obf](end120.obf) を、1スレッド・TT 64 MiB で完全読みした（`end120-*.tsv`、集計は `compare_end120.py`）。
 
 | | 合計ノード数 | 幾何平均 | 最悪 | 最良 |
 |---|---:|---:|---:|---:|
@@ -188,3 +188,7 @@ Edax v4.6（`src/search.c` の `selectivity_table`、`src/midgame.c` の `search
 - 次の段階：
   1. 同じ測定データで、中盤・終盤の式（G から導く式など）を比べる。t は式に合わせて測り直す。
   2. レベル表の段の選び方を、速さと強さで選び直す。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-01-mpc-tails/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

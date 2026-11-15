@@ -1,0 +1,43 @@
+{
+  "command": [
+    "/usr/bin/python3",
+    "tools/bench/mpc_match.py",
+    "--out",
+    "/home/azure/dev/deft-reversi/docs/benchmarks/2026-11-09-midgame-mpc-79-87",
+    "--gtp",
+    "/home/azure/dev/deft-reversi/local/bench-runs/mpc-79-87-20261109/gtp",
+    "--round-robin",
+    "--candidates",
+    "79,81,83,85,87",
+    "--openings",
+    "100",
+    "--seed",
+    "5",
+    "--xot",
+    "/home/azure/dev/deft-reversi/docs/benchmarks/2026-11-09-midgame-mpc-79-87/xot-100.txt",
+    "--mid-sigmas",
+    "/home/azure/dev/deft-reversi/docs/benchmarks/2026-11-09-midgame-mpc-79-87/mid-sigmas.json",
+    "--budgets",
+    "100",
+    "--horizon-endgame",
+    "--cpu",
+    "2",
+    "--report-on-completion"
+  ],
+  "launched_utc": "2026-11-08T19:44:15.691909+00:00",
+  "execution_mode": "managed_exec_session",
+  "completion_file": "completion.json",
+  "expected_games": 2000,
+  "midgame_probabilities": [
+    79,
+    81,
+    83,
+    85,
+    87
+  ],
+  "endgame_probabilities": [
+    99,
+    100
+  ],
+  "session_id": 9824
+}

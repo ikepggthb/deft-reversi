@@ -285,6 +285,10 @@ A（cell / table）で、t の決め方ごとに、誤った刈りの率を比�
 
 | ファイル | 内容 |
 |---|---|
-| [compare_models.py](compare_models.py) | 部品ごとの比較。式の比較の `compare_formulas.py` の関数を使う |
+| `compare_models.py` | 部品ごとの比較。式の比較の `compare_formulas.py` の関数を使う |
 | [models.txt](models.txt) | 全組み合わせ（平均4 × σ5 × t4）の結果、偶奇別の表、分布、t |
-| [paired.py](paired.py)・[paired.txt](paired.txt) | A との効率と誤りの率の差、局面単位の標準誤差 |
+| `paired.py`・[paired.txt](paired.txt) | A との効率と誤りの率の差、局面単位の標準誤差 |
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-11-01-mpc-models/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

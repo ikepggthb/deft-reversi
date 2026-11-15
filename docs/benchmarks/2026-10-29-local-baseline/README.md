@@ -19,7 +19,7 @@
 
 ## 方法
 
-`compare_threads.py`（[前回](../2026-10-28-multithread/compare_threads.py)のものにCPU割当の指定 `--cpusets` を加え、Egaroucid SIMD版を対象にした）。各局面を新しいプロセス・空のTTで解き、周ごとにスレッド数の順を反転、局面ごとにエンジンの順を回転した。全実行でスコアを公開正解（`tools/bench/positions/ffo40-49-answers.obf`）と、空き数までの完全読みの完了を照合した（6周×4スレッド数×3エンジン×10局面＝720実行、不一致なし）。時間は各エンジンが報告する探索時間。
+`compare_threads.py`（`前回`のものにCPU割当の指定 `--cpusets` を加え、Egaroucid SIMD版を対象にした）。各局面を新しいプロセス・空のTTで解き、周ごとにスレッド数の順を反転、局面ごとにエンジンの順を回転した。全実行でスコアを公開正解（`tools/bench/positions/ffo40-49-answers.obf`）と、空き数までの完全読みの完了を照合した（6周×4スレッド数×3エンジン×10局面＝720実行、不一致なし）。時間は各エンジンが報告する探索時間。
 
 周回数：12周で開始したが、4周の時点で deft・Edax の10局面合計の周ごとの変動が±0.5%以内（前回のVMは±5%）だったため、6周で打ち切った（偶数周でスレッド数の実行順が均等になる）。7周目の途中の行は集計に使っていない（`summarize.py --rounds 6`）。打切りの際、未フラッシュだった標準出力の記録のうち最後の101実行分が失われた（`process-output.jsonl.gz` は619実行分）。スコア・深さの照合は各実行の直後に行っており、`results.tsv` の全行は照合済み。以後のためにスクリプトを1行ずつフラッシュするよう直した。
 
@@ -119,3 +119,7 @@
 - `runs/mt-baseline/results.tsv`（生データ、7周目の途中を含む）、`summary.json`（6周の集計）、`process-output.jsonl.gz`（標準出力の記録、619実行分）、`progress.log`（周ごとの合計）。
 - `runs/mt-release/`：配布版・タグ版との比較。`results.tsv`（生データ）、`summary.json`（`summarize.py` の集計）、`summary-script.json`（測定スクリプト自身の集計）、`process-output.jsonl.gz`（全1200実行の標準出力）、`progress.log`。
 - `environment.json`：CPU・コンパイラ・ビルド方法・実行ファイルとデータのSHA-256（`release_comparison` に配布版の情報）。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-29-local-baseline/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

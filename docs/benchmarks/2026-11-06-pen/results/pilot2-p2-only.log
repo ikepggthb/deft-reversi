@@ -1,0 +1,5 @@
+stones 40 epoch 1/3  train mae 11.512  valid mae 8.685  (4000000 positions, 16.0s)
+stones 40 epoch 2/3  train mae 7.503  valid mae 6.689  (4000000 positions, 15.7s)
+stones 40 epoch 3/3  train mae 6.143  valid mae 5.899  (4000000 positions, 15.4s)
+phases 0-35, 37-59 have no checkpoint and copy the nearest trained phase
+wrote p2-only.dpr2

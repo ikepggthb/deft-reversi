@@ -50,8 +50,8 @@ pub use diagnostics::perft;
 pub use model::Model;
 pub use position::{Color, ParsePositionError, Position};
 pub use search::{
-    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, SearchRequest,
-    SearchResult, SearchStats, Selectivity, StopHandle, StopReason, level_reading,
+    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, SearchPlan,
+    SearchRequest, SearchResult, SearchStats, Selectivity, StopHandle, StopReason, level_reading,
 };
 pub use types::{Action, Moves, Square};
 pub use worker::{EngineWorker, SearchHandle};
@@ -61,7 +61,7 @@ pub use worker::{EngineWorker, SearchHandle};
 pub use {
     evaluation::{
         FEATURE_COUNT, Features, MOBILITY_WEIGHT_COUNT, PATTERN_COUNT, PATTERN_WEIGHT_COUNT,
-        PHASE_COUNT, PatternModel, PatternPhase,
+        PEN_DIM, PEN_HIDDEN, PEN_INPUTS, PHASE_COUNT, PatternModel, PatternPhase, PenPhase,
     },
     search::{ProbCutRule, ProbCutSigmas},
 };

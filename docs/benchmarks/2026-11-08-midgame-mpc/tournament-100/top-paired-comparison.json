@@ -1,0 +1,10 @@
+{
+  "comparison": "95 minus 77 overall score",
+  "difference": 0.0085,
+  "opening_bootstrap_95": [
+    -0.0315,
+    0.047
+  ],
+  "replicates": 10000,
+  "seed": 1
+}

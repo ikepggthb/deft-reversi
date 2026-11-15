@@ -1,0 +1,15 @@
+Diagnostic counters (diag-counters.patch on c433a80), model mpc-formula/model.dpr2, 1 thread.
+
+Exact nodes entered by empties (14+: `node`, 7-13: `ordered_endgame`), summed over each file:
+pos-16 (200 positions): 7:1335936 8:697546 9:369853 10:162625 11:82433 12:29989 13:21285 14:7151 15:5346
+pos-20 (100 positions): 7:18637577 8:9015210 9:6023320 10:2462289 11:1566193 12:551844 13:360802 14:114369 15:73120 16:21628 17:13253 18:3656 19:2969
+FFO 57, no calibration (final stage only): 7:45310010 8:37044497 9:20767613 10:17522750 11:8102436 12:6977511 13:2646556 14:2176211 15:724706 16:601165 17:183201 18:142659 19:42174 20:29773 21:9385 22:5639 23:2052 24:955 25:411 26:145 27:69 28:19 29:10
+
+Null-window exact nodes with 14+ empties that reach the move loop (after TT, ETC and
+stability cuts), pos-20: share that fail high, and the share of those cut by the first move.
+empties 14: nodes 105219  fail-high 51.6%  first-move share of cuts 94.5%
+empties 15: nodes 61181   fail-high 85.5%  first-move share of cuts 96.5%
+empties 16: nodes 17683   fail-high 51.5%  first-move share of cuts 94.2%
+empties 17: nodes 10001   fail-high 86.4%  first-move share of cuts 96.0%
+empties 18: nodes 2515    fail-high 52.7%  first-move share of cuts 95.0%
+empties 19: nodes 1241    fail-high 96.5%  first-move share of cuts 96.1%

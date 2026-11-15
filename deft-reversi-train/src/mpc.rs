@@ -8,9 +8,14 @@
 //! Midgame rules (a search of `depth` plies at `empties` empties) are
 //! measured for depths 4..=`max_depth` and fitted with the reference
 //! regression in empties, depth and shallow depth, which extends them to
-//! every depth. Endgame rules (an exact solve) are measured for every
-//! empties count in `--exact-empties`; larger counts reuse the last measured
-//! count of the same parity, as the main-branch table does.
+//! every depth. Endgame rules (an exact solve) are fitted as formulas in
+//! empties e and shallow depth s, one per parity of s, from every measured
+//! pair of an exact score and a full-width depth-s value (`ExactFormula`):
+//! slope and intercept linear in (e, s), and
+//! `deviation² = (c0 + c1·s + c2·s²)·(1 − exp(−(e − s)/λ))`. The rules then
+//! hold for any shallow depth within the measured ones; `exact_shallow`
+//! chooses them. The derivation and its checks are in
+//! docs/benchmarks/2026-11-02-exact-mpc-formula.
 use crate::{Result, for_each_parallel, rd};
 use clap::Args;
 use deft_reversi_engine::{
@@ -32,9 +37,10 @@ pub struct MpcArgs {
     /// The model to calibrate (any format the engine reads).
     #[arg(short, long)]
     model: PathBuf,
-    /// Dataset directory; positions come from `--split`.
-    #[arg(long)]
-    data: PathBuf,
+    /// Dataset directory; positions come from `--split`. Not used with
+    /// `--fit-only`.
+    #[arg(long, required_unless_present = "fit_only")]
+    data: Option<PathBuf>,
     #[arg(long, default_value = "valid")]
     split: String,
     /// Writes `positions.tsv`, `cells.tsv`, `tails.tsv`, `rules.json` and
@@ -96,15 +102,15 @@ const SHALLOW_BY_DEPTH: [u8; 61] = [
     10,
 ];
 
-/// The shallow depth for an exact solve, as in the main-branch table.
+/// The shallow depth for an exact solve, chosen by FFO 40-59 solve times
+/// (docs/benchmarks/2026-11-02-exact-mpc-formula).
 fn exact_shallow(empties: u8) -> u8 {
     match empties {
-        12 | 14 | 16 => 4,
-        13 | 15 => 3,
+        ..=15 => 1,
+        16 => 4,
         17 | 19 => 5,
-        18 | 20 => 6,
-        e if e >= 29 => 8 - e % 2,
-        e => 6 - e % 2,
+        18 => 6,
+        e => 8 - e % 2,
     }
 }
 
@@ -131,12 +137,22 @@ pub struct Rule {
     pub deviation: f64,
 }
 
-/// The deviation multiples per selectivity stage, as written to
+/// The deviation multiples of the engine's selective stages
+/// (`ProbCutSigmas::STAGES`, least accurate first), as written to
 /// `rules.json`.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Sigmas {
-    pub midgame: [f64; 6],
-    pub exact: [f64; 6],
+    pub midgame: [f64; 5],
+    pub exact: [f64; 5],
+}
+
+impl From<ProbCutSigmas> for Sigmas {
+    fn from(s: ProbCutSigmas) -> Self {
+        Sigmas {
+            midgame: s.midgame,
+            exact: s.exact,
+        }
+    }
 }
 
 impl From<Sigmas> for ProbCutSigmas {
@@ -148,15 +164,35 @@ impl From<Sigmas> for ProbCutSigmas {
     }
 }
 
-/// `rules.json`: what `Engine::set_probcut_calibration` takes.
+/// `rules.json`: what `Engine::set_probcut_calibration` takes. `stages`
+/// names the percent of each multiple so that a file fitted for another
+/// list of stages is refused.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Calibration {
+    pub stages: Vec<u8>,
     pub sigmas: Sigmas,
     pub rules: Vec<Rule>,
 }
 
-/// The stage probabilities of `Selectivity::Percent68..=Percent99`.
-const STAGE_PROBABILITIES: [f64; 6] = [0.68, 0.77, 0.85, 0.95, 0.98, 0.99];
+/// The percents of the engine's selective stages.
+fn stage_percents() -> Vec<u8> {
+    ProbCutSigmas::STAGES.iter().map(|s| s.percent()).collect()
+}
+
+/// The probabilities of the engine's selective stages.
+fn stage_probabilities() -> [f64; 5] {
+    ProbCutSigmas::STAGES.map(|s| f64::from(s.percent()) / 100.0)
+}
+
+/// The quantiles of sorted `values` at the stage probabilities, made
+/// non-decreasing.
+fn stage_quantiles(sorted: &[f64]) -> [f64; 5] {
+    let mut t = stage_probabilities().map(|p| quantile(sorted, p));
+    for i in 1..t.len() {
+        t[i] = t[i].max(t[i - 1]);
+    }
+    t
+}
 
 impl From<Rule> for ProbCutRule {
     fn from(r: Rule) -> Self {
@@ -190,10 +226,25 @@ pub struct PackArgs {
 
 /// Writes a model with its ProbCut calibration in one file.
 pub fn pack(args: PackArgs) -> Result<()> {
-    let model = Model::from_file(&args.model)?;
+    let model = Model::weights_from_file(&args.model)?;
     let model = match (&args.rules, args.legacy_main) {
         (Some(path), false) => {
-            let c: Calibration = serde_json::from_slice(&fs::read(path)?)?;
+            let c: Calibration = serde_json::from_slice(&fs::read(path)?).map_err(|e| {
+                format!(
+                    "{}: {e}; refit it with `train mpc --fit-only`",
+                    path.display()
+                )
+            })?;
+            if c.stages != stage_percents() {
+                return Err(format!(
+                    "{}: multiples for the stages {:?}, the engine has {:?}; \
+                     refit it with `train mpc --fit-only`",
+                    path.display(),
+                    c.stages,
+                    stage_percents()
+                )
+                .into());
+            }
             model.with_calibration(
                 c.rules.into_iter().map(Into::into).collect(),
                 c.sigmas.into(),
@@ -223,10 +274,13 @@ pub fn run(args: MpcArgs) -> Result<()> {
     }
     let positions = read_positions(&positions_path)?.1;
     let samples = pairs(&positions);
-    let (rules, report) = fit(&samples)?;
-    let (sigmas, tails) = tail_sigmas(&samples, &rules)?;
+    let formula = ExactFormula::fit(&positions)?;
+    let (rules, mut report) = fit(&samples, &formula)?;
+    report.push_str(&formula.describe());
+    let exact_multiples = formula.multiples(&positions)?;
+    let (sigmas, tails) = tail_sigmas(&samples, &rules, Some(exact_multiples))?;
     // The model checks the calibration as the engine does.
-    let model = Model::from_file(&args.model)?.with_calibration(
+    let model = Model::weights_from_file(&args.model)?.with_calibration(
         rules.iter().copied().map(Into::into).collect(),
         sigmas.into(),
     )?;
@@ -238,6 +292,7 @@ pub fn run(args: MpcArgs) -> Result<()> {
     fs::write(
         args.out.join("rules.json"),
         serde_json::to_string_pretty(&Calibration {
+            stages: stage_percents(),
             sigmas,
             rules: rules.clone(),
         })?,
@@ -296,11 +351,12 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
         fs::write(path, format!("{settings}\n{HEADER}\n"))?;
         HashSet::new()
     };
-    let model = Model::from_file(&args.model)?;
+    let data = args.data.as_ref().ok_or("--data is required to measure")?;
+    let model = Model::weights_from_file(&args.model)?;
     let mut jobs: Vec<(u8, Vec<(usize, Board)>)> = Vec::new();
     for empties in args.empties.first..=args.empties.last {
         let stones = 64 - empties;
-        let path = rd::path(&args.data, stones, &args.split);
+        let path = rd::path(data, stones, &args.split);
         let mut boards: Vec<Board> = rd::read(&path, stones)?
             .into_iter()
             .map(|r| r.board)
@@ -573,7 +629,7 @@ fn least_squares(x: &[Vec<f64>], y: &[f64]) -> Option<Vec<f64>> {
     Some((0..k).map(|i| a[i][k] / a[i][i]).collect())
 }
 
-fn fit(samples: &[Sample]) -> Result<(Vec<Rule>, String)> {
+fn fit(samples: &[Sample], formula: &ExactFormula) -> Result<(Vec<Rule>, String)> {
     let cells: Vec<Cell> = samples
         .chunk_by(|a, b| (a.exact, a.empties, a.depth) == (b.exact, b.empties, b.depth))
         .filter_map(cell)
@@ -619,23 +675,8 @@ fn fit(samples: &[Sample]) -> Result<(Vec<Rule>, String)> {
             }
         }
     }
-    // Endgame: the measured counts, then the last measured of each parity.
-    let last = |parity: u8| exact.iter().rev().find(|c| c.empties % 2 == parity);
-    for empties in 12..=60u8 {
-        let measured = exact.iter().find(|c| c.empties == empties);
-        let Some(c) = measured.or_else(|| last(empties % 2).filter(|c| c.empties < empties)) else {
-            continue;
-        };
-        rules.push(Rule {
-            exact: true,
-            depth: empties,
-            empties,
-            shallow_depth: exact_shallow(empties),
-            slope: c.slope,
-            intercept: c.intercept,
-            deviation: c.deviation,
-        });
-    }
+    // Endgame: the formula at the table's shallow depths.
+    rules.extend((12..=60u8).map(|e| formula.rule(e, exact_shallow(e))));
 
     let mut report = String::from(
         "exact\tempties\tdepth\tshallow_depth\tsamples\tslope\tintercept\tdeviation\tfit_slope\tfit_intercept\tfit_deviation\n",
@@ -683,7 +724,11 @@ fn quantile(sorted: &[f64], p: f64) -> f64 {
 /// measured pairs, for midgame and exact rules separately. The normal
 /// multiples assume normal errors; the measured errors have heavier tails.
 /// Also reports how often the errors pass each multiple, by empties band.
-fn tail_sigmas(samples: &[Sample], rules: &[Rule]) -> Result<(Sigmas, String)> {
+fn tail_sigmas(
+    samples: &[Sample],
+    rules: &[Rule],
+    exact_multiples: Option<[f64; 5]>,
+) -> Result<(Sigmas, String)> {
     let rule = |s: &Sample| {
         rules
             .iter()
@@ -701,20 +746,19 @@ fn tail_sigmas(samples: &[Sample], rules: &[Rule]) -> Result<(Sigmas, String)> {
         v.sort_by(f64::total_cmp);
         v
     };
-    let measured = |exact: bool| -> Result<[f64; 6]> {
+    let measured = |exact: bool| -> Result<[f64; 5]> {
         let all = scores(exact, (0, 60));
         if all.len() < 100 {
             return Err(format!("too few pairs to measure the tails (exact: {exact})").into());
         }
-        let mut t = STAGE_PROBABILITIES.map(|p| quantile(&all, p));
-        for i in 1..6 {
-            t[i] = t[i].max(t[i - 1]);
-        }
-        Ok(t)
+        Ok(stage_quantiles(&all))
     };
     let sigmas = Sigmas {
         midgame: measured(false)?,
-        exact: measured(true)?,
+        exact: match exact_multiples {
+            Some(t) => t,
+            None => measured(true)?,
+        },
     };
     let normal = ProbCutSigmas::NORMAL.midgame;
     let mut report = String::from(
@@ -729,7 +773,7 @@ fn tail_sigmas(samples: &[Sample], rules: &[Rule]) -> Result<(Sigmas, String)> {
                 continue;
             }
             let beyond = |x: f64| v.iter().filter(|&&z| z > x).count() as f64 / v.len() as f64;
-            for i in 0..6 {
+            for (i, probability) in stage_probabilities().into_iter().enumerate() {
                 writeln!(
                     report,
                     "{}\t{}..={}\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t{:.4}",
@@ -737,7 +781,7 @@ fn tail_sigmas(samples: &[Sample], rules: &[Rule]) -> Result<(Sigmas, String)> {
                     band.0,
                     band.1,
                     v.len(),
-                    STAGE_PROBABILITIES[i],
+                    probability,
                     normal[i],
                     beyond(normal[i]),
                     t[i],
@@ -747,6 +791,233 @@ fn tail_sigmas(samples: &[Sample], rules: &[Rule]) -> Result<(Sigmas, String)> {
         }
     }
     Ok((sigmas, report))
+}
+
+/// Endgame rules as formulas in empties e and shallow depth s, one per
+/// parity of s: the value of an odd-depth search carries the uncancelled
+/// bias of the side to move picking its best noisy child, and its slope in
+/// s runs the other way from even depths.
+#[derive(Clone, Copy, Debug)]
+struct ExactFormula {
+    parity: [ParityFit; 2],
+    /// The largest measured empties count; slope and intercept stay at its
+    /// value beyond it.
+    last_empties: u8,
+    /// The deepest measured shallow search.
+    max_shallow: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ParityFit {
+    slope: [f64; 3],
+    intercept: [f64; 3],
+    /// `deviation² = (c0 + c1·s + c2·s²)·(1 − exp(−(e − s)/lambda))`.
+    deviation: [f64; 3],
+    lambda: f64,
+}
+
+/// Cells use remaining depths of at least this many plies, the range a
+/// rule can need.
+const EXACT_MIN_REMAINING: u8 = 4;
+
+impl ParityFit {
+    fn slope(&self, e: f64, s: f64) -> f64 {
+        self.slope[0] + self.slope[1] * e + self.slope[2] * s
+    }
+    fn intercept(&self, e: f64, s: f64) -> f64 {
+        self.intercept[0] + self.intercept[1] * e + self.intercept[2] * s
+    }
+    fn deviation(&self, e: f64, s: f64) -> f64 {
+        let c = self.deviation;
+        ((c[0] + c[1] * s + c[2] * s * s) * saturation(e - s, self.lambda))
+            .max(1e-9)
+            .sqrt()
+    }
+}
+
+fn saturation(remaining: f64, lambda: f64) -> f64 {
+    1.0 - (-remaining / lambda).exp()
+}
+
+/// `x · β ≈ y` by least squares, each row weighted by `w`.
+fn weighted_least_squares(x: &[Vec<f64>], y: &[f64], w: &[f64]) -> Option<Vec<f64>> {
+    let xs: Vec<Vec<f64>> = x
+        .iter()
+        .zip(w)
+        .map(|(row, w)| row.iter().map(|v| v * w.sqrt()).collect())
+        .collect();
+    let ys: Vec<f64> = y.iter().zip(w).map(|(y, w)| y * w.sqrt()).collect();
+    least_squares(&xs, &ys)
+}
+
+/// The regression of the exact scores on the depth-s values, for every
+/// solved empties count and every measured s with enough remaining depth.
+fn exact_cells(positions: &[Position]) -> Vec<Cell> {
+    let mut by_empties: Vec<(u8, Vec<&Position>)> = Vec::new();
+    for p in positions.iter().filter(|p| p.exact.is_some()) {
+        match by_empties.iter_mut().find(|(e, _)| *e == p.empties) {
+            Some((_, v)) => v.push(p),
+            None => by_empties.push((p.empties, vec![p])),
+        }
+    }
+    by_empties.sort_by_key(|(e, _)| *e);
+    let mut cells = Vec::new();
+    for (e, group) in by_empties {
+        let depths = group.iter().map(|p| p.values.len()).min().unwrap_or(0);
+        for s in 0..depths as u8 {
+            if s + EXACT_MIN_REMAINING > e {
+                break;
+            }
+            let samples: Vec<Sample> = group
+                .iter()
+                .map(|p| Sample {
+                    exact: true,
+                    empties: e,
+                    depth: e,
+                    shallow_depth: s,
+                    shallow: p.values[usize::from(s)],
+                    deep: p.exact.unwrap(),
+                })
+                .collect();
+            cells.extend(cell(&samples));
+        }
+    }
+    cells
+}
+
+impl ExactFormula {
+    fn fit(positions: &[Position]) -> Result<Self> {
+        let cells = exact_cells(positions);
+        let mut parity = [ParityFit::default(); 2];
+        for (par, fit) in parity.iter_mut().enumerate() {
+            let cells: Vec<&Cell> = cells
+                .iter()
+                .filter(|c| usize::from(c.shallow_depth % 2) == par)
+                .collect();
+            if cells.len() < 6 {
+                return Err("too few exact cells to fit the endgame formula".into());
+            }
+            let w: Vec<f64> = cells.iter().map(|c| c.samples as f64).collect();
+            let x: Vec<Vec<f64>> = cells
+                .iter()
+                .map(|c| vec![1.0, c.empties.into(), c.shallow_depth.into()])
+                .collect();
+            let linear = |f: fn(&Cell) -> f64| -> Result<[f64; 3]> {
+                let y: Vec<f64> = cells.iter().map(|c| f(c)).collect();
+                weighted_least_squares(&x, &y, &w)
+                    .map(|b| [b[0], b[1], b[2]])
+                    .ok_or_else(|| "endgame regression is singular".into())
+            };
+            fit.slope = linear(|c| c.slope)?;
+            fit.intercept = linear(|c| c.intercept)?;
+            // λ by a geometric grid; the coefficients by least squares on
+            // deviation² for each λ, judged by the error in deviation.
+            let mut best: Option<(f64, f64, [f64; 3])> = None;
+            for i in 0..300 {
+                let lambda = 0.3 * (200.0f64).powf(f64::from(i) / 299.0);
+                let x: Vec<Vec<f64>> = cells
+                    .iter()
+                    .map(|c| {
+                        let (e, s) = (f64::from(c.empties), f64::from(c.shallow_depth));
+                        let h = saturation(e - s, lambda);
+                        vec![h, s * h, s * s * h]
+                    })
+                    .collect();
+                let y: Vec<f64> = cells.iter().map(|c| c.deviation * c.deviation).collect();
+                let Some(b) = weighted_least_squares(&x, &y, &w) else {
+                    continue;
+                };
+                let candidate = ParityFit {
+                    deviation: [b[0], b[1], b[2]],
+                    lambda,
+                    ..*fit
+                };
+                let error: f64 = cells
+                    .iter()
+                    .zip(&w)
+                    .map(|(c, w)| {
+                        let d = candidate.deviation(c.empties.into(), c.shallow_depth.into());
+                        w * (d - c.deviation).powi(2)
+                    })
+                    .sum();
+                if best.is_none_or(|(e, _, _)| error < e) {
+                    best = Some((error, lambda, candidate.deviation));
+                }
+            }
+            let (_, lambda, deviation) = best.ok_or("endgame deviation fit failed")?;
+            fit.lambda = lambda;
+            fit.deviation = deviation;
+        }
+        Ok(Self {
+            parity,
+            last_empties: cells.iter().map(|c| c.empties).max().unwrap(),
+            max_shallow: cells.iter().map(|c| c.shallow_depth).max().unwrap(),
+        })
+    }
+
+    /// The rule for an exact solve at `empties` with a depth-`shallow`
+    /// test, the depth kept within the measured ones and the remaining
+    /// depth (same parity).
+    fn rule(&self, empties: u8, shallow: u8) -> Rule {
+        let mut s = shallow;
+        while s > self.max_shallow || s + EXACT_MIN_REMAINING > empties {
+            s -= 2;
+        }
+        let f = &self.parity[usize::from(s % 2)];
+        let (e, sf) = (f64::from(empties), f64::from(s));
+        let measured = f64::from(empties.min(self.last_empties));
+        Rule {
+            exact: true,
+            depth: empties,
+            empties,
+            shallow_depth: s,
+            slope: f.slope(measured, sf),
+            intercept: f.intercept(measured, sf),
+            deviation: f.deviation(e, sf),
+        }
+    }
+
+    /// The deviation multiples of the exact stages: quantiles of |z| over
+    /// every measured pair, whatever its shallow depth, so they hold for
+    /// any table.
+    fn multiples(&self, positions: &[Position]) -> Result<[f64; 5]> {
+        let mut z = Vec::new();
+        for p in positions {
+            let Some(exact) = p.exact else { continue };
+            for (s, &v) in p.values.iter().enumerate() {
+                let s = s as u8;
+                if s + EXACT_MIN_REMAINING > p.empties {
+                    break;
+                }
+                let f = &self.parity[usize::from(s % 2)];
+                let (e, sf) = (f64::from(p.empties), f64::from(s));
+                let predicted = f.slope(e, sf) * f64::from(v) + f.intercept(e, sf);
+                z.push((f64::from(exact) - predicted).abs() / f.deviation(e, sf));
+            }
+        }
+        if z.len() < 100 {
+            return Err("too few exact pairs to measure the tails".into());
+        }
+        z.sort_by(f64::total_cmp);
+        Ok(stage_quantiles(&z))
+    }
+
+    fn describe(&self) -> String {
+        let mut out = String::new();
+        for (par, f) in self.parity.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "# exact formula, {} shallow depth: slope {:?} intercept {:?} (in [1, e, s], e capped at {}) deviation² ({:?})·(1-exp(-(e-s)/{:.4}))",
+                if par == 0 { "even" } else { "odd" },
+                f.slope,
+                f.intercept,
+                self.last_empties,
+                f.deviation,
+                f.lambda
+            );
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -774,14 +1045,32 @@ mod tests {
         assert_eq!(
             (
                 exact_shallow(12),
+                exact_shallow(18),
                 exact_shallow(25),
-                exact_shallow(29),
                 exact_shallow(30)
             ),
-            (4, 5, 7, 8)
+            (1, 6, 7, 8)
         );
         assert!("12..=24".parse::<EmptiesRange>().is_ok());
         assert!("0..3".parse::<EmptiesRange>().is_err());
+    }
+
+    #[test]
+    fn calibrations_name_the_engine_stages() {
+        assert_eq!(stage_percents(), [83, 85, 95, 98, 99]);
+        let c = Calibration {
+            stages: stage_percents(),
+            sigmas: ProbCutSigmas::NORMAL.into(),
+            rules: Vec::new(),
+        };
+        let text = serde_json::to_string(&c).unwrap();
+        let back: Calibration = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.stages, c.stages);
+        assert_eq!(back.sigmas, c.sigmas);
+        // A file from before the stages were recorded (six multiples, no
+        // `stages`) is not read.
+        let old = r#"{"sigmas":{"midgame":[1,2,3,4,5,6],"exact":[1,2,3,4,5,6]},"rules":[]}"#;
+        assert!(serde_json::from_str::<Calibration>(old).is_err());
     }
 
     #[test]
@@ -815,8 +1104,8 @@ mod tests {
                 })
             })
             .collect();
-        let (sigmas, report) = tail_sigmas(&samples, &[rule, exact]).unwrap();
-        for (t, p) in sigmas.midgame.iter().zip(STAGE_PROBABILITIES) {
+        let (sigmas, report) = tail_sigmas(&samples, &[rule, exact], None).unwrap();
+        for (t, p) in sigmas.midgame.iter().zip(stage_probabilities()) {
             assert!((t - 5.0 * p).abs() < 0.06, "{t} {p}");
         }
         assert_eq!(sigmas.midgame, sigmas.exact);

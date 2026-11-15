@@ -104,3 +104,7 @@ Edaxより遅いのはFFO46・47・49。小さい局面（FFO41・42・44）で�
 
 - `trials/*.patch`：各試作の差分（基点は表の「基準」列）。`node-histogram/`：Edaxの診断パッチ、生データ（deft `f790b3f` 時点、Edax）、比較スクリプト。`count_instructions.sh`：haswellビルドでの命令数・分岐予測ミス数の計測。
 - `runs/`：fast1＝fastord/fastA/fastB、fast14＝fast14/fast14b、simdstate、gather、prep＝prep0/prep1、inl＝inl2/inl23、reuse＝reuse13/reuse14、reuse2＝reuse15、mix2＝mixC/mixD、pn＝prep1E/nmoffE、rank56、rank56b、fast14E、four-C・four-E・four-E2＝4エンジン比較。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-28-edax-gap/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

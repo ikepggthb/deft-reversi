@@ -1,0 +1,26 @@
+{
+  "pid": 4,
+  "command": [
+    "python3",
+    "tools/bench/mpc_match.py",
+    "--out",
+    "/home/azure/dev/deft-reversi/docs/benchmarks/2026-11-08-midgame-mpc/tournament-100",
+    "--round-robin",
+    "--candidates",
+    "68,77,95,98,99,100",
+    "--openings",
+    "100",
+    "--seed",
+    "3",
+    "--xot",
+    "/home/azure/dev/deft-reversi/docs/benchmarks/2026-11-08-midgame-mpc/tournament-100/xot-100.txt",
+    "--budgets",
+    "100",
+    "--endgame-empties",
+    "18",
+    "--endgame-ms",
+    "25",
+    "--cpu",
+    "2"
+  ]
+}

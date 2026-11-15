@@ -1,0 +1,212 @@
+[
+  {
+    "percent": 81,
+    "games": 1000,
+    "wins": 443,
+    "draws": 161,
+    "losses": 396,
+    "score": 0.5235,
+    "mean_diff": 0.184,
+    "opening_bootstrap_95": [
+      0.4935,
+      0.552
+    ],
+    "opponents": {
+      "77": {
+        "games": 200,
+        "score": 0.5025
+      },
+      "85": {
+        "games": 200,
+        "score": 0.5375
+      },
+      "89": {
+        "games": 200,
+        "score": 0.515
+      },
+      "92": {
+        "games": 200,
+        "score": 0.5625
+      },
+      "95": {
+        "games": 200,
+        "score": 0.5
+      }
+    }
+  },
+  {
+    "percent": 85,
+    "games": 1000,
+    "wins": 428,
+    "draws": 188,
+    "losses": 384,
+    "score": 0.522,
+    "mean_diff": 0.31,
+    "opening_bootstrap_95": [
+      0.492,
+      0.553
+    ],
+    "opponents": {
+      "77": {
+        "games": 200,
+        "score": 0.54
+      },
+      "81": {
+        "games": 200,
+        "score": 0.4625
+      },
+      "89": {
+        "games": 200,
+        "score": 0.51
+      },
+      "92": {
+        "games": 200,
+        "score": 0.5625
+      },
+      "95": {
+        "games": 200,
+        "score": 0.535
+      }
+    }
+  },
+  {
+    "percent": 89,
+    "games": 1000,
+    "wins": 422,
+    "draws": 170,
+    "losses": 408,
+    "score": 0.507,
+    "mean_diff": 0.308,
+    "opening_bootstrap_95": [
+      0.4755,
+      0.539
+    ],
+    "opponents": {
+      "77": {
+        "games": 200,
+        "score": 0.5525
+      },
+      "81": {
+        "games": 200,
+        "score": 0.485
+      },
+      "85": {
+        "games": 200,
+        "score": 0.49
+      },
+      "92": {
+        "games": 200,
+        "score": 0.5375
+      },
+      "95": {
+        "games": 200,
+        "score": 0.47
+      }
+    }
+  },
+  {
+    "percent": 95,
+    "games": 1000,
+    "wins": 425,
+    "draws": 149,
+    "losses": 426,
+    "score": 0.4995,
+    "mean_diff": 0.094,
+    "opening_bootstrap_95": [
+      0.4665,
+      0.533
+    ],
+    "opponents": {
+      "77": {
+        "games": 200,
+        "score": 0.5
+      },
+      "81": {
+        "games": 200,
+        "score": 0.5
+      },
+      "85": {
+        "games": 200,
+        "score": 0.465
+      },
+      "89": {
+        "games": 200,
+        "score": 0.53
+      },
+      "92": {
+        "games": 200,
+        "score": 0.5025
+      }
+    }
+  },
+  {
+    "percent": 77,
+    "games": 1000,
+    "wins": 401,
+    "draws": 161,
+    "losses": 438,
+    "score": 0.4815,
+    "mean_diff": -0.462,
+    "opening_bootstrap_95": [
+      0.4485,
+      0.5145
+    ],
+    "opponents": {
+      "81": {
+        "games": 200,
+        "score": 0.4975
+      },
+      "85": {
+        "games": 200,
+        "score": 0.46
+      },
+      "89": {
+        "games": 200,
+        "score": 0.4475
+      },
+      "92": {
+        "games": 200,
+        "score": 0.5025
+      },
+      "95": {
+        "games": 200,
+        "score": 0.5
+      }
+    }
+  },
+  {
+    "percent": 92,
+    "games": 1000,
+    "wins": 389,
+    "draws": 155,
+    "losses": 456,
+    "score": 0.4665,
+    "mean_diff": -0.434,
+    "opening_bootstrap_95": [
+      0.4385,
+      0.495
+    ],
+    "opponents": {
+      "77": {
+        "games": 200,
+        "score": 0.4975
+      },
+      "81": {
+        "games": 200,
+        "score": 0.4375
+      },
+      "85": {
+        "games": 200,
+        "score": 0.4375
+      },
+      "89": {
+        "games": 200,
+        "score": 0.4625
+      },
+      "95": {
+        "games": 200,
+        "score": 0.4975
+      }
+    }
+  }
+]

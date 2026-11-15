@@ -1,0 +1,13 @@
+{
+  "games": 20,
+  "game_wall_seconds": 73.18638899968937,
+  "mid_moves": 605,
+  "end_moves": 435,
+  "end_solved": 409,
+  "boundary_and_selectivity_validated": true,
+  "mid_search_ms_max": 100.39027899999999,
+  "mid_wall_ms_max": 115.937508,
+  "end_search_ms_max": 100.00614100000001,
+  "end_result_request_seconds": 5.028780183,
+  "endgame_policy": "at-horizon-99-100-shared-budget"
+}

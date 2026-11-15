@@ -72,3 +72,7 @@ realには起動・モデル読込（deft約0.3秒）を含む。Edaxは並列�
 4. **分割の粒度**：完全読みのゼロ窓では局所終盤（13空き以下）で分割しないため、分割は14空き以上だけ。Edaxも15空き以上でのみ分割する。小さい局面ではノード増加が大きく、分割位置・最小残り手数の調整が候補になる。
 
 ファイル：`compare_threads.py`（測定スクリプト）、`cpu_use.sh`（CPU時間）、`run/results.tsv`・`summary.json`・`process-output.jsonl.gz`（生データと全出力）。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-28-multithread/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。
