@@ -102,6 +102,11 @@ impl Context {
         self.stats.evaluations += 1;
         self.runtime.model.evaluate_state(&board, state)
     }
+    /// The evaluation and the legal moves it computed.
+    pub(super) fn evaluate_and_moves(&mut self, board: Board, state: &EvalState) -> (i32, u64) {
+        self.stats.evaluations += 1;
+        self.runtime.model.evaluate_state_and_moves(&board, state)
+    }
     fn child_needs_eval(&self, board: Board, exact: bool, narrow: bool) -> bool {
         if !exact {
             return true;

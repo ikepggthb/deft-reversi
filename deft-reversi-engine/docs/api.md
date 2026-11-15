@@ -43,11 +43,11 @@ let mut engine = Engine::new(model, EngineOptions::default().threads(8).tt_mib(5
 
 engine.clear_tt()?;                 // 新しい対局の始まりなど
 engine.set_model(other_model)?;     // 置換表も無効にする
-engine.write_evaluation_model(out)?;   // 評価の重み（DPR2）
+engine.write_evaluation_model(out)?;   // 評価の重みと PEN（DPR2、校正なし）
 engine.write_analysis_settings(out)?;  // 実際に使う MPC 校正
 ```
 
-最後の2つは、同じ条件で求めた値どうしかを見分けるためのもの。定石の値に付ける識別情報（`deft_reversi_book::analysis_identity`）はこれから作る。
+最後の2つは、同じ条件で求めた値どうしかを見分けるためのもの。定石の値に付ける識別情報（`deft_reversi_book::analysis_identity`）は、この2つの出力のハッシュ。
 
 `EngineOptions` の既定値は 1 スレッド・256 MiB。スレッド数は呼び出し側のスレッドを含む。
 
@@ -127,7 +127,7 @@ worker.with(|engine| engine.clear_tt())?;           // 探索中なら終わる�
 評価関数やMPCの調整に使う API。通常の利用では不要。
 
 - `PatternModel`・`PatternPhase`・`PATTERN_COUNT`・`PHASE_COUNT`、`Model::from_pattern`・`weights_from_file`（校正を読まずに重みだけ）・`with_calibration`・`calibration`・`write_to`
-- 学習用の `Features::of(&board)`（段階・44個のパターン重みの位置・合法手数差の位置）と `PatternPhase::from_flat`。`Features` が指す重みの和を128で割って丸めると `PatternModel::evaluate` と一致する
+- 学習用の `Features::of(&board)`（段階・44個のパターン重みの位置・合法手数差の位置）と `PatternPhase::from_flat`。PEN のないモデルでは、`Features` が指す重みの和を128で割って丸めると `PatternModel::evaluate` と一致する（PEN のあるモデルでは、評価はこの和に PEN の出力を足してから丸める）
 - `ProbCutRule`・`Engine::set_probcut_rules`、旧 main の MPC を使う `Engine::set_legacy_main_mpc` と `legacy_main_rules()`
 - `ProbCutSigmas`・`Engine::set_probcut_calibration(rules, sigmas)`：選択的な段（`ProbCutSigmas::STAGES`：83・85・95・98・99%）ごとに、deviation の何倍で刈るかを、中盤の規則と完全読みの規則で別々に与える。既定の `ProbCutSigmas::NORMAL` は正規分布の両側分位点（1.372・1.440・1.960・2.326・2.576）で、`set_probcut_rules` などはこれを使う。実際の誤差は正規分布より裾が重いので、`deft-reversi-train mpc` は測った値をモデルファイルに入れる。正規分布の値以外を使うと `write_analysis_settings` の出力に加わる
 

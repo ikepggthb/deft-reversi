@@ -114,7 +114,12 @@ impl Context {
         self.enter()?;
         let Position { board, state } = position;
         if depth == 0 {
-            return Ok(self.evaluate(board, &state));
+            // Unlike `node`, this has not checked for a finished game yet.
+            let (value, moves) = self.evaluate_and_moves(board, &state);
+            if moves == 0 && board.get_opponent_moves() == 0 {
+                return Ok(board.final_score());
+            }
+            return Ok(value);
         }
         let mut moves = board.get_moves();
         if moves == 0 {

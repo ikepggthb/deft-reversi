@@ -619,3 +619,27 @@ fn tables_kept_across_stages_still_solve_exactly() {
         assert_eq!(-reference(best), reference(board));
     }
 }
+
+#[test]
+fn depth_searches_reaching_the_end_score_finished_games_exactly() {
+    // The zero model values every position 0, so a depth search that reaches
+    // the end must take the final score from the finished games, not the
+    // evaluation. Two empties: F1 scores 0 and G5 +4 for the side to move.
+    let board = Board::from_bits(0x45c98a3f48661ccf, 0xba367580b799e310).unwrap();
+    let mut engine = engine(1);
+    let solved = engine.search(board, &exact()).unwrap();
+    assert_eq!(solved.score, Some(4));
+    engine.clear_tt().unwrap();
+    let deep = engine.search(board, &depth(2)).unwrap();
+    assert_eq!(
+        (deep.score, deep.best_move),
+        (solved.score, solved.best_move)
+    );
+    // Small depth searches to the end agree with the exact score.
+    for seed in 61..=76 {
+        let board = position(seed, 6);
+        engine.clear_tt().unwrap();
+        let result = engine.search(board, &depth(board.empty_count())).unwrap();
+        assert_eq!(result.score, Some(reference(board)), "seed {seed}");
+    }
+}

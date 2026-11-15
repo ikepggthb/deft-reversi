@@ -1,11 +1,11 @@
 //! A minimal GTP front end for matches against Edax and Egaroucid
 //! (`tools/bench/match.py`).
 //!
-//! usage: gtp MODEL (--level N | --game-ms MS) [--tt MIB]
+//! usage: gtp MODEL (--level N | --game-ms MS) [--tt MIB] [--threads N]
 //!
 //! With `--level`, every move is a `Goal::Level(N)` search. With
-//! `--game-ms`, each side has MS milliseconds for the game (or what
-//! `time_settings`/`time_left` say); a move gets the remaining time divided
+//! `--game-ms`, each colour has MS milliseconds for the game (or what
+//! `time_settings`/`time_left` say, `time_left` per colour); a move gets the remaining time divided
 //! by this side's moves left before 20 empties (positions from there are
 //! solved in a small part of the time), searched as `Goal::Level(60)` with
 //! that time limit, which plays the best move of the last completed iteration.
@@ -19,7 +19,25 @@ use std::{
 
 enum Mode {
     Level(u8),
-    Time { remaining: Duration },
+    /// The time left of black and of white.
+    Time {
+        remaining: [Duration; 2],
+    },
+}
+
+fn clock(side: Color) -> usize {
+    match side {
+        Color::Black => 0,
+        Color::White => 1,
+    }
+}
+
+/// Seconds from GTP as a duration; negative, infinite or NaN values are
+/// errors.
+fn seconds(text: Option<&&str>) -> Result<Duration, String> {
+    text.and_then(|s| s.parse::<f64>().ok())
+        .and_then(|s| Duration::try_from_secs_f64(s).ok())
+        .ok_or_else(|| "syntax error".into())
 }
 
 fn color(s: &str) -> Option<Color> {
@@ -57,36 +75,40 @@ fn request_budget(mode: &Mode, pos: &Position) -> Duration {
         // before them: (empties - SOLVE_EMPTIES) / 2 + 1 moves.
         Mode::Time { remaining } => {
             let moves_left = u32::from(pos.empty_count().saturating_sub(SOLVE_EMPTIES)) / 2 + 1;
-            remaining.saturating_sub(Duration::from_millis(10)) / moves_left
+            let left = remaining[clock(pos.side_to_move())];
+            left.saturating_sub(Duration::from_millis(10)) / moves_left
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    let model = Model::from_file(&args[1])?;
+    const USAGE: &str = "usage: gtp MODEL (--level N | --game-ms MS) [--tt MIB] [--threads N]";
+    let mut args = std::env::args().skip(1);
+    let model = Model::from_file(args.next().ok_or(USAGE)?)?;
     let mut mode = None;
     let mut tt = 64;
-    let mut i = 2;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--level" => mode = Some(Mode::Level(args[i + 1].parse()?)),
+    let mut threads = 1;
+    while let Some(flag) = args.next() {
+        let value = args
+            .next()
+            .ok_or_else(|| format!("{flag} needs a value; {USAGE}"))?;
+        match flag.as_str() {
+            "--level" => mode = Some(Mode::Level(value.parse()?)),
             "--game-ms" => {
-                mode = Some(Mode::Time {
-                    remaining: Duration::from_millis(args[i + 1].parse()?),
-                })
+                let ms = Duration::from_millis(value.parse()?);
+                mode = Some(Mode::Time { remaining: [ms; 2] })
             }
-            "--tt" => tt = args[i + 1].parse()?,
-            other => return Err(format!("unknown argument {other}").into()),
+            "--tt" => tt = value.parse()?,
+            "--threads" => threads = value.parse()?,
+            other => return Err(format!("unknown argument {other}; {USAGE}").into()),
         }
-        i += 2;
     }
     let mut mode = mode.ok_or("give --level or --game-ms")?;
     let initial_time = match mode {
         Mode::Time { remaining } => remaining,
-        Mode::Level(_) => Duration::ZERO,
+        Mode::Level(_) => [Duration::ZERO; 2],
     };
-    let mut engine = Engine::new(model, EngineOptions::default().threads(1).tt_mib(tt))?;
+    let mut engine = Engine::new(model, EngineOptions::default().threads(threads).tt_mib(tt))?;
     let mut pos = Position::initial();
     let stdin = io::stdin();
     let mut out = io::stdout();
@@ -107,19 +129,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 engine.clear_tt().map(|_| String::new()).map_err(|e| e.to_string())
             }
-            "time_settings" => match (&mut mode, words.get(1).and_then(|s| s.parse::<f64>().ok())) {
-                (Mode::Time { remaining }, Some(main)) => {
-                    *remaining = Duration::from_secs_f64(main);
-                    Ok(String::new())
+            "time_settings" => seconds(words.get(1)).map(|main| {
+                if let Mode::Time { remaining } = &mut mode {
+                    *remaining = [main; 2];
                 }
-                _ => Ok(String::new()),
-            },
-            "time_left" => match (&mut mode, words.get(2).and_then(|s| s.parse::<f64>().ok())) {
-                (Mode::Time { remaining }, Some(left)) => {
-                    *remaining = Duration::from_secs_f64(left);
-                    Ok(String::new())
-                }
-                _ => Ok(String::new()),
+                String::new()
+            }),
+            "time_left" => match words.get(1).and_then(|s| color(s)) {
+                None => Err("syntax error".into()),
+                Some(side) => seconds(words.get(2)).map(|left| {
+                    if let Mode::Time { remaining } = &mut mode {
+                        remaining[clock(side)] = left;
+                    }
+                    String::new()
+                }),
             },
             "play" => match (words.get(1).and_then(|s| color(s)), words.get(2)) {
                 (Some(side), Some(m)) => m
@@ -169,7 +192,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
                         if let Mode::Time { remaining } = &mut mode {
-                            *remaining = remaining.saturating_sub(start.elapsed());
+                            let left = &mut remaining[clock(side)];
+                            *left = left.saturating_sub(start.elapsed());
                         }
                         match result {
                             Ok(r) => {

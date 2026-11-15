@@ -592,7 +592,8 @@ fn next_stage(current: Selectivity, target: Selectivity, empties: u8) -> Selecti
 }
 
 impl Engine {
-    /// Writes the evaluation weights in the DPR2 format. With
+    /// Writes the evaluation weights, with the pattern embedding networks if
+    /// the model has them, in the DPR2 format (no calibration). With
     /// `write_analysis_settings`, this identifies analyses that are comparable,
     /// for example to tag the values stored in an opening book.
     pub fn write_evaluation_model(&self, out: impl std::io::Write) -> std::io::Result<()> {
