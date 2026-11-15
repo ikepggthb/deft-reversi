@@ -1,0 +1,8 @@
+stones 40 epoch 1/6  train mae 6.735  valid mae 5.711  (4000000 positions, 16.0s)
+stones 40 epoch 2/6  train mae 5.381  valid mae 5.490  (4000000 positions, 16.0s)
+stones 40 epoch 3/6  train mae 5.058  valid mae 5.367  (4000000 positions, 16.1s)
+stones 40 epoch 4/6  train mae 4.860  valid mae 5.291  (4000000 positions, 16.3s)
+stones 40 epoch 5/6  train mae 4.724  valid mae 5.273  (4000000 positions, 16.2s)
+stones 40 epoch 6/6  train mae 4.620  valid mae 5.237  (4000000 positions, 16.2s)
+phases 0-35, 37-59 have no checkpoint and copy the nearest trained phase
+wrote p2-onlyC.dpr2

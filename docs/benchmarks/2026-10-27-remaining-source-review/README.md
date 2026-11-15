@@ -114,3 +114,7 @@ deftは子孫へ降りる前に証明できる上限を、5〜6では使わな�
 assembly-manifest.jsonに現在のnativeバイナリのSHA-256とシンボル範囲を記録した（ff17c4b535fed25e8955c73c207ad85ebef4d8e1e2cdd131d6b702f6cbf4e207）。solve_score_1/2/3_empties.asm.txtとstability_null_window_upper.asm.txtはその逆アセンブル。範囲検査、関数呼出し、保存・復帰、LazyLockの状態確認はこれらで確認できる。Rust 1.99.1、release、target-cpu=native、既定feature、AMD EPYC 9V74のビルドであり、別ビルドで同じ命令列になる保証はしない。
 
 今回は調査のみのため新しい速度改善率は報告しない。また、どの差がFFO44の悪化を説明するかも未確定である。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-27-remaining-source-review/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。

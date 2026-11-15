@@ -1,0 +1,20 @@
+{
+  "run_count": 120,
+  "official_scores_match_all_runs": true,
+  "all_edax_runs_full_depth_at_100_percent_trust": true,
+  "all_deft_pvs_complete_legal_terminal_and_score_validated": true,
+  "edax_pvs_claimed_complete": false,
+  "primary_metric": "sum of per-case median elapsed seconds",
+  "sum_case_medians_seconds": {
+    "remote_deft": 10.251323867,
+    "merged_deft": 10.194934495,
+    "edax_4_5_5": 10.465,
+    "edax_4_6_native": 13.669
+  },
+  "change_vs_remote_percent": {
+    "remote_deft": 0.0,
+    "merged_deft": -0.550069168934586,
+    "edax_4_5_5": 2.0843759866747025,
+    "edax_4_6_native": 33.338875810975296
+  }
+}

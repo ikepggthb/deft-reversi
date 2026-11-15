@@ -20,6 +20,17 @@ fn success(args: &[&str]) -> Output {
     );
     r
 }
+/// Writes the pattern weights `bytes` as a model with a calibration: the
+/// book searches selectively, which needs one.
+fn write_model(path: &Path, bytes: &[u8]) {
+    let pattern = PatternModel::read_from(std::io::Cursor::new(bytes)).unwrap();
+    let model = Model::from_pattern(pattern)
+        .with_calibration(legacy_main_rules(), ProbCutSigmas::NORMAL)
+        .unwrap();
+    let mut out = Vec::new();
+    model.write_to(&mut out).unwrap();
+    std::fs::write(path, out).unwrap();
+}
 fn text(p: &Path) -> &str {
     p.to_str().unwrap()
 }
@@ -30,7 +41,7 @@ fn cli_generation_resume_export_extend_and_retarget() {
     let model = dir.join("model.dpr2");
     let mut bytes = Vec::new();
     PatternModel::zero().write_to(&mut bytes).unwrap();
-    std::fs::write(&model, &bytes).unwrap();
+    write_model(&model, &bytes);
     let work = dir.join("state.dbook-work");
     let book = dir.join("play.dbook");
     let copied = dir.join("copied.dbook");
@@ -127,7 +138,7 @@ fn cli_generation_resume_export_extend_and_retarget() {
     ]);
     let n = bytes.len();
     bytes[n - 2..].copy_from_slice(&128i16.to_le_bytes());
-    std::fs::write(&model, &bytes).unwrap();
+    write_model(&model, &bytes);
     success(&[
         "reanalyze",
         "--model",

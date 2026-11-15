@@ -1,0 +1,1330 @@
+diff --git a/deft-reversi-engine/README.md b/deft-reversi-engine/README.md
+index b6a1b6e..34e4499 100644
+--- a/deft-reversi-engine/README.md
++++ b/deft-reversi-engine/README.md
+@@ -53,6 +53,7 @@ let result = engine.search(&position, &request)?;
+ - `Goal::Level(n)` は元の1〜60のレベルの探索方式、選択率、序盤補正を適用する。範囲外はエラー。
+ - `selectivity` は元の68/77/85/95/98/99/100%の7段階。`result.kind` は最後に完了した反復の深さと選択率を表す。
+ - `Goal::Depth(n)` は着手数基準。パスでは深さを減らさない。
++- `time_limit` がある場合、中盤探索と終盤の準備探索は深さ1から1手ずつ反復深化する。時間指定がない場合は、目標深さの偶奇に合わせて通常5または6から2手ずつ進む。時間切れでは最後に完了した反復の結果を返す。
+ - `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。モデルに校正があれば、その前に元実装と同じ選択性の段階で準備探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
+ - 選択率を下げた `Goal::Endgame` はMPCを使う終盤探索で、完全読みの保証を持たない。
+ - 中断した完全読み要求の結果は、準備段階の `Depth` や選択的な `Endgame` になることがある。完全読みかどうかは `result.is_solved()` で判定する。
+diff --git a/deft-reversi-engine/examples/gtp.rs b/deft-reversi-engine/examples/gtp.rs
+index 1e7048b..90a9efa 100644
+--- a/deft-reversi-engine/examples/gtp.rs
++++ b/deft-reversi-engine/examples/gtp.rs
+@@ -1,7 +1,14 @@
+ //! A minimal GTP front end for matches against Edax and Egaroucid
+ //! (`tools/bench/match.py`).
+ //!
+-//! usage: gtp MODEL (--level N | --game-ms MS) [--tt MIB]
++//! usage: gtp MODEL (--level N | --game-ms MS | --move-ms MS) [--tt MIB]
++//! Fixed-move mode: [--mid-selectivity P] [--endgame-empties N] [--endgame-ms MS].
++//! --mid-sigma T overrides the midgame deviation multiple for tuning. Custom
++//! percentages use the 85% stage tag; telemetry reports both labels.
++//! It uses Depth(60) above N empties and Endgame/Full at or below N.
++//! --horizon-endgame true replaces that fixed boundary with timed depths
++//! 1..empties-1, then Endgame/99 and Endgame/Full, sharing time and TT.
++//! DEFT_GTP_JSON=1 writes move/iteration telemetry to stderr.
+ //!
+ //! With `--level`, every move is a `Goal::Level(N)` search. With
+ //! `--game-ms`, each side has MS milliseconds for the game (or what
+@@ -10,7 +17,8 @@
+ //! solved in a small part of the time), searched as `Goal::Level(60)` with
+ //! that time limit, which plays the best move of the last completed iteration.
+ use deft_reversi_engine::{
+-    Action, Color, Engine, EngineOptions, Goal, Model, Position, SearchRequest,
++    Action, Color, Engine, EngineError, EngineOptions, Goal, Model, Position, ProbCutRule,
++    ProbCutSigmas, ResultKind, SearchRequest, Selectivity,
+ };
+ use std::{
+     io::{self, BufRead, Write},
+@@ -20,6 +28,51 @@ use std::{
+ enum Mode {
+     Level(u8),
+     Time { remaining: Duration },
++    Move { budget: Duration },
++}
++
++fn selectivity(percent: u8) -> Result<Selectivity, String> {
++    match percent {
++        68 => Ok(Selectivity::Percent68),
++        77 => Ok(Selectivity::Percent77),
++        85 => Ok(Selectivity::Percent85),
++        95 => Ok(Selectivity::Percent95),
++        98 => Ok(Selectivity::Percent98),
++        99 => Ok(Selectivity::Percent99),
++        100 => Ok(Selectivity::Full),
++        1..=99 => Ok(Selectivity::Percent85),
++        _ => Err("unsupported selectivity".into()),
++    }
++}
++
++struct MidgameCalibration {
++    rules: Vec<ProbCutRule>,
++    original: ProbCutSigmas,
++    sigma: f64,
++    stage: usize,
++}
++
++impl MidgameCalibration {
++    fn apply(&self, engine: &mut Engine) -> Result<(), EngineError> {
++        let mut sigmas = self.original;
++        // Preserve every endgame multiple and all other midgame stages.
++        sigmas.midgame[self.stage] = self.sigma;
++        engine.set_probcut_calibration(self.rules.clone(), sigmas)
++    }
++
++    fn restore(&self, engine: &mut Engine) -> Result<(), EngineError> {
++        engine.set_probcut_calibration(self.rules.clone(), self.original)
++    }
++}
++
++fn kind_fields(kind: Option<ResultKind>) -> (Option<u8>, Option<u8>, bool) {
++    match kind {
++        Some(ResultKind::Depth { depth, selectivity }) => {
++            (Some(depth), Some(selectivity.percent()), false)
++        }
++        Some(ResultKind::Endgame { selectivity }) => (None, Some(selectivity.percent()), true),
++        None => (None, None, false),
++    }
+ }
+ 
+ fn color(s: &str) -> Option<Color> {
+@@ -52,6 +105,7 @@ const SOLVE_EMPTIES: u8 = 20;
+ fn request_budget(mode: &Mode, pos: &Position) -> Duration {
+     match mode {
+         Mode::Level(_) => Duration::ZERO,
++        Mode::Move { budget } => *budget,
+         // Positions with SOLVE_EMPTIES or fewer empties are solved in a small
+         // part of the time, so the time is spread over this side's moves
+         // before them: (empties - SOLVE_EMPTIES) / 2 + 1 moves.
+@@ -67,9 +121,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+     let model = Model::from_file(&args[1])?;
+     let mut mode = None;
+     let mut tt = 64;
++    let mut mid_selectivity = Selectivity::Percent85;
++    let mut mid_percent = 85u8;
++    let mut mid_sigma: Option<f64> = None;
++    let mut horizon_endgame = false;
++    let mut endgame_empties = 18u8;
++    let mut endgame_budget = Duration::from_millis(25);
+     let mut i = 2;
+     while i < args.len() {
+         match args[i].as_str() {
++            "--move-ms" => {
++                mode = Some(Mode::Move {
++                    budget: Duration::from_millis(args[i + 1].parse()?),
++                })
++            }
++            "--mid-selectivity" => {
++                mid_percent = args[i + 1].parse()?;
++                mid_selectivity = selectivity(mid_percent)?;
++            }
++            "--horizon-endgame" => horizon_endgame = args[i + 1].parse()?,
++            "--mid-sigma" => mid_sigma = Some(args[i + 1].parse()?),
++            "--endgame-empties" => endgame_empties = args[i + 1].parse()?,
++            "--endgame-ms" => endgame_budget = Duration::from_millis(args[i + 1].parse()?),
+             "--level" => mode = Some(Mode::Level(args[i + 1].parse()?)),
+             "--game-ms" => {
+                 mode = Some(Mode::Time {
+@@ -81,13 +154,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+         }
+         i += 2;
+     }
+-    let mut mode = mode.ok_or("give --level or --game-ms")?;
++    let mut mode = mode.ok_or("give --level, --game-ms or --move-ms")?;
++    if (mid_sigma.is_some() && mid_selectivity == Selectivity::Full)
++        || mid_sigma.is_some_and(|s| !s.is_finite() || s <= 0.0)
++        || (!matches!(mid_percent, 68 | 77 | 85 | 95 | 98 | 99 | 100) && mid_sigma.is_none())
++        || (mid_sigma.is_some() && !matches!(mode, Mode::Move { .. }))
++    {
++        return Err(
++            "custom probabilities require a positive finite --mid-sigma in --move-ms mode".into(),
++        );
++    }
++    if horizon_endgame && !matches!(mode, Mode::Move { .. }) {
++        return Err("--horizon-endgame requires --move-ms".into());
++    }
++    if endgame_empties > 60
++        || endgame_budget.is_zero()
++        || matches!(mode, Mode::Move { budget } if budget.is_zero())
++    {
++        return Err("invalid empties or zero move budget".into());
++    }
+     let initial_time = match mode {
+         Mode::Time { remaining } => remaining,
+-        Mode::Level(_) => Duration::ZERO,
++        Mode::Level(_) | Mode::Move { .. } => Duration::ZERO,
+     };
++    let mid_calibration = mid_sigma
++        .map(|sigma| -> Result<_, Box<dyn std::error::Error>> {
++            let (rules, original) = model.calibration().ok_or("model has no calibration")?;
++            Ok(MidgameCalibration {
++                rules: rules.to_vec(),
++                original,
++                sigma,
++                stage: mid_selectivity as usize,
++            })
++        })
++        .transpose()?;
+     let mut engine = Engine::new(model, EngineOptions::default().threads(1).tt_mib(tt))?;
++    if let Some(calibration) = &mid_calibration {
++        calibration.apply(&mut engine)?;
++    }
+     let mut pos = Position::initial();
++    let mut entered_endgame = false;
++    let telemetry = std::env::var_os("DEFT_GTP_JSON").is_some();
+     let stdin = io::stdin();
+     let mut out = io::stdout();
+     for line in stdin.lock().lines() {
+@@ -102,10 +209,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+             "boardsize" | "komi" => Ok(String::new()),
+             "clear_board" => {
+                 pos = Position::initial();
++                entered_endgame = false;
+                 if let Mode::Time { remaining } = &mut mode {
+                     *remaining = initial_time;
+                 }
+-                engine.clear_tt().map(|_| String::new()).map_err(|e| e.to_string())
++                let reset = if let Some(calibration) = &mid_calibration {
++                    calibration.apply(&mut engine)
++                } else {
++                    engine.clear_tt()
++                };
++                reset.map(|_| String::new()).map_err(|e| e.to_string())
+             }
+             "time_settings" => match (&mut mode, words.get(1).and_then(|s| s.parse::<f64>().ok())) {
+                 (Mode::Time { remaining }, Some(main)) => {
+@@ -144,7 +257,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+                         Ok("pass".into())
+                     } else {
+                         let start = Instant::now();
+-                        let request = match &mode {
++                        let fixed_endgame = !horizon_endgame && matches!(mode, Mode::Move { .. }) && pos.empty_count() <= endgame_empties;
++                        let reset_tt = fixed_endgame && !entered_endgame;
++                        if reset_tt {
++                            if let Some(calibration) = &mid_calibration {
++                                calibration.restore(&mut engine)?;
++                            } else {
++                                engine.clear_tt()?;
++                            }
++                            entered_endgame = true;
++                        }
++                        let budget = if fixed_endgame { endgame_budget } else { request_budget(&mode, &pos) };
++                        let mut request = match &mode {
++                            Mode::Move { .. } => SearchRequest::new(if fixed_endgame { Goal::Endgame } else { Goal::Depth(60) })
++                                .selectivity(if fixed_endgame { Selectivity::Full } else { mid_selectivity })
++                                .time_limit(budget),
+                             Mode::Level(l) => SearchRequest::new(Goal::Level(*l)),
+                             Mode::Time { .. } => {
+                                 let budget = request_budget(&mode, &pos);
+@@ -152,10 +279,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+                                     .time_limit(budget.max(Duration::from_millis(1)))
+                             }
+                         };
++                        if horizon_endgame {
++                            request = request.endgame_at_horizon();
++                        }
+                         let mut last = (Duration::ZERO, String::new());
++                        let mut iterations = Vec::new();
+                         let result = engine
+                             .search_with(pos, &request, |p| {
+                                 last = (p.elapsed, format!("{:?}", p.kind));
++                                if telemetry {
++                                    let (depth, stage_percent, endgame) = kind_fields(Some(p.kind));
++                                    let percent = if matches!(mode, Mode::Move { .. }) && !fixed_endgame && !endgame { Some(mid_percent) } else { stage_percent };
++                                    iterations.push(serde_json::json!({
++                                        "depth": depth, "percent": percent, "endgame": endgame,
++                                        "stage_percent": stage_percent,
++                                        "elapsed_ms": p.elapsed.as_secs_f64() * 1000.0,
++                                        "nodes": p.nodes, "tries": p.stats.probcut_tries,
++                                        "searches": p.stats.probcut_searches, "cuts": p.stats.probcut_cuts,
++                                    }));
++                                }
+                             })
+                             .map_err(|e| e.to_string());
+                         if std::env::var_os("DEFT_GTP_LOG").is_some() {
+@@ -173,6 +315,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+                         }
+                         match result {
+                             Ok(r) => {
++                                if telemetry {
++                                    let (depth, stage_percent, endgame) = kind_fields(r.kind);
++                                    let percent = if matches!(mode, Mode::Move { .. }) && !fixed_endgame && !endgame { Some(mid_percent) } else { stage_percent };
++                                    eprintln!("{}", serde_json::json!({
++                                        "empties": pos.empty_count(), "phase": if fixed_endgame || (horizon_endgame && endgame) { "endgame" } else { "midgame" },
++                                        "horizon_endgame": horizon_endgame,
++                                        "budget_ms": budget.as_secs_f64() * 1000.0, "reset_tt": reset_tt,
++                                        "wall_ms": start.elapsed().as_secs_f64() * 1000.0,
++                                        "search_ms": r.elapsed.as_secs_f64() * 1000.0,
++                                        "depth": depth, "percent": percent, "endgame": endgame,
++                                        "stage_percent": stage_percent,
++                                        "mid_sigma": if fixed_endgame { None } else { mid_sigma },
++                                        "solved": r.is_solved(), "stop": format!("{:?}", r.stop_reason),
++                                        "tries": r.stats.probcut_tries, "searches": r.stats.probcut_searches,
++                                        "cuts": r.stats.probcut_cuts, "iterations": iterations,
++                                    }));
++                                }
+                                 let action = r.best_move.unwrap_or(Action::Pass);
+                                 apply(&mut pos, side, action).map(|_| action.to_string().to_lowercase())
+                             }
+@@ -196,3 +355,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+     }
+     Ok(())
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use deft_reversi_engine::{PatternModel, legacy_main_rules};
++
++    #[test]
++    fn custom_midgame_calibration_restores_the_original_endgame_settings() {
++        let rules = legacy_main_rules();
++        let model = Model::from_pattern(PatternModel::zero())
++            .with_calibration(rules.clone(), ProbCutSigmas::NORMAL)
++            .unwrap();
++        let mut engine = Engine::new(model, EngineOptions::default().tt_mib(1)).unwrap();
++        let mut original = Vec::new();
++        engine.write_analysis_settings(&mut original).unwrap();
++        let custom = MidgameCalibration {
++            rules,
++            original: ProbCutSigmas::NORMAL,
++            sigma: 1.7,
++            stage: Selectivity::Percent85 as usize,
++        };
++        custom.apply(&mut engine).unwrap();
++        let mut changed = Vec::new();
++        engine.write_analysis_settings(&mut changed).unwrap();
++        assert_ne!(changed, original);
++        let mut expected_sigmas = ProbCutSigmas::NORMAL;
++        expected_sigmas.midgame[Selectivity::Percent85 as usize] = 1.7;
++        let expected_model = Model::from_pattern(PatternModel::zero())
++            .with_calibration(legacy_main_rules(), expected_sigmas)
++            .unwrap();
++        let expected_engine =
++            Engine::new(expected_model, EngineOptions::default().tt_mib(1)).unwrap();
++        let mut expected = Vec::new();
++        expected_engine
++            .write_analysis_settings(&mut expected)
++            .unwrap();
++        assert_eq!(changed, expected);
++        custom.restore(&mut engine).unwrap();
++        let mut restored = Vec::new();
++        engine.write_analysis_settings(&mut restored).unwrap();
++        assert_eq!(restored, original);
++        custom.apply(&mut engine).unwrap();
++        let mut next_game = Vec::new();
++        engine.write_analysis_settings(&mut next_game).unwrap();
++        assert_eq!(next_game, changed);
++    }
++}
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index bafac73..117e89b 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -172,6 +172,18 @@ impl Engine {
+                 (mode, selectivity, Some(level))
+             }
+         };
++        if request.endgame_at_horizon
++            && (!matches!(request.goal, Goal::Depth(_)) || request.time_limit.is_none())
++        {
++            return Err(EngineError::InvalidRequest(
++                "endgame at horizon requires a timed Depth request",
++            ));
++        }
++        if request.endgame_at_horizon && self.calibration.is_empty() {
++            return Err(EngineError::InvalidCalibration(
++                "99% endgame requires model-specific calibration",
++            ));
++        }
+         if selectivity != Selectivity::Full && self.calibration.is_empty() {
+             return Err(EngineError::InvalidCalibration(
+                 "ProbCut requires model-specific calibration",
+@@ -182,6 +194,7 @@ impl Engine {
+             mode,
+             selectivity,
+             level,
++            endgame_at_horizon: request.endgame_at_horizon,
+             time_limit: request.time_limit,
+             node_limit: request.node_limit,
+             all_moves: request.all_moves,
+@@ -283,12 +296,15 @@ impl Engine {
+             last = Some(iteration);
+             // Helpers merge their counters when they finish.
+             runtime.drain();
++            let mut stats = context.stats.clone();
++            stats.merge(&parallel::lock(&runtime.stats));
+             on_progress(&Progress {
+                 kind: result.kind.unwrap(),
+                 score: line.score,
+                 best_move: result.best_move,
+                 pv: result.pv.clone(),
+-                nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
++                nodes: stats.nodes,
++                stats,
+                 elapsed: start.elapsed(),
+             });
+         }
+@@ -370,6 +386,46 @@ impl Engine {
+             SearchMode::Depth(d) => d.min(board.empty_count()),
+             SearchMode::Exact | SearchMode::SelectiveEndgame => board.empty_count(),
+         };
++        if job.endgame_at_horizon {
++            let reaches_end = target == board.empty_count();
++            let mid_target = if reaches_end {
++                target.saturating_sub(1)
++            } else {
++                target
++            };
++            let mut iterations: Vec<_> = if mid_target == 0 {
++                Vec::new()
++            } else {
++                iterative_depths(mid_target, true)
++                    .into_iter()
++                    .map(|depth| Iteration {
++                        depth,
++                        exact: false,
++                        sigma: target_sigma,
++                        quality: if target_sigma.is_some() {
++                            job.selectivity as u8 + 1
++                        } else {
++                            0
++                        },
++                    })
++                    .collect()
++            };
++            if reaches_end {
++                for selectivity in [Selectivity::Percent99, Selectivity::Full] {
++                    iterations.push(Iteration {
++                        depth: target,
++                        exact: true,
++                        sigma: selectivity.sigma(),
++                        quality: if selectivity == Selectivity::Full {
++                            0
++                        } else {
++                            selectivity as u8 + 1
++                        },
++                    });
++                }
++            }
++            return iterations;
++        }
+         let exact = matches!(job.mode, SearchMode::Exact | SearchMode::SelectiveEndgame);
+         let depths = if exact {
+             // Match the reference's endgame preparation depth and two-ply steps.
+@@ -378,9 +434,9 @@ impl Engine {
+                 .clamp(2, 24)
+                 .min(target)
+                 .min(job.level.unwrap_or(60));
+-            iterative_depths(warmup)
++            iterative_depths(warmup, job.time_limit.is_some())
+         } else {
+-            iterative_depths(target)
++            iterative_depths(target, job.time_limit.is_some())
+         };
+         let calibrated = !self.calibration.is_empty();
+         let target_stage = job.selectivity as u8;
+@@ -436,6 +492,7 @@ struct Job {
+     selectivity: Selectivity,
+     /// Set for `Goal::Level`; it also caps the endgame preparation depth.
+     level: Option<u8>,
++    endgame_at_horizon: bool,
+     time_limit: Option<Duration>,
+     node_limit: Option<u64>,
+     all_moves: bool,
+@@ -520,11 +577,15 @@ impl Iteration {
+     }
+ }
+ 
+-/// Reference solver: begin at 5/6 when possible, retaining target parity.
+-fn iterative_depths(target: u8) -> Vec<u8> {
++/// Timed searches complete each depth from one; otherwise retain the
++/// reference solver's two-ply steps and target parity.
++fn iterative_depths(target: u8, timed: bool) -> Vec<u8> {
+     if target <= 1 {
+         return vec![target];
+     }
++    if timed {
++        return (1..=target).collect();
++    }
+     let start = (6 - (target & 1)).min(target - 2);
+     let start = if start == 0 { 2 - (target & 1) } else { start };
+     (start..=target).step_by(2).collect()
+diff --git a/deft-reversi-engine/src/search/api.rs b/deft-reversi-engine/src/search/api.rs
+index 5ccb8ac..b514ecf 100644
+--- a/deft-reversi-engine/src/search/api.rs
++++ b/deft-reversi-engine/src/search/api.rs
+@@ -116,6 +116,7 @@ pub struct SearchRequest {
+     pub(super) time_limit: Option<Duration>,
+     pub(super) node_limit: Option<u64>,
+     pub(super) all_moves: bool,
++    pub(super) endgame_at_horizon: bool,
+     pub(super) stop: StopHandle,
+ }
+ impl SearchRequest {
+@@ -126,6 +127,7 @@ impl SearchRequest {
+             time_limit: None,
+             node_limit: None,
+             all_moves: false,
++            endgame_at_horizon: false,
+             stop: StopHandle::new(),
+         }
+     }
+@@ -135,7 +137,17 @@ impl SearchRequest {
+         self.selectivity = Some(selectivity);
+         self
+     }
++    /// Experimental timed-Depth schedule: deepen to one ply before the
++    /// remaining empties, then search the endgame at 99% and 100% only.
++    /// All iterations share the deadline and tables. Requires calibration.
++    #[cfg(feature = "tuning")]
++    pub fn endgame_at_horizon(mut self) -> Self {
++        self.endgame_at_horizon = true;
++        self
++    }
+     /// Stops after this much time, returning the last completed iteration.
++    /// Evaluation iterations deepen one ply at a time from depth one,
++    /// including preparation before an endgame solve.
+     pub fn time_limit(mut self, limit: Duration) -> Self {
+         self.time_limit = Some(limit);
+         self
+@@ -182,6 +194,8 @@ pub struct SearchStats {
+     /// Sum of join time across masters; includes time spent helping descendants.
+     pub join_time: Duration,
+     pub probcut_tries: u64,
++    /// Shallow verification searches actually run, after the static precheck.
++    pub probcut_searches: u64,
+     pub probcut_cuts: u64,
+     pub stability_cuts: u64,
+ }
+@@ -199,6 +213,7 @@ impl SearchStats {
+         self.worker_dispatches += other.worker_dispatches;
+         self.join_time += other.join_time;
+         self.probcut_tries += other.probcut_tries;
++        self.probcut_searches += other.probcut_searches;
+         self.probcut_cuts += other.probcut_cuts;
+         self.stability_cuts += other.stability_cuts;
+     }
+@@ -263,6 +278,8 @@ pub struct Progress {
+     pub pv: Vec<Action>,
+     /// Nodes so far, across all threads.
+     pub nodes: u64,
++    /// Cumulative counters through this completed iteration, across all threads.
++    pub stats: SearchStats,
+     pub elapsed: Duration,
+ }
+ 
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index 754acdf..9836271 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -612,6 +612,7 @@ impl Context {
+             ((f64::from(beta) - rule.intercept + sigma * rule.deviation) / rule.slope).ceil();
+         if high < 64.0 && predicted >= high - upper_margin {
+             let bound = high.max(-64.0) as i32;
++            self.stats.probcut_searches += 1;
+             let score = self.probcut_shallow(board, state, bound - 1, bound, rule.shallow_depth)?;
+             if score >= bound {
+                 self.stats.probcut_cuts += 1;
+@@ -622,6 +623,7 @@ impl Context {
+             ((f64::from(alpha) - rule.intercept - sigma * rule.deviation) / rule.slope).floor();
+         if low > -64.0 && predicted <= low + PROBCUT_LOWER_MARGIN {
+             let bound = low.min(64.0) as i32;
++            self.stats.probcut_searches += 1;
+             let score = self.probcut_shallow(board, state, bound, bound + 1, rule.shallow_depth)?;
+             if score <= bound {
+                 self.stats.probcut_cuts += 1;
+diff --git a/deft-reversi-engine/tests/search.rs b/deft-reversi-engine/tests/search.rs
+index 4078692..6b001e9 100644
+--- a/deft-reversi-engine/tests/search.rs
++++ b/deft-reversi-engine/tests/search.rs
+@@ -419,6 +419,53 @@ fn all_moves_scores_every_move_exactly() {
+     assert!(result.moves.is_empty());
+ }
+ 
++#[test]
++fn timed_searches_complete_every_depth_and_preserve_selectivity() {
++    let mut engine = engine(1);
++    for (target, timed, expected) in [
++        (5, true, vec![1, 2, 3, 4, 5]),
++        (6, true, vec![1, 2, 3, 4, 5, 6]),
++        (5, false, vec![3, 5]),
++        (6, false, vec![4, 6]),
++    ] {
++        engine.clear_tt().unwrap();
++        let mut request = depth(target).selectivity(Selectivity::Percent85);
++        if timed {
++            request = request.time_limit(Duration::from_secs(60));
++        }
++        let mut depths = Vec::new();
++        let result = engine
++            .search_with(Board::new(), &request, |progress| {
++                let ResultKind::Depth { depth, selectivity } = progress.kind else {
++                    panic!("expected midgame iteration");
++                };
++                assert_eq!(selectivity, Selectivity::Percent85);
++                depths.push(depth);
++            })
++            .unwrap();
++        assert_eq!(result.stop_reason, StopReason::Completed);
++        assert_eq!(depths, expected);
++    }
++}
++
++#[test]
++fn timed_endgame_preparation_deepens_one_ply_and_still_solves_exactly() {
++    let board = position(3, 6);
++    let mut engine = engine(1);
++    let mut depths = Vec::new();
++    let result = engine
++        .search_with(board, &exact().time_limit(Duration::from_secs(60)), |p| {
++            if let ResultKind::Depth { depth, selectivity } = p.kind {
++                assert_eq!(selectivity, Selectivity::Percent85);
++                depths.push(depth);
++            }
++        })
++        .unwrap();
++    assert_eq!(depths, vec![1, 2]);
++    assert!(result.is_solved());
++    assert_eq!(result.score, Some(reference(board)));
++}
++
+ #[test]
+ fn progress_reports_each_completed_iteration() {
+     let mut engine = engine(2);
+@@ -433,6 +480,11 @@ fn progress_reports_each_completed_iteration() {
+     assert_eq!(Some(last.score), result.score);
+     assert!(reports.windows(2).all(|w| w[0].nodes <= w[1].nodes));
+     assert!(last.nodes <= result.stats.nodes);
++    for p in &reports {
++        assert_eq!(p.nodes, p.stats.nodes);
++        assert!(p.stats.probcut_cuts <= p.stats.probcut_searches);
++        assert!(p.stats.probcut_searches <= result.stats.probcut_searches);
++    }
+     // After a forced pass the reports are for the side that passes.
+     let passing = Board::from_bits(2, 1).unwrap();
+     let mut seen = Vec::new();
+@@ -557,3 +609,65 @@ fn probcut_sigmas_set_the_cut_distance() {
+         ));
+     }
+ }
++
++#[test]
++fn timed_horizon_changes_to_only_99_then_full_before_terminal_depth() {
++    let board = position(31, 6);
++    let request = depth(60)
++        .selectivity(Selectivity::Percent85)
++        .time_limit(Duration::from_secs(5))
++        .endgame_at_horizon();
++    let mut stages = Vec::new();
++    let result = engine(1)
++        .search_with(board, &request, |p| stages.push(p.kind))
++        .unwrap();
++    let mut expected: Vec<_> = (1..board.empty_count())
++        .map(|depth| ResultKind::Depth {
++            depth,
++            selectivity: Selectivity::Percent85,
++        })
++        .collect();
++    expected.extend([
++        ResultKind::Endgame {
++            selectivity: Selectivity::Percent99,
++        },
++        ResultKind::Endgame {
++            selectivity: Selectivity::Full,
++        },
++    ]);
++    assert_eq!(stages, expected);
++    assert!(result.is_solved());
++    assert_eq!(result.score, Some(reference(board)));
++}
++
++#[test]
++fn interrupted_horizon_keeps_last_completed_99_stage() {
++    let board = position(32, 6);
++    let request = depth(60)
++        .selectivity(Selectivity::Percent85)
++        .time_limit(Duration::from_secs(5))
++        .endgame_at_horizon();
++    let stop = request.stop_handle();
++    let mut last_score = None;
++    let result = engine(1)
++        .search_with(board, &request, |p| {
++            if p.kind
++                == (ResultKind::Endgame {
++                    selectivity: Selectivity::Percent99,
++                })
++            {
++                last_score = Some(p.score);
++                stop.stop();
++            }
++        })
++        .unwrap();
++    assert!(last_score.is_some());
++    assert_eq!(result.score, last_score);
++    assert_eq!(
++        result.kind,
++        Some(ResultKind::Endgame {
++            selectivity: Selectivity::Percent99
++        })
++    );
++    assert!(!result.is_solved());
++}
+diff --git a/docs/benchmarks/README.md b/docs/benchmarks/README.md
+index 00d2eb7..70ff39f 100644
+--- a/docs/benchmarks/README.md
++++ b/docs/benchmarks/README.md
+@@ -6,6 +6,7 @@
+ 
+ | フォルダ | 内容 |
+ |---|---|
++| [2026-11-08-midgame-mpc](2026-11-08-midgame-mpc/README.md) | 空き19以上のMPC選択確率：予備測定・600局、6候補の総当たり、77〜95%の実測倍率による再比較 |
+ | [2026-10-24](2026-10-24/README.md) | リライト検証・性能測定（2026-10-24） |
+ | [2026-10-24-endgame-restore](2026-10-24-endgame-restore/README.md) | 元実装を参照した終盤探索の復元 |
+ | [2026-10-24-ffo40-49](2026-10-24-ffo40-49/README.md) | FFO 40〜49 単スレッド比較 |
+@@ -58,3 +59,4 @@
+ | [2026-11-07-ffo-engines](2026-11-07-ffo-engines/README.md) | FFO 40〜59：1スレッドと20スレッドで Edax・Egaroucid と比較（2026-11-07） |
+ | [2026-11-07-mpc-1000](2026-11-07-mpc-1000/README.md) | MPC を1,000局面で校正したモデルの速さ（2026-11-07） |
+ | [2026-11-07-parallel](2026-11-07-parallel/README.md) | 多スレッドの完全読み：分割の下限をスレッド数と段階で変える（2026-11-07） |
++| [2026-11-09-midgame-mpc-79-87](2026-11-09-midgame-mpc-79-87/README.md) | 中盤MPC 79〜87%、深さ＝空き数で終盤99→100%、2,000局 |
+diff --git a/tools/bench/README.md b/tools/bench/README.md
+index f86ebc5..da68297 100644
+--- a/tools/bench/README.md
++++ b/tools/bench/README.md
+@@ -59,6 +59,35 @@ DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=tools/bench/positions/xot-openingslar
+ 
+ 使い方の詳細はファイルの先頭にあります。
+ 
++## 中盤MPCの同時間対局：[mpc_match.py](mpc_match.py)
++
++同じPENモデルで、中盤の選択確率だけを変えて自己対戦します。XOTから開始し、既定では空き19以上を `Depth(60)`、空き18以下を共通の `Endgame/Full` で探索します。各手の時間を固定し、終盤は別の短い上限を使います。1スレッド・TT 64 MiB・CPU固定で1局ずつ実行します。
++
++```sh
++python3 tools/bench/mpc_match.py --out OUT --openings 4 --budgets 25,100 \
++  --candidates 68,95,99,100 --baseline 85 --endgame-empties 18 --endgame-ms 25 --cpu 2
++```
++
++確率ごとに同じ開局を先後交換して対戦します。時間制限付きの反復深化は深さ1から1手刻みです。最初の終盤探索前は両側ともTTを消去します。モデル・実行ファイル・開局・設定をmanifestに保存し、同じコマンドで再開できます。設定やファイルのハッシュが変わる場合は別の出力先にします。
++
++`games.tsv` は対局結果、`logs/*.jsonl` は各手と完了反復の時間・MPCカウンタ、`summary.json` は得点率と開局の先後ペア単位のbootstrap区間、時間・深さの集計です。区間は少数開局では不安定なので、予備測定の順位を採用判断には使いません。境界や選択確率の適用違反、完了反復のない着手があれば止まります。
++
++完了後に `python3 tools/bench/mpc_report.py OUT` を実行すると、追加対戦なしで時間・完了深さの最小／最大／平均／中央値、目標到達率、終盤の読み切り数などを `move-statistics.tsv`・`move-statistics.md`・`diagnostics.json` に集計します。基準側の着手は全対戦相手を合算します。
++
++`--round-robin` を付けると `--candidates` の全候補で総当たりにします（`--baseline` は使いません）。6候補・100開局なら15組×100開局×先後2局＝3,000局です。各開局で組み合わせの順を回します。`summary.json` は組ごとの結果、`tournament.json` は全相手に対する総合得点率と開局単位のbootstrap区間です。総当たりでは1つの開局における全相手・先後の結果を1つの組として区間を求めます。
++
++`--mid-sigmas FILE.json` で校正済みの任意の中盤確率を比較できます。倍率は [mpc_sigmas.py](mpc_sigmas.py) で、モデルと完全に一致する `rules.json` と `positions.tsv` から実測分位点として求めます。元の6段階の倍率が再現することも検証します。実験用GTPは `--mid-sigma` を受け取り、終盤へ切り替える前に元モデルの校正を復元します。任意確率の内部段階タグは85%を使い、ログには実効確率 `percent` と段階タグ `stage_percent` を別に記録します。
++
++`--report-on-completion` を指定すると、対局後に各手の検証・時間と深さの集計・`results.md` の出力まで自動で実行します。全処理が成功した時点で `completion.json` を保存します。状態確認にはこのファイルと `games.tsv` を使います。
++
++85%を含む完了済みの総当たりでは、`python3 tools/bench/mpc_detailed_report.py OUT` で `details/` に詳細レポート・CSVを出力できます。棋譜の再生と全着手の盤面照合、先後別・開局別・空き数別の集計、85%との差の共通開局bootstrapと多重比較調整、全着手・全完了反復の圧縮CSVを含みます。追加探索は行いません。`summary-data.zip` は軽量集計版、`detailed-data.zip` は生データ込みです。
++
++```sh
++python3 tools/bench/mpc_match.py --out OUT --round-robin \
++  --candidates 68,77,95,98,99,100 --openings 100 --seed 3 --budgets 100 \
++  --endgame-empties 18 --endgame-ms 25 --cpu 2
++```
++
+ ## 局面
+ 
+ | ファイル | 中身 |
+@@ -79,3 +108,14 @@ DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=tools/bench/positions/xot-openingslar
+ ```sh
+ python3 -m unittest discover -s tools/bench/tests
+ ```
++
++`--horizon-endgame` を指定した比較では、深さ1から空き数−1まで中盤探索を行い、空き数に達する反復を終盤99%→100%に置き換えます。両段階は中盤と同じ着手予算とTTを共有します。このモードでは `--endgame-empties`・`--endgame-ms` は使いません。中盤用の校正値だけを差し替え、終盤の校正値はモデルのものを維持します。時間切れでは最後に完了した反復を採用します。
++
++```sh
++python3 tools/bench/mpc_match.py --out OUT --round-robin \
++  --candidates 79,81,83,85,87 --mid-sigmas SIGMAS.json \
++  --openings 100 --seed 5 --budgets 100 --horizon-endgame \
++  --cpu 2 --report-on-completion
++```
++
++このモードでは `horizon-statistics.tsv`・`.md` に全着手を合算した時間・完了深さの分布、終盤99%と100%の完了件数、採用した結果の内訳を出力します。`phase` は最後に完了した反復の種類を表し、終盤結果の着手にも中盤反復の時間が含まれます。
+diff --git a/tools/bench/mpc_match.py b/tools/bench/mpc_match.py
+new file mode 100644
+index 0000000..5b7b799
+--- /dev/null
++++ b/tools/bench/mpc_match.py
+@@ -0,0 +1,323 @@
++#!/usr/bin/env python3
++"""Fixed-time midgame MPC self-play, sequential on one CPU.
++
++python3 tools/bench/mpc_match.py --out OUT --openings 4 --budgets 25,100
++Candidates play a baseline with colours swapped on identical XOT openings.
++Only roots above --endgame-empties use the candidate selectivity. Endgame
++requests, their time cap, and the TT reset at the boundary are shared.
++"""
++import argparse
++import csv
++import hashlib
++import json
++import math
++import os
++import random
++import statistics
++import subprocess
++import time
++from itertools import combinations
++from pathlib import Path
++
++from common import POSITIONS, REPO, paths
++from match import Gtp, play_game, xot
++
++
++def sha256(path):
++    with open(path, "rb") as f:
++        return hashlib.file_digest(f, "sha256").hexdigest()
++
++
++def percentile(values, fraction):
++    values = sorted(values)
++    return values[round((len(values) - 1) * fraction)] if values else None
++
++
++def validate_moves(rows, percent, budget, endgame_empties, endgame_ms, mid_sigma=None, horizon_endgame=False):
++    if not rows:
++        raise RuntimeError("missing move telemetry")
++    if horizon_endgame:
++        for row in rows:
++            iterations = row["iterations"]
++            if (row["budget_ms"] != budget or row["reset_tt"]
++                    or not row.get("horizon_endgame") or not iterations
++                    or row["stop"] == "WorkerFailed"
++                    or row.get("mid_sigma") != mid_sigma):
++                raise RuntimeError("invalid shared-budget horizon search")
++            expected_depth = 1
++            end_stages = []
++            previous_ms = -1
++            for iteration in iterations:
++                if iteration["elapsed_ms"] < previous_ms:
++                    raise RuntimeError("iteration clock restarted")
++                previous_ms = iteration["elapsed_ms"]
++                if iteration["endgame"]:
++                    if expected_depth != row["empties"]:
++                        raise RuntimeError("endgame before depth reaches empties")
++                    end_stages.append(iteration["percent"])
++                    if end_stages != [99, 100][:len(end_stages)] or len(end_stages) > 2:
++                        raise RuntimeError("endgame must be 99 then 100")
++                else:
++                    if (end_stages or iteration["depth"] != expected_depth
++                            or expected_depth >= row["empties"] or iteration["percent"] != percent):
++                        raise RuntimeError("incorrect midgame depth/selectivity")
++                    expected_depth += 1
++            last = iterations[-1]
++            if (row["endgame"] != last["endgame"] or row["depth"] != last["depth"]
++                    or row["percent"] != last["percent"]
++                    or row["solved"] != (end_stages == [99, 100])
++                    or row["phase"] != ("endgame" if end_stages else "midgame")):
++                raise RuntimeError("result differs from last completed iteration")
++        return
++    end_rows = []
++    for row in rows:
++        end = row["empties"] <= endgame_empties
++        if row["phase"] != ("endgame" if end else "midgame"):
++            raise RuntimeError("incorrect phase boundary")
++        if row["budget_ms"] != (endgame_ms if end else budget):
++            raise RuntimeError("incorrect move budget")
++        if row["stop"] == "WorkerFailed" or not row["iterations"]:
++            raise RuntimeError("worker failure or no completed iteration")
++        if not end:
++            if mid_sigma is not None and row.get("mid_sigma") != mid_sigma:
++                raise RuntimeError("incorrect experimental midgame multiple")
++            if row["reset_tt"] or row["endgame"] or any(
++                p["endgame"] or p["percent"] != percent for p in row["iterations"]
++            ):
++                raise RuntimeError("midgame settings changed during search")
++        else:
++            if mid_sigma is not None and row.get("mid_sigma") is not None:
++                raise RuntimeError("experimental midgame multiple leaked into endgame")
++            end_rows.append(row)
++    if end_rows and [r["reset_tt"] for r in end_rows] != [True] + [False] * (len(end_rows) - 1):
++        raise RuntimeError("endgame TT reset must happen exactly once per engine/game")
++
++
++def telemetry_summary(rows):
++    mid = [r for r in rows if r["phase"] == "midgame"]
++    end = [r for r in rows if r["phase"] == "endgame"]
++    last_has_searches = 0
++    for r in mid:
++        it = r["iterations"]
++        last_has_searches += it[-1]["searches"] > (it[-2]["searches"] if len(it) > 1 else 0)
++    return {
++        "mid_moves": len(mid),
++        "mean_depth": statistics.mean(r["depth"] for r in mid) if mid else None,
++        "mid_search_ms_median": percentile([r["search_ms"] for r in mid], .5),
++        "mid_search_ms_p95": percentile([r["search_ms"] for r in mid], .95),
++        "mid_search_ms_max": max((r["search_ms"] for r in mid), default=None),
++        "mid_wall_ms_p95": percentile([r["wall_ms"] for r in mid], .95),
++        "mid_wall_ms_max": max((r["wall_ms"] for r in mid), default=None),
++        "last_iteration_mpc_moves": last_has_searches,
++        "mid_cuts": sum(r["cuts"] for r in mid),
++        "mid_verification_searches": sum(r["searches"] for r in mid),
++        "mean_last_done_ms": statistics.mean(r["iterations"][-1]["elapsed_ms"] for r in mid) if mid else None,
++        "end_moves": len(end),
++        "end_solved": sum(r["solved"] for r in end),
++        "end_search_ms_p95": percentile([r["search_ms"] for r in end], .95),
++        "end_wall_ms_max": max((r["wall_ms"] for r in end), default=None),
++    }
++
++
++def pairings(candidates, baseline, round_robin):
++    return list(combinations(candidates, 2)) if round_robin else [(p, baseline) for p in candidates]
++
++
++def tournament_scores(games):
++    players = {}
++    matrix = {}
++    for game in games:
++        left, right = int(game["candidate"]), int(game["opponent"])
++        diff = int(game["diff"])
++        for player, opponent, d in [(left, right, diff), (right, left, -diff)]:
++            data = players.setdefault(player, {"diffs": [], "openings": {}})
++            data["diffs"].append(d)
++            score = (d > 0) + .5 * (d == 0)
++            data["openings"].setdefault(game["opening"], []).append(score)
++            matrix.setdefault((player, opponent), []).append(score)
++    result = []
++    for player, data in sorted(players.items()):
++        diffs = data["diffs"]
++        opening_scores = [statistics.mean(s) for s in data["openings"].values()]
++        rng = random.Random(1)
++        boot = [statistics.mean(rng.choices(opening_scores, k=len(opening_scores))) for _ in range(4000)]
++        result.append({"percent": player, "games": len(diffs), "wins": sum(d > 0 for d in diffs),
++                       "draws": sum(d == 0 for d in diffs), "losses": sum(d < 0 for d in diffs),
++                       "score": statistics.mean(opening_scores), "mean_diff": statistics.mean(diffs),
++                       "opening_bootstrap_95": [percentile(boot, .025), percentile(boot, .975)],
++                       "opponents": {str(o): {"games": len(s), "score": statistics.mean(s)}
++                                     for (p, o), s in matrix.items() if p == player}})
++    return sorted(result, key=lambda x: (-x["score"], x["percent"]))
++
++
++def summarize(out, games, round_robin=False):
++    groups = {}
++    for game in games:
++        key = (int(game["budget_ms"]), int(game["candidate"]), int(game["opponent"]) if round_robin else None)
++        groups.setdefault(key, []).append(game)
++    report = []
++    for (budget, candidate, opponent), group in sorted(groups.items()):
++        diffs = [int(g["diff"]) for g in group]
++        telemetry = {"candidate": [], "baseline": []}
++        pairs = {}
++        for g in group:
++            pairs.setdefault(g["opening"], []).append((int(g["diff"]) > 0) + .5 * (int(g["diff"]) == 0))
++            for side in telemetry:
++                log = out / "logs" / f'{g["id"]}-{side}.jsonl'
++                telemetry[side].extend(json.loads(line) for line in log.read_text().splitlines())
++        if any(len(pair) != 2 for pair in pairs.values()):
++            raise RuntimeError("incomplete colour pair")
++        pair_scores = [statistics.mean(pair) for pair in pairs.values()]
++        rng = random.Random(1)
++        boot = [statistics.mean(rng.choices(pair_scores, k=len(pair_scores))) for _ in range(2000)]
++        report.append({
++            "budget_ms": budget, "candidate": candidate, "games": len(group),
++            **({"opponent": opponent} if round_robin else {}),
++            "wins": sum(d > 0 for d in diffs), "draws": sum(d == 0 for d in diffs),
++            "losses": sum(d < 0 for d in diffs), "score": statistics.mean(pair_scores),
++            "paired_bootstrap_95": [percentile(boot, .025), percentile(boot, .975)],
++            "mean_diff": statistics.mean(diffs),
++            "mean_game_seconds": statistics.mean(float(g["wall_seconds"]) for g in group),
++            **{side + "_stats": telemetry_summary(rows) for side, rows in telemetry.items()},
++        })
++    (out / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
++    for r in report:
++        label = f' vs p{r["opponent"]}' if round_robin else ""
++        print(f'{r["budget_ms"]}ms p{r["candidate"]}{label}: {r["wins"]}/{r["draws"]}/{r["losses"]}'
++              f' score={r["score"]:.1%} depth={r["candidate_stats"]["mean_depth"]:.2f}'
++              f' vs {r["baseline_stats"]["mean_depth"]:.2f}')
++    if round_robin:
++        scores = tournament_scores(games)
++        (out / "tournament.json").write_text(json.dumps(scores, indent=2) + "\n")
++        for row in scores:
++            print(f'p{row["percent"]}: {row["wins"]}/{row["draws"]}/{row["losses"]} score={row["score"]:.1%}')
++    return report
++
++
++def main():
++    tools = paths()
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--out", type=Path, required=True)
++    parser.add_argument("--gtp", type=Path, default=tools["gtp"])
++    parser.add_argument("--model", type=Path, default=tools["model"])
++    parser.add_argument("--xot", type=Path, default=POSITIONS / "xot-openingslarge.txt")
++    parser.add_argument("--openings", type=int, default=4)
++    parser.add_argument("--seed", type=int, default=1)
++    parser.add_argument("--budgets", default="25,100")
++    parser.add_argument("--candidates", default="68,95,99,100")
++    parser.add_argument("--baseline", type=int, default=85)
++    parser.add_argument("--round-robin", action="store_true", help="play each unordered pair of candidates; baseline is unused")
++    parser.add_argument("--mid-sigmas", type=Path, help="JSON empirical multiples, keyed by probability, under sigmas")
++    parser.add_argument("--report-on-completion", action="store_true", help="also validate and summarize move telemetry before marking completion")
++    parser.add_argument("--horizon-endgame", action="store_true", help="switch at depth=empties to 99 then 100 within the same move budget")
++    parser.add_argument("--endgame-empties", type=int, default=18)
++    parser.add_argument("--endgame-ms", type=int, default=25)
++    parser.add_argument("--cpu", type=int, default=0)
++    args = parser.parse_args()
++    budgets = [int(s) for s in args.budgets.split(",")]
++    candidates = [int(s) for s in args.candidates.split(",")]
++    mid_sigmas = {}
++    if args.mid_sigmas:
++        mid_sigmas = json.loads(args.mid_sigmas.read_text())["sigmas"]
++        if (not isinstance(mid_sigmas, dict) or any(
++                not 1 <= int(k) <= 99 or not math.isfinite(v) or v <= 0 for k, v in mid_sigmas.items())):
++            parser.error("invalid empirical midgame multiples")
++    allowed = {68, 77, 85, 95, 98, 99, 100}
++    allowed.update(int(k) for k in mid_sigmas)
++    if (not candidates or len(set(candidates)) != len(candidates) or not set(candidates) <= allowed
++            or args.baseline not in allowed or (not args.round_robin and args.baseline in candidates)
++            or (args.round_robin and (len(candidates) < 2 or len(budgets) != 1))
++            or not budgets or min(budgets) <= 0 or len(set(budgets)) != len(budgets)
++            or args.openings <= 0 or not 0 <= args.endgame_empties <= 52 or args.endgame_ms <= 0):
++        parser.error("invalid probabilities, budgets, opening count or boundary")
++    if args.cpu not in os.sched_getaffinity(0):
++        parser.error("CPU is outside the process affinity")
++    openings = xot(args.openings, args.xot, args.seed)
++    pairs = pairings(candidates, args.baseline, args.round_robin)
++    settings = {k: str(v.resolve()) if isinstance(v, Path) else v for k, v in vars(args).items() if k != "out"}
++    settings["endgame_policy"] = "at-horizon-99-100-shared-budget" if args.horizon_endgame else "fixed-empties-separate-budget"
++    settings.update({"gtp_sha256": sha256(args.gtp), "model_sha256": sha256(args.model),
++                     "xot_sha256": sha256(args.xot), "runner_sha256": sha256(__file__), "openings_moves": openings})
++    support = [Path(__file__).with_name(name) for name in ("common.py", "match.py", "mpc_report.py", "mpc_sigmas.py")]
++    settings["support_sha256"] = {path.name: sha256(path) for path in support if path.exists()}
++    if args.mid_sigmas:
++        settings.update(mid_sigmas_sha256=sha256(args.mid_sigmas), empirical_mid_sigmas=mid_sigmas)
++    args.out.mkdir(parents=True, exist_ok=True)
++    manifest = args.out / "manifest.json"
++    if manifest.exists():
++        if json.loads(manifest.read_text())["settings"] != settings:
++            raise SystemExit("output settings differ; use a fresh output directory")
++    else:
++        manifest.write_text(json.dumps({"settings": settings,
++            "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
++            "cpu": subprocess.check_output(["lscpu"], text=True),
++        }, indent=2) + "\n")
++        source_diff = subprocess.check_output(["git", "diff"], cwd=REPO)
++        # Newly added measurement helpers are not in plain git diff yet.
++        for path in [Path(__file__), *support]:
++            if path.exists() and subprocess.run(["git", "ls-files", "--error-unmatch", str(path.resolve())],
++                                               cwd=REPO, capture_output=True).returncode:
++                source_diff += subprocess.run(["git", "diff", "--no-index", "--", "/dev/null",
++                    str(path.resolve().relative_to(REPO))], cwd=REPO, capture_output=True).stdout
++        (args.out / "source.diff").write_bytes(source_diff)
++    (args.out / "logs").mkdir(exist_ok=True)
++    result_path = args.out / "games.tsv"
++    games = list(csv.DictReader(result_path.open(), delimiter="\t")) if result_path.exists() else []
++    done = {g["id"] for g in games}
++    os.environ["DEFT_GTP_JSON"] = "1"
++    fields = ["id", "opening", "budget_ms", "candidate", "candidate_color", "diff", "candidate_seconds", "baseline_seconds", "wall_seconds", "moves"]
++    if args.round_robin:
++        fields.append("opponent")
++    with result_path.open("a") as f:
++        writer = csv.DictWriter(f, fields, delimiter="\t")
++        if not games:
++            writer.writeheader()
++        for opening_id, opening in enumerate(openings):
++            for budget in budgets:
++                # Rotate both candidate order and which colour plays first.
++                offset = opening_id % len(pairs)
++                order = pairs[offset:] + pairs[:offset]
++                for candidate, opponent in order:
++                    for black in ([True, False] if opening_id % 2 == 0 else [False, True]):
++                        pair_label = f"-v{opponent}" if args.round_robin else ""
++                        game_id = f"o{opening_id}-t{budget}-p{candidate}{pair_label}-{'b' if black else 'w'}"
++                        if game_id in done:
++                            continue
++                        engines = {}
++                        started = time.monotonic()
++                        try:
++                            for side, percent in [("candidate", candidate), ("baseline", opponent)]:
++                                log = args.out / "logs" / f"{game_id}-{side}.jsonl"
++                                log.write_text("")
++                                extra = ["--mid-sigma", str(mid_sigmas[str(percent)])] if str(percent) in mid_sigmas else []
++                                if args.horizon_endgame:
++                                    extra += ["--horizon-endgame", "true"]
++                                else:
++                                    extra += ["--endgame-empties", str(args.endgame_empties), "--endgame-ms", str(args.endgame_ms)]
++                                engines[side] = Gtp([str(args.gtp), str(args.model), "--move-ms", str(budget),
++                                    "--mid-selectivity", str(percent), "--tt", "64", *extra], args.cpu, log=log)
++                            diff, cs, bs, record = play_game({"deft": engines["candidate"], "opp": engines["baseline"]}, black, opening, "fixed")
++                        finally:
++                            for engine in engines.values():
++                                engine.close()
++                                engine.proc.wait(timeout=5)
++                        for side, percent in [("candidate", candidate), ("baseline", opponent)]:
++                            rows = [json.loads(line) for line in (args.out / "logs" / f"{game_id}-{side}.jsonl").read_text().splitlines()]
++                            validate_moves(rows, percent, budget, args.endgame_empties, args.endgame_ms, mid_sigmas.get(str(percent)), args.horizon_endgame)
++                        game = dict(zip(fields, [game_id, opening_id, budget, candidate, "black" if black else "white",
++                            diff, cs, bs, time.monotonic() - started, record]))
++                        if args.round_robin:
++                            game["opponent"] = opponent
++                        writer.writerow(game)
++                        f.flush()
++                        games.append({k: str(v) for k, v in game.items()})
++                        print(f"{game_id}: {diff:+d} ({game['wall_seconds']:.2f}s)", flush=True)
++    summarize(args.out, games, args.round_robin)
++    if args.report_on_completion:
++        from mpc_report import report
++        report(args.out)
++    (args.out / "completion.json").write_text(json.dumps({"status": "completed", "games": len(games)}, indent=2) + "\n")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/bench/mpc_report.py b/tools/bench/mpc_report.py
+new file mode 100644
+index 0000000..62c45c6
+--- /dev/null
++++ b/tools/bench/mpc_report.py
+@@ -0,0 +1,154 @@
++#!/usr/bin/env python3
++"""Summarize move telemetry after mpc_match.py completes, without new games.
++
++usage: python3 tools/bench/mpc_report.py OUT
++Writes move-statistics.tsv/.md and diagnostics.json. Baseline moves are pooled
++over all opponents. Endgame iterations count as terminal depth (empties),
++while solved is reported separately because selective endgame is not exact.
++"""
++import argparse
++import csv
++import json
++import statistics
++from collections import defaultdict
++from pathlib import Path
++from math import comb
++
++from mpc_match import validate_moves
++
++
++def distribution(values):
++    return {"min": min(values), "max": max(values),
++            "mean": statistics.mean(values), "median": statistics.median(values)}
++
++
++
++def horizon_report(out, groups):
++    results = []
++    for (budget, percent), rows in sorted(groups.items()):
++        result = dict(budget_ms=budget, percent=percent, moves=len(rows),
++                      boundary_reached=sum(any(p["endgame"] or p["depth"] == r["empties"] - 1
++                                               for p in r["iterations"]) for r in rows),
++                      end99_completed=sum(any(p["endgame"] and p["percent"] == 99 for p in r["iterations"]) for r in rows),
++                      end100_completed=sum(r["solved"] for r in rows),
++                      mid_result=sum(not r["endgame"] for r in rows),
++                      end99_result=sum(r["endgame"] and not r["solved"] for r in rows))
++        for field, values in [("search_ms", [r["search_ms"] for r in rows]),
++                              ("wall_ms", [r["wall_ms"] for r in rows]),
++                              ("depth", [r["empties"] if r["endgame"] else r["depth"] for r in rows])]:
++            result.update({field + "_" + k: v for k, v in distribution(values).items()})
++        results.append(result)
++    with (out / "horizon-statistics.tsv").open("w") as f:
++        writer = csv.DictWriter(f, fieldnames=list(results[0]), delimiter="\t")
++        writer.writeheader()
++        writer.writerows(results)
++    lines = ["# 全着手の時間・完了深さ・終盤移行", "",
++             "時間の単位はms。終盤結果の完了深さは空き数。中盤と終盤を通じた同じ100 msの予算。",
++             "移行境界到達は空き数−1の中盤反復、または終盤反復の完了。99%未完了でも、それ以前の完了結果で着手する。",
++             "99%完了には100%も完了した着手を含む。完全読み完了は100%完了だけ。", "",
++             "| 中盤確率 | 着手数 | 時間最小 | 最大 | 平均 | 中央 | 深さ最小 | 最大 | 平均 | 中央 |",
++             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
++    for r in results:
++        cells = [str(r["percent"]), str(r["moves"])]
++        cells += [f'{r[field + "_" + stat]:.3f}' for field in ("search_ms", "depth")
++                  for stat in ("min", "max", "mean", "median")]
++        lines.append("| " + " | ".join(cells) + " |")
++    lines += ["", "| 中盤確率 | 境界到達 | 99%完了 | 100%完了 | 中盤結果を採用 | 99%結果を採用 |",
++              "|---|---:|---:|---:|---:|---:|"]
++    for r in results:
++        lines.append("| " + " | ".join(str(r[k]) for k in
++            ("percent", "boundary_reached", "end99_completed", "end100_completed", "mid_result", "end99_result")) + " |")
++    lines += ["", "外側時間（探索呼び出し前後を含む）の分布もTSVに保存。境界到達率は局面の分布に依存し、単独では強さを表さない。"]
++    (out / "horizon-statistics.md").write_text("\n".join(lines) + "\n")
++
++
++def report(out):
++    settings = json.loads((out / "manifest.json").read_text())["settings"]
++    games = list(csv.DictReader((out / "games.tsv").open(), delimiter="\t"))
++    count = len(settings["candidates"].split(","))
++    pairs = comb(count, 2) if settings.get("round_robin") else count
++    expected = settings["openings"] * pairs * len(settings["budgets"].split(",")) * 2
++    if len(games) != expected or len({g["id"] for g in games}) != expected:
++        raise SystemExit(f"expected {expected} unique games; found {len(games)}")
++    groups = defaultdict(list)
++    all_rows = defaultdict(list)
++    for game in games:
++        for side in ("candidate", "baseline"):
++            percent = int(game["candidate"]) if side == "candidate" else int(game.get("opponent") or settings["baseline"])
++            rows = [json.loads(line) for line in (out / "logs" / f'{game["id"]}-{side}.jsonl').read_text().splitlines()]
++            validate_moves(rows, percent, int(game["budget_ms"]), settings["endgame_empties"], settings["endgame_ms"],
++                           settings.get("empirical_mid_sigmas", {}).get(str(percent)), settings.get("horizon_endgame", False))
++            all_rows[(int(game["budget_ms"]), percent)].extend(rows)
++            for row in rows:
++                groups[(int(game["budget_ms"]), percent, row["phase"])].append(row)
++    if settings.get("horizon_endgame"):
++        horizon_report(out, all_rows)
++    results = []
++    for (budget, percent, phase), rows in sorted(groups.items()):
++        result = dict(mid_budget_ms=budget, percent=percent, phase=phase, moves=len(rows),
++                      solved=sum(r["solved"] for r in rows))
++        depths = [r["empties"] if r["endgame"] else r["depth"] for r in rows]
++        assert all(d is not None for d in depths)
++        for field, values in [("search_ms", [r["search_ms"] for r in rows]),
++                              ("wall_ms", [r["wall_ms"] for r in rows]), ("depth", depths)]:
++            result.update({field + "_" + k: v for k, v in distribution(values).items()})
++        result["target_reached"] = sum(r["depth"] == r["empties"] for r in rows) if phase == "midgame" else None
++        result["last_iteration_mpc_moves"] = sum(
++            r["iterations"][-1]["searches"] > (r["iterations"][-2]["searches"] if len(r["iterations"]) > 1 else 0)
++            for r in rows)
++        results.append(result)
++    with (out / "move-statistics.tsv").open("w") as f:
++        writer = csv.DictWriter(f, fieldnames=list(results[0]), delimiter="\t")
++        writer.writeheader()
++        writer.writerows(results)
++    mid = [r for (b, p, phase), rows in groups.items() if phase == "midgame" for r in rows]
++    end = [r for (b, p, phase), rows in groups.items() if phase == "endgame" for r in rows]
++    diagnostic = {"games": len(games), "game_wall_seconds": sum(float(g["wall_seconds"]) for g in games),
++                  "mid_moves": len(mid), "end_moves": len(end), "end_solved": sum(r["solved"] for r in end),
++                  "end_search_seconds": sum(r["search_ms"] for r in end) / 1000,
++                  "boundary_and_selectivity_validated": True,
++                  "mid_search_ms_max": max((r["search_ms"] for r in mid), default=None),
++                  "mid_wall_ms_max": max((r["wall_ms"] for r in mid), default=None),
++                  "end_search_ms_max": max((r["search_ms"] for r in end), default=None)}
++    if settings.get("horizon_endgame"):
++        diagnostic["end_result_request_seconds"] = diagnostic.pop("end_search_seconds")
++        diagnostic["endgame_policy"] = settings["endgame_policy"]
++    (out / "diagnostics.json").write_text(json.dumps(diagnostic, indent=2) + "\n")
++    lines = ["# 1手の時間・完了深さ", "", "追加対戦なし。中央値は中央2件の平均（偶数件の場合）。85%などの基準側は全対戦相手を合算。時間の単位はms。", "",
++             "探索時間はエンジン内部、外側時間は探索前のTT消去等を含む。深さは最後の完了反復。終盤モードの反復が完了した場合は残り空き数を深さとし、完全読みの保証はsolved件数で区別する。", ""]
++    for phase in ("midgame", "endgame"):
++        for budget in sorted({key[0] for key in groups}):
++            lines += [f'## {phase} / 中盤指定 {budget} ms', "",
++                      "| 確率 | 着手数 | 時間最小 | 最大 | 平均 | 中央値 | 深さ最小 | 最大 | 平均 | 中央値 | 目標到達 | solved |",
++                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
++            matching = [r for r in results if r["phase"] == phase and r["mid_budget_ms"] == budget]
++            for r in matching:
++                cells = [f'{r["percent"]}%', str(r["moves"])]
++                cells += [f'{r[k]:.3f}' for k in ("search_ms_min", "search_ms_max", "search_ms_mean", "search_ms_median")]
++                cells += [f'{r[k]:.2f}' for k in ("depth_min", "depth_max", "depth_mean", "depth_median")]
++                cells += [str(r["target_reached"]) if r["target_reached"] is not None else "—", str(r["solved"])]
++                lines.append("| " + " | ".join(cells) + " |")
++            lines += ["", "| 確率 | 外側時間最小 | 最大 | 平均 | 中央値 |", "|---|---:|---:|---:|---:|"]
++            for r in matching:
++                lines.append(f'| {r["percent"]}% | ' + " | ".join(f'{r[k]:.3f}' for k in ("wall_ms_min", "wall_ms_max", "wall_ms_mean", "wall_ms_median")) + " |")
++            lines.append("")
++    (out / "move-statistics.md").write_text("\n".join(lines) + "\n")
++    if settings.get("round_robin"):
++        standings = json.loads((out / "tournament.json").read_text())
++        report_lines = ["# 総当たりの結果", "", f"{len(games):,}局完了。対局時間の合計は{diagnostic['game_wall_seconds'] / 3600:.3f}時間。得点率は勝ち1・引き分け0.5で計算。", "",
++                   "| 順位 | 確率 | 勝 / 分 / 負 | 得点率 | 開局単位の95%区間 | 平均完了深さ |", "|---:|---|---:|---:|---:|---:|"]
++        mid_stats = {r["percent"]: r for r in results if r["phase"] == "midgame"}
++        for i, r in enumerate(standings, 1):
++            lo, hi = r["opening_bootstrap_95"]
++            report_lines.append(f"| {i} | {r['percent']}% | {r['wins']} / {r['draws']} / {r['losses']} | {r['score']:.2%} | {lo:.2%}〜{hi:.2%} | {mid_stats[r['percent']]['depth_mean']:.2f} |")
++        report_lines += ["", "[時間と完了深さ](move-statistics.md)、[全件検証](diagnostics.json)、[組ごとの成績と区間](summary.json)。順位はこの開局集合・対戦相手・時間条件に対するもので、多重比較の調整はしていない。"]
++        if settings.get("horizon_endgame"):
++            report_lines += ["", "[全着手の時間・深さ・終盤移行](horizon-statistics.md)。終盤結果を採用した着手にも、その前の中盤反復の時間が含まれる。"]
++        (out / "results.md").write_text("\n".join(report_lines) + "\n")
++    print(json.dumps(diagnostic, indent=2))
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("out", type=Path)
++    report(parser.parse_args().out)
+diff --git a/tools/bench/mpc_sigmas.py b/tools/bench/mpc_sigmas.py
+new file mode 100644
+index 0000000..3491003
+--- /dev/null
++++ b/tools/bench/mpc_sigmas.py
+@@ -0,0 +1,87 @@
++#!/usr/bin/env python3
++"""Compute empirical midgame multiples from an existing model's calibration.
++
++Requires the rules.json that exactly matches MODEL and its positions.tsv.
++No searches, weight changes, normal approximation or probability interpolation.
++"""
++import argparse
++import csv
++import hashlib
++import json
++import math
++import struct
++from pathlib import Path
++
++
++def digest(path):
++    with open(path, "rb") as f:
++        return hashlib.file_digest(f, "sha256").hexdigest()
++
++
++def quantile(values, p):
++    x = p * (len(values) - 1)
++    i = int(x)
++    f = x - i
++    return values[i] * (1 - f) + values[min(i + 1, len(values) - 1)] * f
++
++
++def generate(model, rules_path, positions, probabilities):
++    calibration = json.loads(rules_path.read_text())
++    data = model.read_bytes()
++    offset = data.rfind(b"MPC1")
++    if offset < 0:
++        raise ValueError("model has no MPC calibration")
++    sigmas = struct.unpack_from("<12d", data, offset + 4)
++    count = struct.unpack_from("<I", data, offset + 100)[0]
++    if offset + 104 + 28 * count != len(data):
++        raise ValueError("unexpected model calibration size")
++    actual = [struct.unpack_from("<4B3d", data, offset + 104 + 28 * k) for k in range(count)]
++    expected = [(int(r["exact"]), r["depth"], r["empties"], r["shallow_depth"],
++                 r["slope"], r["intercept"], r["deviation"]) for r in calibration["rules"]]
++    if sorted(actual) != sorted(expected) or list(sigmas) != calibration["sigmas"]["midgame"] + calibration["sigmas"]["exact"]:
++        raise ValueError("rules.json does not exactly match the model")
++    lookup = {(r[2], r[1]): r for r in actual if not r[0]}
++    errors = []
++    position_count = 0
++    with positions.open() as f:
++        rows = csv.DictReader((line for line in f if not line.startswith("#")), delimiter="\t")
++        for row in rows:
++            empties = int(row["empties"])
++            values = [int(v) for v in row["values"].split(",")]
++            if 64 - (int(row["player"], 16) | int(row["opponent"], 16)).bit_count() != empties:
++                raise ValueError("position empties mismatch")
++            position_count += 1
++            for depth in range(4, len(values)):
++                _, _, _, shallow, slope, intercept, deviation = lookup[(empties, depth)]
++                if deviation > 0:
++                    errors.append(abs(values[depth] - slope * values[shallow] - intercept) / deviation)
++    errors.sort()
++    if len(errors) < 100:
++        raise ValueError("too few calibration pairs")
++    anchors = {}
++    for p, sigma in zip((68, 77, 85, 95, 98, 99), sigmas[:6]):
++        measured = quantile(errors, p / 100)
++        if not math.isclose(measured, sigma, rel_tol=1e-12, abs_tol=1e-12):
++            raise ValueError(f"original {p}% multiple does not reproduce from positions.tsv")
++        anchors[str(p)] = {"model": sigma, "recomputed": measured}
++    return {"sigmas": {str(p): quantile(errors, p / 100) for p in probabilities},
++            "positions": position_count, "midgame_pairs": len(errors), "anchors": anchors,
++            "sources": {name: {"path": str(path.resolve()), "sha256": digest(path)}
++                        for name, path in [("model", model), ("rules", rules_path), ("positions", positions)]}}
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--model", type=Path, required=True)
++    parser.add_argument("--rules", type=Path, required=True)
++    parser.add_argument("--positions", type=Path, required=True)
++    parser.add_argument("--probabilities", default="77,81,85,89,92,95")
++    parser.add_argument("--out", type=Path, required=True)
++    args = parser.parse_args()
++    probabilities = [int(s) for s in args.probabilities.split(",")]
++    if not probabilities or any(not 1 <= p <= 99 for p in probabilities):
++        parser.error("probabilities must be between 1 and 99")
++    result = generate(args.model, args.rules, args.positions, probabilities)
++    args.out.parent.mkdir(parents=True, exist_ok=True)
++    args.out.write_text(json.dumps(result, indent=2) + "\n")
++    print(json.dumps({k: result[k] for k in ("sigmas", "positions", "midgame_pairs")}, indent=2))

@@ -1,0 +1,1 @@
+games 2000  A wins 1000 draws 97 losses 903  score 52.4%  elo +17 [+2, +32]  mean disc diff +0.40 ± 0.38

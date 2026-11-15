@@ -37,7 +37,7 @@ use deft_reversi_book::{Book, BookPlayer, ReadLimits, UsePolicy};
 use deft_reversi_engine::{Engine, EngineOptions, Goal, Model, Position, SearchRequest};
 use std::sync::Arc;
 
-let mut engine = Engine::new(Model::from_file("eval-v4.bin")?, EngineOptions::default())?;
+let mut engine = Engine::new(Model::from_file("model.dpr2")?, EngineOptions::default())?;
 let book = Arc::new(Book::load("openings.dbook", ReadLimits::default())?);
 let mut player = BookPlayer::new(&engine, Some(book), UsePolicy::default(), 42)?;
 let position = Position::initial();
@@ -121,7 +121,7 @@ target/release/book inspect --work small.dbook-work
 target/release/book verify --book small.dbook
 ```
 
-main由来DPR2に対応する校正を使う場合は、生成系コマンドの各呼出しで `--legacy-main-mpc` を付ける。通常の統合モデルでは埋込MPCを使う。モデルの指定だけでmain用校正を推測しない。
+校正はモデルファイル（DPR2 版2）に入っているものを使う。校正のない main 由来の DPR2（版1）を使う場合は、`deft-reversi-train pack --legacy-main` で旧 main の規則を埋め込むか、生成系コマンドの各呼出しで `--legacy-main-mpc` を付ける。
 
 - `--positions FILE.obf` で任意の開始局面を指定できる。OBFのX/Oで絶対手番色も指定する。指定しないbuildは標準初期局面・黒番から。
 - `--loss` は共通の展開許容差。`--black-loss` / `--white-loss` で上書きできる。`--new-weight` / `--deepen-weight` で新規解析と深掘りの比率を指定する。

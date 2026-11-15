@@ -1,0 +1,46 @@
+{
+  "run_count": 432,
+  "groups": 144,
+  "each_condition_depth_position_has_three_runs": true,
+  "all_deft_depth_full_nonselective_and_pvs_legal": true,
+  "all_edax_depth_full_selectivity_100_and_visible_pv_legal": true,
+  "cross_engine_score_equality_required": false,
+  "primary_depth": 12,
+  "by_depth": {
+    "8": {
+      "remote_deft": {
+        "sum_of_case_medians_seconds": 0.079201287,
+        "zero_ms_runs": 0,
+        "change_vs_remote_pct": 0.0
+      },
+      "edax_4_5_5": {
+        "sum_of_case_medians_seconds": 0.148,
+        "zero_ms_runs": 0,
+        "change_vs_remote_pct": 86.86565030186945
+      },
+      "edax_4_6_native": {
+        "sum_of_case_medians_seconds": 0.183,
+        "zero_ms_runs": 0,
+        "change_vs_remote_pct": 131.05685138677106
+      }
+    },
+    "12": {
+      "remote_deft": {
+        "sum_of_case_medians_seconds": 3.021541318,
+        "zero_ms_runs": 0,
+        "change_vs_remote_pct": 0.0
+      },
+      "edax_4_5_5": {
+        "sum_of_case_medians_seconds": 1.296,
+        "zero_ms_runs": 0,
+        "change_vs_remote_pct": -57.107983522203156
+      },
+      "edax_4_6_native": {
+        "sum_of_case_medians_seconds": 1.63,
+        "zero_ms_runs": 0,
+        "change_vs_remote_pct": -46.054022485487
+      }
+    }
+  },
+  "note": "Depth-8 Edax times are rounded to 1 ms; zero readings remain included. Scores are not compared between engines."
+}

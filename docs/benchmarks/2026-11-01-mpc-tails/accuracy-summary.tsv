@@ -1,0 +1,9 @@
+stage	setting	positions	wrong	wrong_rate	mean_abs_error	nodes	nodes_vs_exact
+77%	normal	900	371	0.412	1.001	4.778e+09	0.097
+77%	measured	900	402	0.447	1.104	4.23e+09	0.086
+85%	normal	900	266	0.296	0.701	7.398e+09	0.150
+85%	measured	900	294	0.327	0.774	6.808e+09	0.138
+95%	normal	900	120	0.133	0.340	1.578e+10	0.319
+95%	measured	900	108	0.120	0.302	1.643e+10	0.333
+98%	normal	900	66	0.073	0.184	2.066e+10	0.418
+98%	measured	900	47	0.052	0.124	2.358e+10	0.477

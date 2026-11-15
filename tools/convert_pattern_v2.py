@@ -2,7 +2,9 @@
 """Convert feature engine pattern JSON/bincode v3/v4 into DPR2. Never trains.
 
 Usage: python3 tools/convert_pattern_v2.py INPUT OUTPUT
-Writes OUTPUT.mpc.tsv when regression data is present. This compatibility converter is optional; the engine reads v3/v4 models directly.
+Writes OUTPUT.mpc.tsv when regression data is present. The engine reads only DPR2;
+attach a calibration with `deft-reversi-train pack` (`--legacy-main` for models from main).
+Also reads the JSON written by tools/convert_legacy_eval.py.
 """
 import argparse
 import hashlib

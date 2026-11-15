@@ -9,7 +9,7 @@ pub(super) struct StoredCandidate {
 pub(super) struct CompactValue {
     pub score: i8,
     pub depth: u8,
-    pub selectivity: u8,
+    pub selectivity: Selectivity,
     pub solved: bool,
     pub bound: Bound,
     pub origin: ValueOrigin,
@@ -19,7 +19,7 @@ impl CompactValue {
         Self {
             score: v.score as i8,
             depth: v.quality.depth,
-            selectivity: v.quality.selectivity as u8,
+            selectivity: v.quality.selectivity,
             solved: v.quality.solved,
             bound: v.bound,
             origin: v.origin,
@@ -30,7 +30,7 @@ impl CompactValue {
             score: i16::from(self.score),
             quality: AnalysisQuality {
                 depth: self.depth,
-                selectivity: selectivity(self.selectivity).expect("validated selectivity"),
+                selectivity: self.selectivity,
                 solved: self.solved,
             },
             bound: self.bound,

@@ -1,0 +1,25 @@
+ref
+base  L21  91.37s    1035M same 83.3% |d| 1.65  L18  27.70s     321M same 82.7% |d| 0.94  FFO  278.20s  12.39G
+mid4  L21  97.06s    1091M same 83.3% |d| 1.59  L18  28.59s     324M same 84.0% |d| 0.96  FFO  275.26s  12.24G
+mid6  L21  91.87s    1042M same 83.3% |d| 1.63  L18  27.82s     316M same 82.0% |d| 0.98  FFO  277.58s  12.37G
+mid12  L21  93.68s    1067M same 82.0% |d| 1.67  L18  28.11s     328M same 82.0% |d| 0.97  FFO  277.53s  12.33G
+exact2  L21  91.20s    1035M same 83.3% |d| 1.65  L18  27.78s     321M same 82.7% |d| 0.94  FFO  275.80s  12.26G
+exact6  L21  90.94s    1035M same 83.3% |d| 1.65  L18  27.80s     321M same 82.7% |d| 0.94  FFO  280.44s  12.47G
+low1  L21 103.87s    1177M same 83.3% |d| 1.65  L18  27.66s     319M same 82.7% |d| 0.93  FFO  277.78s  12.40G
+low4  L21  89.88s    1021M same 82.7% |d| 1.66  L18  27.64s     321M same 82.7% |d| 0.97  FFO  271.30s  12.14G
+simple4  L21  86.66s     944M same 83.3% |d| 1.63  L18  28.03s     314M same 83.3% |d| 0.94  FFO  278.61s  12.49G
+simple6  L21  99.34s    1147M same 83.3% |d| 1.64  L18  30.35s     352M same 83.3% |d| 0.96  FFO  286.70s  12.79G
+ordered2  L21 120.32s     870M same 83.3% |d| 1.65  L18  36.08s     266M same 82.7% |d| 0.95  FFO  283.86s  12.39G
+ordered4  L21  99.40s    1395M same 83.3% |d| 1.65  L18  32.71s     455M same 82.7% |d| 0.94  FFO  277.49s  12.42G
+endord18  L21  89.95s    1035M same 83.3% |d| 1.65  L18  27.68s     321M same 82.7% |d| 0.94  FFO  281.33s  12.02G
+endord22  L21  91.67s    1035M same 83.3% |d| 1.65  L18  27.67s     321M same 82.7% |d| 0.94  FFO  281.05s  12.81G
+QUEUE1 DONE
+base2  L21  90.97s    1035M same 83.3% |d| 1.65  L18  28.23s     321M same 82.7% |d| 0.94  FFO  280.14s  12.39G
+simple4b  L21  86.51s     944M same 83.3% |d| 1.63  L18  28.25s     314M same 83.3% |d| 0.94  FFO  278.41s  12.49G
+low4b  L21  90.18s    1021M same 82.7% |d| 1.66  L18  27.64s     321M same 82.7% |d| 0.97  FFO  271.82s  12.14G
+low6  L21  91.60s    1036M same 82.7% |d| 1.65  L18  27.85s     322M same 83.3% |d| 0.95  FFO  270.93s  12.12G
+exact2b  L21  91.17s    1035M same 83.3% |d| 1.65  L18  27.95s     321M same 82.7% |d| 0.94  FFO  275.49s  12.26G
+combo  L21  84.53s     929M same 82.7% |d| 1.65  L18  28.12s     313M same 83.3% |d| 0.96  FFO  271.83s  12.22G
+combo-s4l4  L21  84.34s     929M same 82.7% |d| 1.65  L18  28.06s     313M same 83.3% |d| 0.96  FFO  273.75s  12.27G
+base3  L21  90.94s    1035M same 83.3% |d| 1.65  L18  27.72s     321M same 82.7% |d| 0.94  FFO  278.53s  12.39G
+QUEUE2 DONE

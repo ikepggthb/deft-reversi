@@ -1,0 +1,52 @@
+{
+  "settings": {
+    "gtp": "/home/azure/dev/deft-reversi/local/bench-runs/mpc-79-87-20261109/gtp",
+    "model": "/home/azure/dev/deft-reversi/local/release/model-v3-pen/deft-eval-v3-pen.dpr2",
+    "xot": "/home/azure/dev/deft-reversi/docs/benchmarks/2026-11-09-midgame-mpc-79-87/xot-100.txt",
+    "openings": 1,
+    "seed": 5,
+    "budgets": "100",
+    "candidates": "79,81,83,85,87",
+    "baseline": 85,
+    "round_robin": true,
+    "mid_sigmas": "/home/azure/dev/deft-reversi/docs/benchmarks/2026-11-09-midgame-mpc-79-87/mid-sigmas.json",
+    "report_on_completion": true,
+    "horizon_endgame": true,
+    "endgame_empties": 18,
+    "endgame_ms": 25,
+    "cpu": 2,
+    "endgame_policy": "at-horizon-99-100-shared-budget",
+    "gtp_sha256": "ac882e76b810e5060ac71cd55e1d2eaf954e3e865c6ab31168840daa95986dad",
+    "model_sha256": "aa2d7cd9e42e8f8f7df4f547124683fc86d85cb83b83b332637f07dc1d1f05a8",
+    "xot_sha256": "80b624a20834f779a07ef65c23d5b64b0a717502931b9aa0fad2fac3966673e2",
+    "runner_sha256": "f44cb975e8ab1656b5fb9084c40cd9dcd70e5e059f476875dfadcd522e607302",
+    "openings_moves": [
+      [
+        37,
+        43,
+        34,
+        29,
+        19,
+        33,
+        51,
+        20
+      ]
+    ],
+    "support_sha256": {
+      "common.py": "2c661134873d673f4c6efa54201fcc2b7d9e9dbac5c8b4cae2673cb39dd0a097",
+      "match.py": "2dae2f4c1ce8e9a99ad0e9997fea08fbf46446892fbfaf80cef413a4a31e964a",
+      "mpc_report.py": "253bc71d3bf67a9a20576afc00f41c648e1672b189452668dc9d1b8365be2459",
+      "mpc_sigmas.py": "ff278c88bfd454e73edd9320ff90d10b1c6bf14fc61b46f621506081f6d6ac2a"
+    },
+    "mid_sigmas_sha256": "4b7574b94ec38800c979c6682cc5c489f18b8c288e51c9bf3f143e1f4d7abfdc",
+    "empirical_mid_sigmas": {
+      "79": 1.144645435782356,
+      "81": 1.20365038009303,
+      "83": 1.2691755010376835,
+      "85": 1.343916580839068,
+      "87": 1.4274876714470524
+    }
+  },
+  "commit": "c186ad5b81ccd0adfe8c77b8c58cf77e19325a96",
+  "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           39 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  8\nOn-line CPU(s) list:                     0-7\nVendor ID:                               GenuineIntel\nModel name:                              Intel(R) Core(TM) i3-14100\nCPU family:                              6\nModel:                                   191\nThread(s) per core:                      2\nCore(s) per socket:                      4\nSocket(s):                               1\nStepping:                                5\nCPU(s) scaling MHz:                      31%\nCPU max MHz:                             4700.0000\nCPU min MHz:                             800.0000\nBogoMIPS:                                6988.80\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize arch_lbr ibt flush_l1d arch_capabilities\nVirtualization:                          VT-x\nL1d cache:                               192 KiB (4 instances)\nL1i cache:                               128 KiB (4 instances)\nL2 cache:                                5 MiB (4 instances)\nL3 cache:                                12 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-7\nVulnerability Gather data sampling:      Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace\n"
+}

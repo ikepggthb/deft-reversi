@@ -1,0 +1,21 @@
+perf record -F 1999 -g, FFO 57 exact solve (c433a80, line tables, frame pointers), self time by symbol
+ 37.44% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search7endgameNtNtB4_7session7Context21endgame_score_entered - - 
+ 14.61% [.] _RNvNtNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search7endgame9last_four21solve_score_2_empties - - 
+ 9.92% [.] _RNvMs_NtNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search7endgame9last_fourNtNtB8_7session7Context27last_four_score_with_parity - - 
+ 9.36% [.] _RNvNtNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search7endgame9last_four21solve_score_3_empties - - 
+ 8.02% [.] _RNvMNtNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search7endgame7shallowNtNtB6_7session7Context16five_empty_score - - 
+ 6.41% [.] _RNvMs0_NtCs8KtzPwsjnpv_19deft_reversi_engine10evaluationNtB5_12PatternModel24evaluate_state_and_moves - - 
+ 2.96% [.] _RNvNtNtCs8KtzPwsjnpv_19deft_reversi_engine5board9stability15stability_upper - - 
+ 2.21% [.] _RNvMs1_NtCs8KtzPwsjnpv_19deft_reversi_engine10evaluationNtB5_9EvalState6played - - 
+ 2.07% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4treeNtNtB4_7session7Context4node - - 
+ 1.61% [.] _RNvMs0_NtCs8KtzPwsjnpv_19deft_reversi_engine13transpositionNtB5_5Table3get - - 
+ 1.19% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search8orderingNtNtB4_7session7Context15ordering_search - - 
+ 0.63% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4treeNtNtB4_7session7Context13simple_search - - 
+ 0.61% [.] _RNvMs1_NtCs8KtzPwsjnpv_19deft_reversi_engine10evaluationNtB5_9EvalState10from_board - - 
+ 0.53% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search8orderingNtNtB4_7session7Context16endgame_ordering - - 
+ 0.36% [.] _RNvMs0_NtNtCs8KtzPwsjnpv_19deft_reversi_engine6search7sessionNtB5_4Line7prepend - - 
+ 0.33% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4treeNtNtB4_7session7Context7sibling - - 
+ 0.20% [.] _RNvNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search4tree9pick_best - - 
+ 0.18% [.] _RNvMs0_NtCs8KtzPwsjnpv_19deft_reversi_engine13transpositionNtB5_5Table5store - - 
+ 0.14% [.] _RNvMNtNtCs8KtzPwsjnpv_19deft_reversi_engine6search8orderingNtNtB4_7session7Context16midgame_ordering - - 
+ 0.12% [.] 0x0000000000162889 - - 

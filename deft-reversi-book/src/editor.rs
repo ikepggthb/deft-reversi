@@ -302,7 +302,7 @@ impl BookEditor {
                 best = Some(v);
             }
             depth = depth.min(v.quality.depth);
-            if (v.quality.selectivity as u8) < (selectivity as u8) {
+            if v.quality.selectivity < selectivity {
                 selectivity = v.quality.selectivity;
             }
             all_solved &= v.quality.solved;
@@ -448,5 +448,5 @@ pub(super) fn dominates(new: Assessment, old: Assessment) -> bool {
         && new.bound == Bound::Exact
         && (old.bound != Bound::Exact
             || (new.quality.depth >= old.quality.depth
-                && (new.quality.selectivity as u8) >= (old.quality.selectivity as u8)))
+                && new.quality.selectivity >= old.quality.selectivity))
 }

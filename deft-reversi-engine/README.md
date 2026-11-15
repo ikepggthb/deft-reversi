@@ -7,15 +7,16 @@
 ## 構成
 
 - `board`: 非公開のビットボードと検証付き着手。内部探索は合法手と反転ビットを再利用。
-- `evaluation`: 11パターン×4回転、60フェーズ、合法手数差、バイアス。両手番の特徴量を差分更新。
+- `evaluation`: 11パターン×4回転、60フェーズ、合法手数差、バイアス。両手番の特徴量を差分更新。モデルがパターン埋め込みネット（PEN、`evaluation/pen.rs`）を持つときは、その出力を線形の和に足す（[PEN の測定](../docs/benchmarks/2026-11-06-pen/README.md)）。
 - `position`: 手番の色を持つ局面と、その文字列形式。
 - `worker`: 探索を別スレッドで動かす `EngineWorker`。
 - `search/api`: 要求・結果・進捗・停止・統計・エラー。
 - `search.rs`: モデルと資源の所有、反復深化、最大24手の終盤準備探索と選択性の段階移行、アスピレーション窓。
-- `model` / `mpc`: 元のv3/v4パターンモデルとMPC設定の同時読込、回帰係数・深さ表、元の既定設定。
+- `model`: DPR2 形式のモデル（重みと、版2では ProbCut の校正、版3では PEN）の読み書き。
+- `mpc`: 旧 main の ProbCut 規則（旧 main から変換したモデル用）。
 - `search/root`: ルート候補ごとの境界、アスピレーションの安定化、最善手順の継承。
-- `search/level`: 元のレベルからの深さ・選択率・終盤への移行と序盤補正。
-- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。
+- `search/level`: レベルごとの深さ・選択率・終盤への移行。
+- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。中盤のヌルウィンドウ探索は、残り4手未満で TT を使わず（評価値と着手可能数で手順付け）、残り3手未満で手順付けもしない（旧 main の `SWITCH_SIMPLE_SEARCH_LEVEL`・`SWITCH_NEGAALPHA_SEARCH_LEVEL` と同じ仕組みで、深さは PEN のモデルで測って決めた。[PEN に合わせた調整](../docs/benchmarks/2026-11-06-pen-tuning/README.md)）。MPC の浅い探索は、MPC を使わない中盤探索である。MPC はゼロ窓のノードだけで試す（Edax と同じ。[終盤 MPC の悪手の調査](../docs/benchmarks/2026-11-05-endgame-mpc-quality/README.md)）。MPC の判定は、静的評価から規則で予測した値が境界から離れすぎていれば浅い探索を省く（上側は中盤8石・終盤2石、下側は4石。[中盤探索の高速化](../docs/benchmarks/2026-11-03-midgame-speed/README.md)、[PEN に合わせた調整](../docs/benchmarks/2026-11-06-pen-tuning/README.md)）。
 - `board/stability`: 元実装の辺の全パターン表・満杯のライン・接触による確定石判定。
 - `search/endgame/mod`: 終盤探索の入口と通常窓の処理。
 - `search/endgame/local_tt`: 空き6〜13ごとの局所TT。境界・候補手・選択率を保持し、照会結果は値として再帰へ渡す。
@@ -38,7 +39,7 @@ UI、対局履歴、定石、持ち時間の配分、ファイルパスの決定
 use deft_reversi_engine::{Engine, EngineOptions, Goal, Model, Position, SearchRequest};
 use std::time::Duration;
 
-let mut engine = Engine::new(Model::from_file("eval-v4.bin")?, EngineOptions::default().threads(4))?;
+let mut engine = Engine::new(Model::from_file("model.dpr2")?, EngineOptions::default().threads(4))?;
 let position: Position = "---------------------------OX------XO--------------------------- X".parse()?;
 let request = SearchRequest::new(Goal::Level(16)).time_limit(Duration::from_secs(1));
 let result = engine.search(&position, &request)?;
@@ -49,10 +50,26 @@ let result = engine.search(&position, &request)?;
 - 同じEngineへの要求は直列。別Engineは独立したTTとワーカーを持つ。別スレッドで探索するには `EngineWorker` を使う。
 - `Board::from_bits` と `Position::from_colors` は石の重複を拒否する。A1が最下位ビット。
 - `Action::Place(Square)` と `Action::Pass` を区別。`result.best_move == None` は終局。
-- `Goal::Level(n)` は元の1〜60のレベルの探索方式、選択率、序盤補正を適用する。範囲外はエラー。
-- `selectivity` は元の68/77/85/95/98/99/100%の7段階。`result.kind` は最後に完了した反復の深さと選択率を表す。
+- `Goal::Level(n)` は1〜60のレベルごとの探索方式と選択率を適用する。範囲外はエラー。
+- `Goal::Plan(SearchPlan)` は、レベルが決めている内容を自由に指定する。`SearchPlan::midgame(深さ, 選択率)` が中盤探索、`.endgame(選択率, 空きマス)` が「空きがこの数以下なら終盤探索をこの選択率で行う」段階（`Selectivity::Full` が完全読み）。複数の段階が当てはまる局面では、選択率の高い段階を使う。`SearchPlan::level(n)` はレベル n の内容で、そこから一部だけ変えられる。
+
+```rust
+use deft_reversi_engine::{Goal, SearchPlan, SearchRequest, Selectivity};
+
+// レベル24のまま、完全読みを空き26からにする。
+let plan = SearchPlan::level(24)?.endgame(Selectivity::Full, 26);
+// すべて自分で決める：中盤は深さ20（83%）、空き24以下は終盤95%、空き20以下は完全読み。
+let plan = SearchPlan::midgame(20, Selectivity::Percent83)
+    .endgame(Selectivity::Percent95, 24)
+    .endgame(Selectivity::Full, 20);
+let request = SearchRequest::new(Goal::Plan(plan));
+# Ok::<(), deft_reversi_engine::EngineError>(())
+```
+
+- `selectivity` は 83/85/95/98/99/100% の6段階（`Selectivity::ALL`）。名前の数字がそのまま枝刈りの確率で、各段の倍率はモデルの校正が持つ。レベルの中盤探索は83%（エンジンの規定）、レベルの終盤探索は85%以上を使う。元実装の68%・77%は選べない。`result.kind` は最後に完了した反復の深さと選択率を表す。
 - `Goal::Depth(n)` は着手数基準。パスでは深さを減らさない。
-- `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。元の既定MPC設定または読込モデルのMPC設定で、その前に元実装と同じ選択性の段階で準備探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
+- 中盤探索と終盤の準備探索の反復深化は、目標深さの偶奇に合わせて通常5または6から2手ずつ進む。`time_limit` で時間切れになると、最後に完了した反復の結果を返す。
+- `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。モデルに校正があれば、その前に83%の中盤探索で準備し、85%から要求の選択率まで段階的に終盤探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
 - 選択率を下げた `Goal::Endgame` はMPCを使う終盤探索で、完全読みの保証を持たない。
 - 中断した完全読み要求の結果は、準備段階の `Depth` や選択的な `Endgame` になることがある。完全読みかどうかは `result.is_solved()` で判定する。
 - `score == None` は完了反復がない状態。合法な代替手は返す。深さ0の着手は探索で選んだ最善手ではない。
@@ -61,22 +78,29 @@ let result = engine.search(&position, &request)?;
 - 停止要求と並列カットは別状態。配布した仕事を回収してから戻る。停止・時刻の確認は最大256ノード間隔。ノード上限は各ノードで予約し、超過しない。
 - StopHandleは一方向。再要求には新しいSearchRequestを使う。
 - 局所TTは要求中のContextが所有し、主スレッド分をEngineで再利用する。各層は必要時に確保し、最大約384 KiB。メインTTのMiB指定とは別の作業領域。
-- `clear_tt` は主表・PV表・局所表を無効化する。`set_model` は全表を無効化し、新しいモデルのMPC設定に切り替える。
+- `clear_tt` は主表・PV表・局所表を無効化する。`set_model` は全表を無効化し、新しいモデルの校正に切り替える。
 - 通常窓のTTカット後もPVを返せるよう、PV表・主表の候補を使って確定値に到達する手を検証する。この復元も探索時間とノード予算に含む。スコア確定後、PV復元中に上限へ達した場合は、確定スコアを保持したまま停止理由と取得済みPVを返す。
 - `all_moves()` は最後に完了した反復と同じ深さ・選択率で、ルートの全手を窓 [-64, 64] で探索し直す。途中で止まった場合は `moves` を空にする。
 
 ## モデルとMPC
 
-`Model::from_file` / `Model::from_bytes` は元のv3/v4パターンモデル（JSON・bincode）から、重み・メタデータ・MPC設定をまとめて読み込む。変換やsidecarの手動設定は不要。パターンの構成、位相、スケール、評価の丸め方は維持する。NNUEは対象外。
+モデルは DPR2 形式の1ファイルで、`Model::from_file` / `Model::from_bytes` で読む。形式の詳細は `src/model.rs` の先頭にある。
 
-旧JSONパターンラッパーと重みだけのDPR2は、元の既定MPC設定で読む。モデル固有の設定を持つ場合は、元の統合モデルファイルを直接読む。DPR2の `.mpc.tsv` は自動では読まない。DPR2は重みだけの互換形式として引き続き使用できる。変換ツール `tools/convert_pattern_v2.py` も残すが、通常の利用・性能比較では元のモデルファイルを使う。
+- 版1：重みだけ。60段階の i16 の重み（パターン表・合法手数差・バイアス）。
+- 版2：重みのあとに ProbCut の校正（`MPC2`：段の数、段ごとに確率・中盤の倍率・終盤の倍率、規則の表）を持つ。`deft-reversi-train mpc` と `pack` が書き出す。段の並びがエンジンの段（`ProbCutSigmas::STAGES`）と違う校正は読まない。
+- 以前の校正（`MPC1`、68〜99%の倍率）を持つモデルは読めない。重みと規則はそのままで、`deft-reversi-train mpc --model 旧モデル --out 出力先 --fit-only` を測定済みの `positions.tsv` がある出力先で実行すると校正を付け直せる（同じ測定から 85〜99% の倍率と規則は以前と同じ値になる）。
+- 版3：重みのあとに `PEN1` と60段階の PEN（パターンの状態ごとの8個の i8、90→32→1 の MLP）を持ち、その後に版2と同じ校正を置ける。`deft-reversi-train train --pen` が書き出す。
+
+校正のあるモデルは、`Engine::new` するだけで、その規則と倍率で選択的に探索する。校正のないモデル（版1、校正のない版3）は、枝刈りなしの探索だけができる。選択的な探索（レベル、選択率を下げた要求）は、校正不足のエラーになる。NNUE は対象外。
+
+旧エンジンの v3/v4 形式（JSON・bincode）は読まない。必要なら `tools/convert_pattern_v2.py` で DPR2 の重みに変換し、`deft-reversi-train pack` で校正を付ける。
 
 以下は `tuning` feature を有効にしたときだけ使える。
 
-- `Engine::mpc_config()` で読込設定を取得し、`set_mpc_config` で元と同じ回帰係数・深さ表を変更できる。確認探索の深さは、実際に使う各表の範囲で本探索より浅い必要がある。不正な設定は読込時と設定時に拒否する。MPCは通常窓にも適用し、浅い確認探索にはTTや再帰的なMPCを使わない。係数は元の式で展開し、実行時は直接参照する。回帰式を外挿した結果の負の偏差も、元設定と同じ符号のまま保持する。
-- `Model::from_pattern(PatternModel)` は重みだけのモデルを元の既定MPC設定で作る。
-- `set_probcut_rules` は個別ルールを明示する。この場合、回帰係数形式の設定がないため `mpc_config()` はNone。`set_probcut_rules(Vec::new())` は校正を空にする。完全読みでは全段階MPCなしとなり、選択的探索を要求した場合は校正不足のエラーになる。
-- 旧 `main` の `data/eval/eval.json` は `tools/convert_legacy_eval.py` で変換できる。変換済みの旧モデルには `engine.set_legacy_main_mpc()?` を明示して `main` のMPC係数表を使える。表はモデルに埋め込まれていないため、別のモデルには自動適用しない。切替時にはTTを無効化し、`mpc_config()` は `None` を返す。例のsolveでは `--legacy-main-mpc` を指定する。
+- `Model::from_pattern(PatternModel)` は校正のないモデルを作る。`Model::weights_from_file` は校正を読まずに重みだけを読む（校正の付け直し用）。`Model::with_calibration(rules, sigmas)` で校正を付け、`Model::write_to` で書き出す。`Model::calibration()` で中身を読む。
+- `set_probcut_rules`・`set_probcut_calibration` は、エンジンの規則を差し替える（比較・診断用）。`set_probcut_rules(Vec::new())` は校正を空にする。
+- `set_legacy_main_mpc` は、旧 main の規則に差し替える。旧 main から変換したモデルは、`deft-reversi-train pack --legacy-main` で規則を埋め込んでおけば、指定しなくてよい。例の solve では `--legacy-main-mpc` で指定できる。
+- `legacy_main_rules()` は旧 main の規則を返す。
 
 ## 検証
 
@@ -96,32 +120,13 @@ RUSTFLAGS="-Ctarget-cpu=native" cargo run --locked --release -p deft_reversi_eng
 OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・時間をTSV出力する。任意の末尾引数で1局面の時間上限（ミリ秒）を指定できる。
 `PatternModel::zero()` はルール・探索テスト用。棋力のあるモデルではない。
 
-## 旧版との比較
+## 比較
 
-[tools/bench/compare_reference.py](../tools/bench/compare_reference.py) は、旧エンジンへの依存を生成先の独立したCargoプロジェクトへ設定します。通常ワークスペースに旧実装を含めません。
-
-```sh
-RUSTFLAGS="-Ctarget-cpu=native" python3 tools/bench/compare_reference.py --old-engine /path/to/old/deft-reversi-engine -- OLD_MODEL NEW_MODEL POSITIONS.obf level:60 5
-```
-
-現行の比較コマンドと配置は [比較ツールの説明](../tools/bench/README.md) を参照してください。
-
-通常API同士の性能比較には `level:60` を使う。`exact` と固定深さは診断用で、通常APIの比較とは条件が異なる。評価値の一致を確認し、新旧を交互に実行、局面ごとにTTを空にし、探索スコアの一致と5回以上の中央値を報告する。初期化とモデル読み込みは測定外。
-既存の参考先レビューにあるノード集計差があるため、NPSだけで採否を決めない。
-基準局面、CPU割当、ビルド条件、モデルハッシュ、参考コミットを固定する。
-旧版の `clear_tt` は世代更新だけなので、比較ツールでは旧Solverを作り直し、スレッド内の局所TTも新しいスレッドで初期化する。
-`tools/generate_rewrite_fixtures.py` で固定した座標ルールのゲームから局面を再生成できる。
-LinuxのCPU 1に固定する場合は、比較コマンドの先頭に `taskset -c 1` を付ける。
+速さの比較（変更の前後、Edax・Egaroucid）と対局は [tools/bench](../tools/bench/README.md) を使う。`examples/solve` が完全読みと固定レベルの探索、`examples/gtp` が対局用の GTP である。
 
 ## 並列測定
 
-```sh
-python3 tools/bench_rewrite_parallel.py --binary target/release/examples/solve --model data/eval/pattern.dpr2 --positions deft-reversi-engine/tests/fixtures/ffo40-44.obf --out parallel.tsv
-```
-
-1/2/4/8/20スレッドを5周、往復順で測る。スレッド数ごとのCPU割当を固定し、全局面のスコア一致を確認する。
-プロセス・TTは各実行で新しくし、モデル読み込みや初期化は探索時間に含めない。TTは1回の実行内の局面間では再利用する。
-生データとバイナリ・モデル・局面のハッシュ、CPU割当、中央値を保存する。
+スレッド数ごとの完全読みの速さは [tools/bench/ffo.py](../tools/bench/README.md) で測る（`--threads` と `--cpus` でスレッド数とCPU割当を決める）。完全読みの値がスレッド数によらず同じになることは、探索のテスト（1/2/4/8/20スレッド）で確かめている。MPC を使う探索や時間・ノードで止めた探索、同点の手の選び方は、スレッド数や実行ごとに変わり得る。
 
 ## 終盤探索の最適化と実験
 
@@ -132,6 +137,8 @@ python3 tools/bench_rewrite_parallel.py --binary target/release/examples/solve -
 最終1マスでは、BMI2の抽出結果を8ビットに限定し、縦・斜線の表引き行を共通化して、不要な範囲検査と位置情報の読出しを削減した。最終1マスを2マス側へインライン展開し、安定石表のLazyLock参照は判定あたり1回にまとめる。[最終1マスの比較](../docs/benchmarks/2026-10-27-last-empty-optimization/README.md)に機械語の確認、正しさの検証、採用・保留した試作と測定上の制約を記録した。
 
 評価と手順付けでは、通常評価がmobility項のために計算した合法手を共有する。既定の完全読みでは、ゼロ窓の14→13マスで不要な評価状態の更新を省き、広い窓で再探索する場合に状態を作る。[合法手共有と評価状態更新の比較](../docs/benchmarks/2026-10-27-ordering-reuse/README.md)に2方式の試作、正しさの検証、局面別の性能差を記録した。
+
+14マス以上のゼロ窓の完全読みでは、子局面の評価値と着手可能数で手を並べる。空き20マス以上では、評価値の代わりに子局面から1手読んだ値を使う（Egaroucid と同じ深さ。[空きの多い完全読みの調査](../docs/benchmarks/2026-11-03-endgame-large-empties/README.md)）。
 
 7〜13マスのゼロ窓探索は、相手の着手可能数（隅を2倍）、自分の隅の確定石、升の価値、四分割パリティの順で手を並べる（Edaxの軽量手順付けから潜在合法手を除いたもの）。評価特徴の差分更新は升ごとの差分ベクトルの加算で行う。5〜6マスのゼロ窓探索でも、7〜13マス・4マスと同じ閾値で安定石カットを行い、8近傍に他の空きがない升を先に探索する。局所TTは各層1024スロット。14マスのゼロ窓節点では、局所TTにしか保存されない13マスの子について主TTのETCを省く。安定石判定はカットに必要な安定石数が確定した時点で伝播を打ち切り、辺の安定石表はコンパイル時に生成する。[Edax・Egaroucidとの差の調査](../docs/benchmarks/2026-10-28-engine-gap/README.md)と[続き](../docs/benchmarks/2026-10-28-edax-gap/README.md)に、空き数別の節点分布、各試作の単独比較、採用・保留の理由と測定条件を記録した。
 

@@ -1,0 +1,12 @@
+{
+  "games": 3000,
+  "game_wall_seconds": 10897.17361301207,
+  "mid_moves": 102000,
+  "end_moves": 53951,
+  "end_solved": 53699,
+  "end_search_seconds": 61.484116005999994,
+  "boundary_and_selectivity_validated": true,
+  "mid_search_ms_max": 101.873593,
+  "mid_wall_ms_max": 138.67758,
+  "end_search_ms_max": 25.834542
+}

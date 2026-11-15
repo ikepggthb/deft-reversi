@@ -1,0 +1,57 @@
+== shared mean: deep = a*shallow + b,  a = sum(alpha_i f_i), b = sum(beta_i f_i)
+  1            alpha +1.0041   beta -0.6641
+  e/60         alpha -0.0412   beta +0.4759
+  d/60         alpha +0.0363   beta -1.1395
+  s/60         alpha +0.2220   beta +7.9506
+  odd(s)       alpha -0.0015   beta -0.1769
+  x            alpha -0.0333   beta -1.5981
+  x*odd        alpha +0.0051   beta -2.2640
+  x*e/60       alpha +0.1227   beta +16.8734
+  x*(e/60)^2   alpha -0.0072   beta -27.2244
+
+== A midgame regressions on [1, e, d, s]
+  slope     [ 1.0082 -0.0008  0.0001  0.0048]
+  intercept [-0.6739  0.0078 -0.0429  0.2009]
+  deviation [ 5.0219 -0.0563  0.1823 -0.5423]
+  deviation clamp [2.103, 5.597]
+== A exact table (slope, intercept, deviation)
+  e=12: 0.9987 +0.376 4.528
+  e=13: 1.0121 -2.119 5.312
+  e=14: 1.0112 +0.430 4.679
+  e=15: 1.0340 -1.761 5.433
+  e=16: 1.0259 +0.668 4.952
+  e=17: 1.0252 -1.655 4.670
+  e=18: 1.0147 +0.951 4.192
+  e=19: 1.0277 -1.545 4.498
+  e=20: 1.0298 +0.725 3.940
+  e=21: 1.0255 -1.872 4.504
+  e=22: 1.0413 +1.039 4.404
+  e=23: 1.0264 -1.914 4.775
+  e=24: 1.0533 +0.800 4.497
+
+== B Edax form: u = p0*e + p1*d + p2*s;  sigma = p3*u^2 + p4*u + p5
+  p = [ 0.0476 -0.1503  0.4516  0.0572 -1.3077  5.0992]
+== C Egaroucid form: u = p0*(64-e)/64 + p1*s/60 + p2*d/60;  sigma = p3*u^3 + p4*u^2 + p5*u + p6  (exact cells weight 10)
+  p = [ 0.6933 -5.3685  1.6878  3.7216 -3.3991  6.079   1.5258]
+== D log-linear: log sigma = sum g_i f_i, f = [1, e', e'^2, s', s'^2, log(d-s), odd(s), odd(s)*s', x, x*e', x*s']  (e'=e/60, s'=s/60)
+  g = [ 1.3677 -0.5053 -0.3866 -8.3855 37.8165  0.2929  0.0082  0.2416  0.1475
+  0.0081 -1.7782]
+== E G model: r = e-k-1, logA = q0 + q1*k/10 + q2*e' + q3*e'^2 + q4*(k/10)*e' + q5*odd(k), lambda = exp(q6 + q7*k/10)
+   G(e,k) = exp(logA) * (1 - exp(-r/lambda)),  sigma^2 = G(e,s) - G(e,d)
+  q = [ 4.3419 -0.9796 -1.4574 -0.5691 -1.4638  0.025   1.9859 -0.4335]
+
+== worked example: midgame e=30 d=10 s=2  (shallow value v = +8)
+  A: mean +7.498  sigma 4.072
+  B: mean +7.625  sigma 4.056
+  C: mean +7.625  sigma 4.022
+  D: mean +7.625  sigma 4.015
+  E: mean +7.625  sigma 4.091
+
+== worked example: exact e=26 s=6  (shallow value v = +8)
+  A: mean +9.226  sigma 4.497
+  B: mean +8.787  sigma 5.048
+  C: mean +8.787  sigma 4.791
+  D: mean +8.787  sigma 4.334
+  E: mean +8.787  sigma 3.670
+    E detail: k=6 r=19 A=exp(2.6351)=13.945 lambda=5.617 G=13.471
+    E detail: k=26 r=0 A=exp(-0.5927)=0.553 lambda=2.360 G=0.000

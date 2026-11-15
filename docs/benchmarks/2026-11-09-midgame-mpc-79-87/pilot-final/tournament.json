@@ -1,0 +1,157 @@
+[
+  {
+    "percent": 81,
+    "games": 8,
+    "wins": 7,
+    "draws": 0,
+    "losses": 1,
+    "score": 0.875,
+    "mean_diff": 3.5,
+    "opening_bootstrap_95": [
+      0.875,
+      0.875
+    ],
+    "opponents": {
+      "79": {
+        "games": 2,
+        "score": 0.5
+      },
+      "83": {
+        "games": 2,
+        "score": 1.0
+      },
+      "85": {
+        "games": 2,
+        "score": 1.0
+      },
+      "87": {
+        "games": 2,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "percent": 83,
+    "games": 8,
+    "wins": 4,
+    "draws": 1,
+    "losses": 3,
+    "score": 0.5625,
+    "mean_diff": 1.5,
+    "opening_bootstrap_95": [
+      0.5625,
+      0.5625
+    ],
+    "opponents": {
+      "79": {
+        "games": 2,
+        "score": 0.5
+      },
+      "81": {
+        "games": 2,
+        "score": 0.0
+      },
+      "85": {
+        "games": 2,
+        "score": 1.0
+      },
+      "87": {
+        "games": 2,
+        "score": 0.75
+      }
+    }
+  },
+  {
+    "percent": 79,
+    "games": 8,
+    "wins": 4,
+    "draws": 0,
+    "losses": 4,
+    "score": 0.5,
+    "mean_diff": -1.75,
+    "opening_bootstrap_95": [
+      0.5,
+      0.5
+    ],
+    "opponents": {
+      "81": {
+        "games": 2,
+        "score": 0.5
+      },
+      "83": {
+        "games": 2,
+        "score": 0.5
+      },
+      "85": {
+        "games": 2,
+        "score": 0.5
+      },
+      "87": {
+        "games": 2,
+        "score": 0.5
+      }
+    }
+  },
+  {
+    "percent": 87,
+    "games": 8,
+    "wins": 2,
+    "draws": 1,
+    "losses": 5,
+    "score": 0.3125,
+    "mean_diff": -0.75,
+    "opening_bootstrap_95": [
+      0.3125,
+      0.3125
+    ],
+    "opponents": {
+      "79": {
+        "games": 2,
+        "score": 0.5
+      },
+      "81": {
+        "games": 2,
+        "score": 0.0
+      },
+      "83": {
+        "games": 2,
+        "score": 0.25
+      },
+      "85": {
+        "games": 2,
+        "score": 0.5
+      }
+    }
+  },
+  {
+    "percent": 85,
+    "games": 8,
+    "wins": 2,
+    "draws": 0,
+    "losses": 6,
+    "score": 0.25,
+    "mean_diff": -2.5,
+    "opening_bootstrap_95": [
+      0.25,
+      0.25
+    ],
+    "opponents": {
+      "79": {
+        "games": 2,
+        "score": 0.5
+      },
+      "81": {
+        "games": 2,
+        "score": 0.0
+      },
+      "83": {
+        "games": 2,
+        "score": 0.0
+      },
+      "87": {
+        "games": 2,
+        "score": 0.5
+      }
+    }
+  }
+]

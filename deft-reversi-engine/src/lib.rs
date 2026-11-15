@@ -7,7 +7,7 @@
 //! };
 //! use std::time::Duration;
 //!
-//! let model = Model::from_file("eval-v4.bin")?;
+//! let model = Model::from_file("model.dpr2")?;  // weights and ProbCut calibration
 //! let mut engine = Engine::new(model, EngineOptions::default().threads(4))?;
 //! let position = Position::initial().play("f5".parse::<deft_reversi_engine::Action>()?)?;
 //!
@@ -47,11 +47,11 @@ mod types;
 mod worker;
 pub use board::bitboard::{Board, MoveError};
 pub use diagnostics::perft;
-pub use model::{Model, ModelMetadata};
+pub use model::Model;
 pub use position::{Color, ParsePositionError, Position};
 pub use search::{
-    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, SearchRequest,
-    SearchResult, SearchStats, Selectivity, StopHandle, StopReason,
+    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, SearchPlan,
+    SearchRequest, SearchResult, SearchStats, Selectivity, StopHandle, StopReason,
 };
 pub use types::{Action, Moves, Square};
 pub use worker::{EngineWorker, SearchHandle};
@@ -59,7 +59,16 @@ pub use worker::{EngineWorker, SearchHandle};
 /// Model construction and search calibration, for evaluation and MPC tuning.
 #[cfg(feature = "tuning")]
 pub use {
-    evaluation::{PATTERN_COUNT, PHASE_COUNT, PatternModel, PatternPhase},
-    mpc::{EvalSearchMpcConfig, FinalSearchMpcConfig, MpcConfig, MpcParams, MpcRegression},
-    search::ProbCutRule,
+    evaluation::{
+        FEATURE_COUNT, Features, MOBILITY_WEIGHT_COUNT, PATTERN_COUNT, PATTERN_WEIGHT_COUNT,
+        PEN_DIM, PEN_HIDDEN, PEN_INPUTS, PHASE_COUNT, PatternModel, PatternPhase, PenPhase,
+    },
+    search::{ProbCutRule, ProbCutSigmas},
 };
+
+/// The ProbCut rules of the legacy main branch, for packing them into a
+/// model converted from it.
+#[cfg(feature = "tuning")]
+pub fn legacy_main_rules() -> Vec<ProbCutRule> {
+    mpc::legacy_main_rules()
+}

@@ -1,0 +1,178 @@
+diff --git a/deft-reversi-engine/examples/solve.rs b/deft-reversi-engine/examples/solve.rs
+index 9e042ad..bba2021 100644
+--- a/deft-reversi-engine/examples/solve.rs
++++ b/deft-reversi-engine/examples/solve.rs
+@@ -9,6 +9,14 @@ use std::{
+     time::Duration,
+ };
+ fn main() -> Result<(), Box<dyn Error>> {
++    let r = run();
++    let c = deft_reversi_engine::diag_nodes_by_empties();
++    eprintln!("diag {}", c.iter().enumerate().filter(|(_, n)| **n > 0).map(|(e, n)| format!("{e}:{n}")).collect::<Vec<_>>().join(" "));
++    let cuts = deft_reversi_engine::diag_cuts_by_empties();
++    for (e, c) in cuts.iter().enumerate() { if c.iter().sum::<u64>() > 0 { eprintln!("cuts {e} first {} later {} none {}", c[0], c[1], c[2]); } }
++    r
++}
++fn run() -> Result<(), Box<dyn Error>> {
+     let mut legacy_mpc = false;
+     let mut args = std::env::args().skip(1).filter(|arg| {
+         if arg == "--legacy-main-mpc" {
+diff --git a/deft-reversi-engine/src/lib.rs b/deft-reversi-engine/src/lib.rs
+index 9b2dd4d..51fe55d 100644
+--- a/deft-reversi-engine/src/lib.rs
++++ b/deft-reversi-engine/src/lib.rs
+@@ -72,3 +72,14 @@ pub use {
+ pub fn legacy_main_rules() -> Vec<ProbCutRule> {
+     mpc::legacy_main_rules()
+ }
++
++/// DIAGNOSTIC: exact nodes entered per empties count since the start.
++pub fn diag_nodes_by_empties() -> Vec<u64> {
++    search::tree::DIAG_NODES.iter().map(|c| c.load(std::sync::atomic::Ordering::Relaxed)).collect()
++}
++
++/// DIAGNOSTIC: [first-move cut, later cut, no cut] per empties.
++pub fn diag_cuts_by_empties() -> Vec<[u64; 3]> {
++    use std::sync::atomic::Ordering::Relaxed;
++    search::tree::DIAG_CUTS.iter().map(|c| [c[0].load(Relaxed), c[1].load(Relaxed), c[2].load(Relaxed)]).collect()
++}
+diff --git a/deft-reversi-engine/src/search.rs b/deft-reversi-engine/src/search.rs
+index 26917ad..2b9cc52 100644
+--- a/deft-reversi-engine/src/search.rs
++++ b/deft-reversi-engine/src/search.rs
+@@ -23,7 +23,7 @@ mod level;
+ mod ordering;
+ mod pv;
+ mod root;
+-mod tree;
++pub(crate) mod tree;
+ mod ybwc;
+ 
+ /// Owns the model, the transposition tables and the worker threads. One
+diff --git a/deft-reversi-engine/src/search/endgame/ordered.rs b/deft-reversi-engine/src/search/endgame/ordered.rs
+index 0f8d8de..e7a557a 100644
+--- a/deft-reversi-engine/src/search/endgame/ordered.rs
++++ b/deft-reversi-engine/src/search/endgame/ordered.rs
+@@ -13,6 +13,7 @@ impl Context {
+         known_moves: Option<u64>,
+         best_move: &mut u8,
+     ) -> Result<i32, Aborted> {
++        crate::search::tree::diag(board.empty_count());
+         let mut moves = known_moves.unwrap_or_else(|| board.get_moves());
+         if moves == 0 {
+             let passed = board.board_after_pass();
+diff --git a/deft-reversi-engine/src/search/ordering.rs b/deft-reversi-engine/src/search/ordering.rs
+index 1a89708..0ae5b4e 100644
+--- a/deft-reversi-engine/src/search/ordering.rs
++++ b/deft-reversi-engine/src/search/ordering.rs
+@@ -17,7 +17,20 @@ impl Context {
+         let depth = if narrow {
+             // From 20 empties a one-ply search under each child, as
+             // Egaroucid orders its endgame null-window moves.
+-            if empties >= 20 { 2 } else { empties >> 4 }
++            match diag_env("DEFT_ORD_MODE") {
++                // Edax: (depth - 15) / 3 plies under the child, one more from 27.
++                1 => {
++                    let e = i32::from(empties);
++                    (((e - 15) / 3 + i32::from(e >= 27)).clamp(0, 6) + 1).max(i32::from(empties >> 4)) as u8
++                }
++                // Edax depths capped at DEFT_ORD_CAP plies under the child.
++                2 => {
++                    let e = i32::from(empties);
++                    let cap = diag_env("DEFT_ORD_CAP") as i32;
++                    (((e - 15) / 3 + i32::from(e >= 27)).clamp(0, cap) + 1).max(i32::from(empties >> 4)) as u8
++                }
++                _ => if empties >= 20 { 2 } else { empties >> 4 },
++            }
+         } else {
+             (empties >> 3).max(1)
+         };
+@@ -188,3 +201,11 @@ mod tests {
+         }
+     }
+ }
++
++pub(crate) fn diag_env(key: &str) -> u32 {
++    use std::sync::OnceLock;
++    static MODE: OnceLock<u32> = OnceLock::new();
++    static CAP: OnceLock<u32> = OnceLock::new();
++    let cell = if key == "DEFT_ORD_MODE" { &MODE } else { &CAP };
++    *cell.get_or_init(|| std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(0))
++}
+diff --git a/deft-reversi-engine/src/search/tree.rs b/deft-reversi-engine/src/search/tree.rs
+index 48185f7..31e98dd 100644
+--- a/deft-reversi-engine/src/search/tree.rs
++++ b/deft-reversi-engine/src/search/tree.rs
+@@ -5,6 +5,20 @@ use std::ops::ControlFlow;
+ // Midgame nodes split down to four plies of remaining depth: the shallow
+ // iterations before an endgame solve otherwise leave most threads idle.
+ pub(super) const SPLIT_DEPTH: u8 = 4;
++// DIAGNOSTIC: exact nodes entered, by empties.
++pub static DIAG_NODES: [std::sync::atomic::AtomicU64; 65] =
++    [const { std::sync::atomic::AtomicU64::new(0) }; 65];
++// DIAGNOSTIC: exact null-window nodes from 14 empties: [first-move cut, later cut, no cut].
++pub static DIAG_CUTS: [[std::sync::atomic::AtomicU64; 3]; 65] =
++    [const { [const { std::sync::atomic::AtomicU64::new(0) }; 3] }; 65];
++#[inline(always)]
++pub(crate) fn diag_cut(e: u8, kind: usize) {
++    DIAG_CUTS[usize::from(e)][kind].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++}
++#[inline(always)]
++pub(crate) fn diag(e: u8) {
++    DIAG_NODES[usize::from(e)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++}
+ pub(super) const SPLIT_EMPTIES: u8 = 10;
+ /// Null-window midgame nodes below this depth search without the TT, and
+ /// below `ORDERED_SEARCH_DEPTH` without move ordering too (main's
+@@ -105,6 +119,9 @@ impl Context {
+                 .map(Line::leaf);
+         }
+         self.enter()?;
++        if exact && board.empty_count() > super::endgame::LOCAL_END_MAX {
++            diag(board.empty_count());
++        }
+         if exact && beta - alpha == 1 && board.empty_count() <= super::endgame::LOCAL_END_MAX {
+             #[cfg(feature = "endgame-pattern-ordering")]
+             if board.empty_count() == super::endgame::LOCAL_END_MAX {
+@@ -230,6 +247,9 @@ impl Context {
+                 let mut line = Line::prepend(candidate.action(), &child);
+                 alpha = alpha.max(line.score);
+                 if alpha >= beta {
++                    if exact && beta - window.0 == 1 && board.empty_count() > 13 {
++                        diag_cut(board.empty_count(), 0);
++                    }
+                     self.stats.beta_cuts += 1;
+                     if self.aborted() {
+                         return Err(Aborted);
+@@ -430,8 +450,13 @@ impl Context {
+         (alpha, beta): (i32, i32),
+         child_spec: SearchSpec,
+     ) -> Result<Line, Aborted> {
++        let narrow_exact = child_spec.exact && beta - alpha == 1 && position.board.empty_count() > 13;
++        let e = position.board.empty_count();
+         let mut alpha = alpha.max(best.score);
+         if alpha >= beta {
++            if narrow_exact {
++                diag_cut(e, 0);
++            }
+             self.stats.beta_cuts += 1;
+             return Ok(best);
+         }
+@@ -472,10 +497,16 @@ impl Context {
+             }
+             alpha = alpha.max(best.score);
+             if alpha >= beta {
++                if narrow_exact {
++                    diag_cut(e, 1);
++                }
+                 self.stats.beta_cuts += 1;
+-                break;
++                return Ok(best);
+             }
+         }
++        if narrow_exact {
++            diag_cut(e, 2);
++        }
+         Ok(best)
+     }
+     fn store_node_line(

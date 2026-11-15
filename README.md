@@ -20,19 +20,19 @@ cargo clippy --locked --all-targets -- -D warnings
 
 Rust 1.99.1を `rust-toolchain.toml` で固定し、依存関係はルートの `Cargo.lock` で固定しています。rustfmtとClippyも同じツールチェーンの構成要素として指定しています。
 
-モデルは呼び出し元が指定します。元のv3/v4パターンモデル（JSON・bincode）をMPC設定とともに直接読み込めます。NNUEは対象外です。
+モデルは呼び出し元が指定します。形式は DPR2 の1ファイルで、重みと ProbCut の校正を持ちます（[エンジンの README](deft-reversi-engine/README.md#モデルとmpc)）。NNUEは対象外です。
 
 ```sh
-cargo run --locked --release --example solve -- MODEL.bin POSITIONS.obf exact 1 256
+cargo run --locked --release --example solve -- MODEL.dpr2 POSITIONS.obf exact 1 256
 ```
 
 ## 旧アプリケーション
 
-`deft-reversi-cli`、`deft-reversi-web`、`deft-reversi-learn` は移植前のソースとして保存し、ワークスペースから除外しています。旧エンジンは削除済みです。CLI・Webは旧APIに依存するため、新エンジンへの移植前にはビルドできません。学習処理も今回の検証対象には含めていません。
+`deft-reversi-train` はパターン評価の学習器です（[使い方](deft-reversi-train/README.md)）。`deft-reversi-cli`、`deft-reversi-web` は移植前のソースとして保存し、ワークスペースから除外しています。旧エンジンは削除済みです。CLI・Webは旧APIに依存するため、新エンジンへの移植前にはビルドできません。
 
 公開済みの[Web版](https://az.recazbowl.net/deft-reversi-web/index.html)は、ここで保存している旧アプリケーションに対応します。新エンジンへの移行は未実施です。
 
-現在の比較ツールは [tools/bench](tools/bench/README.md) にあります。旧版とのAPI比較では `--old-engine` で旧クレートの場所を指定し、通常API同士の比較には `level:60` を指定します。Edax・Egaroucidとの比較も、評価データとバイナリの場所を引数で指定できます。
+計測ツールは [tools/bench](tools/bench/README.md) にあります（FFO の完全読みの比較、中盤の速さ、Edax・Egaroucid との対局）。比較用エンジン・モデル・学習データは、`.gitignore` で除外した `local/` に置きます。
 
 ## 測定記録
 

@@ -95,3 +95,7 @@ taskset -c 1 tools/engine-compare/target/release/deft-engine-compare ../deft-rev
 ```
 
 FFO 40〜49の局面ファイルは前回と同じもの。`environment.json` にソース・モデル・バイナリ・局面のハッシュ、`ffo40-49.tsv` / `ffo1-19.tsv` に全測定、`statistics.json` に集計を保存。`probe-ffo40-44.*` は途中の試行で、最終版の性能判定には使わない。
+
+---
+
+2026-11-07 の整理で、このフォルダの計測スクリプト・一回限りのツール・不要なログを削除した。当時のファイルは `git show 04c2ecb:docs/benchmarks/2026-10-24-model-root-tt/<ファイル名>` で見られる。今の計測には [tools/bench](../../../tools/bench/README.md) を使う。
