@@ -16,3 +16,6 @@ deft-reversi-cli/problem/test.obf
 
 # Attachments of the Codex app.
 /.codex-attachments/
+
+# Console self-play output from the workspace root.
+/self-play.txt

@@ -9,6 +9,7 @@ ctrlc = "3.4"
 deft_reversi_book = { path = "../deft-reversi-book" }
 deft_reversi_engine = { path = "../deft-reversi-engine" }
 rand = "0.8.5"
+sha2 = "0.10"
 
 [dev-dependencies]
 # The tests build a zero model instead of reading one from disk.

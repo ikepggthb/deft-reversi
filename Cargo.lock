@@ -182,6 +182,7 @@ dependencies = [
  "deft_reversi_book",
  "deft_reversi_engine",
  "rand",
+ "sha2",
 ]
 
 [[package]]

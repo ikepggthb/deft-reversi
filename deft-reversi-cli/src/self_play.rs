@@ -29,7 +29,9 @@ pub fn run(args: SelfPlayArgs) -> Result<()> {
     let mut rng = args
         .seed
         .map_or_else(StdRng::from_entropy, StdRng::seed_from_u64);
-    let request = args.goal.request(args.goal.goal(Goal::Level(16)));
+    let goal = args.goal.goal(Goal::Level(16));
+    crate::settings::report(&engine, &args.engine, goal, args.goal.time_limit());
+    let request = args.goal.request(goal);
     let mut out = File::create(&args.out).map_err(|e| format!("{}: {e}", args.out.display()))?;
     for n in 1..=args.games {
         let _armed = stop::arm(request.stop_handle());
@@ -54,11 +56,23 @@ pub fn play_game(
 ) -> Result<Game> {
     let mut game = Game::new();
     while game.placements() < random && !game.current().is_terminal() {
+        if request.stop_handle().is_stopped() {
+            return Ok(game);
+        }
         let moves: Vec<_> = game.current().legal_moves().into_iter().collect();
         game.play(Action::Place(moves[rng.gen_range(0..moves.len())]))?;
     }
     while !game.current().is_terminal() {
+        if request.stop_handle().is_stopped() {
+            return Ok(game);
+        }
         let result = engine.search(game.current(), request)?;
+        if result.stop_reason == deft_reversi_engine::StopReason::WorkerFailed {
+            return Err("engine search worker failed; unfinished record not written".into());
+        }
+        if request.stop_handle().is_stopped() {
+            return Ok(game);
+        }
         game.play(
             result
                 .best_move
@@ -87,5 +101,20 @@ mod tests {
         let mut replay = Game::new();
         replay.play_record(&game.record()).unwrap();
         assert_eq!(replay.current(), game.current());
+    }
+    #[test]
+    fn stopped_games_do_not_play_or_search() {
+        let mut engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let request = SearchRequest::new(Goal::Depth(1));
+        request.stop_handle().stop();
+        let mut rng = StdRng::seed_from_u64(1);
+        for random in [0, 20] {
+            let game = play_game(&mut engine, &request, random, &mut rng).unwrap();
+            assert_eq!(game.current(), deft_reversi_engine::Position::initial());
+        }
     }
 }

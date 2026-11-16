@@ -12,11 +12,19 @@ pub struct Game {
 
 impl Game {
     pub fn new() -> Self {
+        Self::from_position(Position::initial())
+    }
+
+    pub fn from_position(position: Position) -> Self {
         Self {
-            positions: vec![Position::initial()],
+            positions: vec![position],
             actions: Vec::new(),
             redo: Vec::new(),
         }
+    }
+
+    pub fn start(&self) -> Position {
+        self.positions[0]
     }
 
     pub fn current(&self) -> Position {
@@ -67,6 +75,9 @@ impl Game {
 
     /// Takes back the last placement and the passes around it.
     pub fn undo(&mut self) -> bool {
+        if self.actions.iter().all(|a| *a == Action::Pass) {
+            return false;
+        }
         while self.actions.last() == Some(&Action::Pass) {
             self.pop();
         }
