@@ -1,365 +1,780 @@
-use deft_reversi_engine::*;
+use crate::{EngineArgs, GoalArgs, Result, display, game::Game, settings, stop};
+use clap::Args;
+use deft_reversi_book::{Book, BookChoice, BookPlayer, MovePolicy, ReadLimits, UsePolicy};
+use deft_reversi_engine::{Action, Color, Engine, Goal, SearchRequest, Selectivity};
+use sha2::{Digest, Sha256};
 use std::{
-    io::{self, Write},
-    process::exit,
+    io::{self, BufRead, Write},
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
 };
-pub struct OthelloCLI {
+
+#[derive(Args, Debug)]
+pub struct PlayArgs {
+    #[command(flatten)]
+    engine: EngineArgs,
+    /// Level 10 unless a level, depth or exact solve is given.
+    #[command(flatten)]
+    pub(super) goal: GoalArgs,
+    /// Opening book to play from before searching.
+    #[arg(short, long)]
+    book: Option<PathBuf>,
+    /// Pick at random among book moves at most this many discs worse than
+    /// the best one, instead of always the best.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=128))]
+    book_loss: Option<u8>,
+    /// 0: you play black, 1: you play white, 2: engine against itself,
+    /// 3: two players.
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=3))]
+    mode: u8,
+}
+
+struct Session {
     game: Game,
-    solver: Solver,
-    ai_level: i32,
-    setting_turn: SettingTurn,
+    engine: Engine,
+    book: Option<BookPlayer>,
+    book_on: bool,
+    goal: Goal,
+    time: Option<Duration>,
+    /// Which colors the engine plays: black, white.
+    computer: [bool; 2],
+    details: Option<ModelDetails>,
 }
 
-enum Turn {
-    Computer,
-    Player,
+struct ModelDetails {
+    path: PathBuf,
+    sha256: String,
+    calibrated: bool,
+    book: Option<PathBuf>,
+    book_loss: Option<u8>,
 }
 
-struct SettingTurn {
-    black: Turn,
-    white: Turn,
+pub fn run(args: PlayArgs) -> Result<()> {
+    let bytes = std::fs::read(&args.engine.model)
+        .map_err(|e| format!("{}: {e}", args.engine.model.display()))?;
+    let model = deft_reversi_engine::Model::from_bytes(&bytes)?;
+    let details = ModelDetails {
+        path: args.engine.model.clone(),
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
+        calibrated: model.has_calibration(),
+        book: args.book.clone(),
+        book_loss: args.book_loss,
+    };
+    drop(bytes);
+    let engine = args.engine.with_model(model)?;
+    let book = match &args.book {
+        None => None,
+        Some(path) => {
+            let book = Book::load(path, ReadLimits::default())
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let moves = match args.book_loss {
+                None => MovePolicy::Best,
+                Some(max_loss) => MovePolicy::RandomWithinLoss { max_loss },
+            };
+            let policy = UsePolicy {
+                moves,
+                ..UsePolicy::default()
+            };
+            Some(BookPlayer::new(
+                &engine,
+                Some(Arc::new(book)),
+                policy,
+                seed(),
+            )?)
+        }
+    };
+    let mut session = Session {
+        game: Game::new(),
+        engine,
+        book_on: book.is_some(),
+        book,
+        goal: args.goal.goal(Goal::Level(10)),
+        time: args.goal.time_limit(),
+        computer: [false; 2],
+        details: Some(details),
+    };
+    session.set_mode(args.mode);
+    println!("Type `help` for commands.");
+    session.run()
 }
 
-impl SettingTurn {
-    fn get(&self, c: Color) -> &Turn {
-        match c {
-            Color::Black => &self.black,
-            Color::White => &self.white,
+fn seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64)
+}
+
+impl Session {
+    fn run(&mut self) -> Result<()> {
+        let mut input = io::stdin().lock();
+        loop {
+            self.show();
+            let position = self.game.current();
+            if position.is_terminal() {
+                self.show_result();
+            } else if position.must_pass() {
+                println!("{} passes.", display::color(position.side_to_move()));
+                self.game.play(Action::Pass)?;
+                continue;
+            } else if self.is_computer(position.side_to_move()) {
+                match self.think() {
+                    Ok(()) => continue,
+                    Err(e) => {
+                        println!("Search error: {e}. Switched to mode 3; board preserved.");
+                        self.set_mode(3);
+                    }
+                }
+            }
+            print!("> ");
+            io::stdout().flush()?;
+            let mut line = String::new();
+            if input.read_line(&mut line)? == 0 {
+                return Ok(());
+            }
+            loop {
+                match self.command(line.trim())? {
+                    Next::Show => break,
+                    Next::Quit => return Ok(()),
+                    Next::Prompt => {}
+                }
+                print!("> ");
+                io::stdout().flush()?;
+                line.clear();
+                if input.read_line(&mut line)? == 0 {
+                    return Ok(());
+                }
+            }
         }
     }
-}
 
-impl OthelloCLI {
-    pub fn new(ai_level: i32, eval_path: &str) -> Self {
-        let eval = match Evaluator::read_file(eval_path) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("Evaluator: {}", e);
-                Evaluator::default()
-            }
+    fn is_computer(&self, color: Color) -> bool {
+        self.computer[color as usize]
+    }
+
+    fn set_mode(&mut self, mode: u8) {
+        self.computer = match mode {
+            0 => [false, true],
+            1 => [true, false],
+            2 => [true, true],
+            _ => [false, false],
         };
+    }
 
-        OthelloCLI {
-            game: Game::new(),
-            solver: Solver::new(eval),
-            ai_level,
-            setting_turn: SettingTurn {
-                black: Turn::Player,
-                white: Turn::Player,
+    fn command(&mut self, line: &str) -> Result<Next> {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let arg = |i: usize| words.get(i).copied().unwrap_or("");
+        let expected = match arg(0) {
+            "new" | "init" | "undo" | "u" | "redo" | "go" | "hint" | "analyze" | "exact"
+            | "settings" | "help" | "h" | "?" | "quit" | "exit" | "q" => Some(1),
+            "level" | "l" | "depth" | "time" | "mode" | "play" | "book" => Some(2),
+            _ => None,
+        };
+        if let Some(n) = expected
+            && words.len() != n
+        {
+            return usage("wrong number of arguments; type help");
+        }
+        match arg(0) {
+            "" => return Ok(Next::Prompt),
+            "new" | "init" => {
+                self.game = Game::new();
+                self.engine.clear_tt()?;
+            }
+            "level" | "l" => match arg(1).parse::<u8>() {
+                Ok(n @ 1..=60) => self.goal = Goal::Level(n),
+                _ => return usage("level <1-60>"),
+            },
+            "depth" => match arg(1).parse::<u8>() {
+                Ok(n @ 0..=60) => self.goal = Goal::Depth(n),
+                _ => return usage("depth <0-60>"),
+            },
+            "exact" => self.goal = Goal::Endgame,
+            "time" => match arg(1).parse::<u64>() {
+                Ok(0) => self.time = None,
+                Ok(ms) => self.time = Some(Duration::from_millis(ms)),
+                Err(_) => return usage("time <milliseconds, 0 for none>"),
+            },
+            "book" => match (arg(1), &self.book) {
+                (_, None) => {
+                    println!("No book loaded; start with --book FILE.");
+                    return Ok(Next::Prompt);
+                }
+                ("on", _) => self.book_on = true,
+                ("off", _) => self.book_on = false,
+                _ => return usage("book on|off"),
+            },
+            "play" => {
+                if let Err(e) = self.game.play_record(arg(1)) {
+                    println!("{e}");
+                    return Ok(Next::Prompt);
+                }
+            }
+            "undo" | "u" => {
+                if !self.game.undo() {
+                    println!("Nothing to undo.");
+                    return Ok(Next::Prompt);
+                }
+                // Back to a position where a player is to move.
+                while self.is_computer(self.game.current().side_to_move()) && self.game.undo() {}
+            }
+            "redo" => {
+                if !self.game.redo() {
+                    println!("Nothing to redo.");
+                    return Ok(Next::Prompt);
+                }
+                while self.is_computer(self.game.current().side_to_move()) && self.game.redo() {}
+            }
+            "mode" => match arg(1).parse::<u8>() {
+                Ok(n @ 0..=3) => self.set_mode(n),
+                _ => return usage("mode <0-3>"),
+            },
+            "search" => {
+                if words.len() == 1 {
+                    self.show_search();
+                } else {
+                    match <crate::SearchCommand as clap::Parser>::try_parse_from(
+                        words.iter().copied(),
+                    ) {
+                        Ok(args) => {
+                            self.goal = args.goal.goal(self.goal);
+                            if args.goal.time_ms.is_some() {
+                                self.time = args.goal.time_limit();
+                            }
+                            self.show_search();
+                        }
+                        Err(e) => println!("{e}"),
+                    }
+                }
+                return Ok(Next::Prompt);
+            }
+            "review" => {
+                let (start, record) = match words.len() {
+                    1 => (self.game.start(), self.game.record()),
+                    2 => (deft_reversi_engine::Position::initial(), arg(1).to_string()),
+                    _ => return usage("review [RECORD]"),
+                };
+                if let Err(e) =
+                    crate::review::review(&mut self.engine, start, &record, self.goal, self.time)
+                {
+                    println!("Review error: {e}");
+                }
+                return Ok(Next::Prompt);
+            }
+            "settings" => {
+                self.show_settings();
+                return Ok(Next::Prompt);
+            }
+            "setboard" => {
+                match imported_position(line.strip_prefix("setboard").unwrap().trim()) {
+                    Ok(position) => {
+                        self.engine.clear_tt()?;
+                        self.game = Game::from_position(position);
+                        // Keep the loaded position available for inspection even in AI-vs-AI mode.
+                        self.set_mode(3);
+                        println!("Position loaded; mode 3 (two players). History starts here.");
+                    }
+                    Err(e) => {
+                        println!("{e}");
+                        return Ok(Next::Prompt);
+                    }
+                }
+            }
+            "hint" | "analyze" => {
+                if let Err(e) = self.analyze(arg(0) == "analyze") {
+                    println!("Analysis error: {e}");
+                }
+                return Ok(Next::Prompt);
+            }
+            "eval" => {
+                let compact = settings::eval_spec(arg(1));
+                let parsed = compact.as_ref().ok().map(|e| e.depth);
+                let plan = settings::plan(self.goal);
+                let stage = if arg(2).is_empty() {
+                    Ok(compact
+                        .as_ref()
+                        .ok()
+                        .and_then(|e| e.mpc)
+                        .unwrap_or(plan.midgame_selectivity()))
+                } else {
+                    settings::selectivity(arg(2))
+                };
+                match (parsed, stage) {
+                    (Some(depth), Ok(stage))
+                        if words.len() <= 3 && !(arg(1).contains('@') && words.len() == 3) =>
+                    {
+                        self.goal = Goal::Plan(plan.with_midgame(depth, stage))
+                    }
+                    _ => return usage("eval <0-60> [83|85|95|98|99|100]"),
+                }
+                print!("{}", settings::describe(self.goal));
+            }
+            "endgame" => {
+                let mut plan = settings::plan(self.goal);
+                if arg(1) == "clear" && words.len() == 2 {
+                    for stage in Selectivity::ALL {
+                        plan = plan.endgame(stage, 0);
+                    }
+                } else {
+                    let stage = settings::endgame_stage(&format!("{}:{}", arg(1), arg(2)));
+                    match stage {
+                        Ok(stage) if words.len() == 3 => {
+                            plan = plan.endgame(stage.selectivity, stage.empties)
+                        }
+                        _ => {
+                            return usage(
+                                "endgame <83|85|95|98|99|100> <empties 0-60> | endgame clear",
+                            );
+                        }
+                    }
+                }
+                self.goal = Goal::Plan(plan);
+                print!("{}", settings::describe(self.goal));
+            }
+            "go" => {
+                if self.game.current().is_terminal() {
+                    println!("The game is over.");
+                    return Ok(Next::Prompt);
+                }
+                if let Err(e) = self.think() {
+                    println!("Search error: {e}");
+                    return Ok(Next::Prompt);
+                }
+            }
+            "help" | "h" | "?" => {
+                help();
+                return Ok(Next::Prompt);
+            }
+            "quit" | "exit" | "q" => return Ok(Next::Quit),
+            word if words.len() > 1 => return usage(&format!("unexpected arguments after {word}")),
+            word => match word.parse::<Action>() {
+                Ok(action) => {
+                    if let Err(e) = self.game.play(action) {
+                        println!("{word}: {e}");
+                        return Ok(Next::Prompt);
+                    }
+                }
+                Err(_) => {
+                    println!("Unknown command `{word}`; type `help`.");
+                    return Ok(Next::Prompt);
+                }
             },
         }
+        Ok(Next::Show)
     }
 
-    fn display_board(&self) {
-        let (black_score, white_score) = {
-            match self.game.current.turn {
-                Color::Black => (
-                    self.game.current.board.player.count_ones(),
-                    self.game.current.board.opponent.count_ones(),
-                ),
-                Color::White => (
-                    self.game.current.board.opponent.count_ones(),
-                    self.game.current.board.player.count_ones(),
-                ),
-            }
-        };
-        println!("  A B C D E F G H");
-        for i in 0..8 {
-            print!("{}", i + 1);
-            for j in 0..8 {
-                print!(" ");
-                let mask = 1u64 << (i * 8 + j);
-                if self.game.current.board.player & mask != 0 {
-                    print!("{}", self.game.current.turn.get_char());
-                } else if self.game.current.board.opponent & mask != 0 {
-                    print!("{}", self.game.current.turn.opponent().get_char());
-                } else {
-                    print!(".");
-                }
-            }
-            println!();
+    /// Plays the engine's move for the side to move.
+    fn think(&mut self) -> Result<()> {
+        let position = self.game.current();
+        let side = display::color(position.side_to_move());
+        if self.book_on
+            && let Some(choice) = self.book.as_mut().and_then(|b| b.choose(position))
+        {
+            println!(
+                "{side} plays {} from the book ({})",
+                choice.action,
+                book_value(&choice)
+            );
+            self.game.play(choice.action)?;
+            return Ok(());
         }
-
-        println!("-----------------------------------------------------------");
-        println!("                           Score                           ");
         println!(
-            "    Black  {:2}                           {:>2}   White    ",
-            black_score, white_score
+            "{side} is thinking ({}); Ctrl-C plays the best move so far.",
+            goal(self.goal, self.time)
         );
-        println!("-----------------------------------------------------------");
-        println!("{:<17} | {:<17} | {:<17}", "Turn", "Move", "Empties");
+        let mut request = SearchRequest::new(self.goal);
+        if let Some(limit) = self.time {
+            request = request.time_limit(limit);
+        }
+        let _armed = stop::arm(request.stop_handle());
+        let result = self
+            .engine
+            .search_with(position, &request, |p| println!("{}", display::progress(p)))?;
+        if result.stop_reason == deft_reversi_engine::StopReason::WorkerFailed {
+            return Err("engine search worker failed".into());
+        }
+        let action = result
+            .best_move
+            .ok_or("no move before the end of the game")?;
         println!(
-            "{:>17} | {:>17} | {:>17}",
-            self.game.current.turn.get_str(),
-            self.game.current.board.move_count() + 1,
-            self.game.current.board.empties_count()
+            "{side} plays {action}  score {}  {}  {} nodes  {:.2}s{}",
+            display::score(result.score),
+            display::kind(result.kind),
+            display::nodes(result.stats.nodes),
+            result.elapsed.as_secs_f64(),
+            display::stop_note(&result),
         );
-        println!("-----------------------------------------------------------");
-        println!("                          Record                           ");
-        let record: String = self.game.record();
+        println!("pv {}", display::pv(&result.pv));
+        self.game.play(action)?;
+        Ok(())
+    }
 
-        // 各手は2文字なので、2文字ずつに分割する
-        let moves: Vec<&str> = record
-            .as_bytes()
-            .chunks(2)
-            .map(|chunk| std::str::from_utf8(chunk).unwrap())
-            .collect();
-
-        // 20手ごとに改行して表示する
-        for line in moves.chunks(20) {
-            println!("{}", line.join(" "));
+    fn analyze(&mut self, all: bool) -> Result<()> {
+        let start = Instant::now();
+        let position = self.game.current();
+        if position.is_terminal() {
+            println!("The game is over.");
+            return Ok(());
         }
-        println!("-----------------------------------------------------------");
-    }
-
-    fn execute_player_prompt(&mut self) {
-        loop {
-            print!("> ");
-            io::stdout().flush().unwrap();
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-            let input = input.trim();
-
-            let parts: Vec<&str> = input.split_whitespace().collect();
-            if parts.is_empty() {
-                continue;
-            }
-
-            match parts[0] {
-                "new" | "init" => {
-                    self.game = Game::new();
-                    break;
-                }
-                "level" | "l" => {
-                    if parts.len() != 2 {
-                        println!("Invalid level command. Usage: level <number> (1-60)");
-                        continue;
-                    }
-                    match parts[1].parse::<i32>() {
-                        Ok(new_level) => {
-                            if new_level < 1 || new_level > 60 {
-                                println!("Invalid level. Level must be between 1 and 60.");
-                                continue;
-                            }
-                            self.ai_level = new_level;
-                            println!("Level set to: {}", new_level);
-                            break; // レベル変更後はループから抜け、ボード表示を更新する
-                        }
-                        Err(_) => {
-                            println!("Invalid level command. Usage: level <number> (1-60)");
-                            continue;
-                        }
-                    }
-                }
-                "play" => {
-                    if parts.len() != 2 {
-                        eprintln!("Invalid mode command. Usage: play <record of game (f5f6...)>");
-                        continue;
-                    }
-                    let all_record = self.game.record() + parts[1];
-                    if check_record(&all_record).is_err() {
-                        eprintln!("Invalid mode command. Usage: play <record of game (f5f6...)>");
-                    }
-                    for position in parts[1].as_bytes().chunks_exact(2) {
-                        self.game.put(std::str::from_utf8(position).unwrap());
-                        if self.game.is_pass() {
-                            self.game.pass();
-                        }
-                    }
-                    break;
-                }
-                "undo" => {
-                    if let Err(e) = self.game.undo() {
-                        println!("{}", e);
-                    } else {
-                        break;
-                    }
-                }
-                "mode" => {
-                    let print_err = || {
-                        println!("Invalid mode command. Usage: mode <number>");
-                        println!("Available modes:");
-                        println!("  0 : Black - Player, White - Computer");
-                        println!("  1 : Black - Computer, White - Player");
-                        println!("  2 : Computer vs Computer");
-                        println!("  3 : Player vs Player");
-                    };
-                    if parts.len() != 2 {
-                        print_err();
-                        continue;
-                    }
-                    match parts[1].parse::<u32>() {
-                        Ok(mode) => {
-                            match mode {
-                                0 => {
-                                    self.setting_turn = SettingTurn {
-                                        black: Turn::Player,
-                                        white: Turn::Computer,
-                                    };
-                                    println!("Mode set: Black - Player, White - Computer");
-                                    break; // モード変更後はループから抜け、ボード表示を更新する
-                                }
-                                1 => {
-                                    self.setting_turn = SettingTurn {
-                                        black: Turn::Computer,
-                                        white: Turn::Player,
-                                    };
-                                    println!("Mode set: Black - Computer, White - Player");
-                                    break; // モード変更後はループから抜け、ボード表示を更新する
-                                }
-                                2 => {
-                                    self.setting_turn = SettingTurn {
-                                        black: Turn::Computer,
-                                        white: Turn::Computer,
-                                    };
-                                    println!("Mode set: Computer vs Computer");
-                                    break; // モード変更後はループから抜け、ボード表示を更新する
-                                }
-                                3 => {
-                                    self.setting_turn = SettingTurn {
-                                        black: Turn::Player,
-                                        white: Turn::Player,
-                                    };
-                                    println!("Mode set: Player vs Player");
-                                    break; // モード変更後はループから抜け、ボード表示を更新する
-                                }
-                                _ => {
-                                    print_err();
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            print_err();
-                        }
-                    }
-                }
-                "redo" => {
-                    if self.game.redo().is_err() {
-                        println!("Cannot redo any further.");
-                    } else {
-                        println!("One move has been redone.");
-                    }
-                    break;
-                }
-                "go" => {
-                    self.computer_turn();
-                    break;
-                }
-                "help" => {
-                    self.display_help();
-                }
-                "quit" | "exit" => {
-                    exit(0);
-                }
-                _ => {
-                    if self.game.put(input).is_err() {
-                        println!("Invalid input");
-                    } else {
-                        break;
-                    }
-                }
-            }
+        let mut request = SearchRequest::new(self.goal);
+        if all {
+            request = request.all_moves();
         }
-    }
-
-    fn computer_turn(&mut self) {
-        let result = self.solver.solve(&self.game.current.board, self.ai_level);
-        if let Ok(move_str) = position_bit_to_str(result.best_move) {
-            println!("move: {}", move_str);
-            self.game.put(&move_str).unwrap();
+        if let Some(limit) = self.time {
+            request = request.time_limit(limit);
         }
-    }
-
-    /// Displays the final game score in a refined format.
-    fn display_score(&self) {
-        let (black_score, white_score) = {
-            match self.game.current.turn {
-                Color::Black => (
-                    self.game.current.board.player.count_ones(),
-                    self.game.current.board.opponent.count_ones(),
-                ),
-                Color::White => (
-                    self.game.current.board.opponent.count_ones(),
-                    self.game.current.board.player.count_ones(),
-                ),
-            }
-        };
-
-        println!("\n==============================");
-        println!("         Final Score          ");
-        println!("------------------------------");
-        println!("Black (X): {:>3}", black_score);
-        println!("White (O): {:>3}", white_score);
-        println!("==============================\n");
-    }
-    /// Displays a help message showing the available commands.
-    fn display_help(&self) {
-        println!("Available commands:");
-        println!("  new | init                - Start a new game with the standard initial position.");
-        println!("  level | l <number>        - Set AI level (1-60).");
-        println!("  play <record>             - Play a game record (e.g., f5f6...).");
-        println!("  undo                      - Undo the last move.");
-        println!("  redo                      - Redo a move.");
-        println!("  mode <number>             - Change game mode. Available modes:");
-        println!("                                0 : Black - Player, White - Computer");
-        println!("                                1 : Black - Computer, White - Player");
-        println!("                                2 : Computer vs Computer");
-        println!("                                3 : Player vs Player");
-        println!("  go                        - Let the computer make a move.");
-        println!("  help                      - Show this help message.");
-        println!("  quit | exit               - Exit the game.");
-        println!();
-        println!("Alternatively, enter a coordinate (e.g., D3) to place your piece.");
-    }
-    pub fn play(&mut self) {
-        loop {
-            self.display_board();
-
-            if self.game.is_end() {
-                println!("Game Over!");
-
-                self.display_score();
-                let (black_score, white_score) = {
-                    match self.game.current.turn {
-                        Color::Black => (
-                            self.game.current.board.player.count_ones(),
-                            self.game.current.board.opponent.count_ones(),
-                        ),
-                        Color::White => (
-                            self.game.current.board.opponent.count_ones(),
-                            self.game.current.board.player.count_ones(),
-                        ),
-                    }
-                };
-                match black_score.cmp(&white_score) {
-                    std::cmp::Ordering::Equal => {
-                        println!("Draw!");
-                    }
-                    std::cmp::Ordering::Greater => {
-                        println!("Black wins!");
-                    }
-                    std::cmp::Ordering::Less => {
-                        println!("White wins!");
-                    }
-                }
-            }
-
-            if self.game.is_pass() {
-                // println!("{}はパスです。", if self.game.current.turn == Board::BLACK { "プレイヤー" } else { "コンピュータ" });
-                self.game.pass();
-                continue;
-            }
-
-            if let Turn::Computer = self.setting_turn.get(self.game.current.turn) {
-                if !self.game.is_end() {
-                    self.computer_turn();
-                } else {
-                    self.execute_player_prompt();
-                }
+        let analysis_stop = request.stop_handle();
+        let _armed = stop::arm(analysis_stop.clone());
+        let result = self
+            .engine
+            .search_with(position, &request, |p| println!("{}", display::progress(p)))?;
+        if result.stop_reason == deft_reversi_engine::StopReason::WorkerFailed {
+            return Err("engine search worker failed".into());
+        }
+        println!(
+            "Hint: {}  score {}  {}{}",
+            display::action(result.best_move),
+            display::score(result.score),
+            display::kind(result.kind),
+            display::stop_note(&result)
+        );
+        if all {
+            if result.moves.is_empty() {
+                println!(
+                    "No complete candidate list (interrupted, pass, or depth 0). No unscored moves are ranked."
+                );
             } else {
-                self.execute_player_prompt();
+                println!("Move   Score   Search       PV");
+                let mut stopped = false;
+                for m in &result.moves {
+                    let pv = if Some(m.action) == result.best_move {
+                        Some(result.pv.clone())
+                    } else if stopped {
+                        None
+                    } else {
+                        let child = position.play(m.action)?;
+                        let (goal, stage, expected) = match result.kind {
+                            Some(deft_reversi_engine::ResultKind::Depth { depth, selectivity }) => {
+                                let d = depth.saturating_sub(u8::from(m.action != Action::Pass));
+                                (
+                                    Goal::Depth(d),
+                                    selectivity,
+                                    deft_reversi_engine::ResultKind::Depth {
+                                        depth: d,
+                                        selectivity,
+                                    },
+                                )
+                            }
+                            Some(
+                                kind @ deft_reversi_engine::ResultKind::Endgame { selectivity },
+                            ) => (Goal::Endgame, selectivity, kind),
+                            None => unreachable!("candidate scores require a completed iteration"),
+                        };
+                        let remaining = self.time.map(|t| t.saturating_sub(start.elapsed()));
+                        if remaining == Some(Duration::ZERO) || analysis_stop.is_stopped() {
+                            stopped = true;
+                            None
+                        } else {
+                            let mut request = SearchRequest::new(goal)
+                                .selectivity(stage)
+                                .with_stop(analysis_stop.clone());
+                            if let Some(limit) = remaining {
+                                request = request.time_limit(limit);
+                            }
+                            match self.engine.search(child, &request) {
+                                Ok(r) => {
+                                    stopped =
+                                        r.stop_reason != deft_reversi_engine::StopReason::Completed;
+                                    if !stopped
+                                        && r.score == Some(-m.score)
+                                        && (r.kind == Some(expected) || child.is_terminal())
+                                    {
+                                        let mut pv = vec![m.action];
+                                        pv.extend(r.pv);
+                                        Some(pv)
+                                    } else {
+                                        None
+                                    }
+                                }
+                                Err(_) => {
+                                    stopped = true;
+                                    None
+                                }
+                            }
+                        }
+                    };
+                    println!(
+                        "{:<6} {:+5}   {:<12} {}",
+                        m.action.to_string(),
+                        m.score,
+                        display::kind(result.kind),
+                        pv.as_ref().map_or_else(
+                            || "unavailable (time/stop/quality)".into(),
+                            |pv| display::pv(pv)
+                        )
+                    );
+                }
             }
         }
+        println!("PV (best): {}", display::pv(&result.pv));
+        println!("Board unchanged. Scores are from the side to move's perspective.");
+        Ok(())
+    }
+
+    fn show_search(&self) {
+        println!("Search: {}", settings::summary(self.goal, self.time));
+        println!(
+            "Now ({} empties): {}",
+            self.game.current().empty_count(),
+            settings::active(self.goal, self.game.current().empty_count())
+        );
+    }
+
+    fn show_settings(&self) {
+        let options = self.engine.options();
+        let actual = 1usize << options.tt_mib.ilog2();
+        println!("Threads: {}", options.threads);
+        println!(
+            "TT: requested {} MiB; allocated main table {} MiB (auxiliary tables excluded)",
+            options.tt_mib, actual
+        );
+        if let Some(d) = &self.details {
+            println!(
+                "Model: {}\nModel SHA-256: {}\nMPC calibration: {}",
+                d.path.display(),
+                d.sha256,
+                d.calibrated
+            );
+            println!(
+                "Book: {} ({}, policy {})",
+                d.book
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |p| p.display().to_string()),
+                if self.book_on { "on" } else { "off" },
+                d.book_loss
+                    .map_or_else(|| "best move".into(), |n| format!("within {n} discs"))
+            );
+        }
+        println!("Goal: {}", goal(self.goal, self.time));
+        print!("{}", settings::describe(self.goal));
+        println!(
+            "Time limit: {}",
+            self.time
+                .map_or_else(|| "none".into(), |t| format!("{} ms", t.as_millis()))
+        );
+        println!(
+            "Players: black {}, white {}",
+            if self.computer[0] { "AI" } else { "human" },
+            if self.computer[1] { "AI" } else { "human" }
+        );
+        println!(
+            "CLI: {}\nBuild target: {}\nProfile: {}, opt-level {}\nRust flags: {}",
+            env!("CARGO_PKG_VERSION"),
+            env!("DEFT_BUILD_TARGET"),
+            env!("DEFT_BUILD_PROFILE"),
+            env!("DEFT_BUILD_OPT_LEVEL"),
+            env!("DEFT_BUILD_CARGO_ENCODED_RUSTFLAGS")
+        );
+        if let Ok(path) = std::env::current_exe()
+            && let Ok(bytes) = std::fs::read(path)
+        {
+            println!("Binary SHA-256: {:x}", Sha256::digest(bytes));
+        }
+    }
+
+    fn show(&self) {
+        let position = self.game.current();
+        println!();
+        self.show_search();
+        print!("{}", display::board(position));
+        println!(
+            "X {:>2}  O {:>2}   move {}   empties {}   {} to move{}",
+            position.disc_count(Color::Black),
+            position.disc_count(Color::White),
+            self.game.placements() + 1,
+            position.empty_count(),
+            display::color(position.side_to_move()),
+            if self.book_on { "   book on" } else { "" },
+        );
+        let record = self.game.record();
+        if !record.is_empty() {
+            for line in record.as_bytes().chunks(40) {
+                println!("{}", std::str::from_utf8(line).unwrap());
+            }
+        }
+    }
+
+    fn show_result(&self) {
+        let score = self.game.current().final_score(Color::Black);
+        let winner = match score {
+            0 => "Draw".into(),
+            s if s > 0 => format!("Black wins by {s}"),
+            s => format!("White wins by {}", -s),
+        };
+        println!("Game over: {winner}. `new` starts another game, `undo` takes back.");
+    }
+}
+
+fn imported_position(text: &str) -> Result<deft_reversi_engine::Position> {
+    if let Some(file) = text.strip_prefix("--file ") {
+        let (file, index) = match file.rsplit_once(" --line ") {
+            Some((file, index)) => (file, index.parse::<usize>()?),
+            None => (file, 1),
+        };
+        let positions = crate::solve::read(&PathBuf::from(file.trim().trim_matches('"')))?;
+        let p = index
+            .checked_sub(1)
+            .and_then(|i| positions.get(i))
+            .ok_or("position index out of range (1-based)")?;
+        Ok(p.position)
+    } else {
+        Ok(crate::solve::parse(text)?.position)
+    }
+}
+
+enum Next {
+    /// Show the board and continue the game.
+    Show,
+    /// Ask for another command.
+    Prompt,
+    Quit,
+}
+
+fn usage(text: &str) -> Result<Next> {
+    println!("usage: {text}");
+    Ok(Next::Prompt)
+}
+
+fn goal(goal: Goal, time: Option<Duration>) -> String {
+    let goal = match goal {
+        Goal::Level(n) => format!("level {n}"),
+        Goal::Depth(n) => format!("depth {n}"),
+        Goal::Endgame => "exact".into(),
+        Goal::Plan(_) => "custom plan".into(),
+    };
+    match time {
+        Some(t) => format!("{goal}, {:.1}s", t.as_secs_f64()),
+        None => goal,
+    }
+}
+
+fn book_value(choice: &BookChoice) -> String {
+    let v = choice.value;
+    let quality = if v.quality.solved {
+        "solved".into()
+    } else if v.quality.selectivity == Selectivity::Full {
+        format!("d{}", v.quality.depth)
+    } else {
+        format!("d{}@{}%", v.quality.depth, v.quality.selectivity.percent())
+    };
+    format!("{:+}, {quality}", v.score)
+}
+
+fn help() {
+    println!(
+        "\
+  f5                  play a move (forced passes are played for you)
+  play f5d6c3         play a record
+  undo | redo         take back or replay a move
+  search              show current search settings and active stage
+  search --eval 12@83 --endgame 95:24,99:22,100:18  replace search settings
+  settings            show actual engine/model/search/build settings
+  review [RECORD]     review current history or a record without playing
+  setboard <OBF>      load a board and side to move; resets history, switches to mode 3
+  setboard --file PATH [--line N]  load the Nth position (default 1)
+  hint                best move and PV without playing
+  analyze             score every candidate and show verified PVs
+  eval DEPTH [PERCENT]  configure eval search, keeping endgame stages
+  endgame PERCENT EMPTIES  switch at or below EMPTIES; 0 disables the stage
+  endgame clear       disable all endgame stages
+  go                  let the engine move now
+  new                 start a new game
+  mode <0-3>          0: you black, 1: you white, 2: engine vs engine, 3: two players
+  level <1-60>        search by level
+  depth <0-60>        search to a fixed depth
+  exact               read to the end of the game
+  time <ms>           time limit per move, 0 for none
+  book on|off         use the opening book
+  help | quit"
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deft_reversi_engine::{EngineOptions, Model, PatternModel};
+
+    fn session() -> Session {
+        Session {
+            game: Game::new(),
+            engine: Engine::new(
+                Model::from_pattern(PatternModel::zero()),
+                EngineOptions::default().tt_mib(1),
+            )
+            .unwrap(),
+            book: None,
+            book_on: false,
+            goal: Goal::Depth(1),
+            time: None,
+            computer: [false, true],
+            details: None,
+        }
+    }
+
+    #[test]
+    fn undo_redo_preserve_the_computer_reply() {
+        let mut session = session();
+        session.command("play f5d6").unwrap();
+        let after = session.game.current();
+        session.command("undo").unwrap();
+        assert_eq!(session.game.placements(), 0);
+        session.command("redo").unwrap();
+        assert_eq!(session.game.current(), after);
+        assert_eq!(session.game.record(), "f5d6");
+    }
+    #[test]
+    fn inspection_does_not_play_and_loading_is_atomic() {
+        let mut s = session();
+        s.command("play f5d6").unwrap();
+        s.command("depth 2").unwrap();
+        let before = s.game.current();
+        let record = s.game.record();
+        for cmd in [
+            "settings",
+            "hint",
+            "analyze",
+            "setboard bad",
+            "endgame 94 12",
+            "eval 61",
+        ] {
+            s.command(cmd).unwrap();
+            assert_eq!(s.game.current(), before);
+            assert_eq!(s.game.record(), record);
+        }
+        s.command("review").unwrap();
+        assert_eq!(s.game.current(), before);
+        assert_eq!(s.game.record(), record);
+        for cmd in ["f5 junk", "new junk", "go junk", "search --eval 61@83"] {
+            s.command(cmd).unwrap();
+            assert_eq!(s.game.current(), before);
+        }
+        s.command("search --eval 3@100 --endgame 95:8,100:4 --time-ms 0")
+            .unwrap();
+        assert_eq!(settings::plan(s.goal).midgame_depth(), 3);
+        assert_eq!(s.time, None);
+        s.command("endgame clear").unwrap();
+        s.command("eval 3 100").unwrap();
+        s.command("endgame 95 8").unwrap();
+        let p = settings::plan(s.goal);
+        assert_eq!(p.midgame_depth(), 3);
+        assert_eq!(p.endgame_limit(Selectivity::Percent95), 8);
+        s.command(&format!(
+            "setboard {}",
+            deft_reversi_engine::Position::initial()
+        ))
+        .unwrap();
+        assert_eq!(s.game.current(), deft_reversi_engine::Position::initial());
+        assert!(!s.game.undo());
+        assert_eq!(s.computer, [false; 2]);
     }
 }

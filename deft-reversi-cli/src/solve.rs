@@ -1,156 +1,270 @@
-use std::time;
+use crate::{EngineArgs, GoalArgs, Result, display, stop};
+use clap::Args;
+use deft_reversi_engine::{Action, Engine, Goal, Position, ResultKind, SearchResult, Selectivity};
+use std::{path::PathBuf, time::Instant};
 
-use std::fs::File;
-use std::io::{self, BufRead};
-
-use deft_reversi_engine::*;
-
-// hh:mm:ss.mmm の形式にフォーマット
-fn format_duration(duration: time::Duration) -> String {
-    let millis = duration.as_millis() % 1000; // ミリ秒
-    let seconds = duration.as_secs() % 60; // 秒
-    let minutes = duration.as_secs() / 60 % 60; // 分
-    let hours = duration.as_secs() / 3600; // 時
-
-    format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
+#[derive(Args, Debug)]
+pub struct SolveArgs {
+    /// One position per line: 64 squares and the side to move, optionally
+    /// followed by `; A2:+38; C7:+36; ...` answers, best first.
+    file: PathBuf,
+    #[command(flatten)]
+    engine: EngineArgs,
+    /// Searches read to the end of the game without pruning unless a level
+    /// or depth is given.
+    #[command(flatten)]
+    pub(super) goal: GoalArgs,
+    /// Clear the transposition table before each position.
+    #[arg(long)]
+    clear_tt: bool,
+    /// Emit precise tab-separated results for benchmark tools.
+    #[arg(long)]
+    tsv: bool,
 }
 
-pub fn solve(path: &str, eval_path: &str, level: i32) {
-    let evaluator = Evaluator::read_file(eval_path).unwrap();
-    let mut solver = Solver::new(evaluator);
+pub struct Problem {
+    pub position: Position,
+    /// Scores of the moves the file lists, best first.
+    pub answers: Vec<(Action, i32)>,
+}
 
-    let board_list: Vec<Board> = match read_solve_file(path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("{}", e);
-            return;
-        }
-    };
+pub fn parse(line: &str) -> std::result::Result<Problem, String> {
+    let mut fields = line.split(';');
+    let mut header = fields.next().ok_or("empty line")?.split_whitespace();
+    let cells = header.next().ok_or("missing board")?;
+    let side = header.next().ok_or("missing side to move")?;
+    let position = format!("{cells} {side}")
+        .parse::<Position>()
+        .map_err(|e| e.to_string())?;
+    // Old bundled files separate answers with spaces, newer OBFs with `;`.
+    let answers = header
+        .chain(fields.map(str::trim).filter(|f| !f.is_empty()))
+        .map(|field| {
+            let (action, score) = field
+                .split_once(':')
+                .ok_or_else(|| format!("answer must be MOVE:SCORE: {field}"))?;
+            let action = action.trim().parse::<Action>()?;
+            let score = score.trim().parse::<i32>().map_err(|e| e.to_string())?;
+            Ok((action, score))
+        })
+        .collect::<std::result::Result<_, String>>()?;
+    Ok(Problem { position, answers })
+}
 
-    let total_solve_start_time = time::Instant::now();
-    let mut total_nodes = 0;
+pub fn read(path: &PathBuf) -> Result<Vec<Problem>> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .map(|(i, line)| parse(line).map_err(|e| format!("line {}: {e}", i + 1).into()))
+        .collect()
+}
 
-    let table_header = format!(
-        "{:5} | {:5} | {:4} | {:9} | {:28} | {:12} | {:15} | {:14}",
-        " #", "score", "move", "n_empties", "solver", "node", "nps", "time"
-    );
-    let table_separator_line = "-".repeat(table_header.len());
+/// Whether `result` agrees with the answers: the best score, and a move that
+/// reaches it. None when the file has no answers.
+pub fn check(problem: &Problem, result: &SearchResult) -> Option<bool> {
+    let best = problem.answers.iter().map(|a| a.1).max()?;
+    let move_ok = problem
+        .answers
+        .iter()
+        .any(|&(a, s)| Some(a) == result.best_move && s == best);
+    Some(result.score == Some(best) && move_ok)
+}
 
-    println!("{}", table_separator_line);
-    println!("{}", table_header);
-    println!("{}", table_separator_line);
-    for (i, board) in board_list.iter().enumerate() {
-        let solve_start_time = time::Instant::now();
-        let solver_result = solver.solve(board, level);
-        let solve_time = solve_start_time.elapsed();
-
-        println!(
-            "{:>5}   {:+5}   {:>4}   {:>9}   {:28}   {:>12}   {:>15.3}   {:>14} ",
-            i + 1,
-            solver_result.eval,
-            position_bit_to_str(solver_result.best_move).unwrap(),
-            board.empties_count(),
-            solver_result
-                .solver_type
-                .description(),
-            solver_result.searched_nodes,
-            solver_result.searched_nodes as f64 / solve_time.as_secs_f64(),
-            format_duration(solve_time)
-        );
-        total_nodes += solver_result.searched_nodes;
+pub fn run(args: SolveArgs) -> Result<()> {
+    let problems = read(&args.file)?;
+    let mut engine = args.engine.engine()?;
+    if problems.is_empty() {
+        return Err("no positions in input file".into());
     }
-
-    let total_solve_time = total_solve_start_time.elapsed();
-
-    println!("{}", table_separator_line);
-    println!(
-        "{:>5}   {:+5}   {:>4}   {:>9}   {:28}   {:>12}   {:>15.3}   {:>14} ",
-        "total",
-        "",
-        "",
-        "",
-        "",
-        total_nodes,
-        total_nodes as f64 / total_solve_time.as_secs_f64(),
-        format_duration(total_solve_time)
+    let goal = args.goal.goal(Goal::Endgame);
+    crate::settings::report(&engine, &args.engine, goal, args.goal.time_limit());
+    let header = format!(
+        "{:>4} | {:>5} | {:>4} | {:>7} | {:>6} | {:>12} | {:>12} | {:>12} | {:>3} | pv",
+        "#", "score", "move", "empties", "kind", "nodes", "nps", "time", "ok"
     );
-
-    println!("{}", table_separator_line);
-}
-
-fn read_solve_file(path: &str) -> Result<Vec<Board>, std::io::Error> {
-    let mut boards = Vec::new();
-    let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
-
-    for line in reader.lines() {
-        let line = line?;
-        let trimmed_line = line.trim();
-
-        if line.is_empty() {
+    let rule = "-".repeat(header.len() + 30);
+    if args.tsv {
+        println!(
+            "position\tscore\taction\tmode\tdepth\tnodes\tleaves\tsplits\tjobs\thandoffs\tjoin_seconds\tseconds\tstop"
+        );
+    } else {
+        println!("{rule}\n{header}\n{rule}");
+    }
+    let (mut nodes, mut wrong, start) = (0, 0, Instant::now());
+    let mut processed = 0;
+    let mut incomplete = 0;
+    for (i, problem) in problems.iter().enumerate() {
+        if args.clear_tt {
+            engine.clear_tt()?;
+        }
+        let result = search(&mut engine, problem.position, &args.goal, goal)?;
+        if result.stop_reason == deft_reversi_engine::StopReason::WorkerFailed {
+            return Err("engine search worker failed".into());
+        }
+        processed += 1;
+        let interrupted = result.stop_reason != deft_reversi_engine::StopReason::Completed;
+        incomplete += usize::from(interrupted);
+        let verdict = match if interrupted {
+            None
+        } else {
+            check(problem, &result)
+        } {
+            None if interrupted => "?",
+            None => "",
+            Some(true) => "ok",
+            Some(false) => {
+                wrong += 1;
+                "NG"
+            }
+        };
+        nodes += result.stats.nodes;
+        if args.tsv {
+            print_tsv(i + 1, problem.position, &result);
+            if result.stop_reason == deft_reversi_engine::StopReason::Requested {
+                break;
+            }
             continue;
         }
-
-        // 空白でボードと手番を分割
-        let parts: Vec<&str> = trimmed_line.split_whitespace().collect();
-        if parts.len() < 2 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Line must contain a board and a turn separated by a space: {}",
-                    trimmed_line
-                ),
-            ));
+        println!(
+            "{:>4} | {:>5} | {:>4} | {:>7} | {:>6} | {:>12} | {:>12.0} | {:>12} | {:>3} | {}{}",
+            i + 1,
+            display::score(result.score),
+            display::action(result.best_move),
+            problem.position.empty_count(),
+            display::kind(result.kind),
+            result.stats.nodes,
+            result.stats.nodes as f64 / result.elapsed.as_secs_f64(),
+            display::duration(result.elapsed),
+            verdict,
+            display::pv(&result.pv),
+            display::stop_note(&result),
+        );
+        if result.stop_reason == deft_reversi_engine::StopReason::Requested {
+            break;
         }
+    }
+    let elapsed = start.elapsed();
+    if !args.tsv {
+        println!("{rule}");
+        println!(
+            "{:>4} | {:>5} | {:>4} | {:>7} | {:>6} | {:>12} | {:>12.0} | {:>12} |",
+            "all",
+            "",
+            "",
+            "",
+            "",
+            nodes,
+            nodes as f64 / elapsed.as_secs_f64(),
+            display::duration(elapsed)
+        );
+        println!("{rule}");
+    }
+    eprintln!(
+        "Solve: {processed}/{} positions visited; {incomplete} incomplete; {wrong} disagree with answers.",
+        problems.len()
+    );
+    if wrong > 0 {
+        return Err(format!(
+            "{wrong} of {} positions disagree with the answers",
+            problems.len()
+        )
+        .into());
+    }
+    Ok(())
+}
 
-        let board_data = parts[0]; // ボード部分
-        let turn_char = parts[1]; // 手番部分
+fn print_tsv(index: usize, position: Position, result: &SearchResult) {
+    let (mode, depth) = match result.kind {
+        None => ("Depth(0)".into(), 0),
+        Some(ResultKind::Depth { depth, .. }) => (format!("Depth({depth})"), depth),
+        Some(ResultKind::Endgame { selectivity }) => (
+            if selectivity == Selectivity::Full {
+                "Exact"
+            } else {
+                "SelectiveEndgame"
+            }
+            .into(),
+            position.empty_count(),
+        ),
+    };
+    let action = result
+        .best_move
+        .map_or_else(|| "terminal".into(), |a| a.to_string());
+    println!(
+        "{index}\t{}\t{action}\t{mode}\t{depth}\t{}\t{}\t{}\t{}\t{}\t{:.9}\t{:.9}\t{:?}",
+        result
+            .score
+            .map_or_else(|| "unknown".into(), |s| s.to_string()),
+        result.stats.nodes,
+        result.stats.leaves,
+        result.stats.splits,
+        result.stats.helper_jobs,
+        result.stats.ancestor_handoffs,
+        result.stats.join_time.as_secs_f64(),
+        result.elapsed.as_secs_f64(),
+        result.stop_reason,
+    );
+}
 
-        if board_data.len() != 64 || turn_char.len() != 1 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Board must be 64 characters and turn must be 1 character: {}",
-                    trimmed_line
-                ),
-            ));
-        }
+fn search(
+    engine: &mut Engine,
+    position: Position,
+    args: &GoalArgs,
+    goal: Goal,
+) -> Result<SearchResult> {
+    let request = args.request(goal);
+    let _armed = stop::arm(request.stop_handle());
+    Ok(engine.search(position, &request)?)
+}
 
-        let mut board = Board {
-            player: 0,
-            opponent: 0,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deft_reversi_engine::{EngineOptions, Model, PatternModel, SearchRequest};
+
+    #[test]
+    fn answers_are_checked_against_an_exact_solve() {
+        // Two empties; the listed best move is the only winning one.
+        let line =
+            "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX-- X; G8:+0; H8:+0";
+        let problem = parse(line).unwrap();
+        assert_eq!(problem.answers.len(), 2);
+        let mut engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default(),
+        )
+        .unwrap();
+        let result = engine
+            .search(problem.position, &SearchRequest::new(Goal::Endgame))
+            .unwrap();
+        let score = result.score.unwrap();
+        let fixed = |s: i32| Problem {
+            position: problem.position,
+            answers: vec![(result.best_move.unwrap(), s)],
         };
-        for (i, c) in board_data.chars().enumerate() {
-            let c = c.to_ascii_uppercase();
-            match c {
-                'X' | 'B' => board.player |= 1 << i,
-                'O' | 'W' => board.opponent |= 1 << i,
-                '-' | '_' => (),
-                _ => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Invalid character '{}' in line: {}", c, trimmed_line),
-                    ));
-                }
-            }
-        }
-
-        // 手番を解析
-        match turn_char.to_ascii_uppercase().chars().next().unwrap() {
-            'X' => (),           // 手番がXならそのまま
-            'O' => board.swap(), // 手番がOならプレイヤーと相手をスワップ
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Invalid turn character '{}' in line: {}",
-                        turn_char, trimmed_line
-                    ),
-                ));
-            }
-        }
-        boards.push(board);
+        assert_eq!(check(&fixed(score), &result), Some(true));
+        assert_eq!(check(&fixed(score + 2), &result), Some(false));
+        assert_eq!(check(&parse(&line[..66]).unwrap(), &result), None);
     }
 
-    Ok(boards)
+    #[test]
+    fn legacy_and_semicolon_answers_and_all_bundled_files_are_readable() {
+        let cells = "O".repeat(32) + &"X".repeat(30) + "--";
+        let old = parse(&format!("{cells} X G8:+0 H8:-2")).unwrap();
+        let new = parse(&format!("{cells} X; G8: +0; H8:-2;")).unwrap();
+        assert_eq!(old.position, new.position);
+        assert_eq!(old.answers, new.answers);
+        for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/problem")).unwrap() {
+            assert!(!read(&entry.unwrap().path()).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn malformed_lines_are_rejected() {
+        assert!(parse("X X").is_err());
+        let board = "-".repeat(64);
+        assert!(parse(&format!("{board} X; F5")).is_err());
+        assert!(parse(&format!("{board} X; F5:x")).is_err());
+    }
 }

@@ -1,0 +1,54 @@
+{
+  "started_utc": "2026-11-16T04:41:06.112215+00:00",
+  "command": "python3 tools/bench/ffo.py --threads 8 --cpus 0-7 --rounds 1 --positions tools/bench/positions/ffo33-51.obf --first 33 --out docs/benchmarks/2026-11-16-ffo33-51-console-8thread/results deft edax egaroucid",
+  "head": "ecce031b71a3d730d228a4dc26f97e5d5d2efff5",
+  "threads": 8,
+  "physical_cores": 4,
+  "smt_threads_per_core": 2,
+  "cpus": "0-7",
+  "rounds": 1,
+  "positions": "FFO33-51",
+  "input_sources": {
+    "FFO33-39": "deft-reversi-console/problem/fforum-20-39.obf, positions 14-20; normalized answer separators",
+    "FFO40-51": "tools/bench/positions/ffo40-59.obf, positions 1-12"
+  },
+  "versions": {
+    "deft": "CLI from current workspace, native release",
+    "edax": "4.5.6 official Linux x86-64-v3",
+    "egaroucid": "Console 7.8.2, clang++ -O2 -march=native -mtune=native -pthread -std=c++20"
+  },
+  "tt": {
+    "deft_mib": 256,
+    "edax_hash_bits": 23,
+    "egaroucid_hash_bits": 23
+  },
+  "sha256": {
+    "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/target-native/release/deft-reversi-console": "2468a5b751f64e275d9bb5089ecefbb4df9f3d8e9fddb6779b4187334c2b687d",
+    "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/models/deft-eval-v3-pen.dpr2": "1a6e6b81aa4de564ab47674bc2911c42e1c0c33df2a74bb9e2dc3694f384eab5",
+    "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/bench-engines/edax-4.5.6/bin/lEdax-x86-64-v3": "f6cfc65d71acaeb73059b4721dba1b788fadf485a730b6f4dc7329542220cd8d",
+    "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/bench-engines/Egaroucid-console_v7.8.2/bin/Egaroucid_for_Console.out": "7c3c1e6cba3192cd3a3b58e9701a844391dd4f97d283b097ba647540a156b98d",
+    "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/bench-engines/edax-4.5.6/bin/data/eval.dat": "f8b2299612d9fa4414157e70e932636e33111c2602d0c2fc382a7d90ef21b792",
+    "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/bench-engines/Egaroucid-console_v7.8.2/bin/resources/eval.egev2": "0a8acbcbc23067933627f1bcc83c3f7ae6b7ff3e603d174a3364271fcaeeef2f",
+    "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/bench-engines/Egaroucid-console_v7.8.2/bin/resources/eval_move_ordering_end.egev": "bd908885e8bb85e72a9be2b0399f8ca52ed40a138bcaaecca3d13710945b9a93",
+    "tools/bench/positions/ffo33-51.obf": "0a90628b2132be27ebaec63d6e57b43b0ca532e2b023d86b3ed86dde3d78ef8b"
+  },
+  "source_sha256": {
+    "deft-reversi-console/src/self_play.rs": "ef93f18634ee4e8b244be4254400b044c6436fa389354beec52add587be120f3",
+    "deft-reversi-console/src/stop.rs": "d37381179e0f04ff0a502acc65b0196c9d44f7105199176a2af7add504a55938",
+    "deft-reversi-console/src/main.rs": "081db26d5b7d67dbf088538a2e6143f33e04b1eddf3f8bd661c67f41de32de39",
+    "deft-reversi-console/src/perft.rs": "d164d08d892d857b10bfe6ed9a97089055c06994a85826c93825f80ef39e0393",
+    "deft-reversi-console/src/display.rs": "3b2c5eb6c7a0721b613658c1d2fcc109876938b9cc9dbb298581e212f784801a",
+    "deft-reversi-console/src/solve.rs": "7298c8173daa282a3306ac710ea10d59ec4796c883638aa15018ff9df18d9354",
+    "deft-reversi-console/src/gtp.rs": "74826253100353963c9b4793b6e687990b189f8eb0844b82be799ff247d57a0d",
+    "deft-reversi-console/src/game.rs": "d16062947d02fb97cef68900a0f4edf0da7ef4a86d1ed4f080273449bc79efbf",
+    "deft-reversi-console/src/play.rs": "afe924db0d165f369216e71746a25105be2f48d478c884a7b7a9d6e75a10ecfa",
+    "deft-reversi-console/Cargo.toml": "656fc5b84e45b3456bbd700255b41578d94c9f19c970eef8444099b3bdc76496",
+    "Cargo.lock": "1d7b5b9d61d1a1686166dd9495d9344ba2bd9daff0f3bd2d9792813750dd3880",
+    "tools/bench/match.py": "1ecf94c44f1323246b987b14f864342d2bf4e39702f97e99ae3b5e84186dc1f2",
+    "tools/bench/ffo.py": "3cc217ab30dfb1838ba9aa4a7f1e714c430795167ea2c921e7add6a2b72f57c0",
+    "tools/bench/midgame.py": "ee1779bf4f65220d432a2a208d9b5aa6681e472d488dd3e9cca680141c3b3496",
+    "tools/bench/common.py": "7015b397ed2efee71d6b4d5fc22c56884157f12c4f45be1f6d287a3fc33c120f"
+  },
+  "finished_utc": "2026-11-16T04:42:26.719560+00:00",
+  "verified_results": 57
+}

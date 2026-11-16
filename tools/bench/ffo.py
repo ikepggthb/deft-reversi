@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Exact solves of FFO-style positions: Deft configurations, Edax 4.5.5 and
-Egaroucid 7.8.1 on the same CPUs and thread count.
+"""Exact solves of FFO-style positions: Deft configurations, Edax 4.5.6 and
+Egaroucid 7.8.2 on the same CPUs and thread count.
 
 Every position is solved in a fresh process; the order of the engines
 rotates per position and round, and reverses every other round. Every
@@ -17,7 +17,7 @@ ENGINE: edax | egaroucid | NAME[:key=value,...] (a Deft configuration;
 examples:
   ffo.py --threads 1 --cpus 4 --rounds 3 --out t1 deft edax egaroucid
   ffo.py --threads 20 --cpus 0-19 --rounds 5 --out t20 \\
-      base:solve=/tmp/solve-base new:solve=/tmp/solve-new
+      base:solve=/tmp/cli-base new:solve=/tmp/cli-new
 """
 import argparse
 import statistics
@@ -38,6 +38,8 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("engines", nargs="+")
     args = parser.parse_args()
+    # Opponents run in their own binary directories.
+    args.out = args.out.resolve()
 
     tools = paths()
     engines = [engine(spec, tools) for spec in args.engines]

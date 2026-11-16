@@ -11,9 +11,9 @@ usage: match.py OPPONENT MODE OPENINGS OUT.tsv [WORKERS]
 Openings: 8 random plies from the initial position (seed 1, distinct), or
 with XOT=FILE, OPENINGS lines drawn from that XOT list (seed 1;
 positions/xot-openingslarge.txt is the large XOT list).
-Deft is the `gtp` example (DEFT_MODEL, default the release model of
+Deft is the CLI `gtp` subcommand (DEFT_MODEL, default the release model of
 common.py); with OPPONENT deft, the other side uses OPP_MODEL.
-OPP_GTP is another gtp binary for the other Deft side (e.g. an older build).
+OPP_GTP is another CLI binary for the other Deft side (e.g. an older build).
 Every engine runs single-threaded; the two engines of a game share one
 physical core (they never search at the same time; no pondering). WORKERS
 games run at once on CPUs 0, 2, 4, 6, or the list MATCH_CPUS=0,1,..
@@ -31,8 +31,8 @@ from common import paths
 
 TOOLS = paths()
 THREADS = os.environ.get("MATCH_THREADS", "1")
-# The engine's `gtp` example, built with CARGO_TARGET_DIR=target-native.
-DEFT = [str(TOOLS["gtp"]), os.environ.get("DEFT_MODEL", str(TOOLS["model"]))]
+# The CLI GTP interface, built with CARGO_TARGET_DIR=target-native.
+DEFT = [str(TOOLS["gtp"]), "gtp", "--model", os.environ.get("DEFT_MODEL", str(TOOLS["model"]))]
 EDAX = str(TOOLS["edax"])
 EGAR = str(TOOLS["egaroucid"])
 FULL = (1 << 64) - 1
@@ -158,10 +158,10 @@ def engine(kind, mode, cpu):
     if kind == "deft":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
         # DEFT_GTP_LOG=FILE: Deft logs each move's budget and time there.
-        return Gtp([*DEFT, *args, "--tt", "64", "--threads", THREADS], cpu, log=os.environ.get("DEFT_GTP_LOG"))
+        return Gtp([*DEFT, *args, "--tt-mib", "64", "--threads", THREADS], cpu, log=os.environ.get("DEFT_GTP_LOG"))
     if kind == "deft-opp":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
-        return Gtp([os.environ.get("OPP_GTP", DEFT[0]), os.environ["OPP_MODEL"], *args, "--tt", "64", "--threads", THREADS], cpu)
+        return Gtp([os.environ.get("OPP_GTP", DEFT[0]), "gtp", "--model", os.environ["OPP_MODEL"], *args, "--tt-mib", "64", "--threads", THREADS], cpu)
     if kind == "edax":
         # EDAX_MOVE_TIME=S: a time per move instead of per game.
         if seconds and os.environ.get("EDAX_MOVE_TIME"):
