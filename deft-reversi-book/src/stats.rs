@@ -157,7 +157,7 @@ impl BookEditor {
             .map(
                 |((depth, sel, solved), (candidates, unregistered_candidates))| QualityBucket {
                     depth,
-                    selectivity: selectivity(sel).unwrap(),
+                    selectivity: Selectivity::ALL[sel as usize],
                     solved,
                     candidates,
                     unregistered_candidates,

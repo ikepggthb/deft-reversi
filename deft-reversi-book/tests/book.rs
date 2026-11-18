@@ -979,7 +979,7 @@ fn levels_resolve_at_children_and_survive_interruption_and_reconfiguration() {
 }
 
 #[test]
-fn level_quality_records_actual_child_depth_instead_of_level_number() {
+fn level_quality_records_actual_root_depth() {
     let mut engine = engine();
     let b = Board::new();
     let mut ed = BookEditor::for_engine(&engine).unwrap();
@@ -1002,8 +1002,8 @@ fn level_quality_records_actual_child_depth_instead_of_level_number() {
     assert!(book.probe(b).unwrap().candidates().all(|c| {
         ImportedValue::from(c.value.unwrap()).quality
             == AnalysisQuality {
-                depth: 3,
-                selectivity: Selectivity::Full,
+                depth: 2,
+                selectivity: Selectivity::Percent83,
                 solved: false,
             }
     }));
@@ -1027,20 +1027,20 @@ fn engine_plan_distinguishes_selective_endgame_from_proof() {
             60,
             16,
             ResultKind::Depth {
-                depth: 12,
-                selectivity: Selectivity::Percent95,
+                depth: 16,
+                selectivity: Selectivity::Percent83,
             },
         ),
         (
-            24,
-            12,
+            28,
+            22,
             ResultKind::Endgame {
-                selectivity: Selectivity::Percent98,
+                selectivity: Selectivity::Percent85,
             },
         ),
         (
-            20,
-            12,
+            21,
+            22,
             ResultKind::Endgame {
                 selectivity: Selectivity::Full,
             },
@@ -1308,7 +1308,7 @@ fn level_selective_endgame_results_do_not_become_proven_through_book_backup() {
     ed.configure_generation(
         &[b],
         GenerationConfig {
-            analysis: AnalysisSchedule::Levels(vec![12]),
+            analysis: AnalysisSchedule::Levels(vec![19]),
             max_plies: 0,
             ..Default::default()
         },
@@ -1327,7 +1327,7 @@ fn level_selective_endgame_results_do_not_become_proven_through_book_backup() {
         assert_eq!(v.score(), -brute(child));
         if !child.is_terminal() {
             assert_eq!(v.depth(), 24);
-            assert_eq!(v.selectivity(), Selectivity::Percent98);
+            assert_eq!(v.selectivity(), Selectivity::Percent85);
             assert!(!v.is_solved());
         }
     }
