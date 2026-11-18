@@ -311,14 +311,19 @@ impl PenWeights {
                     .clamp(-127.0, 127.0) as i8
             })
         });
-        let hidden_bias =
-            std::array::from_fn(|j| (self.dense[B1 + j] * 127.0 * 64.0).round() as i32);
+        // The engine's limit on the biases (`PenPhase::new`).
+        const BIAS: f32 = (1 << 24) as f32;
+        let hidden_bias = std::array::from_fn(|j| {
+            (self.dense[B1 + j] * 127.0 * 64.0)
+                .round()
+                .clamp(-BIAS, BIAS) as i32
+        });
         let output = std::array::from_fn(|j| {
             (self.dense[W2 + j] * 128.0 * 128.0 / 127.0)
                 .round()
                 .clamp(-65536.0, 65536.0) as i32
         });
-        let output_bias = (self.dense[B2] * 128.0).round() as i32;
+        let output_bias = (self.dense[B2] * 128.0).round().clamp(-BIAS, BIAS) as i32;
         let pen = PenPhase::new(embeddings, &hidden, hidden_bias, output, output_bias).unwrap();
         (self.linear.export(shrink), pen)
     }

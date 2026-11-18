@@ -4,6 +4,7 @@
 //! write/read/fingerprintは主に旧形式の検査用。特に旧入力IDの再計算に使うため、
 //! 既存のタグ番号・順序を変えると旧ファイルの検査結果も変わる。
 use super::*;
+use crate::selectivity_code;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 pub(crate) fn byte(w: &mut dyn Write, n: u8) -> Result<()> {
@@ -76,11 +77,11 @@ pub(crate) fn kindw(w: &mut dyn Write, v: SearchKind) -> Result<()> {
         SearchKind::Midgame { depth, selectivity } => {
             byte(w, 0)?;
             byte(w, depth)?;
-            byte(w, selectivity as u8)
+            byte(w, selectivity_code(selectivity))
         }
         SearchKind::Endgame { selectivity } => {
             byte(w, 1)?;
-            byte(w, selectivity as u8)
+            byte(w, selectivity_code(selectivity))
         }
     }
 }
@@ -103,14 +104,15 @@ pub(crate) fn requestedw(w: &mut dyn Write, v: RequestedAnalysis) -> Result<()> 
             byte(w, 1)?;
             byte(w, n)
         }
+        RequestedAnalysis::RootLevel(n) => { byte(w, 4)?; byte(w, n) }
         RequestedAnalysis::ParentDepth { depth, selectivity } => {
             byte(w, 2)?;
             byte(w, depth)?;
-            byte(w, selectivity as u8)
+            byte(w, selectivity_code(selectivity))
         }
         RequestedAnalysis::Endgame { selectivity } => {
             byte(w, 3)?;
-            byte(w, selectivity as u8)
+            byte(w, selectivity_code(selectivity))
         }
     }
 }
@@ -118,6 +120,7 @@ pub(crate) fn requestedr(r: &mut impl Read) -> Result<RequestedAnalysis> {
     match read_byte(r)? {
         0 => Ok(RequestedAnalysis::External),
         1 => Ok(RequestedAnalysis::ChildLevel(read_byte(r)?)),
+        4 => Ok(RequestedAnalysis::RootLevel(read_byte(r)?)),
         2 => Ok(RequestedAnalysis::ParentDepth {
             depth: read_byte(r)?,
             selectivity: selectivity(read_byte(r)?)?,
@@ -133,10 +136,10 @@ pub(crate) fn summaryw(w: &mut dyn Write, q: QualitySummary) -> Result<()> {
         q.families,
         q.horizon,
         q.mid_depth,
-        q.mid_sel,
-        q.end_sel,
+        if q.mid_sel == 255 { 255 } else { selectivity_code(Selectivity::ALL[q.mid_sel as usize]) },
+        if q.end_sel == 255 { 255 } else { selectivity_code(Selectivity::ALL[q.end_sel as usize]) },
         q.legacy_depth,
-        q.legacy_sel,
+        if q.legacy_sel == 255 { 255 } else { selectivity_code(Selectivity::ALL[q.legacy_sel as usize]) },
     ] {
         byte(w, v)?;
     }
@@ -147,13 +150,17 @@ pub(crate) fn summaryr(r: &mut impl Read) -> Result<QualitySummary> {
         families: read_byte(r)?,
         horizon: read_byte(r)?,
         mid_depth: read_byte(r)?,
-        mid_sel: read_byte(r)?,
-        end_sel: read_byte(r)?,
+        mid_sel: read_optional_selectivity(r)?,
+        end_sel: read_optional_selectivity(r)?,
         legacy_depth: read_byte(r)?,
-        legacy_sel: read_byte(r)?,
+        legacy_sel: read_optional_selectivity(r)?,
     };
     q.validate()?;
     Ok(q)
+}
+pub(crate) fn read_optional_selectivity(r: &mut impl Read) -> Result<u8> {
+    let code = read_byte(r)?;
+    if code == 255 { Ok(255) } else { Ok(selectivity(code)? as u8) }
 }
 pub(crate) fn write(w: &mut dyn Write, value: &Assessment) -> Result<()> {
     match value.claim() {
@@ -184,7 +191,7 @@ pub(crate) fn write(w: &mut dyn Write, value: &Assessment) -> Result<()> {
         } => {
             byte(w, 0)?;
             byte(w, depth)?;
-            byte(w, selectivity as u8)?;
+            byte(w, selectivity_code(selectivity))?;
             byte(w, originw(recorded_origin))?;
         }
         ValueAnalysis::Search { trace, projection } => {
@@ -257,7 +264,7 @@ pub(crate) fn write(w: &mut dyn Write, value: &Assessment) -> Result<()> {
         ValueAnalysis::Manual { depth, selectivity } => {
             byte(w, 4)?;
             byte(w, depth)?;
-            byte(w, selectivity as u8)?;
+            byte(w, selectivity_code(selectivity))?;
         }
     }
     Ok(())

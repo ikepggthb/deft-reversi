@@ -5,10 +5,13 @@
 //! - `DPR2`, then the version as u32 (1 or 2)
 //! - 60 phases of i16 weights: every pattern table back to back, 128
 //!   mobility weights, the bias
-//! - version 2 only: `MPC1`, the 12 deviation multiples as f64 (six midgame
-//!   stages, then six exact ones), the rule count as u32, and every rule as
-//!   exact (u8), depth (u8), empties (u8), shallow depth (u8), slope,
-//!   intercept and deviation (f64)
+//! - version 2 only: `MPC2`, the number of selective stages (u8) and for
+//!   every stage its probability in percent (u8) and its deviation multiples
+//!   for midgame and for exact rules (f64); then the rule count as u32, and
+//!   every rule as exact (u8), depth (u8), empties (u8), shallow depth (u8),
+//!   slope, intercept and deviation (f64). The stages must be the engine's
+//!   (`ProbCutSigmas::STAGES`). `MPC1` held the multiples of the stages of
+//!   earlier engines and is not read.
 //! - version 3: the phases, `PEN1` and the 60 phases' pattern embedding
 //!   networks (see `evaluation/pen.rs`), then optionally the calibration as
 //!   in version 2
@@ -44,37 +47,28 @@ impl Model {
     pub fn from_file(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::from_bytes(&std::fs::read(path)?)
     }
-    pub fn from_bytes(mut bytes: &[u8]) -> io::Result<Self> {
-        let mut header = [0; 8];
-        bytes.read_exact(&mut header)?;
-        if &header[..4] != b"DPR2" {
-            return Err(invalid_data("not a DPR2 model"));
-        }
-        let version = u32::from_le_bytes(header[4..].try_into().unwrap());
-        if !matches!(version, 1..=3) {
-            return Err(invalid_data(format!("unsupported DPR2 version {version}")));
-        }
-        let mut pattern = PatternModel::read_phases(&mut bytes)?;
-        if version == 3 {
-            let mut tag = [0; 4];
-            bytes.read_exact(&mut tag)?;
-            if &tag != b"PEN1" {
-                return Err(invalid_data("missing pattern embedding network"));
-            }
-            pattern = pattern.read_pen(&mut bytes)?;
-        }
-        let calibration = if version == 2 || (version == 3 && !bytes.is_empty()) {
-            Some(read_calibration(&mut bytes)?)
+    pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
+        let (pattern, mut rest, calibrated) = read_weights(bytes)?;
+        let calibration = if calibrated {
+            Some(read_calibration(&mut rest)?)
         } else {
             None
         };
-        if !bytes.is_empty() {
+        if !rest.is_empty() {
             return Err(invalid_data("trailing model data"));
         }
         Ok(Self {
             pattern,
             calibration,
         })
+    }
+    /// The weights of a model file without its calibration, which is not
+    /// read: to fit a calibration again, also one an earlier engine wrote.
+    #[cfg(feature = "tuning")]
+    pub fn weights_from_file(path: impl AsRef<Path>) -> io::Result<Self> {
+        let bytes = std::fs::read(path)?;
+        let (pattern, _, _) = read_weights(&bytes)?;
+        Ok(Self::from_pattern(pattern))
     }
     /// Whether the file carried a ProbCut calibration.
     pub fn has_calibration(&self) -> bool {
@@ -98,9 +92,12 @@ impl Model {
             self.pattern.write_pen(&mut out)?;
         }
         if let Some(c) = &self.calibration {
-            out.write_all(b"MPC1")?;
-            for v in c.sigmas.midgame.iter().chain(&c.sigmas.exact) {
-                out.write_all(&v.to_le_bytes())?;
+            out.write_all(b"MPC2")?;
+            out.write_all(&[ProbCutSigmas::STAGES.len() as u8])?;
+            for (i, stage) in ProbCutSigmas::STAGES.iter().enumerate() {
+                out.write_all(&[stage.percent()])?;
+                out.write_all(&c.sigmas.midgame[i].to_le_bytes())?;
+                out.write_all(&c.sigmas.exact[i].to_le_bytes())?;
             }
             out.write_all(&(c.rules.len() as u32).to_le_bytes())?;
             for r in &c.rules {
@@ -142,25 +139,63 @@ impl Model {
     }
 }
 
+/// The weights, the bytes after them and whether those are a calibration.
+fn read_weights(mut bytes: &[u8]) -> io::Result<(PatternModel, &[u8], bool)> {
+    let mut header = [0; 8];
+    bytes.read_exact(&mut header)?;
+    if &header[..4] != b"DPR2" {
+        return Err(invalid_data("not a DPR2 model"));
+    }
+    let version = u32::from_le_bytes(header[4..].try_into().unwrap());
+    if !matches!(version, 1..=3) {
+        return Err(invalid_data(format!("unsupported DPR2 version {version}")));
+    }
+    let mut pattern = PatternModel::read_phases(&mut bytes)?;
+    if version == 3 {
+        let mut tag = [0; 4];
+        bytes.read_exact(&mut tag)?;
+        if &tag != b"PEN1" {
+            return Err(invalid_data("missing pattern embedding network"));
+        }
+        pattern = pattern.read_pen(&mut bytes)?;
+    }
+    let calibrated = version == 2 || (version == 3 && !bytes.is_empty());
+    Ok((pattern, bytes, calibrated))
+}
+
 fn read_calibration(input: &mut &[u8]) -> io::Result<Calibration> {
+    const REFIT: &str = "fit the calibration again (`train mpc --fit-only`)";
     let mut tag = [0; 4];
     input.read_exact(&mut tag)?;
-    if &tag != b"MPC1" {
+    if &tag == b"MPC1" {
+        return Err(invalid_data(format!(
+            "the ProbCut calibration is for the stages of an earlier engine; {REFIT}"
+        )));
+    }
+    if &tag != b"MPC2" {
         return Err(invalid_data("missing ProbCut calibration"));
     }
-    let mut f64s = |n: usize| -> io::Result<Vec<f64>> {
-        let mut out = Vec::with_capacity(n);
-        for _ in 0..n {
-            let mut b = [0; 8];
-            input.read_exact(&mut b)?;
-            out.push(f64::from_le_bytes(b));
-        }
-        Ok(out)
-    };
-    let s = f64s(12)?;
+    let mut count = [0; 1];
+    input.read_exact(&mut count)?;
+    let mut percents = Vec::new();
+    let mut multiples = Vec::new();
+    for _ in 0..count[0] {
+        let mut stage = [0; 17];
+        input.read_exact(&mut stage)?;
+        percents.push(stage[0]);
+        multiples
+            .push([&stage[1..9], &stage[9..]].map(|b| f64::from_le_bytes(b.try_into().unwrap())));
+    }
+    let stages = ProbCutSigmas::STAGES.map(|stage| stage.percent());
+    if percents != stages {
+        return Err(invalid_data(format!(
+            "the ProbCut calibration is for the stages {percents:?}%, the engine's are \
+             {stages:?}%; {REFIT}"
+        )));
+    }
     let sigmas = ProbCutSigmas {
-        midgame: s[..6].try_into().unwrap(),
-        exact: s[6..].try_into().unwrap(),
+        midgame: std::array::from_fn(|i| multiples[i][0]),
+        exact: std::array::from_fn(|i| multiples[i][1]),
     };
     let mut count = [0; 4];
     input.read_exact(&mut count)?;
@@ -228,7 +263,7 @@ mod tests {
         assert_eq!(read.pattern.evaluate(&board.board_after_move(1 << 19)), 2);
 
         let mut sigmas = ProbCutSigmas::NORMAL;
-        sigmas.exact[5] = 3.0;
+        sigmas.exact[4] = 3.0;
         let rules = crate::mpc::legacy_main_rules();
         let calibrated = Model {
             pattern,
@@ -260,10 +295,33 @@ mod tests {
         v9[4] = 9;
         assert!(Model::from_bytes(&v9).is_err());
         assert!(Model::from_bytes(b"{\"format_version\":4}").is_err());
+        // After the weights: the tag, the stage count, then every stage as
+        // its percent and two multiples.
+        let stages = v1.len() + 5;
         let mut bad_sigma = v2.clone();
-        let at = v1.len() + 4;
-        bad_sigma[at..at + 8].copy_from_slice(&f64::NAN.to_le_bytes());
+        bad_sigma[stages + 1..stages + 9].copy_from_slice(&f64::NAN.to_le_bytes());
         assert!(Model::from_bytes(&bad_sigma).is_err());
+        // A calibration says which stages its multiples are for; only the
+        // engine's own are read.
+        assert_eq!(v2[stages], 83);
+        let mut other_stage = v2.clone();
+        other_stage[stages] = 77;
+        let error = Model::from_bytes(&other_stage).err().unwrap().to_string();
+        assert!(error.contains("[77, 85, 95, 98, 99]"), "{error}");
+        let mut earlier = v2.clone();
+        earlier[v1.len()..v1.len() + 4].copy_from_slice(b"MPC1");
+        let error = Model::from_bytes(&earlier).err().unwrap().to_string();
+        assert!(error.contains("earlier engine"), "{error}");
+        // Its weights can still be read, to fit the calibration again.
+        #[cfg(feature = "tuning")]
+        {
+            let path = std::env::temp_dir().join(format!("deft-mpc1-{}.dpr2", std::process::id()));
+            std::fs::write(&path, &earlier).unwrap();
+            let weights = Model::weights_from_file(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            assert!(!weights.has_calibration());
+            assert_eq!(weights.pattern.evaluate(&board), 1);
+        }
         let mut v2_without = v1.clone();
         v2_without[4] = 2;
         assert!(Model::from_bytes(&v2_without).is_err());

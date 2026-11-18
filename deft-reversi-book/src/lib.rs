@@ -160,19 +160,18 @@ fn terminal_value(b: Board) -> Evaluation {
     Evaluation::rules(b)
 }
 
-fn selectivity(n: u8) -> Result<Selectivity> {
-    [
-        Selectivity::Percent68,
-        Selectivity::Percent77,
-        Selectivity::Percent85,
-        Selectivity::Percent95,
-        Selectivity::Percent98,
-        Selectivity::Percent99,
-        Selectivity::Full,
-    ]
-    .get(n as usize)
-    .copied()
-    .ok_or_else(|| invalid("selectivity"))
+fn selectivity_code(value: Selectivity) -> u8 {
+    match value {
+        Selectivity::Percent83 => 7,
+        _ => value as u8 + 1,
+    }
+}
+fn selectivity(code: u8) -> Result<Selectivity> {
+    match code {
+        7 => Ok(Selectivity::Percent83),
+        2..=6 => Ok(Selectivity::ALL[(code - 1) as usize]),
+        _ => Err(invalid("unsupported selectivity")),
+    }
 }
 
 // Cold opaque optional sections survive a load/save by an older compatible reader.

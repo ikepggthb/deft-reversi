@@ -1,0 +1,51 @@
+[
+  {
+    "budget_ms": 100,
+    "candidate": 68,
+    "games": 8,
+    "wins": 4,
+    "draws": 1,
+    "losses": 3,
+    "score": 0.5625,
+    "paired_bootstrap_95": [
+      0.1875,
+      0.875
+    ],
+    "mean_diff": -0.25,
+    "mean_game_seconds": 3.483171795378439,
+    "candidate_stats": {
+      "mid_moves": 136,
+      "mean_depth": 20.419117647058822,
+      "mid_search_ms_median": 100.006415,
+      "mid_search_ms_p95": 100.01985300000001,
+      "mid_search_ms_max": 100.03525400000001,
+      "mid_wall_ms_p95": 109.407979,
+      "mid_wall_ms_max": 109.756713,
+      "last_iteration_mpc_moves": 136,
+      "mid_cuts": 1657823,
+      "mid_verification_searches": 2610728,
+      "mean_last_done_ms": 71.34967419852941,
+      "end_moves": 74,
+      "end_solved": 74,
+      "end_search_ms_p95": 6.926193,
+      "end_wall_ms_max": 32.541412
+    },
+    "baseline_stats": {
+      "mid_moves": 136,
+      "mean_depth": 17.977941176470587,
+      "mid_search_ms_median": 100.007603,
+      "mid_search_ms_p95": 100.01940400000001,
+      "mid_search_ms_max": 100.024468,
+      "mid_wall_ms_p95": 109.322065,
+      "mid_wall_ms_max": 109.785387,
+      "last_iteration_mpc_moves": 136,
+      "mid_cuts": 1902414,
+      "mid_verification_searches": 2965591,
+      "mean_last_done_ms": 69.63822702205883,
+      "end_moves": 70,
+      "end_solved": 70,
+      "end_search_ms_p95": 6.457918,
+      "end_wall_ms_max": 44.577589
+    }
+  }
+]

@@ -22,9 +22,11 @@ pub const MOBILITY_WEIGHT_COUNT: usize = 128;
 /// Pattern lookups per evaluation: every pattern in four orientations.
 pub const FEATURE_COUNT: usize = PATTERN_COUNT * 4;
 
-/// The weights one evaluation reads, for training the model. The score is
+/// The linear weights one evaluation reads, for training the model. For a
+/// model without pattern embedding networks the score is
 /// `bias + Σ patterns[i] + mobility[mobility]` of phase `phase`, divided
-/// by 128 and rounded as `PatternModel::evaluate` does.
+/// by 128 and rounded as `PatternModel::evaluate` does; with networks,
+/// `evaluate` adds their output to that sum before rounding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Features {
     /// 0..60; 60 minus the empty squares, with a full board in phase 59.
@@ -143,6 +145,9 @@ impl PatternModel {
         )
         .unwrap()
     }
+    /// The model's value of `board` for the side to move, in discs. A
+    /// finished game is valued like any other position; the search uses
+    /// the final score at its leaves instead.
     pub fn evaluate(&self, board: &Board) -> i32 {
         self.evaluate_state(board, &EvalState::from_board(*board))
     }
@@ -193,13 +198,21 @@ impl PatternModel {
         }
         (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
     }
-    /// DPR2 version 1, weights only. `Model::write_to` also writes the
-    /// calibration (version 2); see `model.rs` for the layout.
+    /// The whole evaluation without a calibration: DPR2 version 3 with the
+    /// pattern embedding networks, else version 1. `Model::write_to` also
+    /// writes the calibration; see `model.rs` for the layout.
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
-        out.write_all(b"DPR2\x01\x00\x00\x00")?;
-        self.write_phases(&mut out)
+        if self.has_pen() {
+            out.write_all(b"DPR2\x03\x00\x00\x00")?;
+            self.write_phases(&mut out)?;
+            out.write_all(b"PEN1")?;
+            self.write_pen(&mut out)
+        } else {
+            out.write_all(b"DPR2\x01\x00\x00\x00")?;
+            self.write_phases(&mut out)
+        }
     }
-    /// Reads DPR2 version 1. `Model::from_file` reads both versions.
+    /// Reads DPR2 version 1. `Model::from_file` reads every version.
     pub fn read_from(mut input: impl Read) -> io::Result<Self> {
         let mut magic = [0; 8];
         input.read_exact(&mut magic)?;

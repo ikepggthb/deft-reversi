@@ -1561,7 +1561,7 @@ fn configw(w: &mut dyn Write, c: &GenerationConfig) -> Result<()> {
             u8w(w, v.len() as u8)?;
             for s in v {
                 u8w(w, s.depth)?;
-                u8w(w, s.selectivity as u8)?;
+                u8w(w, selectivity_code(s.selectivity))?;
             }
         }
         AnalysisSchedule::Levels(v) => {
@@ -1952,7 +1952,7 @@ mod tests {
         u8w(w, stages.len() as u8)?;
         for v in stages {
             u8w(w, v.depth)?;
-            u8w(w, v.selectivity as u8)?;
+            u8w(w, selectivity_code(v.selectivity))?;
         }
         let levels = c.analysis.levels();
         u8w(w, levels.map_or(0, |v| v.len()) as u8)?;

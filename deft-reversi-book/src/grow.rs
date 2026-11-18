@@ -79,7 +79,20 @@ fn prepare(
         .map(|e| e.action)
         .find(|&a| !board.play(a).unwrap().is_terminal())
         .unwrap_or(node.edges[0].action);
-    let (_, mut target) = candidate_plan(engine, board, action, &state.config, stage)?;
+    let root_level = state.config.analysis.levels().map(|levels| levels[stage]);
+    let original_target = if let Some(level) = root_level {
+        let plan = engine.search_plan(board, &SearchRequest::new(Goal::Level(level)))?;
+        Stage {
+            depth: match plan {
+                deft_reversi_engine::ResultKind::Depth { depth, .. } => depth,
+                deft_reversi_engine::ResultKind::Endgame { .. } => board.empty_count(),
+            },
+            selectivity: plan.selectivity(),
+        }
+    } else {
+        candidate_plan(engine, board, action, &state.config, stage)?.1
+    };
+    let mut target = original_target;
     // A retained registered child can lie outside a newly reduced placement
     // boundary. It has no scheduled analysis job there. Include missing or
     // insufficient coverage for those links in the root subset, otherwise a
@@ -249,7 +262,9 @@ fn prepare(
             }
         }
     }
-    let mut request = if target.depth >= board.empty_count() {
+    let mut request = if let Some(level) = root_level.filter(|_| target == original_target) {
+        SearchRequest::new(Goal::Level(level))
+    } else if target.depth >= board.empty_count() {
         SearchRequest::new(Goal::Endgame).selectivity(target.selectivity)
     } else {
         SearchRequest::new(Goal::Depth(target.depth)).selectivity(target.selectivity)
@@ -278,7 +293,7 @@ fn prepare(
                     selectivity: s.selectivity,
                 }
             },
-            |levels| RequestedAnalysis::ChildLevel(levels[stage]),
+            |levels| RequestedAnalysis::RootLevel(levels[stage]),
         ),
         planned: if target.depth >= board.empty_count() {
             SearchKind::Endgame {

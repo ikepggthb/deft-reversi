@@ -29,6 +29,8 @@ pub const PEN_HIDDEN: usize = 32;
 /// Network inputs: the summed embeddings, then both mobilities.
 pub const PEN_INPUTS: usize = PATTERN_COUNT * PEN_DIM + 2;
 /// Inputs padded to whole groups of four.
+/// The largest magnitude of a hidden or output bias.
+const PEN_BIAS_LIMIT: u32 = 1 << 24;
 const PEN_INPUTS_PADDED: usize = PEN_INPUTS.next_multiple_of(4);
 const GROUPS: usize = PEN_INPUTS_PADDED / 4;
 
@@ -58,9 +60,18 @@ impl PenPhase {
         if embeddings.len() != TOTAL_PATTERN_WEIGHTS {
             return Err("invalid embedding table size");
         }
-        // Keeps the output sum within i32.
+        // Keeps every sum within i32: a hidden unit's input sum is below
+        // 127 * 128 * PEN_INPUTS < 2^21, its output below 127 * 2^16 per
+        // unit, and the network's output plus the linear part below 2^26.
         if output.iter().any(|w| w.unsigned_abs() > 1 << 16) {
             return Err("PEN output weight out of range");
+        }
+        if hidden_bias
+            .iter()
+            .chain([&output_bias])
+            .any(|b| b.unsigned_abs() > PEN_BIAS_LIMIT)
+        {
+            return Err("PEN bias out of range");
         }
         let mut padded = Box::new([[0i8; 4 * PEN_HIDDEN]; GROUPS]);
         for (j, row) in hidden.iter().enumerate() {

@@ -37,6 +37,8 @@ impl SearchKind {
 pub enum RequestedAnalysis {
     /// Levels are resolved after the candidate move, then shifted to its parent.
     ChildLevel(u8),
+    /// Engine level resolved at the searched root.
+    RootLevel(u8),
     ParentDepth {
         depth: u8,
         selectivity: Selectivity,
@@ -82,7 +84,7 @@ impl CompletedSearch {
                 && (self.best >= 64 || self.moves & (1u64 << self.best) == 0))
             || (b.must_pass() && self.best != 64)
             || (b.is_terminal() && self.best != 65)
-            || matches!(self.requested,RequestedAnalysis::ChildLevel(n) if !(1..=60).contains(&n))
+            || matches!(self.requested,RequestedAnalysis::ChildLevel(n) | RequestedAnalysis::RootLevel(n) if !(1..=60).contains(&n))
             || matches!(self.requested,RequestedAnalysis::ParentDepth{depth,..} if depth>60)
             || self.completed.horizon(b.empty_count()) > b.empty_count()
             || self.planned.horizon(b.empty_count()) > b.empty_count()

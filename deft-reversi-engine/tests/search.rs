@@ -341,6 +341,46 @@ fn selective_preparation_cannot_supply_the_exact_final_score() {
 }
 
 #[test]
+fn selective_endgame_scores_are_even() {
+    // A final score is even, and a ProbCut cut at an odd window edge must not
+    // leak an odd one. The zero model predicts the intercept everywhere, so
+    // these rules cut every null window on one side of it.
+    let rules = |intercept: f64| -> Vec<ProbCutRule> {
+        (12..=15)
+            .map(|empties| ProbCutRule {
+                exact: true,
+                depth: empties,
+                empties,
+                shallow_depth: 0,
+                slope: 1.0,
+                intercept,
+                deviation: 0.0,
+            })
+            .collect()
+    };
+    for threads in [1, 4] {
+        let mut engine = engine(threads);
+        let mut cuts = 0;
+        for intercept in [-9.0, -3.0, 1.0, 5.0, 11.0] {
+            engine.set_probcut_rules(rules(intercept)).unwrap();
+            for seed in [3, 7, 11] {
+                let board = position(seed, 16);
+                let request = exact().selectivity(Selectivity::Percent85).all_moves();
+                let result = engine.search(board, &request).unwrap();
+                assert_eq!(result.stop_reason, StopReason::Completed);
+                cuts += result.stats.probcut_cuts;
+                let score = result.score.unwrap();
+                assert_eq!(score % 2, 0, "seed {seed}: root score {score}");
+                for scored in &result.moves {
+                    assert_eq!(scored.score % 2, 0, "seed {seed}: {scored:?}");
+                }
+            }
+        }
+        assert!(cuts > 0);
+    }
+}
+
+#[test]
 fn stopping_after_selective_preparation_does_not_report_exact() {
     // Exact preparation stops endgame ProbCut below thirteen empties; a rule at
     // thirteen makes it search the same tree as the selective request.
@@ -384,8 +424,8 @@ fn level_midgame_iterations_keep_the_requested_selectivity() {
     let Some(ResultKind::Depth { depth, selectivity }) = result.kind else {
         panic!("expected a depth result, got {:?}", result.kind);
     };
-    assert!(depth > 0 && depth < 12);
-    assert_eq!(selectivity, Selectivity::Percent95);
+    assert!(depth > 0 && depth < 16);
+    assert_eq!(selectivity, Selectivity::Percent83);
 }
 
 #[test]
@@ -523,12 +563,12 @@ fn probcut_sigmas_set_the_cut_distance() {
         (engine.search(board, &request).unwrap().stats, settings)
     };
     let near = ProbCutSigmas {
-        midgame: [0.001; 6],
-        exact: [100.0; 6],
+        midgame: [0.001; 5],
+        exact: [100.0; 5],
     };
     let far = ProbCutSigmas {
-        midgame: [100.0; 6],
-        exact: [0.001; 6],
+        midgame: [100.0; 5],
+        exact: [0.001; 5],
     };
     let (near_stats, near_settings) = cuts(near);
     let (far_stats, _) = cuts(far);
@@ -547,7 +587,7 @@ fn probcut_sigmas_set_the_cut_distance() {
     assert_eq!(ProbCutSigmas::default(), ProbCutSigmas::NORMAL);
 
     let mut decreasing = ProbCutSigmas::NORMAL;
-    decreasing.exact[5] = 1.0;
+    decreasing.exact[4] = 1.0;
     let mut nan = ProbCutSigmas::NORMAL;
     nan.midgame[0] = f64::NAN;
     for bad in [decreasing, nan] {
@@ -555,5 +595,91 @@ fn probcut_sigmas_set_the_cut_distance() {
             engine.set_probcut_calibration(rules.clone(), bad),
             Err(EngineError::InvalidCalibration(_))
         ));
+    }
+}
+
+#[test]
+fn plan_changes_a_levels_midgame_and_endgame() {
+    let board = position(41, 12);
+    let mut engine = engine(1);
+    let mut search = |plan| {
+        engine
+            .search(board, &SearchRequest::new(Goal::Plan(plan)))
+            .unwrap()
+    };
+    // Level 10 solves 12 empties exactly, as its plan does.
+    let level = SearchPlan::level(10).unwrap();
+    assert_eq!(level.endgame_limit(Selectivity::Full), 16);
+    assert!(search(level).is_solved());
+    let midgame = SearchPlan::midgame(8, Selectivity::Full);
+    assert_eq!(
+        search(midgame).kind,
+        Some(ResultKind::Depth {
+            depth: 8,
+            selectivity: Selectivity::Full
+        })
+    );
+    assert_eq!(
+        search(midgame.endgame(Selectivity::Percent95, 12)).kind,
+        Some(ResultKind::Endgame {
+            selectivity: Selectivity::Percent95
+        })
+    );
+    // The most accurate stage that reaches the position is used.
+    let exact = search(level.endgame(Selectivity::Percent95, 20));
+    assert!(exact.is_solved());
+    assert_eq!(exact.score, Some(reference(board)));
+    assert!(SearchPlan::level(0).is_err() && SearchPlan::level(61).is_err());
+    let too_deep = SearchPlan::midgame(61, Selectivity::Full);
+    assert!(matches!(
+        engine.search(board, &SearchRequest::new(Goal::Plan(too_deep))),
+        Err(EngineError::InvalidRequest(_))
+    ));
+}
+
+#[test]
+fn tables_kept_across_stages_still_solve_exactly() {
+    let mut engine = engine(1);
+    for seed in 51..=58 {
+        let board = position(seed, 12);
+        // Each stage leaves entries behind for the next one.
+        for request in [
+            depth(6).selectivity(Selectivity::Percent83),
+            exact().selectivity(Selectivity::Percent83),
+            exact().selectivity(Selectivity::Percent85),
+            exact().selectivity(Selectivity::Percent98),
+            depth(8).selectivity(Selectivity::Percent95),
+        ] {
+            engine.search(board, &request).unwrap();
+        }
+        let result = engine.search(board, &exact()).unwrap();
+        assert!(result.is_solved());
+        assert_eq!(result.score, Some(reference(board)));
+        let best = board.play(result.best_move.unwrap()).unwrap();
+        assert_eq!(-reference(best), reference(board));
+    }
+}
+
+#[test]
+fn depth_searches_reaching_the_end_score_finished_games_exactly() {
+    // The zero model values every position 0, so a depth search that reaches
+    // the end must take the final score from the finished games, not the
+    // evaluation. Two empties: F1 scores 0 and G5 +4 for the side to move.
+    let board = Board::from_bits(0x45c98a3f48661ccf, 0xba367580b799e310).unwrap();
+    let mut engine = engine(1);
+    let solved = engine.search(board, &exact()).unwrap();
+    assert_eq!(solved.score, Some(4));
+    engine.clear_tt().unwrap();
+    let deep = engine.search(board, &depth(2)).unwrap();
+    assert_eq!(
+        (deep.score, deep.best_move),
+        (solved.score, solved.best_move)
+    );
+    // Small depth searches to the end agree with the exact score.
+    for seed in 61..=76 {
+        let board = position(seed, 6);
+        engine.clear_tt().unwrap();
+        let result = engine.search(board, &depth(board.empty_count())).unwrap();
+        assert_eq!(result.score, Some(reference(board)), "seed {seed}");
     }
 }

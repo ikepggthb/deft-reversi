@@ -37,9 +37,10 @@ pub struct MpcArgs {
     /// The model to calibrate (any format the engine reads).
     #[arg(short, long)]
     model: PathBuf,
-    /// Dataset directory; positions come from `--split`.
-    #[arg(long)]
-    data: PathBuf,
+    /// Dataset directory; positions come from `--split`. Not used with
+    /// `--fit-only`.
+    #[arg(long, required_unless_present = "fit_only")]
+    data: Option<PathBuf>,
     #[arg(long, default_value = "valid")]
     split: String,
     /// Writes `positions.tsv`, `cells.tsv`, `tails.tsv`, `rules.json` and
@@ -136,12 +137,22 @@ pub struct Rule {
     pub deviation: f64,
 }
 
-/// The deviation multiples per selectivity stage, as written to
+/// The deviation multiples of the engine's selective stages
+/// (`ProbCutSigmas::STAGES`, least accurate first), as written to
 /// `rules.json`.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Sigmas {
-    pub midgame: [f64; 6],
-    pub exact: [f64; 6],
+    pub midgame: [f64; 5],
+    pub exact: [f64; 5],
+}
+
+impl From<ProbCutSigmas> for Sigmas {
+    fn from(s: ProbCutSigmas) -> Self {
+        Sigmas {
+            midgame: s.midgame,
+            exact: s.exact,
+        }
+    }
 }
 
 impl From<Sigmas> for ProbCutSigmas {
@@ -153,15 +164,35 @@ impl From<Sigmas> for ProbCutSigmas {
     }
 }
 
-/// `rules.json`: what `Engine::set_probcut_calibration` takes.
+/// `rules.json`: what `Engine::set_probcut_calibration` takes. `stages`
+/// names the percent of each multiple so that a file fitted for another
+/// list of stages is refused.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Calibration {
+    pub stages: Vec<u8>,
     pub sigmas: Sigmas,
     pub rules: Vec<Rule>,
 }
 
-/// The stage probabilities of `Selectivity::Percent68..=Percent99`.
-const STAGE_PROBABILITIES: [f64; 6] = [0.68, 0.77, 0.85, 0.95, 0.98, 0.99];
+/// The percents of the engine's selective stages.
+fn stage_percents() -> Vec<u8> {
+    ProbCutSigmas::STAGES.iter().map(|s| s.percent()).collect()
+}
+
+/// The probabilities of the engine's selective stages.
+fn stage_probabilities() -> [f64; 5] {
+    ProbCutSigmas::STAGES.map(|s| f64::from(s.percent()) / 100.0)
+}
+
+/// The quantiles of sorted `values` at the stage probabilities, made
+/// non-decreasing.
+fn stage_quantiles(sorted: &[f64]) -> [f64; 5] {
+    let mut t = stage_probabilities().map(|p| quantile(sorted, p));
+    for i in 1..t.len() {
+        t[i] = t[i].max(t[i - 1]);
+    }
+    t
+}
 
 impl From<Rule> for ProbCutRule {
     fn from(r: Rule) -> Self {
@@ -195,10 +226,25 @@ pub struct PackArgs {
 
 /// Writes a model with its ProbCut calibration in one file.
 pub fn pack(args: PackArgs) -> Result<()> {
-    let model = Model::from_file(&args.model)?;
+    let model = Model::weights_from_file(&args.model)?;
     let model = match (&args.rules, args.legacy_main) {
         (Some(path), false) => {
-            let c: Calibration = serde_json::from_slice(&fs::read(path)?)?;
+            let c: Calibration = serde_json::from_slice(&fs::read(path)?).map_err(|e| {
+                format!(
+                    "{}: {e}; refit it with `train mpc --fit-only`",
+                    path.display()
+                )
+            })?;
+            if c.stages != stage_percents() {
+                return Err(format!(
+                    "{}: multiples for the stages {:?}, the engine has {:?}; \
+                     refit it with `train mpc --fit-only`",
+                    path.display(),
+                    c.stages,
+                    stage_percents()
+                )
+                .into());
+            }
             model.with_calibration(
                 c.rules.into_iter().map(Into::into).collect(),
                 c.sigmas.into(),
@@ -234,7 +280,7 @@ pub fn run(args: MpcArgs) -> Result<()> {
     let exact_multiples = formula.multiples(&positions)?;
     let (sigmas, tails) = tail_sigmas(&samples, &rules, Some(exact_multiples))?;
     // The model checks the calibration as the engine does.
-    let model = Model::from_file(&args.model)?.with_calibration(
+    let model = Model::weights_from_file(&args.model)?.with_calibration(
         rules.iter().copied().map(Into::into).collect(),
         sigmas.into(),
     )?;
@@ -246,6 +292,7 @@ pub fn run(args: MpcArgs) -> Result<()> {
     fs::write(
         args.out.join("rules.json"),
         serde_json::to_string_pretty(&Calibration {
+            stages: stage_percents(),
             sigmas,
             rules: rules.clone(),
         })?,
@@ -304,11 +351,12 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
         fs::write(path, format!("{settings}\n{HEADER}\n"))?;
         HashSet::new()
     };
-    let model = Model::from_file(&args.model)?;
+    let data = args.data.as_ref().ok_or("--data is required to measure")?;
+    let model = Model::weights_from_file(&args.model)?;
     let mut jobs: Vec<(u8, Vec<(usize, Board)>)> = Vec::new();
     for empties in args.empties.first..=args.empties.last {
         let stones = 64 - empties;
-        let path = rd::path(&args.data, stones, &args.split);
+        let path = rd::path(data, stones, &args.split);
         let mut boards: Vec<Board> = rd::read(&path, stones)?
             .into_iter()
             .map(|r| r.board)
@@ -679,7 +727,7 @@ fn quantile(sorted: &[f64], p: f64) -> f64 {
 fn tail_sigmas(
     samples: &[Sample],
     rules: &[Rule],
-    exact_multiples: Option<[f64; 6]>,
+    exact_multiples: Option<[f64; 5]>,
 ) -> Result<(Sigmas, String)> {
     let rule = |s: &Sample| {
         rules
@@ -698,16 +746,12 @@ fn tail_sigmas(
         v.sort_by(f64::total_cmp);
         v
     };
-    let measured = |exact: bool| -> Result<[f64; 6]> {
+    let measured = |exact: bool| -> Result<[f64; 5]> {
         let all = scores(exact, (0, 60));
         if all.len() < 100 {
             return Err(format!("too few pairs to measure the tails (exact: {exact})").into());
         }
-        let mut t = STAGE_PROBABILITIES.map(|p| quantile(&all, p));
-        for i in 1..6 {
-            t[i] = t[i].max(t[i - 1]);
-        }
-        Ok(t)
+        Ok(stage_quantiles(&all))
     };
     let sigmas = Sigmas {
         midgame: measured(false)?,
@@ -729,7 +773,7 @@ fn tail_sigmas(
                 continue;
             }
             let beyond = |x: f64| v.iter().filter(|&&z| z > x).count() as f64 / v.len() as f64;
-            for i in 0..6 {
+            for (i, probability) in stage_probabilities().into_iter().enumerate() {
                 writeln!(
                     report,
                     "{}\t{}..={}\t{}\t{:.2}\t{:.4}\t{:.4}\t{:.4}\t{:.4}",
@@ -737,7 +781,7 @@ fn tail_sigmas(
                     band.0,
                     band.1,
                     v.len(),
-                    STAGE_PROBABILITIES[i],
+                    probability,
                     normal[i],
                     beyond(normal[i]),
                     t[i],
@@ -936,7 +980,7 @@ impl ExactFormula {
     /// The deviation multiples of the exact stages: quantiles of |z| over
     /// every measured pair, whatever its shallow depth, so they hold for
     /// any table.
-    fn multiples(&self, positions: &[Position]) -> Result<[f64; 6]> {
+    fn multiples(&self, positions: &[Position]) -> Result<[f64; 5]> {
         let mut z = Vec::new();
         for p in positions {
             let Some(exact) = p.exact else { continue };
@@ -955,11 +999,7 @@ impl ExactFormula {
             return Err("too few exact pairs to measure the tails".into());
         }
         z.sort_by(f64::total_cmp);
-        let mut t = STAGE_PROBABILITIES.map(|p| quantile(&z, p));
-        for i in 1..6 {
-            t[i] = t[i].max(t[i - 1]);
-        }
-        Ok(t)
+        Ok(stage_quantiles(&z))
     }
 
     fn describe(&self) -> String {
@@ -1016,6 +1056,24 @@ mod tests {
     }
 
     #[test]
+    fn calibrations_name_the_engine_stages() {
+        assert_eq!(stage_percents(), [83, 85, 95, 98, 99]);
+        let c = Calibration {
+            stages: stage_percents(),
+            sigmas: ProbCutSigmas::NORMAL.into(),
+            rules: Vec::new(),
+        };
+        let text = serde_json::to_string(&c).unwrap();
+        let back: Calibration = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.stages, c.stages);
+        assert_eq!(back.sigmas, c.sigmas);
+        // A file from before the stages were recorded (six multiples, no
+        // `stages`) is not read.
+        let old = r#"{"sigmas":{"midgame":[1,2,3,4,5,6],"exact":[1,2,3,4,5,6]},"rules":[]}"#;
+        assert!(serde_json::from_str::<Calibration>(old).is_err());
+    }
+
+    #[test]
     fn tail_sigmas_are_the_quantiles_of_standardized_errors() {
         // Errors -50..=50 with deviation 10: |z| is uniform on 0..=5.
         let rule = Rule {
@@ -1047,7 +1105,7 @@ mod tests {
             })
             .collect();
         let (sigmas, report) = tail_sigmas(&samples, &[rule, exact], None).unwrap();
-        for (t, p) in sigmas.midgame.iter().zip(STAGE_PROBABILITIES) {
+        for (t, p) in sigmas.midgame.iter().zip(stage_probabilities()) {
             assert!((t - 5.0 * p).abs() < 0.06, "{t} {p}");
         }
         assert_eq!(sigmas.midgame, sigmas.exact);

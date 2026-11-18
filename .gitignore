@@ -10,3 +10,12 @@ deft-reversi-cli/problem/test.obf
 # Local data, reference engines, release staging and notes; never committed.
 # The training data in local/data must not be redistributed.
 /local/
+
+# Raw per-game and per-move logs of benchmark runs stay in local/bench-runs.
+/docs/benchmarks/**/logs/
+
+# Attachments of the Codex app.
+/.codex-attachments/
+
+# Console self-play output from the workspace root.
+/self-play.txt

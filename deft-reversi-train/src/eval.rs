@@ -28,7 +28,7 @@ pub fn run(args: EvalArgs) -> Result<()> {
         .model
         .iter()
         .map(|path| {
-            Model::from_file(path)
+            Model::weights_from_file(path)
                 .map(|m| m.pattern().clone())
                 .map_err(|e| format!("{}: {e}", path.display()).into())
         })

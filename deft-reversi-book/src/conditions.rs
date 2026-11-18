@@ -71,7 +71,7 @@ impl SearchConditions {
     }
     pub fn imported_selectivity(self) -> Option<Selectivity> {
         self.has_imported()
-            .then(|| selectivity(self.legacy_sel).unwrap())
+            .then(|| Selectivity::ALL[self.legacy_sel as usize])
     }
     pub fn has_imported(self) -> bool {
         self.families & Self::LEGACY != 0
@@ -80,23 +80,17 @@ impl SearchConditions {
         (self.mid_depth != 255).then_some(self.mid_depth)
     }
     pub fn midgame_selectivity(self) -> Option<Selectivity> {
-        (self.mid_sel != 255).then(|| selectivity(self.mid_sel).unwrap())
+        (self.mid_sel != 255).then(|| Selectivity::ALL[self.mid_sel as usize])
     }
     pub fn endgame_selectivity(self) -> Option<Selectivity> {
-        (self.end_sel != 255).then(|| selectivity(self.end_sel).unwrap())
+        (self.end_sel != 255).then(|| Selectivity::ALL[self.end_sel as usize])
     }
     pub fn depth(self) -> u8 {
         self.horizon
     }
     pub(crate) fn minimum_selectivity(self) -> Selectivity {
-        selectivity(
-            [self.mid_sel, self.end_sel, self.legacy_sel]
-                .into_iter()
-                .min()
-                .unwrap()
-                .min(6),
-        )
-        .unwrap()
+        let ordinal = [self.mid_sel, self.end_sel, self.legacy_sel].into_iter().min().unwrap();
+        Selectivity::ALL.get(ordinal as usize).copied().unwrap_or(Selectivity::Full)
     }
     // 子から親へは点数の符号だけでなく到達深さも変わる。石を置いた場合だけ+1。
     // パスは手番を変えるが深さを消費しない。中盤・終盤という種類も変えない。
@@ -145,7 +139,7 @@ impl SearchConditions {
                 .any(|v| v != 255 && v > 60)
             || [self.mid_sel, self.end_sel, self.legacy_sel]
                 .into_iter()
-                .any(|v| v != 255 && v > 6)
+                .any(|v| v != 255 && usize::from(v) >= Selectivity::ALL.len())
             || self.has_midgame() != (self.mid_depth != 255)
             || self.has_midgame() != (self.mid_sel != 255)
             || self.has_endgame() != (self.end_sel != 255)

@@ -149,7 +149,7 @@ fn a1_requested_level_plan_completed_kind_and_profiles_survive_both_profiles() {
         let EvaluationSource::SearchMove(trace) = direct.source() else {
             panic!("lost completed search")
         };
-        assert_eq!(trace.requested, RequestedAnalysis::ChildLevel(19));
+        assert_eq!(trace.requested, RequestedAnalysis::RootLevel(19));
         assert_eq!(trace.planned, trace.completed);
         assert_eq!(trace.root, [b.player_bits(), b.opponent_bits()]);
         assert_eq!(trace.run, Some(0));

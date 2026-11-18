@@ -1,0 +1,63 @@
+{
+  "settings": {
+    "gtp": "/home/azure/dev/deft-reversi/target-native/release/examples/gtp",
+    "model": "/home/azure/dev/deft-reversi/local/release/model-v3-pen/deft-eval-v3-pen.dpr2",
+    "xot": "/home/azure/dev/deft-reversi/tools/bench/positions/xot-openingslarge.txt",
+    "openings": 4,
+    "seed": 1,
+    "budgets": "25,100",
+    "candidates": "68,95,99,100",
+    "baseline": 85,
+    "endgame_empties": 18,
+    "endgame_ms": 25,
+    "cpu": 2,
+    "gtp_sha256": "b184f8a6d174111d056672b9791ed4ecc3ff0e3603b051aaa1239e863cd804ec",
+    "model_sha256": "aa2d7cd9e42e8f8f7df4f547124683fc86d85cb83b83b332637f07dc1d1f05a8",
+    "xot_sha256": "ccbeb0ed7b7ae23de20013a3992b9a6ede77610bbb5cacda82ccbaedaab72530",
+    "runner_sha256": "10086ea83a969ca6bc2ea283925d5641f502f0683e3da4d5c01f4a7b3d8cc80a",
+    "openings_moves": [
+      [
+        37,
+        43,
+        26,
+        29,
+        21,
+        17,
+        42,
+        38
+      ],
+      [
+        37,
+        29,
+        22,
+        30,
+        38,
+        42,
+        19,
+        45
+      ],
+      [
+        37,
+        43,
+        26,
+        29,
+        21,
+        22,
+        44,
+        13
+      ],
+      [
+        37,
+        43,
+        18,
+        29,
+        44,
+        45,
+        46,
+        26
+      ]
+    ]
+  },
+  "commit": "c186ad5b81ccd0adfe8c77b8c58cf77e19325a96",
+  "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           39 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  8\nOn-line CPU(s) list:                     0-7\nVendor ID:                               GenuineIntel\nModel name:                              Intel(R) Core(TM) i3-14100\nCPU family:                              6\nModel:                                   191\nThread(s) per core:                      2\nCore(s) per socket:                      4\nSocket(s):                               1\nStepping:                                5\nCPU(s) scaling MHz:                      40%\nCPU max MHz:                             4700.0000\nCPU min MHz:                             800.0000\nBogoMIPS:                                6988.80\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize arch_lbr ibt flush_l1d arch_capabilities\nVirtualization:                          VT-x\nL1d cache:                               192 KiB (4 instances)\nL1i cache:                               128 KiB (4 instances)\nL2 cache:                                5 MiB (4 instances)\nL3 cache:                                12 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-7\nVulnerability Gather data sampling:      Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace\n"
+}
