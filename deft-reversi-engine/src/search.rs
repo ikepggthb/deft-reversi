@@ -727,6 +727,16 @@ fn timed_level_iterations(max_level: u8, empties: u8) -> Vec<Iteration> {
         })
         .collect();
     steps.dedup();
+    let endgame_start = steps.partition_point(|step| !step.exact);
+    if let Some(&target) = steps[..endgame_start].last() {
+        // Keep the depth at the table's transition, including its parity.
+        steps.splice(
+            ..endgame_start,
+            iterative_depths(target.depth)
+                .into_iter()
+                .map(|depth| Iteration { depth, ..target }),
+        );
+    }
     steps
 }
 
@@ -890,26 +900,31 @@ mod timed_level_tests {
     #[test]
     fn depth_and_endgame_stages_follow_the_level_table() {
         use Selectivity::*;
-        for (empties, level, max_depth, endgame) in [
-            (7, 60, 0, &[Full][..]),
-            (24, 60, 18, &[Percent85, Percent98, Percent99, Full]),
-            (28, 21, 21, &[]),
-            (28, 22, 21, &[Percent85]),
+        for (empties, level, first_depth, max_depth, endgame) in [
+            (7, 60, 1, 0, &[Full][..]),
+            (14, 1, 1, 1, &[]),
+            (14, 60, 2, 4, &[Percent85, Full]),
+            (24, 60, 6, 18, &[Percent85, Percent98, Percent99, Full]),
+            (28, 21, 5, 21, &[]),
+            (28, 22, 5, 21, &[Percent85]),
             (
                 28,
                 60,
+                5,
                 21,
                 &[Percent85, Percent95, Percent98, Percent99, Full],
             ),
             (
                 40,
                 60,
+                6,
                 36,
                 &[Percent85, Percent95, Percent98, Percent99, Full],
             ),
-            (60, 60, 56, &[Percent85, Percent98, Percent99, Full]),
+            (60, 60, 6, 56, &[Percent85, Percent98, Percent99, Full]),
         ] {
-            let expected: Vec<_> = (1..=max_depth)
+            let expected: Vec<_> = (first_depth..=max_depth)
+                .step_by(2)
                 .map(|depth| Iteration {
                     depth,
                     exact: false,

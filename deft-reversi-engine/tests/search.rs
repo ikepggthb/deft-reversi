@@ -128,7 +128,7 @@ fn timed_levels_return_last_completed_stage_on_timeout() {
         })
         .unwrap();
     let last = last.expect("the first stage should complete");
-    assert_eq!(last.kind, ResultKind::Depth { depth: 1, selectivity: Selectivity::Percent83 });
+    assert_eq!(last.kind, ResultKind::Depth { depth: 5, selectivity: Selectivity::Percent83 });
     assert_eq!(result.stop_reason, StopReason::TimeLimit);
     assert_eq!(result.kind, Some(last.kind));
     assert_eq!(result.score, Some(last.score));
@@ -152,7 +152,7 @@ fn timed_levels_searches_selective_stages_and_solves_exactly() {
     assert!(timed.is_solved());
     assert_eq!(timed.score, fixed.score);
     assert!(timed.stats.tt_hits > 0);
-    let expected: Vec<_> = (1..=4)
+    let expected: Vec<_> = [2, 4].into_iter()
         .map(|depth| ResultKind::Depth { depth, selectivity: Selectivity::Percent83 })
         .chain([Selectivity::Percent85, Selectivity::Full].map(|selectivity| {
             ResultKind::Endgame { selectivity }

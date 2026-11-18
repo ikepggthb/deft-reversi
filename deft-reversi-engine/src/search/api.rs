@@ -264,9 +264,10 @@ impl SearchRequest {
             stop: StopHandle::new(),
         }
     }
-    /// Search the distinct goals from level 1 through `level` under one clock,
-    /// returning the best move from the last completed goal. With a calibrated
-    /// model, the goals follow the level table for the root's empty-square count.
+    /// Iteratively search up to `level` under one clock, returning the best
+    /// move from the last completed iteration. With a calibrated model, the
+    /// root's empty-square count determines the last evaluation depth and
+    /// endgame stages from the level table. Evaluation depths advance by two.
     pub fn timed_levels(level: u8, limit: Duration) -> Self {
         Self {
             timed_levels: true,
