@@ -7,12 +7,16 @@
 use deft_reversi_book::*;
 use deft_reversi_engine::{Board, Engine, EngineOptions, Model, Selectivity, StopHandle};
 use std::{collections::BTreeMap, error::Error, path::Path, time::Duration};
-fn main() {
-    if let Err(e) = run() {
-        eprintln!("{e}");
-        std::process::exit(1);
-    }
+#[derive(clap::Args, Debug)]
+pub struct BookArgs {
+    #[arg(
+        value_name = "COMMAND",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    arguments: Vec<String>,
 }
+
 fn load_work(path: impl AsRef<Path>, limits: ReadLimits) -> deft_reversi_book::Result<BookEditor> {
     let editor = BookEditor::load(path, limits)?;
     if let Some(m) = editor.migration_report() {
@@ -28,8 +32,8 @@ fn load_work(path: impl AsRef<Path>, limits: ReadLimits) -> deft_reversi_book::R
     }
     Ok(editor)
 }
-fn run() -> std::result::Result<(), Box<dyn Error>> {
-    let mut args = std::env::args().skip(1);
+pub fn run(args: BookArgs) -> crate::Result<()> {
+    let mut args = args.arguments.into_iter();
     let Some(command) = args.next() else {
         help();
         return Ok(());
@@ -43,7 +47,9 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         );
         return Ok(());
     }
-    if command == "--help" || command == "help" {
+    if matches!(command.as_str(), "-h" | "--help" | "help")
+        || matches!(args.as_slice(), [flag] if flag == "--help" || flag == "-h")
+    {
         help();
         return Ok(());
     }
@@ -54,6 +60,7 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         "positions",
         "stages",
         "levels",
+        "level",
         "legacy-values",
         "schedule",
         "line-plies",
@@ -89,6 +96,7 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         if !allowed.contains(&k.as_str()) {
             return Err(format!("unknown option --{k}").into());
         }
+        let k = if k == "level" { "levels".into() } else { k };
         let v = if k == "legacy-main-mpc" {
             "true".to_string()
         } else {
@@ -382,8 +390,7 @@ fn run() -> std::result::Result<(), Box<dyn Error>> {
         new_positions: flags.get("new-positions").map(|s| s.parse()).transpose()?,
     };
     let stop = StopHandle::new();
-    let handler = stop.clone();
-    ctrlc::set_handler(move || handler.stop())?;
+    let _armed = crate::stop::arm(stop.clone());
     let result = editor.generate_with_checkpoint(&mut engine, budgets, stop, |e, r| {
         e.save(work)?;
         eprintln!(
@@ -528,7 +535,7 @@ fn destination(path: &str) -> std::io::Result<std::path::PathBuf> {
 }
 fn help() {
     println!(
-        "book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --levels 4,8,12 (alternative to --stages/--selectivity)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
+        "deft-reversi-cli book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --level 22 | --levels 4,8,12 (alternative to --stages/--selectivity)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
   --threads 1 --tt-mib 256 --memory-mib 512 --checkpoint-seconds 60\n  --memory-mib limits estimated book data and job storage; engine/TT and temporary I/O memory are separate\n  --legacy-main-mpc\nbook repair --work FILE [--book FILE]\nbook export --work FILE --book FILE\nbook inspect|verify --work FILE | --book FILE\n  inspect --positions OBF (candidate evidence and completed modes)\n  --read-mib 512 --read-positions 2000000 --read-candidates 32000000
   (read/allocation bounds; resume retains stored generation settings)"
     );

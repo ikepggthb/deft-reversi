@@ -7,10 +7,9 @@ edition = "2024"
 clap = { version = "4.5.23", features = ["derive", "env"] }
 ctrlc = "3.4"
 deft_reversi_book = { path = "../deft-reversi-book" }
-deft_reversi_engine = { path = "../deft-reversi-engine" }
+deft_reversi_engine = { path = "../deft-reversi-engine", features = ["tuning"] }
 rand = "0.8.5"
 sha2 = "0.10"
 
-[dev-dependencies]
-# The tests build a zero model instead of reading one from disk.
-deft_reversi_engine = { path = "../deft-reversi-engine", features = ["tuning"] }
+[features]
+endgame-pattern-ordering = ["deft_reversi_book/endgame-pattern-ordering"]

@@ -1,4 +1,3 @@
-#![cfg(feature = "book-cli")]
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{
@@ -6,7 +5,8 @@ use std::{
     process::{Command, Output},
 };
 fn call(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_book"))
+    Command::new(env!("CARGO_BIN_EXE_deft-reversi-cli"))
+        .arg("book")
         .args(args)
         .output()
         .unwrap()

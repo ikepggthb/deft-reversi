@@ -14,6 +14,31 @@ export DEFT_MODEL=path/to/model.dpr2
 
 モデルはDPR2形式。環境変数の代わりに各コマンドで `--model FILE` を指定できる。`--threads N` は呼び出し元を含むスレッド数で、省略すると利用可能な全論理CPU。`--tt-mib N` は主置換表の要求容量（既定256 MiB）で、実際の主表容量は2の累乗に切り下げる。例えば3 MiB指定では2 MiB。補助表のメモリは別に必要になる。
 
+## 対局用Book
+
+リリースで案内されたモデルとBookを組み合わせて指定する。評価モデルはMPC2校正付きの [model-v3-pen-mpc2](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v3-pen-mpc2) を使う。
+
+```sh
+./target/release/deft-reversi-cli play --model model.dpr2 --book openings.dbook
+```
+
+- `settings` でBookのパス、有効状態、選択方針、局面数、モデルの一致状況を確認できる。`book off` / `book on` で切り替える。
+- 対局CLIは深さ12以上・MPC83%以上のBook評価を利用する。
+- `from the book` はBookからの着手。`Book fallback` にモデル不一致、未収録、利用条件を満たす登録手がない、などの理由を表示してから通常探索に移る。終局まで完全に読んだ値はモデルに依存せず利用できる。
+- `--book-loss 4` は、その局面のBook上の最善評価から4石以内の登録手をランダムに選ぶ。`--book` と併用する。生成時の累積損失条件とは独立した対局時の設定。
+- Bookの読込に失敗した場合はファイルパスと理由を表示する。旧ProbCut校正のモデルを使う場合は、現行エンジンに合うリリース用モデルを取得する。
+
+Bookを自分で生成・再開・検査するには `deft-reversi-cli book --help` を使う。`book build --level 29` でエンジンと共通のレベル表を使い、空き28から完全読みする。生成条件と作業ファイルの扱いは [Bookの操作手順](../docs/book-v2/training.md) を参照。
+
+広域学習の例。レベル22の終盤MPCは空き28、完全読みは空き21からです。
+
+```sh
+./target/release/deft-reversi-cli book build --model deft-eval-v3-pen.dpr2 \
+  --work openings.dbook-work --book openings.dbook --level 22 --max-plies 32 \
+  --schedule frontier --line-plies 4 --loss 4 --cumulative-loss 4 --leaf-loss 4 \
+  --threads 18 --tt-mib 1024 --memory-mib 2048 --seconds 14400
+```
+
 ## 探索設定を簡単に指定する
 
 レベルだけなら `--level 10`。個別に指定する場合は **`--eval 深さ@MPC確率` と `--endgame 確率:空きマス数,...`** を使う。

@@ -1,3 +1,4 @@
+mod book;
 mod display;
 mod game;
 mod gtp;
@@ -27,6 +28,9 @@ struct Cli {
 enum Command {
     /// Play against the engine.
     Play(play::PlayArgs),
+    /// Generate, resume, export or inspect an opening book.
+    #[command(disable_help_flag = true)]
+    Book(book::BookArgs),
     /// Search every position of an OBF file and print a table.
     Solve(solve::SolveArgs),
     /// Review records and compare played moves with the best moves.
@@ -164,6 +168,7 @@ struct SearchCommand {
 fn normalize_args(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
     let known = [
         "play",
+        "book",
         "solve",
         "review",
         "self-play",
@@ -201,6 +206,7 @@ fn main() {
     stop::install();
     let result = match Cli::parse_from(normalize_args(std::env::args_os().collect())).command {
         Command::Play(args) => play::run(args),
+        Command::Book(args) => book::run(args),
         Command::Solve(args) => solve::run(args),
         Command::Review(args) => review::run(args),
         Command::SelfPlay(args) => self_play::run(args),

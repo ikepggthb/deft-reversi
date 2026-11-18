@@ -1,6 +1,8 @@
 use crate::{EngineArgs, GoalArgs, Result, display, game::Game, settings, stop};
 use clap::Args;
-use deft_reversi_book::{Book, BookChoice, BookPlayer, MovePolicy, ReadLimits, UsePolicy};
+use deft_reversi_book::{
+    Book, BookChoice, BookDecision, BookMiss, BookPlayer, MovePolicy, ReadLimits, UsePolicy,
+};
 use deft_reversi_engine::{Action, Color, Engine, Goal, SearchRequest, Selectivity};
 use sha2::{Digest, Sha256};
 use std::{
@@ -22,7 +24,7 @@ pub struct PlayArgs {
     book: Option<PathBuf>,
     /// Pick at random among book moves at most this many discs worse than
     /// the best one, instead of always the best.
-    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=128))]
+    #[arg(long, requires = "book", value_parser = clap::value_parser!(u8).range(0..=128))]
     book_loss: Option<u8>,
     /// 0: you play black, 1: you play white, 2: engine against itself,
     /// 3: two players.
@@ -48,32 +50,44 @@ struct ModelDetails {
     calibrated: bool,
     book: Option<PathBuf>,
     book_loss: Option<u8>,
+    book_positions: Option<usize>,
+    book_matches: Option<bool>,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
     let bytes = std::fs::read(&args.engine.model)
         .map_err(|e| format!("{}: {e}", args.engine.model.display()))?;
     let model = deft_reversi_engine::Model::from_bytes(&bytes)?;
-    let details = ModelDetails {
+    let mut details = ModelDetails {
         path: args.engine.model.clone(),
         sha256: format!("{:x}", Sha256::digest(&bytes)),
         calibrated: model.has_calibration(),
         book: args.book.clone(),
         book_loss: args.book_loss,
+        book_positions: None,
+        book_matches: None,
     };
     drop(bytes);
     let engine = args.engine.with_model(model)?;
     let book = match &args.book {
         None => None,
         Some(path) => {
-            let book = Book::load(path, ReadLimits::default())
-                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let book = Book::load(path, ReadLimits::default()).map_err(|e| {
+                format!(
+                    "{}: {e}. Use the Book supplied with this CLI release.",
+                    path.display()
+                )
+            })?;
+            details.book_positions = Some(book.stats().positions);
+            details.book_matches =
+                Some(book.identity() == deft_reversi_book::analysis_identity(&engine)?);
             let moves = match args.book_loss {
                 None => MovePolicy::Best,
                 Some(max_loss) => MovePolicy::RandomWithinLoss { max_loss },
             };
             let policy = UsePolicy {
                 moves,
+                min_selectivity: Selectivity::Percent83,
                 ..UsePolicy::default()
             };
             Some(BookPlayer::new(
@@ -84,6 +98,9 @@ pub fn run(args: PlayArgs) -> Result<()> {
             )?)
         }
     };
+    if details.book_matches == Some(false) {
+        eprintln!("Warning: Book model mismatch; use the model and Book supplied together.");
+    }
     let mut session = Session {
         game: Game::new(),
         engine,
@@ -368,15 +385,30 @@ impl Session {
         let position = self.game.current();
         let side = display::color(position.side_to_move());
         if self.book_on
-            && let Some(choice) = self.book.as_mut().and_then(|b| b.choose(position))
+            && let Some(book) = self.book.as_mut()
         {
-            println!(
-                "{side} plays {} from the book ({})",
-                choice.action,
-                book_value(&choice)
-            );
-            self.game.play(choice.action)?;
-            return Ok(());
+            match book.decide(position) {
+                BookDecision::Chosen(choice) => {
+                    println!(
+                        "{side} plays {} from the book ({})",
+                        choice.action,
+                        book_value(&choice)
+                    );
+                    self.game.play(choice.action)?;
+                    return Ok(());
+                }
+                BookDecision::Fallback(reason) => {
+                    let message = match reason {
+                        BookMiss::ModelMismatch => "model mismatch",
+                        BookMiss::MissingPosition => "position not in book",
+                        BookMiss::NoRegisteredMove => "no eligible registered move",
+                        BookMiss::InvalidPosition => "position cannot be played from book",
+                        BookMiss::NoBook => "no book loaded",
+                        _ => "no eligible registered move",
+                    };
+                    println!("Book fallback: {message}");
+                }
+            }
         }
         println!(
             "{side} is thinking ({}); Ctrl-C plays the best move so far.",
@@ -554,6 +586,9 @@ impl Session {
                 d.book_loss
                     .map_or_else(|| "best move".into(), |n| format!("within {n} discs"))
             );
+            if let (Some(positions), Some(matches)) = (d.book_positions, d.book_matches) {
+                println!("Book positions: {positions}\nBook model match: {matches}");
+            }
         }
         println!("Goal: {}", goal(self.goal, self.time));
         print!("{}", settings::describe(self.goal));

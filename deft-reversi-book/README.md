@@ -16,12 +16,12 @@ use deft_reversi_engine::{Engine, Board};
 ```
 
 ```sh
-cargo build --locked --release -p deft_reversi_book --features book-cli --bin book
-cargo test --locked -p deft_reversi_book --features book-cli
+cargo build --locked --release -p deft-reversi-cli
+cargo test --locked -p deft_reversi_book
 cargo doc --locked -p deft_reversi_book --all-features --no-deps --document-private-items
 ```
 
-`book-cli` は操作用バイナリとCtrl-C対応を有効にする。旧mainのMPC表を使う `--legacy-main-mpc` のため、エンジンの `tuning` featureも有効にする。`endgame-pattern-ordering` はエンジン側の同名featureを有効にする。
+CLIがBook操作とCtrl-Cを扱う。`endgame-pattern-ordering` はエンジン側の同名featureを有効にする。
 
 [実装API](../docs/book-v2/architecture.md) と [保存形式・互換性](../docs/book-v2/compatibility.md) を参照。分離前の `.dbook` / `.dbook-work` を読込可能。モデル・校正・探索仕様の識別情報が異なる推定は、明示的な再解析を必要とする。
 
@@ -33,3 +33,5 @@ Book v2：[設計と実装順序](../docs/book-v2/design.md)、[レベルによ�
 [評価値と探索条件](../docs/book-v2/value-model.md)：要求・予定・実際に完了した探索、推定と最終石差の上下限を区別する。探索記録は共有し、子の値は自動で親へ反映する。過去の計算経路は保存しない。通常の対局参照には`BookEntry::moves()`を使い、詳しい記録は必要時に展開する。
 
 保守性の見直しでは、現行の評価を`Evaluation`へ統合し、点数・探索条件・出所を直接読む形にした。旧分類・途中状態は形式の境界へ移した。[変更理由](../docs/book-v2/maintainability.md)と[Rust APIの移行](../docs/book-v2/compatibility.md)を参照。
+
+Bookの生成と検査は `deft-reversi-cli book --help` を参照。
