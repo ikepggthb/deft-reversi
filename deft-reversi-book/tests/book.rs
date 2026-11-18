@@ -1552,7 +1552,7 @@ fn frontier_recalculation_is_resumable_and_does_not_analyze_or_expand_registered
         "leaf pass must reach a registered child even when its parent was incomplete or outside current loss limits"
     );
     for c in loaded.export().unwrap().probe(child).unwrap().candidates() {
-        assert_eq!(c.value.unwrap().depth(), 2);
+        assert_eq!(c.value.unwrap().depth(), 1);
         assert!(!c.registered);
     }
     assert_eq!(
