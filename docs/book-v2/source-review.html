@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>bookのソースを読む · Deft Book</title><style>
+:root{color-scheme:light;--ink:#18313b;--muted:#52646b;--line:#d5dfe1;--accent:#096c64}
+*{box-sizing:border-box}html{scroll-padding-top:1.5rem}body{margin:0;color:var(--ink);background:#f6f8f7;font:17px/1.85 system-ui,-apple-system,'Noto Sans JP',sans-serif}
+a{color:var(--accent);text-underline-offset:.2em}a:focus-visible{outline:3px solid #b37600;outline-offset:3px}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:white;padding:.5rem;z-index:10}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1500px;margin:auto}nav{padding:2rem 1.3rem;position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line)}nav .brand{font-size:1.3rem;font-weight:750;color:var(--ink)}nav ol{padding:0;list-style:none}nav li{margin:.5rem 0}nav a{display:block;font-size:.94rem;text-decoration:none;padding:.3rem .65rem;border-radius:5px}nav a[aria-current]{background:#d9eeea;font-weight:700}
+main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.meta{font-size:.84rem;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:1rem}.toc{background:#f1f6f4;border-left:4px solid var(--accent);padding:1rem 1.5rem}.toc ul{margin:.5rem 0;padding-left:1.3rem}.toc a{font-size:.94rem}h1{font-size:clamp(1.7rem,3vw,2.4rem);line-height:1.4;letter-spacing:.01em}h2{font-size:1.4rem;margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}h3{font-size:1.15rem;margin-top:2rem}p,li{overflow-wrap:anywhere}pre{padding:1.2rem;background:#132b33;color:#edf5f3;border-radius:7px;overflow:auto;line-height:1.65;font-size:.84rem}code{font-family:ui-monospace,monospace}p code,li code,td code{background:#eef2f1;padding:.12em .3em;border-radius:3px}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1.3rem 0}th,td{border:1px solid var(--line);padding:.65rem .85rem;text-align:left;vertical-align:top}th{background:#e7f0ed}blockquote{margin-left:0;border-left:4px solid var(--line);padding-left:1rem;color:var(--muted)}footer{border-top:1px solid var(--line);margin-top:3rem;padding-top:1rem;color:var(--muted);font-size:.86rem}
+@media(max-width:850px){.layout{display:block}nav{position:static;height:auto;padding:1rem;border-right:0;border-bottom:1px solid var(--line)}nav ol{display:flex;flex-wrap:wrap;gap:.2rem;margin-bottom:0}nav li{margin:0}nav a{font-size:.82rem}main{padding-top:1rem}}
+@media print{nav,.toc,.skip{display:none}.layout{display:block}body{background:white;font-size:10pt}main{padding:0}pre{white-space:pre-wrap;border:1px solid var(--line);background:#f1f3f2;color:black}h2,h3{break-after:avoid}a{color:inherit}table{font-size:9pt}}
+</style></head>
+<body><a class="skip" href="#content">本文へ</a><div class="layout">
+<nav aria-label="Bookガイド"><div class="brand">Deft Reversi · Book</div><ol><li><a href="index.html">Deft Reversi Book v2 運用・設計ガイド</a></li><li><a href="source-review.html" aria-current="page">bookのソースを読む</a></li><li><a href="maintainability.html">理解の負担を減らすための見直し</a></li><li><a href="training.html">Bookを継続して育てる手順</a></li><li><a href="operations.html">保存・運用・障害対応</a></li><li><a href="architecture.html">保存する情報とAPI</a></li><li><a href="value-model.html">評価値と探索条件の意味</a></li><li><a href="levels.html">レベル、深さ、選択率</a></li><li><a href="loss-control.html">展開の損失制御</a></li><li><a href="scheduling.html">有力進行と不確かな末端の優先順位</a></li><li><a href="propagation.html">子の値を親へ反映する</a></li><li><a href="diagnostics.html">品質、保存状態、処理時間を調べる</a></li><li><a href="compatibility.html">保存形式と旧bookの引継ぎ</a></li><li><a href="design.html">Edax・Egaroucidを土台にした構造</a></li><li><a href="validation.html">Bookの検証</a></li></ol></nav>
+<main id="content"><div class="meta">Book v2 / work v8 / play v4 · Markdownから生成 · 外部通信なし</div>
+<aside class="toc" aria-label="このページの目次"><strong>このページ</strong><ul><li><a href="#section-2">評価を読む</a></li><li><a href="#section-3">評価を追加する・登録した子の値を反映する</a></li><li><a href="#section-4">bookを生成する</a></li><li><a href="#section-5">保存して再開する</a></li><li><a href="#section-6">共有する保存方法を変更する場合</a></li><li><a href="#section-7">確認する試験</a></li></ul></aside>
+<h1 id="section-1">bookのソースを読む</h1>
+<p>最初から内部の型を全部覚える必要はない。まず、確認したい操作から読む。現在の評価は<code>Evaluation</code>一つで扱い、点数・探索条件・出所を直接読む。旧形式の検査は別の場所へ分けている。</p>
+<h2 id="section-2">評価を読む</h2>
+<p><code>Book::probe</code>で局面を探し、<code>entry.moves()</code>で手を列挙する。それぞれの<code>value</code>が評価である。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>知りたいこと</th>
+<th>読む箇所</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>点数と、点・下限・上限の区別</td>
+<td><code>value.result()</code>。<code>Score::Estimate</code>は推定、<code>Score::Final</code>は最終石差の範囲</td>
+</tr>
+<tr>
+<td>中盤の深さ、終盤の選択率、混在する条件</td>
+<td><code>value.conditions()</code></td>
+</tr>
+<tr>
+<td>直接探索したのか、子から計算したのか、手動なのか</td>
+<td><code>value.source()</code></td>
+</tr>
+<tr>
+<td>実際に完了した一回の探索の詳細</td>
+<td>出所が<code>Search</code>または<code>SearchMove</code>なら、その<code>CompletedSearch</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>例えば「この手は+4以下」という情報は+4の点評価ではない。着手に使える一点の値を読むなら<code>value.result().point_value()</code>を確認する。完全読み切りで石差が一点に確定したかは<code>is_solved()</code>で確認する。</p>
+<p>通常の対局参照は借用した評価を返す。<code>to_owned()</code>で独立した<code>Evaluation</code>にできるが、点数・探索条件・出所の読み方は同じである。共有するための番号を呼出し側で扱う必要はない。</p>
+<p><a href="../../deft-reversi-book/src/evaluation.rs">評価を表す型</a>、<a href="../../deft-reversi-book/src/score.rs">点数と上下限</a>、<a href="../../deft-reversi-book/src/conditions.rs">探索条件</a>を参照する。実際に探索した条件の記録は<a href="../../deft-reversi-book/src/search_record.rs">search_record.rs</a>にある。</p>
+<h2 id="section-3">評価を追加する・登録した子の値を反映する</h2>
+<p><a href="../../deft-reversi-book/src/editor.rs">editor.rs</a>の次の入口から読む。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>操作</th>
+<th>入口</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>一回の探索結果を取り込む</td>
+<td><code>record_search</code></td>
+</tr>
+<tr>
+<td>一つの手の評価を取り込む</td>
+<td><code>record_candidate</code></td>
+</tr>
+<tr>
+<td>手動値を設定する</td>
+<td><code>set_manual</code></td>
+</tr>
+<tr>
+<td>その手をbookの進行として登録する</td>
+<td><code>register_move</code></td>
+</tr>
+<tr>
+<td>登録を外す</td>
+<td><code>unregister_move</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>変更後は<code>refresh_from</code>が子から親の順に再計算する。ある局面へ複数の進行が合流する場合も、影響する親を更新する。</p>
+<p>値の候補を集めるのが<code>move_values_at</code>、その中から採用する値を選ぶのが<code>MoveValues::choose</code>。採用規則だけを確認する場合は、共有番号や盤面の検索処理を飛ばして<code>choose</code>を読める。</p>
+<ol>
+<li>現在のモデルに対応する手動値があれば、それを使う。</li>
+<li>最終石差について確定した情報があれば、それを推定で置き換えない。</li>
+<li>登録した子に値があれば、その値を親の手番へ変換して使う。</li>
+<li>子の値がなければ、その手を直接調べた値を使う。</li>
+<li>手をまとめて調べた結果も確認する。最良手以外には上限だけを与える。子から戻した推定を、以前の深い直接推定へ戻さない。</li>
+</ol>
+<p>手動値とは独立して、完全読み切りで得た最終石差の情報を保持する。確定情報の共通範囲が空になる変更は拒否し、編集前へ戻す。最終石差の統合は<code>merge_final_scores</code>、局面全体の最大値は<a href="../../deft-reversi-book/src/lib.rs">lib.rs</a>の<code>combine_values</code>が担当する。</p>
+<p>例として、子の手番から見て-4なら親の手の値は+4。子の最終石差の範囲が[-6,-2]なら親では[+2,+6]。パスでも符号は変えるが、石を置いていないので深さは増やさない。変換は<code>Evaluation::try_child_to_parent</code>にある。</p>
+<h2 id="section-4">bookを生成する</h2>
+<p>設定と登録範囲は<a href="../../deft-reversi-book/src/generate.rs">generate.rs</a>、探索を一巡する処理は<a href="../../deft-reversi-book/src/grow.rs">grow.rs</a>を読む。</p>
+<ol>
+<li><code>configure_generation_roots</code>で開始局面・手番の色・設定を決める。</li>
+<li><code>generate</code>が次の仕事を取り出し、<code>prepare</code>が調べる手を決める。</li>
+<li><code>BatchPool::run</code>が探索を実行し、<code>publish</code>が完了結果を反映する。</li>
+<li><code>expand</code>が現在の損失・手数・予算を確認して手を登録する。</li>
+<li>次の段階や子の仕事を追加する。停止時は未完の仕事を探索待ちへ戻す。</li>
+</ol>
+<p>「局面が存在する」と「その親から進む手として登録されている」は別である。<code>Edge.registered</code>が後者を表す。</p>
+<p>一回の集合探索は<code>MoveSearch</code>に保持する。最良手の点評価と、それ以外の手の上限を同じ探索から読む。探索範囲に含まない手を評価済みにしたり、一部の手の最大値を局面全体の値にしたりしない。</p>
+<p><code>candidate_plan</code>はレベル・深さ指定をEngineの条件へ変換する。現在の子基準のレベル解釈は維持しており、将来の「同じ探索元で中盤レベル＝深さ」へは変更していない。</p>
+<p>開始局面から到達できるかは<code>active_paths</code>で判定する。同じ局面へ短いが損失の大きい進行と、長いが損失の小さい進行が合流し得るため、最短距離だけでは新規登録を許可しない。<code>analysis_distance</code>は既存の不明値を調べ直すための判定であり、新規登録の根拠には使わない。</p>
+<p><a href="../../deft-reversi-book/src/schedule.rs">優先順位</a>は探索の順序だけを変える。並列探索では全体のスレッド数・置換表・残りノードを仕事へ分配する。</p>
+<h2 id="section-5">保存して再開する</h2>
+<p><a href="../../deft-reversi-book/src/format.rs">format.rs</a>の<code>save_editor/load_editor</code>が生成再開用、<code>save_book/load_book</code>が対局用。書き込む形式はwork v8 / play v4で変更していない。</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>生成再開用に保存するもの</th>
+<th>読み込んだ後で作るもの</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>盤面、登録した手、直接評価、手動値、最終石差の情報、集合探索</td>
+<td>子の盤面、親の逆引き、現在の局面値と親へ戻す値</td>
+</tr>
+<tr>
+<td>開始局面、色、設定、完了段階、未完の仕事</td>
+<td>探索の優先順位の索引、到達条件のキャッシュ</td>
+</tr>
+<tr>
+<td>モデル等の説明、実行条件と停止理由</td>
+<td>保存に必要のない補助索引</td>
+</tr>
+</tbody>
+</table></div>
+<p>定期保存は<code>grow::save</code>が仕事一覧をeditorへ戻してからコールバックを呼ぶ。<code>atomic_save</code>は一時ファイルへ書いて同期後に置換する。読み込むだけでは元ファイルを更新しない。</p>
+<p>旧形式の「導出」「投影」「旧採用方式」といった表現は<a href="../../deft-reversi-book/src/legacy/mod.rs">legacy</a>内で検査・変換する。現行の局面データには旧方式の途中状態を保持せず、読込中に完了した候補だけを取り込む。旧形式を変更しないレビューでは、この内部表現を追う必要はない。</p>
+<h2 id="section-6">共有する保存方法を変更する場合</h2>
+<p>ここまでの値の意味とは別に、<a href="../../deft-reversi-book/src/values.rs">values.rs</a>がメモリ上の共有配置を担当する。局面や手は4バイトの参照番号を持つ。記録一覧は点数・出所・探索記録・モデル識別値を共有する。</p>
+<p>番号は外部へ公開しない。<code>compact_evidence</code>で使わない記録を除くときに全参照を付け替える。新しい参照の保持欄を追加した場合は、この走査も修正する。</p>
+<p>対局用への変換は<a href="../../deft-reversi-book/src/snapshot.rs">snapshot.rs</a>、使用条件と着手の選択は<a href="../../deft-reversi-book/src/player.rs">player.rs</a>。統計のための全走査は<a href="../../deft-reversi-book/src/stats.rs">stats.rs</a>に分けている。</p>
+<h2 id="section-7">確認する試験</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>変更するもの</th>
+<th>読む試験</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>評価の対象範囲と、推定・最終石差の区別</td>
+<td>evaluation.rs内、<a href="../../deft-reversi-book/tests/value_contract.rs">value_contract.rs</a></td>
+</tr>
+<tr>
+<td>子からの反映、手動値、矛盾時の復元</td>
+<td><a href="../../deft-reversi-book/tests/review_regressions.rs">review_regressions.rs</a>、value_contract.rs</td>
+</tr>
+<tr>
+<td>集合探索、並列・中断・再開</td>
+<td><a href="../../deft-reversi-book/tests/frontier.rs">frontier.rs</a>、grow.rs内</td>
+</tr>
+<tr>
+<td>損失・手数と、合流する進行</td>
+<td>generate.rs内、<a href="../../deft-reversi-book/tests/book.rs">book.rs</a></td>
+</tr>
+<tr>
+<td>既存のv8/v4をそのまま保存できること</td>
+<td><a href="../../deft-reversi-book/tests/current_format.rs">current_format.rs</a></td>
+</tr>
+<tr>
+<td>旧形式の読込</td>
+<td><a href="../../deft-reversi-book/tests/simple_design.rs">simple_design.rs</a>、format.rs内、<a href="../../deft-reversi-book/tests/fixtures/README.md">固定入力の説明</a></td>
+</tr>
+<tr>
+<td>対局の通常参照でメモリ確保しないこと</td>
+<td><a href="../../deft-reversi-book/tests/book_alloc.rs">book_alloc.rs</a></td>
+</tr>
+</tbody>
+</table></div>
+<pre><code class="language-sh">cargo test --offline --locked --release -p deft_reversi_book --features book-cli
+cargo doc --offline --locked -p deft_reversi_book --all-features --no-deps --document-private-items
+python3 tools/render_book_docs.py --check
+</code></pre>
+<p><a href="maintainability.html">今回の見直し</a>には、何を統合・削除し、どの点に複雑さが残るかを記録している。</p>
+<footer>正本：<a href="source-review.md">source-review.md</a> · 再生成：tools/render_book_docs.py</footer></main>
+</div></body></html>

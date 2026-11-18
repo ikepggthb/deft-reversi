@@ -1,4 +1,5 @@
 //! Allocation regression for the actual public play path, including symmetry lookup.
+use deft_reversi_book::legacy::{self, AnalysisQuality, ImportedValue, ValueOrigin};
 use deft_reversi_book::*;
 use deft_reversi_engine::*;
 use std::{
@@ -38,7 +39,7 @@ unsafe impl GlobalAlloc for Allocator {
 static ALLOCATOR: Allocator = Allocator;
 #[test]
 fn book_hit_performs_no_heap_allocations() {
-    let engine = Engine::new(
+    let mut engine = Engine::new(
         Model::from_pattern(PatternModel::zero()),
         EngineOptions::default().tt_mib(1),
     )
@@ -48,20 +49,21 @@ fn book_hit_performs_no_heap_allocations() {
     let action = Action::Place(board.legal_moves().next().unwrap());
     editor.register_move(board, action).unwrap();
     editor
-        .record(
+        .record_candidate(
             board,
             action,
-            Assessment {
+            Evaluation::import(ImportedValue {
                 score: 0,
                 quality: AnalysisQuality {
                     depth: 12,
                     selectivity: Selectivity::Full,
                     solved: false,
                 },
-                bound: Bound::Exact,
+                bound: legacy::Bound::Exact,
                 identity: editor.identity(),
                 origin: ValueOrigin::Search,
-            },
+            })
+            .unwrap(),
         )
         .unwrap();
     let book = Arc::new(editor.export().unwrap());
@@ -69,8 +71,49 @@ fn book_hit_performs_no_heap_allocations() {
         &engine,
         Some(book),
         UsePolicy {
+            allow_imported: true,
             moves: MovePolicy::RandomWithinLoss { max_loss: 2 },
             ..UsePolicy::default()
+        },
+        1,
+    )
+    .unwrap();
+    let root = board.canonical();
+    let action = Action::Place(root.legal_moves().next().unwrap());
+    let request = SearchRequest::new(Goal::Depth(2)).root_moves(if let Action::Place(s) = action {
+        1u64 << s.index()
+    } else {
+        0
+    });
+    let result = engine.search(root, &request).unwrap();
+    let mut typed = BookEditor::for_engine(&engine).unwrap();
+    typed.register_move(root, action).unwrap();
+    typed
+        .record_candidate(
+            root,
+            action,
+            Evaluation::from_search_result(
+                root,
+                RequestedAnalysis::External,
+                SearchKind::Midgame {
+                    depth: 2,
+                    selectivity: Selectivity::Full,
+                },
+                &result,
+                typed.identity(),
+            )
+            .unwrap()
+            .best_move_value()
+            .unwrap(),
+        )
+        .unwrap();
+    let mut typed = BookPlayer::new(
+        &engine,
+        Some(Arc::new(typed.export().unwrap())),
+        UsePolicy {
+            min_depth: 2,
+            min_selectivity: Selectivity::Full,
+            ..Default::default()
         },
         1,
     )
@@ -78,6 +121,7 @@ fn book_hit_performs_no_heap_allocations() {
     TRACK.with(|t| t.set(true));
     for _ in 0..100 {
         assert!(player.choose(board).is_some());
+        assert!(typed.choose(board).is_some());
     }
     TRACK.with(|t| t.set(false));
     assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0);

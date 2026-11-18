@@ -1,6 +1,6 @@
-use deft_reversi_book::{AnalysisQuality, Assessment, BookEditor, Bound, ValueOrigin};
+use deft_reversi_book::{BookEditor, RequestedAnalysis, SearchKind};
 use deft_reversi_engine::{
-    Action, Board, Engine, EngineOptions, Model, PatternModel, Position, ProbCutSigmas,
+    Action, Board, Engine, EngineOptions, Goal, SearchRequest, Model, PatternModel, Position, ProbCutSigmas,
     Selectivity, legacy_main_rules,
 };
 use std::{
@@ -56,26 +56,17 @@ fn commands_work_through_the_binary() {
     model
         .write_to(fs::File::create(f.0.join("model.dpr2")).unwrap())
         .unwrap();
-    let engine = Engine::new(model, EngineOptions::default().tt_mib(1)).unwrap();
+    let mut engine = Engine::new(model, EngineOptions::default().tt_mib(1)).unwrap();
     let mut book = BookEditor::for_engine(&engine).unwrap();
-    let action: Action = "f5".parse().unwrap();
-    book.register_move(Board::new(), action).unwrap();
-    book.record(
-        Board::new(),
-        action,
-        Assessment {
-            score: 0,
-            quality: AnalysisQuality {
-                depth: 12,
-                selectivity: Selectivity::Full,
-                solved: false,
-            },
-            bound: Bound::Exact,
-            identity: book.identity(),
-            origin: ValueOrigin::Search,
-        },
-    )
-    .unwrap();
+    let board = Board::new().canonical();
+    let result = engine.search(board, &SearchRequest::new(Goal::Depth(12))).unwrap();
+    book.register_move(board, result.best_move.unwrap()).unwrap();
+    book.record_search(
+        board,
+        RequestedAnalysis::External,
+        SearchKind::Midgame { depth: 12, selectivity: Selectivity::Full },
+        &result,
+    ).unwrap();
     let book_path = f.0.join("test.dbook");
     book.export().unwrap().save(&book_path).unwrap();
 

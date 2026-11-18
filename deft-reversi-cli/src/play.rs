@@ -660,14 +660,14 @@ fn goal(goal: Goal, time: Option<Duration>) -> String {
 
 fn book_value(choice: &BookChoice) -> String {
     let v = choice.value;
-    let quality = if v.quality.solved {
+    let quality = if v.is_solved() {
         "solved".into()
-    } else if v.quality.selectivity == Selectivity::Full {
-        format!("d{}", v.quality.depth)
+    } else if v.selectivity() == Selectivity::Full {
+        format!("d{}", v.depth())
     } else {
-        format!("d{}@{}%", v.quality.depth, v.quality.selectivity.percent())
+        format!("d{}@{}%", v.depth(), v.selectivity().percent())
     };
-    format!("{:+}, {quality}", v.score)
+    format!("{:+}, {quality}", v.score())
 }
 
 fn help() {
