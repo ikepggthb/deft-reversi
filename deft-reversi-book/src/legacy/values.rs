@@ -1,5 +1,6 @@
 //! work v8 / play v4の共有テーブルのバイト表現。
 use super::*;
+use crate::selectivity_code;
 use std::{collections::BTreeMap, num::NonZeroU32};
 
 // 内部のValueIdは1始まりで、Option<ValueId>も4バイトに収まる。
@@ -202,12 +203,12 @@ impl ValueStore {
                 StoredAnalysis::Manual(d, s) => {
                     byte(w, 3)?;
                     byte(w, d)?;
-                    byte(w, s as u8)?;
+                    byte(w, selectivity_code(s))?;
                 }
                 StoredAnalysis::Unknown(d, s, o) => {
                     byte(w, 4)?;
                     byte(w, d)?;
-                    byte(w, s as u8)?;
+                    byte(w, selectivity_code(s))?;
                     byte(w, originw(o))?;
                 }
             }

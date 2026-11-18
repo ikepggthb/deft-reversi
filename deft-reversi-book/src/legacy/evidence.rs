@@ -822,9 +822,9 @@ mod tests {
         let mut bytes = Vec::new();
         value_codec::write(&mut bytes, &value).unwrap();
         // Certified interval(5), identity(32), legacy tag(1), depth(1).
-        assert_eq!(bytes[39], Selectivity::Full as u8);
+        assert_eq!(bytes[39], crate::selectivity_code(Selectivity::Full));
         let original = bytes.clone();
-        bytes[39] = Selectivity::Percent85 as u8;
+        bytes[39] = crate::selectivity_code(Selectivity::Percent85);
         assert!(value_codec::read(&mut bytes.as_slice()).is_err());
         let mut bytes = original;
         bytes[40] = 1;
