@@ -68,6 +68,18 @@ fn exact_matches_exhaustive_and_pv_is_legal() {
     }
 }
 #[test]
+fn skipping_pv_recovery_keeps_the_best_move_and_score() {
+    let board = position(9, 14);
+    let mut engine = engine(1);
+    let expected = engine.search(board, &exact()).unwrap();
+    let without_recovery = engine.search(board, &exact().skip_pv_recovery()).unwrap();
+    assert_eq!(without_recovery.stop_reason, StopReason::Completed);
+    assert!(without_recovery.is_solved());
+    assert_eq!(without_recovery.best_move, expected.best_move);
+    assert_eq!(without_recovery.score, expected.score);
+    assert!(without_recovery.stats.tt_hits > 0);
+}
+#[test]
 fn interrupted_search_never_claims_an_exact_solution() {
     for kind in 0..3 {
         let mut engine = engine(2);
@@ -101,6 +113,54 @@ fn budget_is_shared_across_workers_and_iterations() {
         assert!(matches!(result.kind, Some(ResultKind::Depth { depth, .. }) if depth > 0));
     }
 }
+#[test]
+fn timed_levels_return_last_completed_stage_on_timeout() {
+    let mut engine = engine(4);
+    let board = position(21, 28);
+    let budget = Duration::from_millis(500);
+    let request = SearchRequest::timed_levels(60, budget).skip_pv_recovery();
+    let mut last = None;
+    let result = engine
+        .search_with(board, &request, |progress| {
+            last = Some(progress.clone());
+            // Let the actual search clock expire between two stages.
+            std::thread::sleep(budget.saturating_sub(progress.elapsed));
+        })
+        .unwrap();
+    let last = last.expect("the first stage should complete");
+    assert_eq!(last.kind, ResultKind::Depth { depth: 1, selectivity: Selectivity::Percent83 });
+    assert_eq!(result.stop_reason, StopReason::TimeLimit);
+    assert_eq!(result.kind, Some(last.kind));
+    assert_eq!(result.score, Some(last.score));
+    assert_eq!(result.best_move, last.best_move);
+    assert!(board.play(result.best_move.unwrap()).is_ok());
+}
+
+#[test]
+fn timed_levels_searches_selective_stages_and_solves_exactly() {
+    let mut engine = engine(4);
+    let board = position(9, 14);
+    let fixed = engine.search(board, &exact()).unwrap();
+    let budget = Duration::from_secs(5);
+    let mut reported = Vec::new();
+    let timed = engine
+        .search_with(board, &SearchRequest::timed_levels(60, budget), |progress| {
+            reported.push(progress.kind);
+        })
+        .unwrap();
+    assert_eq!(timed.stop_reason, StopReason::Completed);
+    assert!(timed.is_solved());
+    assert_eq!(timed.score, fixed.score);
+    assert!(timed.stats.tt_hits > 0);
+    let expected: Vec<_> = (1..=4)
+        .map(|depth| ResultKind::Depth { depth, selectivity: Selectivity::Percent83 })
+        .chain([Selectivity::Percent85, Selectivity::Full].map(|selectivity| {
+            ResultKind::Endgame { selectivity }
+        }))
+        .collect();
+    assert_eq!(reported, expected);
+}
+
 #[test]
 fn pass_and_terminal_are_distinct() {
     let board = Board::from_bits(2, 1).unwrap();
@@ -431,6 +491,7 @@ fn stopping_after_selective_preparation_does_not_report_exact() {
         })
     );
     assert_eq!(stopped.score, prepared.score);
+    assert_eq!(stopped.best_move, prepared.best_move);
 }
 
 #[test]

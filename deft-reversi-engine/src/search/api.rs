@@ -231,6 +231,7 @@ pub struct SearchRequest {
     pub(super) goal: Goal,
     pub(super) selectivity: Option<Selectivity>,
     pub(super) time_limit: Option<Duration>,
+    pub(super) timed_levels: bool,
     pub(super) node_limit: Option<u64>,
     pub(super) all_moves: bool,
     pub(super) move_pvs: bool,
@@ -240,6 +241,7 @@ pub struct SearchRequest {
     pub(super) minimum_score: Option<i32>,
     pub(super) reuse_pv: bool,
     pub(super) recover_endgame_pv: bool,
+    pub(super) skip_pv_recovery: bool,
     pub(super) stop: StopHandle,
 }
 impl SearchRequest {
@@ -248,6 +250,7 @@ impl SearchRequest {
             goal,
             selectivity: None,
             time_limit: None,
+            timed_levels: false,
             node_limit: None,
             all_moves: false,
             move_pvs: false,
@@ -257,7 +260,17 @@ impl SearchRequest {
             minimum_score: None,
             reuse_pv: false,
             recover_endgame_pv: false,
+            skip_pv_recovery: false,
             stop: StopHandle::new(),
+        }
+    }
+    /// Search the distinct goals from level 1 through `level` under one clock,
+    /// returning the best move from the last completed goal. With a calibrated
+    /// model, the goals follow the level table for the root's empty-square count.
+    pub fn timed_levels(level: u8, limit: Duration) -> Self {
+        Self {
+            timed_levels: true,
+            ..Self::new(Goal::Level(level)).time_limit(limit)
         }
     }
     /// Pruning for `Depth` and `Endgame`; `Full` when not set. A `Level`
@@ -295,6 +308,12 @@ impl SearchRequest {
     /// Recovery shares the search limits and may leave a partial line.
     pub fn recover_endgame_pv(mut self) -> Self {
         self.recover_endgame_pv = true;
+        self
+    }
+    /// Return the line found during search without a separate PV recovery
+    /// pass. The best move and score still come from the completed search.
+    pub fn skip_pv_recovery(mut self) -> Self {
+        self.skip_pv_recovery = true;
         self
     }
     /// Stops after this much time, returning the last completed iteration.

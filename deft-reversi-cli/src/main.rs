@@ -1,6 +1,7 @@
 mod book;
 mod book_view;
 mod display;
+mod flipsight;
 mod game;
 mod gtp;
 mod perft;
@@ -46,6 +47,8 @@ enum Command {
     Perft(perft::PerftArgs),
     /// Run the Go Text Protocol interface for automated matches.
     Gtp(gtp::GtpArgs),
+    /// Run the FlipSight bot connector's JSON-lines engine protocol.
+    Flipsight(flipsight::FlipsightArgs),
 }
 
 /// Model and engine settings shared by the commands that search.
@@ -179,6 +182,7 @@ fn normalize_args(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> 
         "self-play",
         "perft",
         "gtp",
+        "flipsight",
         "help",
     ];
     if args
@@ -216,6 +220,7 @@ fn main() {
         Command::Review(args) => review::run(args),
         Command::SelfPlay(args) => self_play::run(args),
         Command::Gtp(args) => gtp::run(args),
+        Command::Flipsight(args) => flipsight::run(args),
         Command::Perft(args) => {
             perft::run(args);
             Ok(())

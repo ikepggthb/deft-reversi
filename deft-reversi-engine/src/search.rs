@@ -267,6 +267,7 @@ impl Engine {
             minimum_score: request.minimum_score,
             reuse_pv: request.reuse_pv,
             recover_endgame_pv: request.recover_endgame_pv,
+            skip_pv_recovery: request.skip_pv_recovery,
             root_moves: request.root_moves,
             preferred_move: request.preferred_move,
             board,
@@ -274,6 +275,7 @@ impl Engine {
             selectivity,
             level,
             time_limit: request.time_limit,
+            timed_levels: request.timed_levels && !self.calibration.is_empty(),
             node_limit: request.node_limit,
             all_moves: request.all_moves,
             move_pvs: request.move_pvs,
@@ -428,7 +430,8 @@ impl Engine {
         runtime.drain();
         // Full TT cutoffs return scores without a recursion-built PV. Recover
         // the line separately, verifying each suggested move against the value.
-        if !result.score_is_upper_bound
+        if !job.skip_pv_recovery
+            && !result.score_is_upper_bound
             && !context.aborted()
             && let Some(last) = last
             && (job.review_move.is_none() || job.all_moves)
@@ -537,10 +540,10 @@ impl Engine {
             quality: AtomicU8::new(0),
             rules: self.calibration.clone(),
             sigmas: self.sigmas,
-            // Exact requests use selective stages only to seed the tables;
-            // results below this bound are exact and reused by the final stage.
+            // The timed ladder treats selective stages as level goals, using
+            // their own ProbCut range. A fixed exact search uses them as preparation.
             cache_epoch: self.cache_epoch,
-            endgame_probcut_min: if job.mode == SearchMode::Exact {
+            endgame_probcut_min: if job.mode == SearchMode::Exact && !job.timed_levels {
                 endgame::EXACT_PREPARATION_PROBCUT_MIN
             } else {
                 endgame::PROBCUT_MIN_EMPTIES
@@ -551,6 +554,10 @@ impl Engine {
     /// endgame requests the selective stages and the final solve.
     fn plan(&self, job: &Job) -> Vec<Iteration> {
         let board = job.board;
+        if job.timed_levels {
+            let max_level = job.level.expect("timed levels use a level goal");
+            return timed_level_iterations(max_level, board.empty_count());
+        }
         let target = match job.mode {
             SearchMode::Depth(d) => d.min(board.empty_count()),
             SearchMode::Exact | SearchMode::SelectiveEndgame => board.empty_count(),
@@ -610,6 +617,7 @@ struct Job {
     minimum_score: Option<i32>,
     reuse_pv: bool,
     recover_endgame_pv: bool,
+    skip_pv_recovery: bool,
     board: Board,
     mode: SearchMode,
     selectivity: Selectivity,
@@ -617,6 +625,7 @@ struct Job {
     /// endgame preparation depth.
     level: Option<u8>,
     time_limit: Option<Duration>,
+    timed_levels: bool,
     node_limit: Option<u64>,
     all_moves: bool,
     move_pvs: bool,
@@ -664,7 +673,7 @@ fn searched(kind: ResultKind) -> bool {
 }
 
 /// One root iteration of `Engine::search`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Iteration {
     depth: u8,
     /// Searches to the end of the game rather than to an evaluation.
@@ -700,6 +709,25 @@ impl Iteration {
             result.pv.clear();
         }
     }
+}
+
+fn timed_level_iterations(max_level: u8, empties: u8) -> Vec<Iteration> {
+    let mut steps: Vec<_> = (1..=max_level)
+        .map(|level| {
+            let (mode, selectivity) = level::plan(level).at(empties);
+            let (depth, exact) = match mode {
+                SearchMode::Depth(depth) => (depth, false),
+                SearchMode::Exact | SearchMode::SelectiveEndgame => (empties, true),
+            };
+            Iteration {
+                depth,
+                exact,
+                selectivity,
+            }
+        })
+        .collect();
+    steps.dedup();
+    steps
 }
 
 /// Reference solver: begin at 5/6 when possible, retaining target parity.
@@ -852,6 +880,49 @@ mod resource_tests {
         let table = engine.table.clone();
         engine.set_resources(engine.options()).unwrap();
         assert!(Arc::ptr_eq(&engine.table, &table));
+    }
+}
+
+#[cfg(test)]
+mod timed_level_tests {
+    use super::*;
+
+    #[test]
+    fn depth_and_endgame_stages_follow_the_level_table() {
+        use Selectivity::*;
+        for (empties, level, max_depth, endgame) in [
+            (7, 60, 0, &[Full][..]),
+            (24, 60, 18, &[Percent85, Percent98, Percent99, Full]),
+            (28, 21, 21, &[]),
+            (28, 22, 21, &[Percent85]),
+            (
+                28,
+                60,
+                21,
+                &[Percent85, Percent95, Percent98, Percent99, Full],
+            ),
+            (
+                40,
+                60,
+                36,
+                &[Percent85, Percent95, Percent98, Percent99, Full],
+            ),
+            (60, 60, 56, &[Percent85, Percent98, Percent99, Full]),
+        ] {
+            let expected: Vec<_> = (1..=max_depth)
+                .map(|depth| Iteration {
+                    depth,
+                    exact: false,
+                    selectivity: Percent83,
+                })
+                .chain(endgame.iter().map(|&selectivity| Iteration {
+                    depth: empties,
+                    exact: true,
+                    selectivity,
+                }))
+                .collect();
+            assert_eq!(timed_level_iterations(level, empties), expected);
+        }
     }
 }
 

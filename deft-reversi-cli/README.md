@@ -14,6 +14,17 @@ export DEFT_MODEL=path/to/model.dpr2
 
 モデルはDPR2形式。環境変数の代わりに各コマンドで `--model FILE` を指定できる。`--threads N` は呼び出し元を含むスレッド数で、省略すると利用可能な全論理CPU。`--tt-mib N` は主置換表の要求容量（既定256 MiB）で、実際の主表容量は2の累乗に切り下げる。例えば3 MiB指定では2 MiB。補助表のメモリは別に必要になる。
 
+## FlipSight Bot API
+
+FlipSight 接続プログラムの `--engine` に、次のようなコマンドを指定する。対応ルールは標準 8×8。接続プログラム側の `--engine-threads` も同じ値にする。
+
+```sh
+./target/release/deft-reversi-cli flipsight --model model.dpr2 \
+  --book openings.dbook --threads 4 --tt-mib 64
+```
+
+エンジンは毎手、標準入力で受け取った JSON Lines の盤面に対し、標準出力へ着手を返す。`--book` は任意。探索時は各手番の時間枠内で、空きマス数に応じて固定レベル表の探索目標を順にたどる。評価探索の深さと終盤 MPC の段階を上げ、時間切れ時は最後に完了した段階の最善手を返す。置換表は同じプロセスでの手番間で再利用する。
+
 ## 対局用Book
 
 リリースで案内されたモデルとBookを組み合わせて指定する。配布タグは [`model-v3-pen-mpc2`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v3-pen-mpc2)、ファイル名は `deft-eval-v3-pen.dpr2`。このファイルはDPR2形式 v3で、PENの重みとMPC2校正を含む。
