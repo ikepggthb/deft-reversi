@@ -5,7 +5,7 @@
 `GenerationConfig.schedule`またはCLI `--schedule breadth|promising`で選ぶ。既定のBreadthは従来の距離・解析段階順を保つ。Promisingは同じ新規/深掘りの配分の中で候補を優先する。旧CLI表記のfrontierも受理する。
 
 ```sh
-target/release/book extend --model MODEL --work openings.dbook-work \
+target/release/deft-reversi-cli book extend --model MODEL --work openings.dbook-work \
   --levels 4,8,12 --max-plies 24 --schedule promising --seconds 60
 ```
 
@@ -33,7 +33,7 @@ target/release/book extend --model MODEL --work openings.dbook-work \
 
 索引の見積もり容量をメモリ制限に含める。索引はworkに保存せず、読込後の最初の取り出しで再構築する。未処理キュー、iteration、schedule設定は保存する。保存の前後で同じ正本から次のジョブが選ばれることを試験する。
 
-work形式v5はconfig末尾にscheduleのu8（0=Breadth、1=Promising）を追加する。v1〜v4はBreadthとして読む。現在のwork v8・対局用v4の追加は[互換性](compatibility.md)を参照。resumeでscheduleを変更せず、extend/reanalyze/leavesで変更する。
+work形式v5はconfig末尾にscheduleのu8（0=Breadth、1=Promising）を追加する。v1〜v4はBreadthとして読む。現在のwork v9・対局用v5の追加は[互換性](compatibility.md)を参照。resumeでscheduleを変更せず、extend/reanalyze/leavesで変更する。
 
 ## 検証
 
@@ -43,8 +43,10 @@ work形式v5はconfig末尾にscheduleのu8（0=Breadth、1=Promising）を追�
 
 全候補の点評価をそろえる生成器を、最良の未展開手と残り候補の上限を使う方式へ一本化した。最良手を新規登録できたら、その子の解析を優先し、PVの次の手を正規化座標へ変換してEngineの手順付けヒントへ渡す。ヒントはスコアの証拠には使わない。損失条件は各登録の直前に現在値で確認する。
 
-`--line-plies 8`（既定）は連続優先の予算。0ならこの優先を無効にする。優先予算は子ジョブ数で数え、パスも1件とする。16ジョブに1回の通常順と新規/深掘りの配分で逸脱処理も進める。PVジョブは通常キューに存在する仕事だけを優先し、古い仕事を実行しない。PVキューと残量・ヒントはwork v8へ保存する。
+`--line-plies 8`（既定）は連続優先の予算。0ならこの優先を無効にする。frontierの中盤では、損失0の最善手を先に登録し、残り候補の再評価より子局面を優先する。パスは中盤の着手予算を消費しない。中盤の主線が止まるか予算を使い切ったら、再評価を含む通常キューへ戻る。通常キューの定期取り出し、PVヒント、損失条件による登録判定は引き続き使う。中断した主線の残量とヒントはworkへ保存する。
 
-`--jobs 0`（既定）は総threadsとTT設定以内で独立ジョブ数を自動選択する。`--jobs 1`なら外側は逐次で、内部探索に全スレッドを使う。複数ジョブではスレッドとTTを分配し、総ノード予算も要求ごとに割り当てる。余ったノード予算は次のバッチで再利用する。共有Editorへの反映は逐次で、古いrevisionの結果は破棄して再キューする。
+既知の点評価がある中盤では、全経路のうち最も余裕がある残り損失で、未登録手の最低許容評価を計算する。未評価の手集合をこのしきい値で調べ、下回ったら上限を保存し、通過したら通常通り点評価を求める。親の値や到達条件が変われば、上限がまだ枝を除外できるか確認する。適合するTTエントリがあれば初期反復を省くが、要求された最後の反復は実行する。
+
+`--jobs 0`（既定）は総threadsとTT設定の範囲で、1件あたり約3スレッドを目安にする。18スレッドなら最大6ジョブ。`--jobs 1`なら外側は逐次で、内部探索に全スレッドを使う。複数ジョブ間では総ノード予算を分配する。短いバッチでは空いたEngineの補助スレッドを解放し、TTは保持する。共有Editorへの反映は逐次で、古いrevisionの結果は破棄して再キューする。
 
 バッチ内の別局面の公開でも親へ伝播するため、予算途中のグラフとノード数はスレッド数や実行順で変わり得る。同じ設定番号で同じ途中グラフになる保証とは区別する。

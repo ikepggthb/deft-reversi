@@ -235,6 +235,8 @@ pub struct SearchRequest {
     pub(super) all_moves: bool,
     pub(super) root_moves: Option<u64>,
     pub(super) preferred_move: Option<crate::Square>,
+    pub(super) minimum_score: Option<i32>,
+    pub(super) reuse_pv: bool,
     pub(super) stop: StopHandle,
 }
 impl SearchRequest {
@@ -247,6 +249,8 @@ impl SearchRequest {
             all_moves: false,
             root_moves: None,
             preferred_move: None,
+            minimum_score: None,
+            reuse_pv: false,
             stop: StopHandle::new(),
         }
     }
@@ -266,6 +270,19 @@ impl SearchRequest {
     /// A legal ordering hint; ignored if outside the selected root moves.
     pub fn preferred_move(mut self, square: crate::Square) -> Self {
         self.preferred_move = Some(square);
+        self
+    }
+    /// At the final midgame depth, first test whether any selected move
+    /// reaches this score. A failed test returns an upper bound for the
+    /// entire mask; a successful test is followed by a normal point search.
+    pub fn minimum_score(mut self, score: i32) -> Self {
+        self.minimum_score = Some(score);
+        self
+    }
+    /// Reuse a compatible transposition-table result as a warm start. The
+    /// target iteration is still searched with the requested root mask.
+    pub fn reuse_pv(mut self) -> Self {
+        self.reuse_pv = true;
         self
     }
     /// Stops after this much time, returning the last completed iteration.
@@ -317,6 +334,8 @@ pub struct SearchStats {
     pub probcut_tries: u64,
     pub probcut_cuts: u64,
     pub stability_cuts: u64,
+    /// Number of initial iterations skipped using a compatible TT entry.
+    pub reused_iterations: u64,
 }
 impl SearchStats {
     pub(super) fn merge(&mut self, other: &Self) {
@@ -334,6 +353,7 @@ impl SearchStats {
         self.probcut_tries += other.probcut_tries;
         self.probcut_cuts += other.probcut_cuts;
         self.stability_cuts += other.stability_cuts;
+        self.reused_iterations += other.reused_iterations;
     }
 }
 /// What a completed iteration searched.
@@ -361,10 +381,13 @@ pub struct MoveScore {
 #[non_exhaustive]
 pub struct SearchResult {
     /// None only at the end of the game. A search stopped before any
-    /// iteration completed still returns a legal action.
+    /// iteration completed still returns a legal action. For a mask upper
+    /// bound it is a legal representative, without any optimality claim.
     pub best_move: Option<Action>,
     /// None when no iteration completed.
     pub score: Option<i32>,
+    /// True when the last iteration only proved an upper bound for the mask.
+    pub score_is_upper_bound: bool,
     /// The last completed iteration; None with `score`.
     pub kind: Option<ResultKind>,
     pub pv: Vec<Action>,
@@ -388,10 +411,11 @@ impl SearchResult {
     /// Exact maximum over the selected root moves. Does not certify excluded
     /// moves; callers must retain the mask when backing this result up.
     pub fn is_subset_solved(&self) -> bool {
-        self.kind
-            == Some(ResultKind::Endgame {
-                selectivity: Selectivity::Full,
-            })
+        !self.score_is_upper_bound
+            && self.kind
+                == Some(ResultKind::Endgame {
+                    selectivity: Selectivity::Full,
+                })
     }
 }
 

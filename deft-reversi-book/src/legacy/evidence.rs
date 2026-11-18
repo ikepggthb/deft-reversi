@@ -347,7 +347,11 @@ impl Assessment {
         } else {
             ValueClaim::Estimate {
                 score,
-                bound: EstimateBound::Point,
+                bound: if result.score_is_upper_bound {
+                    EstimateBound::Upper
+                } else {
+                    EstimateBound::Point
+                },
             }
         };
         Self::new(
@@ -378,7 +382,7 @@ impl Assessment {
                 if trace.root != [parent.0, parent.1]
                     || projection == SearchProjection::Maximum
                     || code < 64 && trace.moves & (1u64 << code) == 0
-                    || (projection == SearchProjection::BestMove) != (trace.best == code)
+                    || projection == SearchProjection::BestMove && trace.best != code
                 {
                     return Err(invalid("candidate search subject"));
                 }
@@ -566,7 +570,16 @@ impl Assessment {
             } else {
                 ValueClaim::Estimate {
                     score: trace.result_score,
-                    bound: if projection == SearchProjection::OtherMoveUpper {
+                    bound: if projection == SearchProjection::OtherMoveUpper
+                        || projection == SearchProjection::Maximum
+                            && matches!(
+                                claim,
+                                ValueClaim::Estimate {
+                                    bound: EstimateBound::Upper,
+                                    ..
+                                }
+                            )
+                    {
                         EstimateBound::Upper
                     } else {
                         EstimateBound::Point

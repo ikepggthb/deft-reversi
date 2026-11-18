@@ -245,7 +245,19 @@ impl Engine {
                 ));
             }
         }
+        if request.minimum_score.is_some_and(|score| {
+            !(-63..=64).contains(&score)
+                || request.all_moves
+                || board.get_moves() == 0
+                || !matches!(mode, SearchMode::Depth(d) if d > 0 && d < board.empty_count())
+        }) {
+            return Err(EngineError::InvalidRequest(
+                "minimum score requires a positive midgame depth and legal root moves",
+            ));
+        }
         Ok(Job {
+            minimum_score: request.minimum_score,
+            reuse_pv: request.reuse_pv,
             root_moves: request.root_moves,
             preferred_move: request.preferred_move,
             board,
@@ -340,12 +352,27 @@ impl Engine {
         // Owned by the active context; retained by this Engine between requests.
         context.end_cache = std::mem::take(&mut self.end_cache);
         let mut last = None;
-        for iteration in self.plan(&job) {
+        let plan = self.plan(&job);
+        let warm = self.warm_start(&job, mask, &plan);
+        let (skip, mut prediction) = if let Some((skip, square, score)) = warm {
+            root.restrict(mask, Some(square));
+            context.stats.reused_iterations += skip as u64;
+            (skip, score)
+        } else {
+            (0, self.model.evaluate(&board))
+        };
+        for (index, &iteration) in plan.iter().enumerate().skip(skip) {
             runtime.drain();
             runtime.set_stage(iteration.selectivity);
-            let prediction = result.score.unwrap_or_else(|| self.model.evaluate(&board));
             let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if index + 1 == plan.len()
+                    && let Some(minimum) = job.minimum_score
+                    && root.below_minimum(&mut context, iteration.spec(), minimum)?
+                {
+                    return Ok((Line::leaf(minimum - 1), true));
+                }
                 root.iteration(&mut context, iteration.spec(), prediction)
+                    .map(|line| (line, false))
             }));
             let completed = match attempt {
                 Ok(Ok(line)) if !context.aborted() => Some(line),
@@ -355,8 +382,16 @@ impl Engine {
                     None
                 }
             };
-            let Some(line) = completed else { break };
+            let Some((line, upper)) = completed else {
+                break;
+            };
             iteration.record(&mut result, &line);
+            if upper {
+                result.score_is_upper_bound = true;
+                result.best_move = Some(Action::Place(Square::lowest(mask)));
+                break;
+            }
+            prediction = line.score;
             last = Some(iteration);
             // Helpers merge their counters when they finish.
             runtime.drain();
@@ -372,7 +407,8 @@ impl Engine {
         runtime.drain();
         // Full TT cutoffs return scores without a recursion-built PV. Recover
         // the line separately, verifying each suggested move against the value.
-        if !context.aborted()
+        if !result.score_is_upper_bound
+            && !context.aborted()
             && let Some(last) = last
             && last.selectivity == Selectivity::Full
             && last.depth > 0
@@ -401,6 +437,29 @@ impl Engine {
         result.stats = parallel::lock(&runtime.stats).clone();
         result.elapsed = start.elapsed();
         Ok(result)
+    }
+    fn warm_start(&self, job: &Job, mask: u64, plan: &[Iteration]) -> Option<(usize, Square, i32)> {
+        if !job.reuse_pv || plan.len() < 2 {
+            return None;
+        }
+        [self.pv_table.get(job.board), self.table.get(job.board)]
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let best = Square::new(entry.best)?;
+                if mask & best.bit() == 0 || entry.lower != entry.upper {
+                    return None;
+                }
+                // Only skip iterations of the same search mode and MPC stage.
+                // Retain the target iteration even for a matching deeper entry.
+                let index = plan[..plan.len() - 1].iter().rposition(|iteration| {
+                    entry.exact_mode == iteration.exact
+                        && entry.quality == iteration.selectivity.quality()
+                        && entry.depth >= iteration.depth
+                })?;
+                Some((index + 1, best, i32::from(entry.lower)))
+            })
+            .max_by_key(|(skip, _, _)| *skip)
     }
     fn runtime(&self, job: &Job, deadline: Option<Instant>) -> Arc<Runtime> {
         Arc::new(Runtime {
@@ -496,6 +555,8 @@ impl Engine {
 
 /// A request resolved against its root position.
 struct Job {
+    minimum_score: Option<i32>,
+    reuse_pv: bool,
     board: Board,
     mode: SearchMode,
     selectivity: Selectivity,
@@ -529,6 +590,7 @@ fn initial_result(board: Board) -> SearchResult {
     SearchResult {
         best_move,
         score: None,
+        score_is_upper_bound: false,
         kind: None,
         pv: Vec::new(),
         moves: Vec::new(),
@@ -734,5 +796,54 @@ mod resource_tests {
         let table = engine.table.clone();
         engine.set_resources(engine.options()).unwrap();
         assert!(Arc::ptr_eq(&engine.table, &table));
+    }
+}
+
+#[cfg(test)]
+mod warm_start_tests {
+    use super::*;
+
+    #[test]
+    fn warm_start_keeps_the_target_and_requires_the_cached_move_in_the_mask() {
+        let mut engine = Engine::new(
+            crate::Model::from_pattern(crate::PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let board = Board::new();
+        let best = board.legal_moves().next().unwrap();
+        engine.pv_table.store(
+            board,
+            crate::transposition::Entry {
+                lower: 0,
+                upper: 0,
+                depth: 6,
+                quality: Selectivity::Full.quality(),
+                best: best.index(),
+                second: 255,
+                generation: 0,
+                exact_mode: false,
+            },
+        );
+        let request = SearchRequest::new(Goal::Depth(8)).reuse_pv();
+        let excluded = engine
+            .search(
+                board,
+                &request.clone().root_moves(board.get_moves() & !best.bit()),
+            )
+            .unwrap();
+        assert_eq!(excluded.stats.reused_iterations, 0);
+
+        let warmed = engine.search(board, &request).unwrap();
+        assert_eq!(warmed.stats.reused_iterations, 1);
+        assert_eq!(
+            warmed.kind,
+            Some(ResultKind::Depth {
+                depth: 8,
+                selectivity: Selectivity::Full,
+            })
+        );
+        assert_eq!(warmed.score, Some(0));
+        assert!(!warmed.score_is_upper_bound);
     }
 }

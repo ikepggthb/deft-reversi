@@ -21,6 +21,7 @@ struct Work {
     // maskは合法手配列の添字、request.root_movesは盤面のマス番号。両者は別の番号体系。
     mask: u64,
     burst: u8,
+    continuation: bool,
     request: SearchRequest,
     requested: RequestedAnalysis,
     planned: SearchKind,
@@ -140,14 +141,19 @@ fn prepare(
     let mut mask = 0;
     let mut squares = 0;
     let mut best_point = None;
+    let mut incumbent = None;
+    let mut mask_has_point = false;
     let mut max_upper = -65;
     let mut ready = true;
     let mut repair_registered = false;
     for (i, e) in node.edges.iter().enumerate() {
+        let ev = editor.move_values_at(context.key, e);
+        if let Some(v) = ev.selected.filter(|v| v.bound() == Bound::Point) {
+            incumbent = Some(incumbent.map_or(v.score(), |s: i16| s.max(v.score())));
+        }
         if e.registered && !boundary_link(e) {
             continue;
         }
-        let ev = editor.move_values_at(context.key, e);
         if e.registered {
             let sufficient = ev.selected.is_some_and(|v| {
                 quality_ok(
@@ -203,6 +209,7 @@ fn prepare(
                     && (reuse || v.is_final())
             });
         if !fixed {
+            mask_has_point |= ev.selected.is_some_and(|v| v.bound() == Bound::Point);
             mask |= 1u64 << i;
             if let Action::Place(square) = e.action {
                 squares |= 1u64 << square.index();
@@ -212,31 +219,52 @@ fn prepare(
     if reuse && !repair_registered && ready && best_point.is_some_and(|v| v >= max_upper) {
         return Ok(None);
     }
-    // Covered upper bounds below every admissible new branch need no exact
-    // scores. Keep them as upper bounds instead of searching rejected moves.
+    // The threshold uses the most permissive remaining loss budget of any
+    // active path. Equality is admissible and must survive the probe.
+    let mut minimum_score = None;
     if reuse
         && !repair_registered
-        && ready
-        && let Some(best) = editor
-            .values
-            .opt(node.value)
-            .filter(|v| v.bound() == Bound::Point)
+        && let Some(best) = incumbent
     {
-        let mut tolerance = state
+        let tolerance = state
             .config
             .loss(context.side)
             .min(state.config.leaf_loss.unwrap_or(128));
         let paths = active_paths(editor, state, context);
-        let expandable = paths.iter().filter(|p| p.distance < state.config.max_plies || board.must_pass());
-        if let Some(limit) = state.config.cumulative_loss {
-            let remaining = expandable.clone().map(|p| limit.saturating_sub(p.loss)).max().unwrap_or(0);
-            tolerance = u16::from(tolerance).min(remaining) as u8;
-        }
-        let cannot_expand = expandable.count() == 0;
-        if (cannot_expand || max_upper < best.score() - i16::from(tolerance))
-            && best_point.is_none_or(|v| v < best.score() - i16::from(tolerance))
+        let remaining = paths
+            .iter()
+            .filter(|p| p.distance < state.config.max_plies || board.must_pass())
+            .map(|p| {
+                state
+                    .config
+                    .cumulative_loss
+                    .map_or(u16::MAX, |limit| limit.saturating_sub(p.loss))
+            })
+            .max();
+        let allowance = i16::from(tolerance.min(remaining.unwrap_or(0).min(128) as u8));
+        let threshold = best - allowance;
+        if let Some(value) = editor
+            .values
+            .opt(node.value)
+            .filter(|v| v.bound() == Bound::Point)
         {
-            return Ok(None);
+            let known_threshold = value.score() - allowance;
+            if ready
+                && (remaining.is_none() || max_upper < known_threshold)
+                && best_point.is_none_or(|v| v < known_threshold)
+            {
+                return Ok(None);
+            }
+        }
+        if remaining.is_some()
+            && state.config.schedule == SchedulePolicy::Promising
+            && !state.config.unregistered_only
+            && !mask_has_point
+            && (1..board.empty_count()).contains(&target.depth)
+            && (-63..=64).contains(&threshold)
+            && squares != 0
+        {
+            minimum_score = Some(i32::from(threshold));
         }
     }
     if mask == 0 {
@@ -273,6 +301,12 @@ fn prepare(
         SearchRequest::new(Goal::Depth(target.depth)).selectivity(target.selectivity)
     }
     .root_moves(squares);
+    if state.config.schedule == SchedulePolicy::Promising && target.depth < board.empty_count() {
+        request = request.reuse_pv();
+    }
+    if let Some(minimum) = minimum_score {
+        request = request.minimum_score(minimum);
+    }
     if let Some(Action::Place(square)) = state
         .hints
         .get(&context)
@@ -287,6 +321,7 @@ fn prepare(
         revision: node.revision,
         mask,
         burst: state.active_burst,
+        continuation: false,
         request,
         requested: state.config.analysis.levels().map_or_else(
             || {
@@ -322,7 +357,12 @@ fn publish(
 ) -> Result<bool> {
     let key = work.context.key;
     if editor.nodes[&key].revision != work.revision {
-        state.enqueue(work.context, work.stage, work.distance);
+        state.requeue(
+            work.context,
+            work.stage,
+            work.distance,
+            work.continuation.then_some(work.burst),
+        );
         return Ok(false);
     }
     let best = result
@@ -340,7 +380,11 @@ fn publish(
     } else {
         Score::Estimate {
             score: score as i16,
-            bound: Bound::Point,
+            bound: if result.score_is_upper_bound {
+                Bound::Upper
+            } else {
+                Bound::Point
+            },
         }
     };
     let value = Evaluation::new(
@@ -373,11 +417,12 @@ fn publish(
     editor.bump()?;
     let n = editor.nodes.get_mut(&key).unwrap();
     n.preserve_search_final_scores(&mut editor.values);
-    if n.edges[index]
-        .direct()
-        .is_none_or(|old| dominates(value, editor.values.get(old)))
+    if value.bound() == Bound::Point
+        && n.edges[index]
+            .direct()
+            .is_none_or(|old| dominates(value, editor.values.get(old)))
     {
-        n.edges[index].set_direct(Some(frontier.point));
+        n.edges[index].set_direct(Some(frontier.best_value));
     }
     n.move_search = Some(frontier);
 
@@ -487,23 +532,41 @@ fn expand_and_schedule(
     if state.config.unregistered_only {
         return Ok(());
     }
-    let selected = editor.nodes[&c.key].move_search.as_ref().and_then(|f| {
-        editor.nodes[&c.key]
-            .edges
-            .iter()
-            .find(|e| e.action == f.best && !e.registered)
-            .map(|_| (f.best, f.pv.get(1).copied()))
+    let selected = editor.nodes[&c.key]
+        .move_search
+        .as_ref()
+        .filter(|f| editor.values.get(f.value).bound() == Bound::Point)
+        .and_then(|f| {
+            editor.nodes[&c.key]
+                .edges
+                .iter()
+                .find(|e| e.action == f.best && !e.registered)
+                .map(|_| {
+                    (
+                        f.best,
+                        f.pv.get(1).copied(),
+                        editor.values.get(f.value).conditions().has_midgame(),
+                    )
+                })
+        });
+    let first = selected.and_then(|(action, _, midgame)| {
+        (state.config.schedule == SchedulePolicy::Promising
+            && midgame
+            && burst > 0
+            && local_loss(editor, c.key, action) == Some(0))
+        .then_some(action)
     });
     let check_started = Instant::now();
     let actual = active_distance(editor, state, c);
     report.profile.reachability_wall += check_started.elapsed();
-    if let Some(actual) = actual {
+    if actual.is_some() {
         let timer = Instant::now();
-        expand(editor, state, c, actual, limits, report)?;
+        expand(editor, state, c, first, limits, report)?;
         report.profile.expansion_wall += timer.elapsed();
     }
     if burst > 0
-        && let Some((action, hint)) = selected
+        && let Some((action, hint, midgame)) = selected
+        && (first == Some(action) || !midgame || state.config.schedule != SchedulePolicy::Promising)
         && editor.nodes[&c.key]
             .edges
             .iter()
@@ -514,7 +577,11 @@ fn expand_and_schedule(
         if !child.key.board().is_terminal() && stage < state.config.stage_count() {
             let distance = state.distances[&child];
             state.urgent.retain(|job| job.0 != child);
-            state.urgent.push_front((child, distance, stage, burst - 1));
+            let new_line = state.config.schedule == SchedulePolicy::Promising && midgame;
+            let left = burst - u8::from(!new_line || matches!(action, Action::Place(_)));
+            if left > 0 || !new_line {
+                state.urgent.push_front((child, distance, stage, left));
+            }
             if let Some(hint) = hint {
                 let (_, transform) = Key::new(c.key.board().play(action).unwrap());
                 let hint = transform.action(hint);
@@ -623,7 +690,7 @@ pub(super) fn generate(
     let mut pool = BatchPool::new(resources);
     // キューから取り出した後、完了または再投入するまでの仕事を追跡する。
     // エラーでループを抜けても、末尾で残りを戻して次回の再開に残す。
-    let mut active: Vec<(Context, u8, usize)> = Vec::new();
+    let mut active: Vec<(Context, u8, usize, Option<u8>)> = Vec::new();
     let outcome = (|| -> Result<()> {
         loop {
             if let Some(reason) = budget_reason(limits, &report, started, &stop) {
@@ -647,7 +714,8 @@ pub(super) fn generate(
                     break;
                 }
             }
-            if let Some((d, c)) = state.expansions.pop_first() {
+            let line_only = state.has_line(editor);
+            if !line_only && let Some((d, c)) = state.expansions.pop_first() {
                 if state.distances.get(&c) == Some(&d) {
                     expand_and_schedule(
                         editor,
@@ -677,7 +745,11 @@ pub(super) fn generate(
                     break;
                 }
                 let timer = Instant::now();
-                let next = state.pop(editor);
+                let next = if line_only {
+                    state.pop_job(editor, true)
+                } else {
+                    state.pop(editor)
+                };
                 report.profile.scheduling_wall += timer.elapsed();
                 let Some((c, d, s)) = next else {
                     break;
@@ -690,8 +762,9 @@ pub(super) fn generate(
                     state.schedule(c, stage, d);
                     continue;
                 }
+                let line = line_only.then_some(state.active_burst);
                 if !keys.insert(c.key) {
-                    deferred.push((c, d, s));
+                    deferred.push((c, d, s, line));
                     continue;
                 }
                 let timer = Instant::now();
@@ -701,7 +774,7 @@ pub(super) fn generate(
                     continue;
                 }
                 state.iteration = state.iteration.wrapping_add(1);
-                active.push((c, d, s));
+                active.push((c, d, s, line));
                 terminal_moves(editor, &mut state, c.key)?;
                 let timer = Instant::now();
                 let work = prepare(
@@ -714,7 +787,8 @@ pub(super) fn generate(
                     state.config.reuse_completed,
                 )?;
                 report.profile.planning_wall += timer.elapsed();
-                if let Some(work) = work {
+                if let Some(mut work) = work {
+                    work.continuation = line_only;
                     jobs.push(work);
                 } else {
                     let burst = state.active_burst;
@@ -727,19 +801,24 @@ pub(super) fn generate(
                         &mut report,
                         burst,
                     )?;
-                    if report.reason == GenerationStop::Exhausted {
+                    let mainline_pending = state.has_line(editor);
+                    let done = !mainline_pending
+                        || prepare(engine, editor, &state, c, d, s, true)?.is_none();
+                    if report.reason == GenerationStop::Exhausted && done {
                         completed(editor, &mut state, c, d, s, &mut report)?;
                     } else {
-                        state.enqueue(c, s, d);
+                        state.requeue(c, s, d, line);
                     }
                     active.retain(|job| job.0 != c);
-                    if report.reason != GenerationStop::Exhausted {
+                    if report.reason != GenerationStop::Exhausted
+                        || state.has_line(editor) && !line_only
+                    {
                         break;
                     }
                 }
             }
-            for (c, d, s) in deferred {
-                state.enqueue(c, s, d);
+            for (c, d, s, line) in deferred {
+                state.requeue(c, s, d, line);
             }
             if report.reason != GenerationStop::Exhausted {
                 break;
@@ -748,7 +827,8 @@ pub(super) fn generate(
                 if let Some(reason) = budget_reason(limits, &report, started, &stop) {
                     report.reason = reason;
                 }
-                if state.fresh.is_empty() && state.deepen.is_empty() {
+                if state.fresh.is_empty() && state.deepen.is_empty() && state.expansions.is_empty()
+                {
                     break;
                 }
                 if report.reason != GenerationStop::Exhausted {
@@ -770,7 +850,11 @@ pub(super) fn generate(
                 let d = work.distance;
                 let s = work.stage;
                 let result = result?;
+                let line = work.continuation.then_some(work.burst);
+                report.profile.mainline_searches += u64::from(work.continuation);
                 report.nodes = report.nodes.saturating_add(result.stats.nodes);
+                report.profile.reused_iterations += result.stats.reused_iterations;
+                report.profile.rejected_subsets += u64::from(result.score_is_upper_bound);
                 // 途中反復のスコアは診断用に記録し、この段階の完了値としてpublishしない。
                 if result.stop_reason != StopReason::Completed {
                     match result.stop_reason {
@@ -802,7 +886,7 @@ pub(super) fn generate(
                     if run.interrupted.len() > 256 {
                         run.interrupted.remove(0);
                     }
-                    state.enqueue(c, s, d);
+                    state.requeue(c, s, d, line);
                     active.retain(|job| job.0 != c);
                     continue;
                 }
@@ -835,7 +919,7 @@ pub(super) fn generate(
                         state.enqueue(c, s, d);
                     }
                 } else {
-                    state.enqueue(c, s, d);
+                    state.requeue(c, s, d, line);
                 }
                 active.retain(|job| job.0 != c);
             }
@@ -850,8 +934,8 @@ pub(super) fn generate(
         }
         Ok(())
     })();
-    for (c, d, s) in active {
-        state.enqueue(c, s, d);
+    for (c, d, s, line) in active {
+        state.requeue(c, s, d, line);
     }
     report.profile.resources_wall = pool.setup_wall;
     report.profile.engine_wall = report.profile.engine_wall.saturating_sub(pool.setup_wall);
@@ -899,7 +983,9 @@ impl BatchPool {
     }
     fn width(&self, configured: u16, nodes: Option<u64>) -> usize {
         let cap = if configured == 0 {
-            self.total.threads
+            // Favor a few workers per search. With 18 threads this gives
+            // six jobs rather than saturating the batch with single searches.
+            self.total.threads.div_ceil(3)
         } else {
             usize::from(configured).min(self.total.threads)
         };
@@ -918,14 +1004,21 @@ impl BatchPool {
     ) -> Result<Vec<std::result::Result<SearchResult, deft_reversi_engine::EngineError>>> {
         let setup = Instant::now();
         let count = jobs.len();
-        self.others.truncate(count.saturating_sub(1));
+        // Keep tables when a short wave follows a full one. Idle engines
+        // retain their tables but release helpers so the active jobs can use
+        // the available threads. A new peak repartitions the fixed TT budget.
+        let slots = count.max(self.others.len() + 1);
         let options = |i: usize| {
+            let threads = if i < count {
+                self.total.threads / count + usize::from(i < self.total.threads % count)
+            } else {
+                1
+            };
             EngineOptions::default()
-                .threads(self.total.threads / count + usize::from(i < self.total.threads % count))
-                .tt_mib(self.total.tt_mib / count + usize::from(i < self.total.tt_mib % count))
+                .threads(threads)
+                .tt_mib(self.total.tt_mib / slots + usize::from(i < self.total.tt_mib % slots))
         };
-        // Shrink every existing allocation before enlarging any. Stable batch
-        // widths keep their tables and worker pools, avoiding repeated setup.
+        // Shrink every existing allocation before increasing any of them.
         for (i, engine) in std::iter::once(&mut *main)
             .chain(self.others.iter_mut())
             .enumerate()
@@ -1013,7 +1106,9 @@ mod tests {
             key: Key::new(Board::new()).0,
             side: BookSide::Black,
         };
+        let mut peak = 1;
         for count in [3, 1, 4, 4, 2] {
+            peak = peak.max(count);
             let jobs: Vec<_> = (0..count)
                 .map(|_| Work {
                     context: c,
@@ -1022,6 +1117,7 @@ mod tests {
                     revision: 0,
                     mask: 15,
                     burst: 0,
+                    continuation: false,
                     request: SearchRequest::new(Goal::Depth(2)),
                     requested: RequestedAnalysis::External,
                     planned: SearchKind::Midgame {
@@ -1053,8 +1149,9 @@ mod tests {
             let budgets: Vec<_> = std::iter::once(main.options())
                 .chain(pool.others.iter().map(Engine::options))
                 .collect();
-            assert_eq!(budgets.len(), count);
-            assert_eq!(budgets.iter().map(|o| o.threads).sum::<usize>(), 7);
+            assert_eq!(budgets.len(), peak);
+            assert_eq!(budgets[..count].iter().map(|o| o.threads).sum::<usize>(), 7);
+            assert!(budgets[count..].iter().all(|o| o.threads == 1));
             assert_eq!(budgets.iter().map(|o| o.tt_mib).sum::<usize>(), 7);
             assert!(budgets.iter().all(|o| o.threads >= 1 && o.tt_mib >= 1));
         }

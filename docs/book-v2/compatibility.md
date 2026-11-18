@@ -4,10 +4,10 @@
 
 |ファイル|読込可能|新しく保存する版|用途|
 |---|---|---|---|
-|.dbook-work|v1〜v8|v8|生成・更新の元データと再開状態|
-|.dbook|v1〜v4|v4|対局用の読み取りデータ。生成再開には使わない|
+|.dbook-work|v1〜v9|v8またはv9|生成・更新の元データと再開状態|
+|.dbook|v1〜v5|v4またはv5|対局用の読み取りデータ。生成再開には使わない|
 
-二つの用途で、点数・探索方式・品質の意味は共通である。workから直接`export()`して対局に使えるため、playファイルの出力は任意。
+二つの用途で、点数・探索方式・品質の意味は共通である。work v9 / play v5は、中盤のしきい値探索で求めた集合全体の上限を旧版が処理できない場合に使う。従来の表現で保存できる内容にはwork v8 / play v4を使う。workから直接`export()`して対局に使えるため、playファイルの出力は任意。
 
 新形式は、モデル等、完了した探索、値の説明、評価値をそれぞれの一覧へ保存し、番号で対応付ける。一回の探索を、最良手の値と他の手の上限に使っても、元の探索記録は一件だけとなる。過去の計算に使った入力記録の連鎖は保存しない。
 
@@ -29,10 +29,10 @@
 
 ```sh
 cp openings.dbook-work next.dbook-work
-target/release/book verify --work next.dbook-work
-target/release/book repair --work next.dbook-work --book next.dbook
-target/release/book verify --work next.dbook-work
-target/release/book verify --book next.dbook
+target/release/deft-reversi-cli book verify --work next.dbook-work
+target/release/deft-reversi-cli book repair --work next.dbook-work --book next.dbook
+target/release/deft-reversi-cli book verify --work next.dbook-work
+target/release/deft-reversi-cli book verify --book next.dbook
 ```
 
 verifyは入力を書き換えない。repairは指定先を新形式で保存する。旧バイナリは新形式を読めないので、元ファイルを保持する。保存途中の失敗で既存ファイルを壊さない方式を維持する。
@@ -41,7 +41,7 @@ verifyは入力を書き換えない。repairは指定先を新形式で保存�
 
 ファイルが読めることと、その推定を現在のモデルと混ぜてよいことは別である。`analysis_identity`はモデル重み、校正、sigma、探索feature、探索仕様のrevisionから作る識別情報。
 
-今回、再帰探索とレベル表を変更していないため探索revisionは2のまま。レベルの意味・枝刈り・点数の意味が変わる場合は、別途revisionの更新を判断する。
+しきい値探索とTTの反復再利用はBookから明示的に指定する。通常の探索リクエストとレベル表は従来どおりで、探索revisionは2。レベルの意味・枝刈り・点数の意味が変わる場合は、別途revisionの更新を判断する。
 
 モデル等が変わる場合はコピーに`reanalyze`を使う。互換性のない推定は無効にし、登録・手動の原記録・ルールが一致する最終石差の確定情報は残す。古いモデルの手動値は黙って現在の値として使わない。探索自体の不具合で過去の確定情報が誤っていた場合は、別途監査・再構築が必要。
 

@@ -91,6 +91,15 @@ impl RootSearch {
         }
         outcome
     }
+    pub(super) fn below_minimum(
+        &mut self,
+        context: &mut Context,
+        spec: SearchSpec,
+        minimum: i32,
+    ) -> Result<bool, Aborted> {
+        self.bounds.fill(RootBound::UNBOUNDED);
+        Ok(self.window(context, spec, minimum - 1, minimum)?.score < minimum)
+    }
     /// Scores every root move with a full window, best first.
     pub(super) fn move_scores(
         &self,

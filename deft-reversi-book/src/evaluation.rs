@@ -294,7 +294,14 @@ impl Evaluation {
         let result_score = if result.is_subset_solved() {
             Score::Final(ScoreInterval::point(score)?)
         } else {
-            Score::point(score)
+            Score::Estimate {
+                score,
+                bound: if result.score_is_upper_bound {
+                    Bound::Upper
+                } else {
+                    Bound::Point
+                },
+            }
         };
         Self::new(
             result_score,
@@ -367,8 +374,13 @@ impl Evaluation {
             return Err(invalid("selective import cannot certify final score"));
         }
         if let EvaluationSource::Search(trace) | EvaluationSource::SearchMove(trace) = source {
-            let upper =
-                matches!(source, EvaluationSource::SearchMove(_)) && result.bound() == Bound::Upper;
+            let upper = result.bound() == Bound::Upper;
+            if upper
+                && matches!(source, EvaluationSource::Search(_))
+                && !matches!(trace.completed, SearchKind::Midgame { .. })
+            {
+                return Err(invalid("threshold search must be midgame"));
+            }
             let expected = if trace.completed
                 == (SearchKind::Endgame {
                     selectivity: Selectivity::Full,
@@ -418,7 +430,7 @@ impl Evaluation {
                 let code = action_code(action);
                 if trace.root != [parent.0, parent.1]
                     || code < 64 && trace.moves & (1u64 << code) == 0
-                    || (self.bound() == Bound::Point) != (trace.best == code)
+                    || self.bound() == Bound::Point && trace.best != code
                 {
                     return Err(invalid("candidate search subject"));
                 }

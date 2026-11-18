@@ -91,7 +91,8 @@ impl Edge {
     }
 }
 /// 一回の集合探索の結果。MoveSearchはここでは「対象候補の中の最良手と残りの上限」。
-/// bestの点評価と、それ以外の手の上限は同じ探索記録を異なる意味で参照する。
+/// bestに対応する値と、それ以外の手の上限は同じ探索記録を参照する。
+/// 集合がしきい値を下回った場合は、bestも含めてすべて上限になる。
 #[derive(Clone, Debug)]
 pub(super) struct MoveSearch {
     /// Canonical edge indexes covered by a single restricted root search.
@@ -99,7 +100,7 @@ pub(super) struct MoveSearch {
     pub best: Action,
     pub value: ValueId,
     pub pv: Vec<Action>,
-    pub(super) point: ValueId,
+    pub(super) best_value: ValueId,
     pub(super) upper: ValueId,
 }
 impl MoveSearch {
@@ -115,7 +116,7 @@ impl MoveSearch {
             best,
             value: values.intern(value),
             pv,
-            point: values.intern(value.best_move_value()?),
+            best_value: values.intern(value.best_move_value()?),
             upper: values.intern(value.other_moves_upper_bound()?),
         })
     }
@@ -129,7 +130,7 @@ impl MoveSearch {
             return None;
         }
         Some(values.get(if action == self.best {
-            self.point
+            self.best_value
         } else {
             self.upper
         }))
@@ -453,7 +454,7 @@ impl BookEditor {
             }
             if let Some(f) = &mut n.move_search {
                 f.value = move_id(f.value);
-                f.point = move_id(f.point);
+                f.best_value = move_id(f.best_value);
                 f.upper = move_id(f.upper);
             }
         }
@@ -687,7 +688,9 @@ impl BookEditor {
             .iter_mut()
             .find(|e| e.action == best)
             .ok_or_else(|| invalid("search move"))?;
-        edge.set_direct(Some(frontier.point));
+        if value.bound() == Bound::Point {
+            edge.set_direct(Some(frontier.best_value));
+        }
         node.move_search = Some(frontier);
 
         node.revision = self.revision;
@@ -1186,7 +1189,8 @@ impl BookEditor {
                 if f.mask == 0
                     || f.mask >> n.edges.len() != 0
                     || f.mask & (1u64 << best) == 0
-                    || fv.bound() != Bound::Point
+                    || (fv.bound() != Bound::Point
+                        && (fv.bound() != Bound::Upper || fv.is_final() || !f.pv.is_empty()))
                     || (!fv.is_final() && fv.identity() != self.identity)
                     || f.pv.len() > 120
                     || (!f.pv.is_empty() && f.pv[0] != f.best)
@@ -1235,11 +1239,17 @@ pub(super) fn dominates(new: Evaluation, old: Evaluation) -> bool {
     if new.is_final() {
         return true;
     }
-    if new.identity() != old.identity() || new.bound() != Bound::Point {
+    if new.identity() != old.identity() {
         return false;
     }
-    if old.bound() != Bound::Point {
-        return true;
+    match (new.bound(), old.bound()) {
+        (Bound::Point, Bound::Upper | Bound::Lower) => return true,
+        (Bound::Point, Bound::Point) => {}
+        (Bound::Upper, Bound::Upper)
+            if new.score() <= old.score()
+                || new.depth() > old.depth()
+                || new.selectivity() > old.selectivity() => {}
+        _ => return false,
     }
     let q = old.conditions();
     if q.has_imported() || q.has_manual() {

@@ -1737,3 +1737,44 @@ fn frontier_scheduling_finishes_the_same_small_solved_graph_after_budget_resume(
         }
     }
 }
+
+#[test]
+fn threshold_search_upper_bound_survives_work_and_book_round_trips() {
+    let board = Board::new().canonical();
+    let mut engine = Engine::new(
+        Model::from_pattern(PatternModel::zero()),
+        EngineOptions::default().tt_mib(1),
+    )
+    .unwrap();
+    let mut editor = BookEditor::for_engine(&engine).unwrap();
+    let result = engine
+        .search(board, &SearchRequest::new(Goal::Depth(4)).minimum_score(1))
+        .unwrap();
+    assert!(result.score_is_upper_bound);
+    editor
+        .record_search(
+            board,
+            RequestedAnalysis::External,
+            SearchKind::from_result(result.kind.unwrap()),
+            &result,
+        )
+        .unwrap();
+    let temp = Temp::new();
+    let work = temp.file("threshold.work");
+    let book = temp.file("threshold.dbook");
+    editor.save(&work).unwrap();
+    assert_eq!(&std::fs::read(&work).unwrap()[8..12], &9_u32.to_le_bytes());
+    let restored = BookEditor::load(&work, ReadLimits::default()).unwrap();
+    for square in board.legal_moves() {
+        let value = restored
+            .move_values(board, Action::Place(square))
+            .unwrap()
+            .selected
+            .unwrap();
+        assert_eq!(value.bound(), Bound::Upper);
+        assert_eq!(value.score(), 0);
+    }
+    restored.export().unwrap().save(&book).unwrap();
+    assert_eq!(&std::fs::read(&book).unwrap()[8..12], &5_u32.to_le_bytes());
+    Book::load(&book, ReadLimits::default()).unwrap();
+}

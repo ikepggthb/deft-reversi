@@ -25,7 +25,7 @@ CLIがBook操作とCtrl-Cを扱う。`endgame-pattern-ordering` はエンジン�
 
 [実装API](../docs/book-v2/architecture.md) と [保存形式・互換性](../docs/book-v2/compatibility.md) を参照。分離前の `.dbook` / `.dbook-work` を読込可能。モデル・校正・探索仕様の識別情報が異なる推定は、明示的な再解析を必要とする。
 
-Book v2：[設計と実装順序](../docs/book-v2/design.md)、[レベルによる育成](../docs/book-v2/levels.md)。work v1〜v8と対局用v1〜v4を読込み、保存はwork v8・対局用v4。最良の未展開手と残り候補の上限を探索し、PV連続伸長と資源予算内の局面並列を行う。全候補生成モードは廃止。
+Book v2：[設計と実装順序](../docs/book-v2/design.md)、[レベルによる育成](../docs/book-v2/levels.md)。work v1〜v9と対局用v1〜v5を読込み、集合全体の上限を含む場合にwork v9・対局用v5を使用。frontier方式は主線を優先し、損失予算を満たさない探索集合の上限と、候補手の点評価を保持する。全候補生成モードは廃止。
 [解析互換性と移行](../docs/book-v2/compatibility.md)、[損失制御](../docs/book-v2/loss-control.md)も参照。
 
 [子からの更新](../docs/book-v2/propagation.md)、[末端再計算・品質診断](../docs/book-v2/diagnostics.md)。

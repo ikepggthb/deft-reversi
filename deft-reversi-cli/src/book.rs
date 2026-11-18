@@ -423,8 +423,11 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
     );
     let p = &report.profile;
     println!(
-        "profile searches={} parallel={} engine={:.6}s resources={:.6}s expand={:.6}s schedule={:.6}s plan={:.6}s reachability={:.6}s publish={:.6}s checkpoint={:.6}s reach_hits={} reach_misses={}",
+        "profile searches={} mainline={} rejected_subsets={} reused_iterations={} parallel={} engine={:.6}s resources={:.6}s expand={:.6}s schedule={:.6}s plan={:.6}s reachability={:.6}s publish={:.6}s checkpoint={:.6}s reach_hits={} reach_misses={}",
         p.move_searches,
+        p.mainline_searches,
+        p.rejected_subsets,
+        p.reused_iterations,
         p.max_parallel_jobs,
         p.engine_wall.as_secs_f64(),
         p.resources_wall.as_secs_f64(),
@@ -535,7 +538,7 @@ fn destination(path: &str) -> std::io::Result<std::path::PathBuf> {
 }
 fn help() {
     println!(
-        "deft-reversi-cli book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --level 22 | --levels 4,8,12 (alternative to --stages/--selectivity)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
+        "deft-reversi-cli book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --level 22 | --levels 4,8,12 (alternative to --stages/--selectivity)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic, about three threads per job)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
   --threads 1 --tt-mib 256 --memory-mib 512 --checkpoint-seconds 60\n  --memory-mib limits estimated book data and job storage; engine/TT and temporary I/O memory are separate\n  --legacy-main-mpc\nbook repair --work FILE [--book FILE]\nbook export --work FILE --book FILE\nbook inspect|verify --work FILE | --book FILE\n  inspect --positions OBF (candidate evidence and completed modes)\n  --read-mib 512 --read-positions 2000000 --read-candidates 32000000
   (read/allocation bounds; resume retains stored generation settings)"
     );

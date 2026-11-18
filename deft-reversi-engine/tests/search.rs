@@ -683,3 +683,25 @@ fn depth_searches_reaching_the_end_score_finished_games_exactly() {
         assert_eq!(result.score, Some(reference(board)), "seed {seed}");
     }
 }
+
+#[test]
+fn root_threshold_keeps_equal_moves_and_reports_only_an_upper_bound_on_failure() {
+    let mut engine = engine(1);
+    let board = Board::new();
+    let square = board.legal_moves().next().unwrap();
+    let request = depth(6).root_moves(1 << square.index());
+
+    let rejected = engine
+        .search(board, &request.clone().minimum_score(1))
+        .unwrap();
+    assert_eq!(rejected.stop_reason, StopReason::Completed);
+    assert_eq!(rejected.score, Some(0));
+    assert!(rejected.score_is_upper_bound);
+    assert!(rejected.pv.is_empty());
+    assert_eq!(rejected.root_moves, 1 << square.index());
+
+    let accepted = engine.search(board, &request.minimum_score(0)).unwrap();
+    assert_eq!(accepted.score, Some(0));
+    assert!(!accepted.score_is_upper_bound);
+    assert_eq!(accepted.pv.first(), Some(&Action::Place(square)));
+}

@@ -248,6 +248,9 @@ pub enum GenerationStop {
 #[derive(Clone, Debug, Default)]
 pub struct GenerationProfile {
     pub move_searches: u64,
+    pub rejected_subsets: u64,
+    pub mainline_searches: u64,
+    pub reused_iterations: u64,
     pub engine_wall: Duration,
     pub resources_wall: Duration,
     pub expansion_wall: Duration,
@@ -361,9 +364,52 @@ impl GenerationState {
             self.deepen.insert((stages, distance, key));
         }
     }
+    pub(super) fn requeue(&mut self, c: Context, stage: usize, distance: u8, line: Option<u8>) {
+        self.enqueue(c, stage, distance);
+        if let Some(left) = line {
+            self.urgent.retain(|job| job.0 != c);
+            self.urgent.push_front((c, distance, stage, left));
+        }
+    }
+    fn queued(&self, c: Context, d: u8, stage: usize) -> bool {
+        if stage == 0 {
+            self.fresh.contains(&(d, c))
+        } else {
+            self.deepen.contains(&(stage, d, c))
+        }
+    }
+    pub(super) fn has_line(&self, editor: &BookEditor) -> bool {
+        self.config.schedule == SchedulePolicy::Promising
+            && self.urgent.iter().any(|&(c, d, stage, _)| {
+                self.queued(c, d, stage)
+                    && editor
+                        .parents
+                        .get(&c.key)
+                        .into_iter()
+                        .flatten()
+                        .any(|&parent| {
+                            editor.nodes[&parent].move_search.as_ref().is_some_and(|f| {
+                                editor.values.get(f.value).conditions().has_midgame()
+                                    && (Context {
+                                        key: parent,
+                                        side: c.side.other(),
+                                    })
+                                    .child(f.best)
+                                        == c
+                            })
+                        })
+            })
+    }
     pub(super) fn pop(&mut self, editor: &BookEditor) -> Option<(Context, u8, usize)> {
+        self.pop_job(editor, false)
+    }
+    pub(super) fn pop_job(
+        &mut self,
+        editor: &BookEditor,
+        line_only: bool,
+    ) -> Option<(Context, u8, usize)> {
         self.active_burst = self.config.line_plies;
-        while self.iteration % 16 != 15
+        while (line_only || self.iteration % 16 != 15)
             && let Some((c, d, s, left)) = self.urgent.pop_front()
         {
             let queued = if s == 0 {
@@ -378,6 +424,9 @@ impl GenerationState {
                 self.active_burst = left;
                 return Some((c, d, s));
             }
+        }
+        if line_only {
+            return None;
         }
         let total =
             u64::from(self.config.new_job_weight) + u64::from(self.config.deepen_job_weight);
@@ -618,7 +667,7 @@ pub(super) fn expand(
     editor: &mut BookEditor,
     state: &mut GenerationState,
     context: Context,
-    _distance: u8,
+    first: Option<Action>,
     limits: GenerationLimits,
     report: &mut GenerationReport,
 ) -> Result<()> {
@@ -629,7 +678,7 @@ pub(super) fn expand(
         .edges
         .iter()
         .enumerate()
-        .filter(|(i, _)| mask & (1u64 << i) != 0)
+        .filter(|(i, e)| mask & (1u64 << i) != 0 && first.is_none_or(|a| a == e.action))
         .filter_map(|(_, e)| {
             let loss = local_loss(editor, key, e.action)?;
             if !e.registered
@@ -1248,7 +1297,7 @@ mod path_tests {
             &mut editor,
             &mut state,
             c,
-            0,
+            None,
             GenerationLimits {
                 new_positions: Some(100),
                 ..Default::default()

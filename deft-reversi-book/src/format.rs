@@ -1,6 +1,6 @@
 //! Versioned, bounded streaming codec. No Rust layout or unbounded serde vectors.
 //!
-//! 現行の書込はsave_editor（work v8）とsave_book（play v4）。読込側は旧版も扱う。
+//! 集合全体の上限があるときはwork v9 / play v5。従来形式も読み書きする。
 //! メモリの共有一覧はvalues.rs、バイト表現と旧分類の検査はlegacy内を使う。
 //! 手数や盤面の検査に加え、旧形式の入力関係はlegacy::validate_catalogで検査してから捨てる。
 //! 形式を追う順序と保存項目はdocs/book-v2/source-review.mdにまとめている。
@@ -74,7 +74,7 @@ impl ValuePool {
             }
             if let Some(f) = &n.move_search {
                 pool.intern(Assessment::from(editor.values.get(f.value)));
-                pool.intern(Assessment::from(editor.values.get(f.point)));
+                pool.intern(Assessment::from(editor.values.get(f.best_value)));
                 pool.intern(Assessment::from(editor.values.get(f.upper)));
             }
         }
@@ -247,8 +247,8 @@ fn open(path: &Path, magic: &[u8; 8], limits: ReadLimits) -> Result<(BufReader<F
     }
     let version = u32r(&mut file)?;
     if !(version == 1
-        || (magic == BOOK && (2..=4).contains(&version))
-        || (magic == WORK && (2..=8).contains(&version)))
+        || (magic == BOOK && (2..=5).contains(&version))
+        || (magic == WORK && (2..=9).contains(&version)))
         || u32r(&mut file)? != 1
     {
         return Err(invalid("unsupported format or rules"));
@@ -716,32 +716,47 @@ fn reserve<T>(v: &mut Vec<T>, n: usize) -> Result<()> {
         .map_err(|_| BookError::Limit("allocation"))
 }
 pub(super) fn save_book(book: &Book, path: &Path) -> Result<()> {
-    atomic_save(path, BOOK, 4, |w| {
-        w.write_all(&book.identity)?;
-        u8w(w, 1)?;
-        stringw(w, &book.producer)?;
-        u64w(w, book.records.len() as u64)?;
-        u64w(w, book.candidates.len() as u64)?;
-        poolw(
-            w,
-            &book.values.iter().map(Assessment::from).collect::<Vec<_>>(),
-        )?;
-        catalogw(w, &book.catalog)?;
-        for record in &book.records {
-            keyw(w, record.key)?;
-            u8w(w, record.len as u8)?;
-            u8w(w, u8::from(record.complete))?;
-            refw(w, record.value)?;
-            refw(w, record.final_score)?;
-            for c in &book.candidates[record.start..record.start + record.len] {
-                u8w(w, action_code(c.action))?;
-                u8w(w, u8::from(c.registered))?;
-                refw(w, c.value)?;
-                refw(w, c.final_score)?;
+    // Older readers allow a search upper bound only on the non-best
+    // moves. The representative of an all-upper subset can also carry it.
+    let has_upper_representative = book.candidates.iter().any(|candidate| {
+        candidate.value.is_some_and(|id| {
+            let value = book.values.at(id as usize);
+            value.bound() == crate::Bound::Upper
+                && matches!(value.source(), EvaluationSource::SearchMove(trace)
+                    if trace.best == action_code(candidate.action))
+        })
+    });
+    atomic_save(
+        path,
+        BOOK,
+        if has_upper_representative { 5 } else { 4 },
+        |w| {
+            w.write_all(&book.identity)?;
+            u8w(w, 1)?;
+            stringw(w, &book.producer)?;
+            u64w(w, book.records.len() as u64)?;
+            u64w(w, book.candidates.len() as u64)?;
+            poolw(
+                w,
+                &book.values.iter().map(Assessment::from).collect::<Vec<_>>(),
+            )?;
+            catalogw(w, &book.catalog)?;
+            for record in &book.records {
+                keyw(w, record.key)?;
+                u8w(w, record.len as u8)?;
+                u8w(w, u8::from(record.complete))?;
+                refw(w, record.value)?;
+                refw(w, record.final_score)?;
+                for c in &book.candidates[record.start..record.start + record.len] {
+                    u8w(w, action_code(c.action))?;
+                    u8w(w, u8::from(c.registered))?;
+                    refw(w, c.value)?;
+                    refw(w, c.final_score)?;
+                }
             }
-        }
-        extensionsw(w, &book.extensions)
-    })
+            extensionsw(w, &book.extensions)
+        },
+    )
 }
 pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
     let (mut input, version) = open(path, BOOK, limits)?;
@@ -995,7 +1010,12 @@ pub(super) fn load_book(path: &Path, limits: ReadLimits) -> Result<Book> {
 pub(super) fn save_editor(editor: &BookEditor, path: &Path) -> Result<()> {
     editor.validate()?;
     let pool = ValuePool::editor(editor);
-    atomic_save(path, WORK, 8, |w| {
+    let has_upper_subset = editor.nodes.values().any(|node| {
+        node.move_search.as_ref().is_some_and(|frontier| {
+            editor.values.get(frontier.value).bound() == crate::Bound::Upper
+        })
+    });
+    atomic_save(path, WORK, if has_upper_subset { 9 } else { 8 }, |w| {
         w.write_all(&editor.identity)?;
         u8w(w, 1)?;
         stringw(w, &editor.producer)?;
@@ -1290,7 +1310,9 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
         }
         let pending = if boolr(&mut input)? {
             if version >= 8 {
-                return Err(invalid("legacy pending results are not allowed in work v8"));
+                return Err(invalid(
+                    "legacy pending results are not allowed in work v8 or newer",
+                ));
             }
             let stage = limited_count(&mut input, 59)?;
             let revision = u64r(&mut input)?;

@@ -60,6 +60,7 @@ pub struct CompletedSearch {
     /// Root square mask. Zero is valid for a forced pass or terminal root.
     pub moves: u64,
     /// 0..=63はマス、64はパス、65は終局で着手なし。
+    /// 集合全体の上限を記録する場合は、探索対象から選んだ代表手。
     pub best: u8,
     pub result_score: i16,
     pub run: Option<u32>,
