@@ -128,13 +128,16 @@ fn mask(a: Action) -> u64 {
 fn a1_requested_level_plan_completed_kind_and_profiles_survive_both_profiles() {
     let mut eng = engine();
     let dir = Temp::new();
-    for (i, b) in [position(73, 56), position(73, 15), position(73, 6)]
+    let occupied = u64::MAX << 24;
+    let opponent = (1u64 << 27) | (1u64 << 28);
+    let selective = Board::from_bits(occupied ^ opponent, opponent).unwrap().canonical();
+    for (i, (b, level)) in [(position(73, 56), 2), (selective, 19), (position(73, 6), 19)]
         .into_iter()
         .enumerate()
     {
         let mut ed = BookEditor::for_engine(&eng).unwrap();
         let mut cfg = config(2, Selectivity::Full, 0);
-        cfg.analysis = AnalysisSchedule::Levels(vec![19]);
+        cfg.analysis = AnalysisSchedule::Levels(vec![level]);
         ed.configure_generation(&[b], cfg).unwrap();
         assert_eq!(
             ed.generate(&mut eng, budget(), StopHandle::new())
@@ -149,7 +152,7 @@ fn a1_requested_level_plan_completed_kind_and_profiles_survive_both_profiles() {
         let EvaluationSource::SearchMove(trace) = direct.source() else {
             panic!("lost completed search")
         };
-        assert_eq!(trace.requested, RequestedAnalysis::RootLevel(19));
+        assert_eq!(trace.requested, RequestedAnalysis::RootLevel(level));
         assert_eq!(trace.planned, trace.completed);
         assert_eq!(trace.root, [b.player_bits(), b.opponent_bits()]);
         assert_eq!(trace.run, Some(0));
@@ -162,7 +165,7 @@ fn a1_requested_level_plan_completed_kind_and_profiles_survive_both_profiles() {
                 .any(|a| loaded.move_values(b, a).unwrap().direct == Some(direct))
         );
         let run = &loaded.generation_runs()[0];
-        assert_eq!(run.config.analysis.levels(), Some(&vec![19]));
+        assert_eq!(run.config.analysis.levels(), Some(&vec![level]));
         assert_eq!(run.status, RunStatus::Stopped(GenerationStop::Exhausted));
         assert!(
             loaded
