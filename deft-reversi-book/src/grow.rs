@@ -222,14 +222,17 @@ fn prepare(
             .opt(node.value)
             .filter(|v| v.bound() == Bound::Point)
     {
-        let tolerance = state
+        let mut tolerance = state
             .config
             .loss(context.side)
             .min(state.config.leaf_loss.unwrap_or(128));
-        let cannot_expand = active_paths(editor, state, context)
-            .iter()
-            .all(|p| p.distance >= state.config.max_plies)
-            && !board.must_pass();
+        let paths = active_paths(editor, state, context);
+        let expandable = paths.iter().filter(|p| p.distance < state.config.max_plies || board.must_pass());
+        if let Some(limit) = state.config.cumulative_loss {
+            let remaining = expandable.clone().map(|p| limit.saturating_sub(p.loss)).max().unwrap_or(0);
+            tolerance = u16::from(tolerance).min(remaining) as u8;
+        }
+        let cannot_expand = expandable.count() == 0;
         if (cannot_expand || max_upper < best.score() - i16::from(tolerance))
             && best_point.is_none_or(|v| v < best.score() - i16::from(tolerance))
         {

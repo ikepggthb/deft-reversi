@@ -1,6 +1,6 @@
 use deft_reversi_book::{BookEditor, RequestedAnalysis, SearchKind};
 use deft_reversi_engine::{
-    Board, Engine, EngineOptions, Goal, SearchRequest, Model, PatternModel, Position, ProbCutSigmas,
+    Action, Board, Engine, EngineOptions, Goal, SearchRequest, Model, PatternModel, Position, ProbCutSigmas,
     Selectivity, legacy_main_rules,
 };
 use std::{
