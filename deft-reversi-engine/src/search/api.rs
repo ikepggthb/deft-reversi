@@ -231,6 +231,7 @@ pub struct SearchRequest {
     pub(super) goal: Goal,
     pub(super) selectivity: Option<Selectivity>,
     pub(super) time_limit: Option<Duration>,
+    pub(super) target_time: Option<Duration>,
     pub(super) timed_levels: bool,
     pub(super) node_limit: Option<u64>,
     pub(super) all_moves: bool,
@@ -250,6 +251,7 @@ impl SearchRequest {
             goal,
             selectivity: None,
             time_limit: None,
+            target_time: None,
             timed_levels: false,
             node_limit: None,
             all_moves: false,
@@ -321,6 +323,18 @@ impl SearchRequest {
     pub fn time_limit(mut self, limit: Duration) -> Self {
         self.time_limit = Some(limit);
         self
+    }
+    /// After each completed iteration, start the next one only if it is
+    /// expected to end around `target`, and within the time limit if one is
+    /// set. The target grows, up to twice, while the best move is unstable.
+    /// Time not used stays on the caller's clock for later moves.
+    pub fn target_time(mut self, target: Duration) -> Self {
+        self.target_time = Some(target);
+        self
+    }
+    /// Sets the target and the time limit of a move under a game clock.
+    pub fn move_time(self, time: MoveTime) -> Self {
+        self.target_time(time.target).time_limit(time.limit)
     }
     /// Stops before visiting more nodes than this, across all threads.
     pub fn node_limit(mut self, limit: u64) -> Self {

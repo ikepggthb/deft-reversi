@@ -15,6 +15,9 @@ use std::{
 
 mod api;
 pub use api::*;
+mod clock;
+use clock::Pacer;
+pub use clock::{GameClock, MoveTime};
 mod session;
 use session::*;
 mod endgame;
@@ -275,6 +278,7 @@ impl Engine {
             selectivity,
             level,
             time_limit: request.time_limit,
+            target_time: request.target_time,
             timed_levels: request.timed_levels && !self.calibration.is_empty(),
             node_limit: request.node_limit,
             all_moves: request.all_moves,
@@ -384,7 +388,17 @@ impl Engine {
         } else {
             (0, self.model.evaluate(&board))
         };
+        let mut pacer = job
+            .target_time
+            .map(|target| Pacer::new(target, job.time_limit));
         for (index, &iteration) in plan.iter().enumerate().skip(skip) {
+            let iteration_start = start.elapsed();
+            if let Some(pacer) = &pacer
+                && !pacer.should_start(iteration, board.empty_count(), iteration_start)
+            {
+                runtime.control.set(StopReason::TimeLimit);
+                break;
+            }
             runtime.drain();
             runtime.set_stage(iteration.selectivity);
             let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -416,6 +430,10 @@ impl Engine {
             }
             prediction = line.score;
             last = Some(iteration);
+            if let Some(pacer) = &mut pacer {
+                let duration = start.elapsed().saturating_sub(iteration_start);
+                pacer.completed(iteration, duration, result.best_move, line.score);
+            }
             // Helpers merge their counters when they finish.
             runtime.drain();
             on_progress(&Progress {
@@ -625,6 +643,8 @@ struct Job {
     /// endgame preparation depth.
     level: Option<u8>,
     time_limit: Option<Duration>,
+    /// Starts no iteration expected to run far past this; see `Pacer`.
+    target_time: Option<Duration>,
     timed_levels: bool,
     node_limit: Option<u64>,
     all_moves: bool,

@@ -1,7 +1,9 @@
 use crate::{Engine, EngineArgs, Result, book_view, stop};
 use clap::Args;
 use deft_reversi_book::{BookPlayer, MovePolicy};
-use deft_reversi_engine::{Action, Color, Moves, Position, SearchRequest, Square, StopReason};
+use deft_reversi_engine::{
+    Action, Color, GameClock, Moves, Position, SearchRequest, Square, StopReason,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     io::{self, BufRead, Write},
@@ -180,13 +182,20 @@ fn choose(
     {
         return Ok(square);
     }
-    let moves_left = u32::from(position.empty_count()) / 2 + 1;
-    let share = Duration::from_millis(turn.remaining_ms) / moves_left;
-    let limit = time_left().min(share);
-    if limit.is_zero() {
+    // Spread the game clock over the remaining moves, keeping a reserve for
+    // the exact endgame solve, and never pass this turn's budget.
+    let remaining = Duration::from_millis(turn.remaining_ms).saturating_sub(received.elapsed());
+    let time = GameClock::new(remaining)
+        .threads(engine.engine.options().threads)
+        .overhead(REPLY_MARGIN)
+        .move_cap(time_left())
+        .move_time(position.empty_count());
+    if time.limit.is_zero() {
         return Ok(first);
     }
-    let request = SearchRequest::timed_levels(60, limit).skip_pv_recovery();
+    let request = SearchRequest::timed_levels(60, time.limit)
+        .target_time(time.target)
+        .skip_pv_recovery();
     let _armed = stop::arm(request.stop_handle());
     let result = engine.engine.search(position, &request)?;
     match (result.stop_reason, result.best_move) {

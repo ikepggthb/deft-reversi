@@ -1,7 +1,7 @@
 //! GTP interface for CLI-based matches.
 use crate::{EngineArgs, Result, stop};
 use clap::Args;
-use deft_reversi_engine::{Action, Color, Goal, Position, SearchRequest};
+use deft_reversi_engine::{Action, Color, GameClock, Goal, MoveTime, Position, SearchRequest};
 use std::{
     io::{self, BufRead, Write},
     time::{Duration, Instant},
@@ -54,19 +54,16 @@ fn apply(pos: &mut Position, side: Color, action: Action) -> std::result::Result
     Ok(())
 }
 
-const SOLVE_EMPTIES: u8 = 20;
-
-fn request_budget(mode: &Mode, pos: &Position) -> Duration {
+/// The time for this move: the side's clock spread over its remaining moves,
+/// keeping a reserve for the exact endgame solve (`GameClock`).
+fn move_time(engine: &crate::Engine, mode: &Mode, pos: &Position) -> Option<MoveTime> {
     match mode {
-        Mode::Level(_) => Duration::ZERO,
-        // Positions with SOLVE_EMPTIES or fewer empties are solved in a small
-        // part of the time, so the time is spread over this side's moves
-        // before them: (empties - SOLVE_EMPTIES) / 2 + 1 moves.
-        Mode::Time { remaining } => {
-            let moves_left = u32::from(pos.empty_count().saturating_sub(SOLVE_EMPTIES)) / 2 + 1;
-            let left = remaining[clock(pos.side_to_move())];
-            left.saturating_sub(Duration::from_millis(10)) / moves_left
-        }
+        Mode::Level(_) => None,
+        Mode::Time { remaining } => Some(
+            GameClock::new(remaining[clock(pos.side_to_move())])
+                .threads(engine.options().threads)
+                .move_time(pos.empty_count()),
+        ),
     }
 }
 
@@ -245,10 +242,14 @@ fn generate(
         return Ok("pass".into());
     }
     let start = Instant::now();
-    let request = match mode {
-        Mode::Level(l) => SearchRequest::new(Goal::Level(*l)),
-        Mode::Time { .. } => SearchRequest::new(Goal::Level(60))
-            .time_limit(request_budget(mode, &next).max(Duration::from_millis(1))),
+    let time = move_time(engine, mode, &next);
+    let request = match (&*mode, time) {
+        (Mode::Level(l), _) => SearchRequest::new(Goal::Level(*l)),
+        (Mode::Time { .. }, time) => {
+            let mut time = time.expect("a clock gives a move time");
+            time.limit = time.limit.max(Duration::from_millis(1));
+            SearchRequest::new(Goal::Level(60)).move_time(time)
+        }
     };
     let _armed = stop::arm(request.stop_handle());
     let mut last = (Duration::ZERO, String::new());
@@ -259,9 +260,10 @@ fn generate(
         .map_err(|e| e.to_string());
     if std::env::var_os("DEFT_GTP_LOG").is_some() {
         eprintln!(
-            "empties {} budget {:.4} used {:.4} last_done {:.4} kind {}",
+            "empties {} target {:.4} limit {:.4} used {:.4} last_done {:.4} kind {}",
             next.empty_count(),
-            request_budget(mode, &next).as_secs_f64(),
+            time.map_or(0.0, |t| t.target.as_secs_f64()),
+            time.map_or(0.0, |t| t.limit.as_secs_f64()),
             start.elapsed().as_secs_f64(),
             last.0.as_secs_f64(),
             last.1.replace(' ', "")
