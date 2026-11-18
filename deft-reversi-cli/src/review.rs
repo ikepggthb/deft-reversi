@@ -1,5 +1,6 @@
-use crate::{EngineArgs, GoalArgs, Result, display, game::Game, settings, stop};
+use crate::{EngineArgs, GoalArgs, Result, book_view, display, game::Game, settings, stop};
 use clap::Args;
+use deft_reversi_book::{BookPlayer, MovePolicy};
 use deft_reversi_engine::{Action, Engine, Goal, Position, SearchRequest, StopReason};
 use std::{path::PathBuf, time::Duration};
 
@@ -11,6 +12,9 @@ pub struct ReviewArgs {
     /// One record per line; blanks and # comments are ignored.
     #[arg(long)]
     file: Option<PathBuf>,
+    /// Compare each played move with the opening book alongside the search.
+    #[arg(long)]
+    book: Option<PathBuf>,
     #[command(flatten)]
     engine: EngineArgs,
     #[command(flatten)]
@@ -27,17 +31,7 @@ pub fn positions(start: Position, record: &str) -> Result<Vec<(Position, Action)
         game.play(Action::Pass)?;
     }
     game.play_record(record)?;
-    let mut game = Game::from_position(start);
-    if game.current().must_pass() {
-        game.play(Action::Pass)?;
-    }
-    let mut positions = Vec::new();
-    for chunk in record.as_bytes().as_chunks::<2>().0 {
-        let action = std::str::from_utf8(chunk)?.parse::<Action>()?;
-        positions.push((game.current(), action));
-        game.play(action)?;
-    }
-    Ok(positions)
+    Ok(game.steps().filter(|&(_, a)| a != Action::Pass).collect())
 }
 
 #[derive(Default, Debug)]
@@ -54,13 +48,18 @@ pub fn review(
     record: &str,
     goal: Goal,
     time: Option<Duration>,
+    book: Option<&BookPlayer>,
 ) -> Result<ReviewSummary> {
     let positions = positions(start, record)?;
     let mut summary = ReviewSummary::default();
+    let mut first_departure = None;
     println!("Search: {}", settings::summary(goal, time));
     println!("Move Side  Played Best  PlayedScore BestScore Loss Search");
     for (i, &(pos, played)) in positions.iter().enumerate() {
-        let mut request = SearchRequest::new(goal).all_moves();
+        let Action::Place(square) = played else {
+            unreachable!("review positions include only placements");
+        };
+        let mut request = SearchRequest::new(goal).review_move(square);
         if let Some(time) = time {
             request = request.time_limit(time);
         }
@@ -96,12 +95,18 @@ pub fn review(
         } else {
             summary.unscored += 1;
             println!(
-                "{:>4} {:?} {played} - ? ? ? {} (unscored: {:?}; complete candidates required)",
+                "{:>4} {:?} {played} - ? ? ? {} (unscored: {:?}; both scores required)",
                 i + 1,
                 pos.side_to_move(),
                 display::kind(result.kind),
                 result.stop_reason
             );
+        }
+        if let Some(book) = book
+            && review_book_move(book, pos, played)
+            && first_departure.is_none()
+        {
+            first_departure = Some(i);
         }
         if result.stop_reason == StopReason::Requested {
             summary.stopped = true;
@@ -127,7 +132,63 @@ pub fn review(
     println!(
         "Scores/losses are for the player to move. Only 'exact' rows are proven; other rows are estimates at the displayed search quality."
     );
+    if let Some(index) = first_departure {
+        let prefix: String = positions[..=index]
+            .iter()
+            .filter(|(_, action)| *action != Action::Pass)
+            .map(|(_, action)| action.to_string().to_ascii_lowercase())
+            .collect();
+        if start == Position::initial() {
+            println!(
+                "First Book departure: move {} (record prefix {prefix})",
+                index + 1
+            );
+        } else {
+            println!(
+                "First Book departure: move {} (from the loaded start)",
+                index + 1
+            );
+        }
+    } else if book.is_some() {
+        println!("No Book departure in the reviewed moves.");
+    }
     Ok(summary)
+}
+
+/// Return whether the played edge is absent from the registered Book.
+fn review_book_move(book: &BookPlayer, pos: Position, played: Action) -> bool {
+    let Some(entry) = book.probe(pos) else {
+        println!("     Book: position absent");
+        return true;
+    };
+    let actual = entry.moves().find(|m| m.action == played);
+    let best = entry
+        .moves()
+        .filter(|m| m.registered)
+        .filter_map(|m| book.point_value(m).ok().map(|score| (m, score)))
+        .min_by_key(|(m, score)| (std::cmp::Reverse(*score), m.action != played));
+    let played_detail = actual.map_or_else(|| "absent".into(), |m| book_view::candidate(book, m));
+    print!("     Book: played {played} {played_detail}");
+    if let Some((best, score)) = best {
+        print!(
+            " | best linked {} {}",
+            best.action,
+            book_view::candidate(book, best)
+        );
+        if let Some(actual) = actual
+            && let Ok(played_score) = book.point_value(actual)
+        {
+            if score >= played_score {
+                print!(" | Book loss {}", score - played_score);
+            } else {
+                print!(" | played exceeds best linked by {}", played_score - score);
+            }
+        }
+    } else {
+        print!(" | no usable linked point value");
+    }
+    println!();
+    !actual.is_some_and(|m| m.registered)
 }
 
 pub fn run(args: ReviewArgs) -> Result<()> {
@@ -150,6 +211,12 @@ pub fn run(args: ReviewArgs) -> Result<()> {
         positions(Position::initial(), record).map_err(|e| format!("record line {line}: {e}"))?;
     }
     let mut engine = args.engine.engine()?;
+    let book = args
+        .book
+        .as_ref()
+        .map(|path| book_view::load(&engine, path, MovePolicy::Best, 0))
+        .transpose()?
+        .map(|(book, _, _)| book);
     let goal = args.goal.goal(Goal::Level(10));
     settings::report(&engine, &args.engine, goal, args.goal.time_limit());
     for (line, record) in records {
@@ -161,6 +228,7 @@ pub fn run(args: ReviewArgs) -> Result<()> {
             &record,
             goal,
             args.goal.time_limit(),
+            book.as_ref(),
         )?
         .stopped
         {
@@ -208,6 +276,7 @@ mod tests {
                 &square.to_string(),
                 Goal::Endgame,
                 None,
+                None,
             )
             .unwrap();
             assert_eq!(summary.scored, 1);
@@ -225,6 +294,7 @@ mod tests {
             Position::initial(),
             "f5",
             Goal::Depth(0),
+            None,
             None,
         )
         .unwrap();

@@ -1,15 +1,12 @@
-use crate::{EngineArgs, GoalArgs, Result, display, game::Game, settings, stop};
+use crate::{EngineArgs, GoalArgs, Result, book_view, display, game::Game, settings, stop};
 use clap::Args;
-use deft_reversi_book::{
-    Book, BookChoice, BookDecision, BookMiss, BookPlayer, MovePolicy, ReadLimits, UsePolicy,
-};
+use deft_reversi_book::{BookDecision, BookMiss, BookPlayer, MovePolicy};
 use deft_reversi_engine::{Action, Color, Engine, Goal, SearchRequest, Selectivity};
 use sha2::{Digest, Sha256};
 use std::{
     io::{self, BufRead, Write},
     path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Args, Debug)]
@@ -72,35 +69,16 @@ pub fn run(args: PlayArgs) -> Result<()> {
     let book = match &args.book {
         None => None,
         Some(path) => {
-            let book = Book::load(path, ReadLimits::default()).map_err(|e| {
-                format!(
-                    "{}: {e}. Use the Book supplied with this CLI release.",
-                    path.display()
-                )
-            })?;
-            details.book_positions = Some(book.stats().positions);
-            details.book_matches =
-                Some(book.identity() == deft_reversi_book::analysis_identity(&engine)?);
             let moves = match args.book_loss {
                 None => MovePolicy::Best,
                 Some(max_loss) => MovePolicy::RandomWithinLoss { max_loss },
             };
-            let policy = UsePolicy {
-                moves,
-                min_selectivity: Selectivity::Percent83,
-                ..UsePolicy::default()
-            };
-            Some(BookPlayer::new(
-                &engine,
-                Some(Arc::new(book)),
-                policy,
-                seed(),
-            )?)
+            let (player, positions, matches) = book_view::load(&engine, path, moves, seed())?;
+            details.book_positions = Some(positions);
+            details.book_matches = Some(matches);
+            Some(player)
         }
     };
-    if details.book_matches == Some(false) {
-        eprintln!("Warning: Book model mismatch; use the model and Book supplied together.");
-    }
     let mut session = Session {
         game: Game::new(),
         engine,
@@ -182,8 +160,8 @@ impl Session {
         let words: Vec<&str> = line.split_whitespace().collect();
         let arg = |i: usize| words.get(i).copied().unwrap_or("");
         let expected = match arg(0) {
-            "new" | "init" | "undo" | "u" | "redo" | "go" | "hint" | "analyze" | "exact"
-            | "settings" | "help" | "h" | "?" | "quit" | "exit" | "q" => Some(1),
+            "new" | "init" | "undo" | "u" | "redo" | "go" | "hint" | "exact" | "settings"
+            | "help" | "h" | "?" | "quit" | "exit" | "q" => Some(1),
             "level" | "l" | "depth" | "time" | "mode" | "play" | "book" => Some(2),
             _ => None,
         };
@@ -219,7 +197,11 @@ impl Session {
                 }
                 ("on", _) => self.book_on = true,
                 ("off", _) => self.book_on = false,
-                _ => return usage("book on|off"),
+                ("show", Some(book)) => {
+                    book_view::show(book, self.game.current());
+                    return Ok(Next::Prompt);
+                }
+                _ => return usage("book on|off|show"),
             },
             "play" => {
                 if let Err(e) = self.game.play_record(arg(1)) {
@@ -271,9 +253,15 @@ impl Session {
                     2 => (deft_reversi_engine::Position::initial(), arg(1).to_string()),
                     _ => return usage("review [RECORD]"),
                 };
-                if let Err(e) =
-                    crate::review::review(&mut self.engine, start, &record, self.goal, self.time)
-                {
+                let book = self.book.as_ref().filter(|_| self.book_on);
+                if let Err(e) = crate::review::review(
+                    &mut self.engine,
+                    start,
+                    &record,
+                    self.goal,
+                    self.time,
+                    book,
+                ) {
                     println!("Review error: {e}");
                 }
                 return Ok(Next::Prompt);
@@ -298,7 +286,12 @@ impl Session {
                 }
             }
             "hint" | "analyze" => {
-                if let Err(e) = self.analyze(arg(0) == "analyze") {
+                let all = arg(0) == "analyze";
+                let full_pvs = all && words.len() == 2 && arg(1) == "--pv";
+                if words.len() != 1 && !full_pvs {
+                    return usage("analyze [--pv]");
+                }
+                if let Err(e) = self.analyze(all, full_pvs) {
                     println!("Analysis error: {e}");
                 }
                 return Ok(Next::Prompt);
@@ -441,114 +434,117 @@ impl Session {
         Ok(())
     }
 
-    fn analyze(&mut self, all: bool) -> Result<()> {
-        let start = Instant::now();
+    fn analyze(&mut self, all: bool, full_pvs: bool) -> Result<()> {
         let position = self.game.current();
         if position.is_terminal() {
             println!("The game is over.");
             return Ok(());
         }
+        let book = self.book.as_ref().filter(|_| self.book_on);
+        if !all
+            && !matches!(self.goal, Goal::Endgame)
+            && let Some(book) = book
+            && let BookDecision::Chosen(choice) = book.recommend(position)
+        {
+            let v = choice.value;
+            println!(
+                "Hint: {} from the book  {}",
+                choice.action,
+                book_view::value(v.result(), v.conditions(), v.source())
+            );
+            let mut line = vec![choice.action];
+            line.extend(book.continuation(position.play(choice.action)?));
+            println!("Book line: {}", display::pv(&line));
+            println!("Board unchanged. Scores are from the side to move's perspective.");
+            return Ok(());
+        }
+        let entry = book.and_then(|b| b.probe(position));
         let mut request = SearchRequest::new(self.goal);
-        if all {
+        if full_pvs {
+            request = request.all_moves_with_pv();
+        } else if all {
             request = request.all_moves();
         }
         if let Some(limit) = self.time {
             request = request.time_limit(limit);
         }
-        let analysis_stop = request.stop_handle();
-        let _armed = stop::arm(analysis_stop.clone());
-        let result = self
-            .engine
-            .search_with(position, &request, |p| println!("{}", display::progress(p)))?;
+        let _armed = stop::arm(request.stop_handle());
+        let result = self.engine.search_with(position, &request, |p| {
+            if !all {
+                println!("{}", display::progress(p));
+            }
+        })?;
         if result.stop_reason == deft_reversi_engine::StopReason::WorkerFailed {
             return Err("engine search worker failed".into());
         }
-        println!(
-            "Hint: {}  score {}  {}{}",
-            display::action(result.best_move),
-            display::score(result.score),
-            display::kind(result.kind),
-            display::stop_note(&result)
-        );
         if all {
+            println!(
+                "Analysis: {}  {} nodes  {:.2}s{}",
+                display::kind(result.kind),
+                display::nodes(result.stats.nodes),
+                result.elapsed.as_secs_f64(),
+                display::stop_note(&result)
+            );
             if result.moves.is_empty() {
-                println!(
-                    "No complete candidate list (interrupted, pass, or depth 0). No unscored moves are ranked."
-                );
+                println!("No complete candidate scores.");
+                if book.is_some() {
+                    println!("Use 'book show' to inspect the Book.");
+                }
             } else {
-                println!("Move   Score   Search       PV");
-                let mut stopped = false;
+                let book_entry = book.zip(entry.as_ref());
+                if book_entry.is_some() {
+                    println!("Move  Search  Book link  Book evaluation");
+                } else {
+                    if book.is_some() {
+                        println!("Book: position absent");
+                    }
+                    println!("Move  Search");
+                }
                 for m in &result.moves {
-                    let pv = if Some(m.action) == result.best_move {
-                        Some(result.pv.clone())
-                    } else if stopped {
-                        None
-                    } else {
-                        let child = position.play(m.action)?;
-                        let (goal, stage, expected) = match result.kind {
-                            Some(deft_reversi_engine::ResultKind::Depth { depth, selectivity }) => {
-                                let d = depth.saturating_sub(u8::from(m.action != Action::Pass));
-                                (
-                                    Goal::Depth(d),
-                                    selectivity,
-                                    deft_reversi_engine::ResultKind::Depth {
-                                        depth: d,
-                                        selectivity,
-                                    },
-                                )
-                            }
-                            Some(
-                                kind @ deft_reversi_engine::ResultKind::Endgame { selectivity },
-                            ) => (Goal::Endgame, selectivity, kind),
-                            None => unreachable!("candidate scores require a completed iteration"),
+                    let score = format!("{:+}", m.score);
+                    if let Some((book, entry)) = book_entry {
+                        let candidate =
+                            entry.moves().find(|candidate| candidate.action == m.action);
+                        let (link, evaluation) = match candidate {
+                            Some(c) => (
+                                if c.registered { "linked" } else { "unlinked" },
+                                book_view::analysis_value(book, c),
+                            ),
+                            None => ("-", "-".into()),
                         };
-                        let remaining = self.time.map(|t| t.saturating_sub(start.elapsed()));
-                        if remaining == Some(Duration::ZERO) || analysis_stop.is_stopped() {
-                            stopped = true;
-                            None
-                        } else {
-                            let mut request = SearchRequest::new(goal)
-                                .selectivity(stage)
-                                .with_stop(analysis_stop.clone());
-                            if let Some(limit) = remaining {
-                                request = request.time_limit(limit);
-                            }
-                            match self.engine.search(child, &request) {
-                                Ok(r) => {
-                                    stopped =
-                                        r.stop_reason != deft_reversi_engine::StopReason::Completed;
-                                    if !stopped
-                                        && r.score == Some(-m.score)
-                                        && (r.kind == Some(expected) || child.is_terminal())
-                                    {
-                                        let mut pv = vec![m.action];
-                                        pv.extend(r.pv);
-                                        Some(pv)
-                                    } else {
-                                        None
-                                    }
-                                }
-                                Err(_) => {
-                                    stopped = true;
-                                    None
-                                }
-                            }
-                        }
-                    };
-                    println!(
-                        "{:<6} {:+5}   {:<12} {}",
-                        m.action.to_string(),
-                        m.score,
-                        display::kind(result.kind),
-                        pv.as_ref().map_or_else(
-                            || "unavailable (time/stop/quality)".into(),
-                            |pv| display::pv(pv)
-                        )
-                    );
+                        println!(
+                            "{:<4}  {:>6}  {:<9}  {evaluation}",
+                            m.action.to_string(),
+                            score,
+                            link
+                        );
+                    } else {
+                        println!("{:<4}  {:>6}", m.action.to_string(), score);
+                    }
                 }
             }
+        } else {
+            println!(
+                "Hint: {}  score {}  {}{}",
+                display::action(result.best_move),
+                display::score(result.score),
+                display::kind(result.kind),
+                display::stop_note(&result)
+            );
         }
-        println!("PV (best): {}", display::pv(&result.pv));
+        if full_pvs && !result.moves.is_empty() {
+            println!("Candidate PVs");
+            for (m, pv) in result.moves.iter().zip(&result.move_pvs) {
+                println!("  {:<4} {}", m.action.to_string(), display::pv(pv));
+            }
+        } else if !result.pv.is_empty() {
+            let pv = if all {
+                display::pv_prefix(&result.pv, 8)
+            } else {
+                display::pv(&result.pv)
+            };
+            println!("PV (best): {pv}");
+        }
         println!("Board unchanged. Scores are from the side to move's perspective.");
         Ok(())
     }
@@ -602,9 +598,9 @@ impl Session {
             if self.computer[0] { "AI" } else { "human" },
             if self.computer[1] { "AI" } else { "human" }
         );
+        println!("{}", settings::versions());
         println!(
-            "CLI: {}\nBuild target: {}\nProfile: {}, opt-level {}\nRust flags: {}",
-            env!("CARGO_PKG_VERSION"),
+            "Build target: {}\nProfile: {}, opt-level {}\nRust flags: {}",
             env!("DEFT_BUILD_TARGET"),
             env!("DEFT_BUILD_PROFILE"),
             env!("DEFT_BUILD_OPT_LEVEL"),
@@ -693,7 +689,7 @@ fn goal(goal: Goal, time: Option<Duration>) -> String {
     }
 }
 
-fn book_value(choice: &BookChoice) -> String {
+fn book_value(choice: &deft_reversi_book::BookChoice) -> String {
     let v = choice.value;
     let quality = if v.is_solved() {
         "solved".into()
@@ -717,8 +713,8 @@ fn help() {
   review [RECORD]     review current history or a record without playing
   setboard <OBF>      load a board and side to move; resets history, switches to mode 3
   setboard --file PATH [--line N]  load the Nth position (default 1)
-  hint                best move and PV without playing
-  analyze             score every candidate and show verified PVs
+  hint                suggest a Book move or search for a move without playing
+  analyze [--pv]      score all candidates with Book values; --pv shows candidate lines
   eval DEPTH [PERCENT]  configure eval search, keeping endgame stages
   endgame PERCENT EMPTIES  switch at or below EMPTIES; 0 disables the stage
   endgame clear       disable all endgame stages
@@ -729,7 +725,7 @@ fn help() {
   depth <0-60>        search to a fixed depth
   exact               read to the end of the game
   time <ms>           time limit per move, 0 for none
-  book on|off         use the opening book
+  book on|off|show    toggle Book use or show current Book moves and lines
   help | quit"
     );
 }

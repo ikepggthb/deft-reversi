@@ -233,10 +233,13 @@ pub struct SearchRequest {
     pub(super) time_limit: Option<Duration>,
     pub(super) node_limit: Option<u64>,
     pub(super) all_moves: bool,
+    pub(super) move_pvs: bool,
+    pub(super) review_move: Option<crate::Square>,
     pub(super) root_moves: Option<u64>,
     pub(super) preferred_move: Option<crate::Square>,
     pub(super) minimum_score: Option<i32>,
     pub(super) reuse_pv: bool,
+    pub(super) recover_endgame_pv: bool,
     pub(super) stop: StopHandle,
 }
 impl SearchRequest {
@@ -247,10 +250,13 @@ impl SearchRequest {
             time_limit: None,
             node_limit: None,
             all_moves: false,
+            move_pvs: false,
+            review_move: None,
             root_moves: None,
             preferred_move: None,
             minimum_score: None,
             reuse_pv: false,
+            recover_endgame_pv: false,
             stop: StopHandle::new(),
         }
     }
@@ -285,6 +291,12 @@ impl SearchRequest {
         self.reuse_pv = true;
         self
     }
+    /// Try to extend a selective endgame PV at the completed search stage.
+    /// Recovery shares the search limits and may leave a partial line.
+    pub fn recover_endgame_pv(mut self) -> Self {
+        self.recover_endgame_pv = true;
+        self
+    }
     /// Stops after this much time, returning the last completed iteration.
     pub fn time_limit(mut self, limit: Duration) -> Self {
         self.time_limit = Some(limit);
@@ -299,6 +311,20 @@ impl SearchRequest {
     /// This searches each move again, so it takes several times longer.
     pub fn all_moves(mut self) -> Self {
         self.all_moves = true;
+        self
+    }
+    /// Score every selected root move and retain its principal variation from
+    /// the scoring search. TT cutoffs may leave a partial line.
+    pub fn all_moves_with_pv(mut self) -> Self {
+        self.all_moves = true;
+        self.move_pvs = true;
+        self
+    }
+    /// Score the principal move and the specified legal move with full windows
+    /// at the final search stage. Intended for reviewing a played move.
+    /// This skips full PV recovery. If `all_moves` is set, score every root move.
+    pub fn review_move(mut self, square: crate::Square) -> Self {
+        self.review_move = Some(square);
         self
     }
     /// Stops on `stop` instead of a handle of its own, so that one handle
@@ -391,9 +417,11 @@ pub struct SearchResult {
     /// The last completed iteration; None with `score`.
     pub kind: Option<ResultKind>,
     pub pv: Vec<Action>,
-    /// Every legal move with its score, best first, when the request asked
-    /// for `all_moves` and the search completed.
+    /// Scores best first for the root moves requested by `all_moves` or
+    /// `review_move`, after the final iteration completed.
     pub moves: Vec<MoveScore>,
+    /// Lines corresponding to `moves`, when requested by `all_moves_with_pv`.
+    pub move_pvs: Vec<Vec<Action>>,
     pub stop_reason: StopReason,
     pub stats: SearchStats,
     pub elapsed: Duration,
@@ -403,6 +431,11 @@ pub struct SearchResult {
     pub root_restricted: bool,
 }
 impl SearchResult {
+    /// The terminal disc difference reached by replaying the PV, from the
+    /// root side's perspective. Returns None for a partial or illegal PV.
+    pub fn pv_final_score(&self, position: impl Into<crate::Board>) -> Option<i32> {
+        super::pv::terminal_score(position.into(), &self.pv)
+    }
     /// Whether `score` is the exact game value: a full-selectivity endgame
     /// iteration completed.
     pub fn is_solved(&self) -> bool {

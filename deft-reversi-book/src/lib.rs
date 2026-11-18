@@ -65,6 +65,9 @@ pub use snapshot::{Book, BookCandidate, BookEntry, BookMove, BookStats};
 pub use stats::{QualityBucket, ValueKindBucket, WorkspaceStats};
 pub use symmetry::Symmetry;
 
+/// Version of the Book library shipped in the Deft Reversi workspace.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// 評価モデル・校正・探索仕様の識別値。推定値を再利用できるかの照合に使う。
 pub type AnalysisIdentity = [u8; 32];
 #[derive(Debug)]

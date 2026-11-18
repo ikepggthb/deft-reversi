@@ -68,7 +68,11 @@ fn commands_work_through_the_binary() {
         &result,
     ).unwrap();
     let book_path = f.0.join("test.dbook");
-    book.export().unwrap().save(&book_path).unwrap();
+    let snapshot = book.export().unwrap();
+    snapshot.save(&book_path).unwrap();
+    let initial = snapshot.probe(Board::new()).unwrap();
+    let linked = initial.moves().find(|m| m.registered).unwrap().action;
+    let unlinked = initial.moves().find(|m| !m.registered).unwrap().action;
 
     let inspect = f.success(&["play", "--mode", "3", "--depth", "2", "--threads", "1", "--tt-mib", "3"],
         "settings\nendgame clear\neval 2 100\nendgame 95 8\nendgame 100 4\nsettings\nhint\nanalyze\nquit\n");
@@ -77,7 +81,8 @@ fn commands_work_through_the_binary() {
     assert!(inspect.contains("Binary SHA-256:"));
     assert!(inspect.contains("95%: 8"));
     assert!(inspect.contains("100%: 4"));
-    assert!(inspect.contains("Move   Score   Search       PV"));
+    assert!(inspect.contains("Move  Search"));
+    assert!(!inspect.contains("Candidate PVs"));
     assert!(inspect.contains("Board unchanged"));
     assert!(!inspect.contains("unavailable"));
     let file = f.0.join("positions with spaces.obf");
@@ -176,9 +181,26 @@ fn commands_work_through_the_binary() {
             "--tt-mib",
             "1",
         ],
-        "book off\nbook on\ngo\nquit\n",
+        "book off\nbook show\nhint\nbook on\nbook show\nhint\nanalyze\nanalyze --pv\ngo\nbook show\nundo\nredo\nquit\n",
     );
-    assert!(output.contains("from the book"));
+    assert!(output.contains("Hint:"));
+    assert!(output.contains(&format!("Hint: {linked} from the book")));
+    assert_eq!(output.matches("Book line:").count(), 1);
+    assert_eq!(output.matches("of 4 candidates linked").count(), 2);
+    assert!(output.contains("Move  Search  Book link  Book evaluation"));
+    assert_eq!(output.matches("Candidate PVs").count(), 1);
+    assert!(output.contains("  linked     "));
+    assert!(output.contains("  unlinked   "));
+    assert!(output.contains(&format!("plays {linked} from the book")));
+
+    for (action, expected) in [(linked, "No Book departure"), (unlinked, "First Book departure: move 1")] {
+        let output = f.success(&[
+            "review", &action.to_string(), "--book", book_path.to_str().unwrap(),
+            "--depth", "1", "--threads", "1", "--tt-mib", "1",
+        ], "");
+        assert!(output.contains(expected), "{output}");
+        assert!(output.contains("best linked"));
+    }
 
     let records = f.0.join("games.txt");
     let self_play = [
@@ -285,7 +307,12 @@ fn commands_work_through_the_binary() {
     );
     assert!(legacy.status.success());
     assert!(String::from_utf8_lossy(&legacy.stdout).contains("\tExact\t2\t"));
-    assert!(String::from_utf8_lossy(&legacy.stderr).contains("Search: eval 1@100; endgame 100:2"));
+    let diagnostics = String::from_utf8_lossy(&legacy.stderr);
+    assert!(diagnostics.contains("Search: eval 1@100; endgame 100:2"));
+    assert!(diagnostics.contains(&format!(
+        "Versions: CLI {} | Engine {} | Book library {}",
+        env!("CARGO_PKG_VERSION"), deft_reversi_engine::VERSION, deft_reversi_book::VERSION
+    )));
     let custom = f.success(
         &[
             "solve",

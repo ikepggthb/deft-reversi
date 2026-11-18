@@ -94,6 +94,7 @@ pub fn run(args: GtpArgs) -> Result<()> {
         Mode::Level(_) => [Duration::ZERO; 2],
     };
     let mut engine = args.engine.engine()?;
+    eprintln!("{}", crate::settings::versions());
     let mut pos = Position::initial();
     let stdin = io::stdin();
     let mut out = io::stdout();
@@ -143,7 +144,7 @@ pub fn run(args: GtpArgs) -> Result<()> {
             match cmd {
                 "protocol_version" => Ok("2".into()),
                 "name" => Ok("Deft".into()),
-                "version" => Ok(env!("CARGO_PKG_VERSION").into()),
+                "version" => Ok(crate::VERSION.into()),
                 "known_command" => Ok(COMMANDS.contains(&words[1]).to_string()),
                 "list_commands" => Ok(COMMANDS.join("\n")),
                 "boardsize" if words[1].parse::<u8>() != Ok(8) => {

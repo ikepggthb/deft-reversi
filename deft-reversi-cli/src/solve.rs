@@ -17,6 +17,9 @@ pub struct SolveArgs {
     /// Clear the transposition table before each position.
     #[arg(long)]
     clear_tt: bool,
+    /// Show the full PV and try to recover missing selective endgame moves.
+    #[arg(long, conflicts_with = "tsv")]
+    full_pv: bool,
     /// Emit precise tab-separated results for benchmark tools.
     #[arg(long)]
     tsv: bool,
@@ -79,11 +82,12 @@ pub fn run(args: SolveArgs) -> Result<()> {
     }
     let goal = args.goal.goal(Goal::Endgame);
     crate::settings::report(&engine, &args.engine, goal, args.goal.time_limit());
+    const KIND_WIDTH: usize = 8;
     let header = format!(
-        "{:>4} | {:>5} | {:>4} | {:>7} | {:>6} | {:>12} | {:>12} | {:>12} | {:>3} | pv",
+        "{:>4} | {:>5} | {:>4} | {:>7} | {:>KIND_WIDTH$} | {:>12} | {:>12} | {:>12} | {:>3} | pv",
         "#", "score", "move", "empties", "kind", "nodes", "nps", "time", "ok"
     );
-    let rule = "-".repeat(header.len() + 30);
+    let rule = "-".repeat(header.len() + 20);
     if args.tsv {
         println!(
             "position\tscore\taction\tmode\tdepth\tnodes\tleaves\tsplits\tjobs\thandoffs\tjoin_seconds\tseconds\tstop"
@@ -98,7 +102,13 @@ pub fn run(args: SolveArgs) -> Result<()> {
         if args.clear_tt {
             engine.clear_tt()?;
         }
-        let result = search(&mut engine, problem.position, &args.goal, goal)?;
+        let result = search(
+            &mut engine,
+            problem.position,
+            &args.goal,
+            goal,
+            args.full_pv,
+        )?;
         if result.stop_reason == deft_reversi_engine::StopReason::WorkerFailed {
             return Err("engine search worker failed".into());
         }
@@ -126,8 +136,23 @@ pub fn run(args: SolveArgs) -> Result<()> {
             }
             continue;
         }
+        let pv = if args.full_pv {
+            let mut pv = display::pv(&result.pv);
+            if matches!(result.kind, Some(ResultKind::Endgame { .. })) {
+                match result.pv_final_score(problem.position) {
+                    None => pv.push_str(" [partial PV]"),
+                    Some(score) if Some(score) != result.score => {
+                        pv.push_str(&format!(" [PV score {score:+}]"));
+                    }
+                    Some(_) => {}
+                }
+            }
+            pv
+        } else {
+            display::pv_prefix(&result.pv, 6)
+        };
         println!(
-            "{:>4} | {:>5} | {:>4} | {:>7} | {:>6} | {:>12} | {:>12.0} | {:>12} | {:>3} | {}{}",
+            "{:>4} | {:>5} | {:>4} | {:>7} | {:>KIND_WIDTH$} | {:>12} | {:>12.0} | {:>12} | {:>3} | {}{}",
             i + 1,
             display::score(result.score),
             display::action(result.best_move),
@@ -137,7 +162,7 @@ pub fn run(args: SolveArgs) -> Result<()> {
             result.stats.nodes as f64 / result.elapsed.as_secs_f64(),
             display::duration(result.elapsed),
             verdict,
-            display::pv(&result.pv),
+            pv,
             display::stop_note(&result),
         );
         if result.stop_reason == deft_reversi_engine::StopReason::Requested {
@@ -148,7 +173,7 @@ pub fn run(args: SolveArgs) -> Result<()> {
     if !args.tsv {
         println!("{rule}");
         println!(
-            "{:>4} | {:>5} | {:>4} | {:>7} | {:>6} | {:>12} | {:>12.0} | {:>12} |",
+            "{:>4} | {:>5} | {:>4} | {:>7} | {:>KIND_WIDTH$} | {:>12} | {:>12.0} | {:>12} | {:>3} |",
             "all",
             "",
             "",
@@ -156,7 +181,8 @@ pub fn run(args: SolveArgs) -> Result<()> {
             "",
             nodes,
             nodes as f64 / elapsed.as_secs_f64(),
-            display::duration(elapsed)
+            display::duration(elapsed),
+            ""
         );
         println!("{rule}");
     }
@@ -212,8 +238,12 @@ fn search(
     position: Position,
     args: &GoalArgs,
     goal: Goal,
+    full_pv: bool,
 ) -> Result<SearchResult> {
-    let request = args.request(goal);
+    let mut request = args.request(goal);
+    if full_pv {
+        request = request.recover_endgame_pv();
+    }
     let _armed = stop::arm(request.stop_handle());
     Ok(engine.search(position, &request)?)
 }

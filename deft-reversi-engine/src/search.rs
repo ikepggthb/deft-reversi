@@ -245,9 +245,17 @@ impl Engine {
                 ));
             }
         }
+        if request.review_move.is_some_and(|square| {
+            request.root_moves.unwrap_or_else(|| board.get_moves()) & square.bit() == 0
+        }) {
+            return Err(EngineError::InvalidRequest(
+                "review move must be in the legal root mask",
+            ));
+        }
         if request.minimum_score.is_some_and(|score| {
             !(-63..=64).contains(&score)
                 || request.all_moves
+                || request.review_move.is_some()
                 || board.get_moves() == 0
                 || !matches!(mode, SearchMode::Depth(d) if d > 0 && d < board.empty_count())
         }) {
@@ -258,6 +266,7 @@ impl Engine {
         Ok(Job {
             minimum_score: request.minimum_score,
             reuse_pv: request.reuse_pv,
+            recover_endgame_pv: request.recover_endgame_pv,
             root_moves: request.root_moves,
             preferred_move: request.preferred_move,
             board,
@@ -267,6 +276,8 @@ impl Engine {
             time_limit: request.time_limit,
             node_limit: request.node_limit,
             all_moves: request.all_moves,
+            move_pvs: request.move_pvs,
+            review_move: request.review_move,
             stop: request.stop.clone(),
         })
     }
@@ -279,9 +290,11 @@ impl Engine {
         if job.board.must_pass() {
             let pass_start = Instant::now();
             let all_moves = job.all_moves;
+            let move_pvs = job.move_pvs;
             let passed = Job {
                 board: job.board.board_after_pass(),
                 all_moves: false,
+                move_pvs: false,
                 root_moves: None,
                 preferred_move: None,
                 ..job
@@ -309,6 +322,14 @@ impl Engine {
                     action: Action::Pass,
                     score,
                 }];
+                if move_pvs {
+                    let pv = if result.pv.is_empty() {
+                        vec![Action::Pass]
+                    } else {
+                        result.pv.clone()
+                    };
+                    result.move_pvs.push(pv);
+                }
             }
             result.root_moves = 0;
             result.root_restricted = false;
@@ -410,23 +431,54 @@ impl Engine {
         if !result.score_is_upper_bound
             && !context.aborted()
             && let Some(last) = last
-            && last.selectivity == Selectivity::Full
+            && (job.review_move.is_none() || job.all_moves)
             && last.depth > 0
             && let Some(score) = result.score
-            && let Ok(pv) =
-                context.extract_pv(board, score, last.depth, last.exact, result.best_move)
         {
-            result.pv = pv;
+            let full = last.selectivity == Selectivity::Full;
+            let selective_recovery =
+                job.recover_endgame_pv && last.exact && result.pv_final_score(board) != Some(score);
+            if (full || selective_recovery)
+                && let Ok(pv) =
+                    context.extract_pv(board, score, last.depth, last.exact, result.best_move)
+                && (full
+                    || pv::terminal_score(board, &pv) == Some(score)
+                    || (result.pv_final_score(board).is_none() && pv.len() > result.pv.len()))
+            {
+                result.pv = pv;
+            }
         }
         runtime.drain();
-        if job.all_moves
+        let score_mask = if job.all_moves {
+            mask
+        } else if let (Some(played), Some(Action::Place(best))) =
+            (job.review_move, result.best_move)
+        {
+            played.bit() | best.bit()
+        } else {
+            0
+        };
+        if score_mask != 0
             && !context.aborted()
             && let Some(last) = last
             && last.depth > 0
-            && let Ok(moves) = root.move_scores(&mut context, last.spec())
+            && let Ok(moves) = root.move_scores(&mut context, last.spec(), score_mask, job.move_pvs)
             && !context.aborted()
         {
-            result.moves = moves;
+            for (score, pv) in moves {
+                result.moves.push(score);
+                if job.move_pvs {
+                    let pv = if result.best_move == Some(score.action)
+                        && result.score == Some(score.score)
+                        && result.pv.len() > pv.len()
+                    {
+                        result.pv.clone()
+                    } else {
+                        pv
+                    };
+                    result.move_pvs.push(pv);
+                }
+            }
         }
         runtime.drain();
         if runtime.control.reason() != StopReason::WorkerFailed {
@@ -557,6 +609,7 @@ impl Engine {
 struct Job {
     minimum_score: Option<i32>,
     reuse_pv: bool,
+    recover_endgame_pv: bool,
     board: Board,
     mode: SearchMode,
     selectivity: Selectivity,
@@ -566,6 +619,8 @@ struct Job {
     time_limit: Option<Duration>,
     node_limit: Option<u64>,
     all_moves: bool,
+    move_pvs: bool,
+    review_move: Option<Square>,
     root_moves: Option<u64>,
     preferred_move: Option<Square>,
     stop: StopHandle,
@@ -594,6 +649,7 @@ fn initial_result(board: Board) -> SearchResult {
         kind: None,
         pv: Vec::new(),
         moves: Vec::new(),
+        move_pvs: Vec::new(),
         stop_reason: StopReason::Completed,
         stats: SearchStats::default(),
         elapsed: Duration::ZERO,

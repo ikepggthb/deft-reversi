@@ -75,3 +75,10 @@ pub fn legacy_main_rules() -> Vec<ProbCutRule> {
 
 /// Version recorded in external analysis provenance.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Git revision used for this build, with a suffix for local source changes.
+pub const GIT_REVISION: &str = env!("DEFT_GIT_REVISION");
+
+/// Engine version and source revision.
+pub const BUILD_VERSION: &str =
+    concat!(env!("CARGO_PKG_VERSION"), " (git ", env!("DEFT_GIT_REVISION"), ")");

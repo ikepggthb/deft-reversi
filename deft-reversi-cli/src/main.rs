@@ -1,4 +1,5 @@
 mod book;
+mod book_view;
 mod display;
 mod game;
 mod gtp;
@@ -16,9 +17,13 @@ use std::{error::Error, path::PathBuf, time::Duration};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+static BUILD_VERSION: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{VERSION} (git {})", deft_reversi_engine::GIT_REVISION));
+
 /// Play, analyze and review Reversi from the terminal.
 #[derive(Parser, Debug)]
-#[command(author, version, about)]
+#[command(author, version, long_version = BUILD_VERSION.as_str(), about)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

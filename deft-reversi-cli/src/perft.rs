@@ -43,6 +43,7 @@ pub fn count(position: Position, depth: u8, count_pass: bool, counts: &mut Count
 }
 
 pub fn run(args: PerftArgs) {
+    eprintln!("{}", crate::settings::versions());
     println!(
         "{:>5} | {:>14} | {:>10} | {:>10} | {:>12}",
         "depth", "leaves", "passes", "ends", "time"

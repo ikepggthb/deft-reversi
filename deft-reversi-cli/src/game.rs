@@ -103,6 +103,13 @@ impl Game {
         Some(action)
     }
 
+    pub fn steps(&self) -> impl Iterator<Item = (Position, Action)> + '_ {
+        self.positions
+            .iter()
+            .copied()
+            .zip(self.actions.iter().copied())
+    }
+
     /// The placements so far, such as `f5d6c3`.
     pub fn record(&self) -> String {
         self.actions

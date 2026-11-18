@@ -142,6 +142,17 @@ pub fn summary(goal: Goal, time: Option<std::time::Duration>) -> String {
     )
 }
 
+pub fn versions() -> String {
+    format!(
+        "Versions: CLI {} | Engine {} | Book library {} | search revision {} | git {}",
+        crate::VERSION,
+        deft_reversi_engine::VERSION,
+        deft_reversi_book::VERSION,
+        deft_reversi_engine::SEARCH_SEMANTICS_REVISION,
+        deft_reversi_engine::GIT_REVISION,
+    )
+}
+
 pub fn report(
     engine: &deft_reversi_engine::Engine,
     args: &crate::EngineArgs,
@@ -149,6 +160,7 @@ pub fn report(
     time: Option<std::time::Duration>,
 ) {
     let o = engine.options();
+    eprintln!("{}", versions());
     eprintln!("Search: {}", summary(goal, time));
     eprintln!(
         "Engine: threads {}; main TT {} MiB (requested {}); model {}",

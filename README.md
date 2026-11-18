@@ -26,6 +26,24 @@ Rust 1.99.1を `rust-toolchain.toml` で固定し、依存関係はルートの 
 cargo run --locked --release -p deft-reversi-cli -- solve POSITIONS.obf --model MODEL.dpr2 --exact --threads 1 --tt-mib 256
 ```
 
+## バージョン
+
+今回の開発系列は Deft Reversi 2.0 です。Engine は自身の `Cargo.toml` で `2.0.0-dev.1`、CLI・Book・学習ツールはルートの `[workspace.package].version` で `1.0.0-dev.1` を指定します。`-dev.N` は正式リリース前の開発ビルドを表します。開発版の区切りで `N` を進め、個々のビルドはGitコミットでも識別します。
+
+バージョンを変更したら `cargo check --workspace` でロックファイルを更新し、`cargo test --locked --workspace` で確認します。正式版をリリースするときにプレリリース接尾辞を外します。
+
+```sh
+cargo run --locked --release -p deft-reversi-cli -- --version
+cargo run --locked --release -p deft-reversi-cli -- book --version
+cargo run --locked --release -p deft_reversi_train -- --version
+```
+
+`--version` には製品番号に加え、ビルド元のGitコミットを表示します。`-dirty` は上記4クレートまたはワークスペースのビルド設定に未コミットの変更があることを示します。ソースアーカイブなど、コミットを取得できない場合は `git unknown` と表示します。対局中の `settings` では、ビルドターゲット・バイナリのSHA-256・モデルのSHA-256も確認できます。
+
+`solve`、`review`、`self-play`、`perft`、`gtp` とBookの学習では、標準エラーにCLI・Engine・Bookライブラリのバージョン、探索仕様番号、Gitコミットを表示します。`solve --tsv` の標準出力は計測結果のままです。
+
+モデルやBookのファイル形式、探索仕様の互換性はそれぞれの番号で管理します。公開済みの旧Web版は独立したバージョンを持ちます。
+
 ## 旧アプリケーション
 
 `deft-reversi-train` はパターン評価の学習器です（[使い方](deft-reversi-train/README.md)）。`deft-reversi-cli` は新エンジンと定石を使う端末アプリです（[対局・solve・review・自己対戦・perft](deft-reversi-cli/README.md)）。`deft-reversi-web` は旧APIに依存する移植前のソースとして保存し、ワークスペースから除外しています。

@@ -9,6 +9,7 @@ import csv
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -63,6 +64,7 @@ class Deft:
     def __init__(self, spec, tools):
         self.name, _, settings = spec.partition(":")
         self.solve, self.model, self.tt, self.env = tools["solve"], tools["model"], 256, {}
+        self.reported_versions = set()
         for item in filter(None, settings.split(",")):
             key, _, value = item.partition("=")
             if key == "solve":
@@ -80,8 +82,12 @@ class Deft:
         goal_args = ["--exact"] if goal == "exact" else (["--level", goal[5:]] if goal.startswith("level") else ["--depth", goal])
         cmd = ["taskset", "-c", cpus, str(self.solve), "solve", str(Path(case).resolve()),
                "--model", str(self.model), *goal_args, "--threads", str(threads), "--tt-mib", str(self.tt), "--tsv"]
-        out = subprocess.run(cmd, capture_output=True, text=True, check=True, env={**os.environ, **self.env}).stdout
-        return list(csv.DictReader(io.StringIO(out), delimiter="\t"))
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, env={**os.environ, **self.env})
+        for line in result.stderr.splitlines():
+            if line.startswith("Versions: ") and line not in self.reported_versions:
+                print(f"{self.name}: {line}", file=sys.stderr, flush=True)
+                self.reported_versions.add(line)
+        return list(csv.DictReader(io.StringIO(result.stdout), delimiter="\t"))
 
 
 def engine(spec, tools):

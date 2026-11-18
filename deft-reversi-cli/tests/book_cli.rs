@@ -120,6 +120,72 @@ fn cli_generation_resume_export_extend_and_retarget() {
         std::fs::read(&book).unwrap(),
         std::fs::read(&copied).unwrap()
     );
+    let record = "f5d6c3";
+    let args = [
+        "--model",
+        text(&model),
+        "--work",
+        text(&work),
+        "--tt-mib",
+        "1",
+        "--nodes",
+        "1000",
+    ];
+    let before_record = std::fs::read(&work).unwrap();
+    let mut invalid = vec!["extend", "--record", "f5f5"];
+    invalid.extend(args);
+    assert!(!call(&invalid).status.success());
+    assert_eq!(std::fs::read(&work).unwrap(), before_record);
+
+    // A record seeds a linked path from the initial position and training
+    // resumes from the actual side to move at the last position.
+    let record_work = dir.join("record.dbook-work");
+    success(&[
+        "build",
+        "--record",
+        record,
+        "--model",
+        text(&model),
+        "--work",
+        text(&record_work),
+        "--tt-mib",
+        "1",
+        "--stages",
+        "2",
+        "--selectivity",
+        "100",
+        "--max-plies",
+        "1",
+        "--nodes",
+        "1000",
+    ]);
+    let trained = BookEditor::load(&record_work, ReadLimits::default()).unwrap();
+    let snapshot = trained.export().unwrap();
+    let mut board = Board::new();
+    for chunk in record.as_bytes().chunks_exact(2) {
+        let action = std::str::from_utf8(chunk).unwrap().parse().unwrap();
+        assert!(
+            snapshot
+                .probe(board)
+                .unwrap()
+                .moves()
+                .any(|m| m.action == action && m.registered)
+        );
+        board = board.play(action).unwrap();
+    }
+    assert_eq!(trained.generation_starts()[0].side, BookSide::White);
+    assert!(snapshot.probe(board).is_some());
+    success(&[
+        "resume",
+        "--model",
+        text(&model),
+        "--work",
+        text(&record_work),
+        "--tt-mib",
+        "1",
+        "--nodes",
+        "1000",
+    ]);
     let before = std::fs::read(&work).unwrap();
     assert!(
         !call(&["export", "--work", text(&work), "--book", text(&work)])

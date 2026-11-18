@@ -304,7 +304,7 @@ impl BookEditor {
             active_run: None,
             producer: format!(
                 "deft_reversi_book/{};search-revision/{}",
-                env!("CARGO_PKG_VERSION"),
+                crate::VERSION,
                 deft_reversi_engine::SEARCH_SEMANTICS_REVISION
             ),
             extensions: Vec::new(),

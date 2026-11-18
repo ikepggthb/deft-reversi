@@ -5,7 +5,7 @@
 //! run内のコマンド別分岐から、configure_generation_roots / generate_with_checkpoint、
 //! export / save / loadへ進むとCLIと実装の対応を追える。
 use deft_reversi_book::*;
-use deft_reversi_engine::{Board, Engine, EngineOptions, Model, Selectivity, StopHandle};
+use deft_reversi_engine::{Board, Color, Engine, EngineOptions, Model, Selectivity, StopHandle};
 use std::{collections::BTreeMap, error::Error, path::Path, time::Duration};
 #[derive(clap::Args, Debug)]
 pub struct BookArgs {
@@ -40,8 +40,9 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
     };
     if command == "--version" || command == "version" {
         println!(
-            "deft_reversi_book {} search_revision={} endgame_pattern_ordering={}",
-            env!("CARGO_PKG_VERSION"),
+            "deft_reversi_book {} (git {}) search_revision={} endgame_pattern_ordering={}",
+            deft_reversi_book::VERSION,
+            deft_reversi_engine::GIT_REVISION,
             deft_reversi_engine::SEARCH_SEMANTICS_REVISION,
             cfg!(feature = "endgame-pattern-ordering")
         );
@@ -58,6 +59,7 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
         "work",
         "book",
         "positions",
+        "record",
         "stages",
         "levels",
         "level",
@@ -230,6 +232,22 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
     {
         return Err("explicit --seconds, --nodes or --new-positions budget required".into());
     }
+    if flags.contains_key("record") {
+        if !matches!(command.as_str(), "build" | "extend") {
+            return Err("--record is only available for book build and extend".into());
+        }
+        if flags.contains_key("positions") {
+            return Err("--record conflicts with --positions".into());
+        }
+    }
+    let budgets = GenerationLimits {
+        time: flags
+            .get("seconds")
+            .map(|s| s.parse().map(Duration::from_secs))
+            .transpose()?,
+        nodes: flags.get("nodes").map(|s| s.parse()).transpose()?,
+        new_positions: flags.get("new-positions").map(|s| s.parse()).transpose()?,
+    };
     let work = required("work")?;
     let mut engine = Engine::new(
         Model::from_file(required("model")?)?,
@@ -253,7 +271,11 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
     if command == "reanalyze" {
         editor.retarget(&engine)?;
     }
-    if editor.identity() == analysis_identity(&engine)? {
+    let model_matches = editor.identity() == analysis_identity(&engine)?;
+    if flags.contains_key("record") && !model_matches {
+        return Err("--record requires a workspace with the current model and calibration".into());
+    }
+    if model_matches {
         editor.set_model_label(required("model")?.to_string())?;
         use sha2::{Digest, Sha256};
         let bytes = std::fs::read(std::env::current_exe()?)?;
@@ -283,6 +305,7 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
         "memory-mib",
         "checkpoint-seconds",
         "positions",
+        "record",
     ];
     if command == "resume" && config_flags.iter().any(|f| flags.contains_key(*f)) {
         return Err("resume retains stored settings; use extend/reanalyze to change them".into());
@@ -368,6 +391,26 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
         }
         let roots = if let Some(p) = flags.get("positions") {
             read_positions(p)?
+        } else if let Some(record) = flags.get("record") {
+            let mut game = crate::game::Game::new();
+            if record.is_empty() {
+                return Err("--record requires at least one move".into());
+            }
+            game.play_record(record)?;
+            let position = game.current();
+            if position.is_terminal() {
+                return Err("--record ends at a terminal position".into());
+            }
+            for (parent, action) in game.steps() {
+                editor.register_move(parent.into(), action)?;
+            }
+            vec![GenerationRoot {
+                board: position.into(),
+                side: match position.side_to_move() {
+                    Color::Black => BookSide::Black,
+                    Color::White => BookSide::White,
+                },
+            }]
         } else {
             let r = previous_roots;
             if r.is_empty() {
@@ -381,14 +424,7 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
         };
         editor.configure_generation_roots(&roots, config)?;
     }
-    let budgets = GenerationLimits {
-        time: flags
-            .get("seconds")
-            .map(|s| s.parse().map(Duration::from_secs))
-            .transpose()?,
-        nodes: flags.get("nodes").map(|s| s.parse()).transpose()?,
-        new_positions: flags.get("new-positions").map(|s| s.parse()).transpose()?,
-    };
+    eprintln!("{}", crate::settings::versions());
     let stop = StopHandle::new();
     let _armed = crate::stop::arm(stop.clone());
     let result = editor.generate_with_checkpoint(&mut engine, budgets, stop, |e, r| {
@@ -538,7 +574,7 @@ fn destination(path: &str) -> std::io::Result<std::path::PathBuf> {
 }
 fn help() {
     println!(
-        "deft-reversi-cli book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --level 22 | --levels 4,8,12 (alternative to --stages/--selectivity)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic, about three threads per job)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
+        "deft-reversi-cli book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --level 22 | --levels 4,8,12 (alternative to --stages/--selectivity)\n  --record MOVES (build/extend: link the record and train from its endpoint)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic, about three threads per job)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
   --threads 1 --tt-mib 256 --memory-mib 512 --checkpoint-seconds 60\n  --memory-mib limits estimated book data and job storage; engine/TT and temporary I/O memory are separate\n  --legacy-main-mpc\nbook repair --work FILE [--book FILE]\nbook export --work FILE --book FILE\nbook inspect|verify --work FILE | --book FILE\n  inspect --positions OBF (candidate evidence and completed modes)\n  --read-mib 512 --read-positions 2000000 --read-candidates 32000000
   (read/allocation bounds; resume retains stored generation settings)"
     );

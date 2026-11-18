@@ -1,5 +1,21 @@
 //! TT cutoffs need no PV copies. Verify the chosen line after the score is known.
 use super::*;
+
+pub(super) fn terminal_score(board: Board, pv: &[Action]) -> Option<i32> {
+    let board = pv
+        .iter()
+        .try_fold(board, |board, &action| board.play(action))
+        .ok()?;
+    board.is_terminal().then(|| {
+        let score = board.final_score();
+        if pv.len().is_multiple_of(2) {
+            score
+        } else {
+            -score
+        }
+    })
+}
+
 impl Context {
     pub(super) fn extract_pv(
         &mut self,
@@ -9,6 +25,7 @@ impl Context {
         exact: bool,
         mut first: Option<Action>,
     ) -> Result<Vec<Action>, Aborted> {
+        let selective = self.runtime.selective();
         let mut pv = Vec::new();
         while depth > 0 && !board.is_terminal() && pv.len() < 128 {
             if self.aborted() {
@@ -22,20 +39,23 @@ impl Context {
                 first = None;
                 continue;
             }
-            let hint = first
-                .take()
-                .and_then(|action| match action {
-                    Action::Place(square) => Some(square),
-                    _ => None,
-                })
-                .or_else(|| {
-                    self.runtime
-                        .pv_table
-                        .get(board)
-                        .or_else(|| self.runtime.table.get(board))
-                        .and_then(|entry| Square::new(entry.best))
-                });
+            let first = first.take().and_then(|action| match action {
+                Action::Place(square) => Some(square),
+                _ => None,
+            });
+            let hint = first.or_else(|| {
+                self.runtime
+                    .pv_table
+                    .get(board)
+                    .or_else(|| self.runtime.table.get(board))
+                    .and_then(|entry| Square::new(entry.best))
+            });
             let preferred = hint.map_or(0, Square::bit) & moves;
+            // In a selective search, do not change the reported root move
+            // based on a new probe.
+            if selective && first.is_some() {
+                moves = preferred;
+            }
             let state = EvalState::from_board(board);
             let mut chosen = None;
             while moves != 0 {
@@ -52,7 +72,7 @@ impl Context {
                         board: child,
                         state: state.played(bit, flips),
                     },
-                    -score,
+                    -score - i32::from(selective),
                     -score + 1,
                     SearchSpec {
                         depth: depth - 1,
@@ -60,9 +80,14 @@ impl Context {
                         probcut: true,
                     },
                 )?;
-                // Since the parent value is known, a move reaching that value
-                // is optimal. A hint alone is not proof that the move is best.
-                if line.score <= -score {
+                // At full width the known parent value makes a one-sided
+                // test sufficient. With MPC, require the probe's point score.
+                let matches = if selective {
+                    line.score == -score
+                } else {
+                    line.score <= -score
+                };
+                if matches {
                     chosen = Some((bit, child));
                     break;
                 }

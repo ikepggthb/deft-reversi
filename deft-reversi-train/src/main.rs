@@ -12,9 +12,13 @@ use std::{error::Error, str::FromStr, sync::Mutex};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+static BUILD_VERSION: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{VERSION} (git {})", deft_reversi_engine::GIT_REVISION));
+
 /// Trains the engine's pattern evaluation from `.rd` datasets.
 #[derive(Parser, Debug)]
-#[command(author, version, about)]
+#[command(author, version, long_version = BUILD_VERSION.as_str(), about)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

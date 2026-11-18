@@ -119,17 +119,79 @@ impl BookPlayer {
         }
     }
     pub fn decide(&mut self, position: impl Into<Board>) -> BookDecision {
-        let board = position.into();
+        Self::decide_with(
+            self.book.as_deref(),
+            position.into(),
+            self.identity,
+            self.policy,
+            Some(&mut self.rng),
+        )
+    }
+
+    /// Look up recorded candidates in the caller's orientation, including
+    /// evaluations that the play policy would reject.
+    pub fn probe(&self, position: impl Into<Board>) -> Option<BookEntry<'_>> {
+        self.book.as_ref()?.probe(position.into())
+    }
+
+    /// A point evaluation usable at the configured search quality.
+    pub fn point_value(&self, candidate: BookMove<'_>) -> std::result::Result<i16, BookMiss> {
+        let value = candidate.value.ok_or(BookMiss::NoPointValue)?;
+        self.policy.check_ref(value, self.identity)?;
+        value.result().point_value().ok_or(BookMiss::NoPointValue)
+    }
+
+    /// Return the strongest eligible move without advancing the play RNG.
+    pub fn recommend(&self, position: impl Into<Board>) -> BookDecision {
+        Self::decide_with(
+            self.book.as_deref(),
+            position.into(),
+            self.identity,
+            self.policy,
+            None,
+        )
+    }
+
+    /// Follow eligible Book moves starting at this position. Forced passes
+    /// are included so that the returned continuation can be replayed.
+    pub fn continuation(&self, position: impl Into<Board>) -> Vec<Action> {
+        let mut board = position.into();
+        let mut line = Vec::new();
+        // Hold a pending pass until there is a Book move on the other side.
+        while !board.is_terminal() {
+            let pass = board.must_pass();
+            if pass {
+                board = board.play(Action::Pass).expect("forced pass");
+            }
+            let BookDecision::Chosen(choice) = self.recommend(board) else {
+                break;
+            };
+            if pass {
+                line.push(Action::Pass);
+            }
+            line.push(choice.action);
+            board = board.play(choice.action).expect("legal Book move");
+        }
+        line
+    }
+
+    fn decide_with(
+        book: Option<&Book>,
+        board: Board,
+        identity: AnalysisIdentity,
+        policy: UsePolicy,
+        rng: Option<&mut u64>,
+    ) -> BookDecision {
         if board.empty_count() > 60 {
             return BookDecision::Fallback(BookMiss::InvalidPosition);
         }
         if board.is_terminal() {
             return BookDecision::Fallback(BookMiss::Terminal);
         }
-        let Some(book) = self.book.as_ref() else {
+        let Some(book) = book else {
             return BookDecision::Fallback(BookMiss::NoBook);
         };
-        match choose(book, board, self.identity, self.policy, &mut self.rng) {
+        match choose(book, board, identity, policy, rng) {
             Ok(c) => BookDecision::Chosen(c),
             Err(reason) => BookDecision::Fallback(reason),
         }
@@ -224,7 +286,7 @@ fn choose(
     board: Board,
     identity: AnalysisIdentity,
     policy: UsePolicy,
-    rng: &mut u64,
+    rng: Option<&mut u64>,
 ) -> std::result::Result<BookChoice, BookMiss> {
     let entry = book.probe(board).ok_or(BookMiss::MissingPosition)?;
     let usable = |c: &BookMove<'_>| {
@@ -283,15 +345,15 @@ fn choose(
                 .unwrap_or(BookMiss::NoPointValue)
         });
     }
-    let index = match policy.moves {
-        MovePolicy::Best => 0,
-        _ => uniform(rng, count),
-    };
-    let c = entry
-        .moves()
-        .filter(qualifies)
-        .nth(index as usize)
-        .expect("counted candidate");
+    let mut eligible = entry.moves().filter(qualifies);
+    let c = match (rng, policy.moves) {
+        (None, _) => eligible.min_by_key(|c| std::cmp::Reverse(c.value.unwrap().score())),
+        (Some(_), MovePolicy::Best) => eligible.next(),
+        (Some(rng), MovePolicy::RandomWithinLoss { .. }) => {
+            eligible.nth(uniform(rng, count) as usize)
+        }
+    }
+    .expect("counted candidate");
     Ok(BookChoice {
         action: c.action,
         value: c.value.unwrap().to_owned(),

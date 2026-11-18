@@ -60,6 +60,14 @@ pub fn pv(pv: &[Action]) -> String {
         .join(" ")
 }
 
+pub fn pv_prefix(line: &[Action], limit: usize) -> String {
+    let mut preview = pv(&line[..line.len().min(limit)]);
+    if line.len() > limit {
+        preview.push_str(" ...");
+    }
+    preview
+}
+
 pub fn action(action: Option<Action>) -> String {
     action.map_or_else(|| "-".into(), |a| a.to_string())
 }

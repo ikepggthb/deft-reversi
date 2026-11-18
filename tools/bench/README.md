@@ -24,6 +24,8 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native \
 
 `solve`・`gtp` の値はどちらもCLIバイナリのパスです。`solve --tsv` は秒数を小数点以下9桁で出し、通常表示のミリ秒への丸めを避けます。探索の完了・深さ・完全読みの種別も出力し、不完全なFFO結果は計測ツールが拒否します。
 
+FFO・中盤の計測では、Deftの設定ごとにCLI・Engine・BookライブラリのバージョンとGitコミットを標準エラーに表示します。GTP対局ではエンジン側の標準エラーをログに記録します。
+
 場所を変えるときは `local/bench.toml` に同じキーで書きます（リポジトリからの相対パスか絶対パス）。
 
 ## 完全読み：[ffo.py](ffo.py)
