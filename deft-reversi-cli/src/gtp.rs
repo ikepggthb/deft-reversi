@@ -1,7 +1,9 @@
 //! GTP interface for CLI-based matches.
-use crate::{EngineArgs, Result, stop};
+use crate::{EngineArgs, Result, game_clock::Budget, stop};
 use clap::Args;
-use deft_reversi_engine::{Action, Color, Goal, Position, SearchRequest};
+use deft_reversi_engine::{
+    Action, Color, EngineError, Goal, Position, SearchRequest, SearchResult, StopReason,
+};
 use std::{
     io::{self, BufRead, Write},
     time::{Duration, Instant},
@@ -52,22 +54,6 @@ fn apply(pos: &mut Position, side: Color, action: Action) -> std::result::Result
     next = next.play(action).map_err(|e| e.to_string())?;
     *pos = next;
     Ok(())
-}
-
-const SOLVE_EMPTIES: u8 = 20;
-
-fn request_budget(mode: &Mode, pos: &Position) -> Duration {
-    match mode {
-        Mode::Level(_) => Duration::ZERO,
-        // Positions with SOLVE_EMPTIES or fewer empties are solved in a small
-        // part of the time, so the time is spread over this side's moves
-        // before them: (empties - SOLVE_EMPTIES) / 2 + 1 moves.
-        Mode::Time { remaining } => {
-            let moves_left = u32::from(pos.empty_count().saturating_sub(SOLVE_EMPTIES)) / 2 + 1;
-            let left = remaining[clock(pos.side_to_move())];
-            left.saturating_sub(Duration::from_millis(10)) / moves_left
-        }
-    }
 }
 
 #[derive(Args, Debug)]
@@ -224,6 +210,18 @@ pub fn run(args: GtpArgs) -> Result<()> {
     Ok(())
 }
 
+fn searched_action(
+    result: std::result::Result<SearchResult, EngineError>,
+) -> std::result::Result<Action, String> {
+    let result = result.map_err(|e| e.to_string())?;
+    if result.stop_reason == StopReason::WorkerFailed {
+        return Err("search worker failed".into());
+    }
+    result
+        .best_move
+        .ok_or_else(|| "search returned no legal move".into())
+}
+
 fn generate(
     engine: &mut crate::Engine,
     pos: &mut Position,
@@ -245,36 +243,49 @@ fn generate(
         return Ok("pass".into());
     }
     let start = Instant::now();
-    let request = match mode {
-        Mode::Level(l) => SearchRequest::new(Goal::Level(*l)),
-        Mode::Time { .. } => SearchRequest::new(Goal::Level(60))
-            .time_limit(request_budget(mode, &next).max(Duration::from_millis(1))),
+    let log = std::env::var_os("DEFT_GTP_LOG").is_some();
+    let mut last = None;
+    let mut report = |p: &deft_reversi_engine::Progress| {
+        if log {
+            last = Some((p.elapsed, p.kind));
+        }
     };
-    let _armed = stop::arm(request.stop_handle());
-    let mut last = (Duration::ZERO, String::new());
-    let result = engine
-        .search_with(next, &request, |p| {
-            last = (p.elapsed, format!("{:?}", p.kind))
-        })
-        .map_err(|e| e.to_string());
-    if std::env::var_os("DEFT_GTP_LOG").is_some() {
+    let mut limit = Duration::ZERO;
+    let action = match mode {
+        Mode::Level(l) => {
+            let request = SearchRequest::new(Goal::Level(*l));
+            let _armed = stop::arm(request.stop_handle());
+            searched_action(engine.search_with(next, &request, report))
+        }
+        Mode::Time { remaining } => {
+            let mut moves = next.legal_moves();
+            let left = remaining[clock(side)].saturating_sub(Duration::from_millis(10));
+            let budget = Budget::new(next.empty_count(), left, left);
+            limit = budget.hard;
+            if moves.len() == 1 || limit.is_zero() {
+                Ok(Action::Place(moves.next().unwrap()))
+            } else {
+                searched_action(budget.search(engine, next, &mut report))
+            }
+        }
+    };
+    if log {
+        let (elapsed, kind) = last.map_or((Duration::ZERO, String::new()), |(t, k)| {
+            (t, format!("{k:?}").replace(' ', ""))
+        });
         eprintln!(
             "empties {} budget {:.4} used {:.4} last_done {:.4} kind {}",
             next.empty_count(),
-            request_budget(mode, &next).as_secs_f64(),
+            limit.as_secs_f64(),
             start.elapsed().as_secs_f64(),
-            last.0.as_secs_f64(),
-            last.1.replace(' ', "")
+            elapsed.as_secs_f64(),
+            kind
         );
     }
     if let Mode::Time { remaining } = mode {
         remaining[clock(side)] = remaining[clock(side)].saturating_sub(start.elapsed());
     }
-    let result = result?;
-    if result.stop_reason == deft_reversi_engine::StopReason::WorkerFailed {
-        return Err("search worker failed".into());
-    }
-    let action = result.best_move.ok_or("search returned no legal move")?;
+    let action = action?;
     apply(&mut next, side, action)?;
     *pos = next;
     Ok(action.to_string().to_lowercase())

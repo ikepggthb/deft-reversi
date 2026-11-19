@@ -1,7 +1,7 @@
-use crate::{Engine, EngineArgs, Result, book_view, stop};
+use crate::{Engine, EngineArgs, Result, book_view, game_clock::Budget};
 use clap::Args;
 use deft_reversi_book::{BookPlayer, MovePolicy};
-use deft_reversi_engine::{Action, Color, Moves, Position, SearchRequest, Square, StopReason};
+use deft_reversi_engine::{Action, Color, Moves, Position, Square, StopReason};
 use serde::{Deserialize, Serialize};
 use std::{
     io::{self, BufRead, Write},
@@ -180,15 +180,13 @@ fn choose(
     {
         return Ok(square);
     }
-    let moves_left = u32::from(position.empty_count()) / 2 + 1;
-    let share = Duration::from_millis(turn.remaining_ms) / moves_left;
-    let limit = time_left().min(share);
-    if limit.is_zero() {
+    let remaining =
+        Duration::from_millis(turn.remaining_ms).saturating_sub(received.elapsed() + REPLY_MARGIN);
+    let budget = Budget::new(position.empty_count(), remaining, time_left());
+    if budget.hard.is_zero() {
         return Ok(first);
     }
-    let request = SearchRequest::timed_levels(60, limit).skip_pv_recovery();
-    let _armed = stop::arm(request.stop_handle());
-    let result = engine.engine.search(position, &request)?;
+    let result = budget.search(&mut engine.engine, position, |_| {})?;
     match (result.stop_reason, result.best_move) {
         (StopReason::WorkerFailed, _) => Err("search worker failed".into()),
         (_, Some(Action::Place(square))) => Ok(square),
