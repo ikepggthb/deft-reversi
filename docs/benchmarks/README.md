@@ -71,3 +71,4 @@
 | [2026-11-16-ffo33-51-console-8thread](2026-11-16-ffo33-51-console-8thread/README.md) | CLI経由のFFO33〜51：8スレッド（4物理コア＋SMT）、各1回、全57解が正解と一致 |
 | [2026-11-16-edax456-audit](2026-11-16-edax456-audit/README.md) | Edax 4.5.6の設定確認、公式配布版・GCC/Clang native再ビルドの比較、TT容量の確認 |
 | [2026-11-20-game-clock](2026-11-20-game-clock/README.md) | 持ち時間制対局（FlipSight / GTP）の時間管理最適化と644局の直接対局評価 |
+| [2026-11-20-game-clock-v2](2026-11-20-game-clock-v2/README.md) | 60秒対局を見据えた `reuse_pv` 導入と不安定度減衰の256局独立評価 |

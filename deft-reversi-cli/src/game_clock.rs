@@ -49,7 +49,9 @@ impl Budget {
         pos: Position,
         mut report: impl FnMut(&Progress),
     ) -> Result<SearchResult, EngineError> {
-        let request = SearchRequest::timed_levels(60, self.hard).skip_pv_recovery();
+        let request = SearchRequest::timed_levels(60, self.hard)
+            .reuse_pv()
+            .skip_pv_recovery();
         let handle = request.stop_handle();
         let _armed = stop::arm(handle.clone());
         let mut forecast = Forecast::default();
@@ -67,6 +69,7 @@ struct Forecast {
     elapsed: Duration,
     last_cost: Duration,
     best: Option<Action>,
+    instability: f64,
 }
 
 impl Forecast {
@@ -92,10 +95,14 @@ impl Forecast {
             ResultKind::Endgame { .. } => 1.6,
         };
         let changed = self.best.is_some() && self.best != best;
+        // A reversal two plies ago still matters even if the latest
+        // iteration confirmed the new move. Decay the evidence with each
+        // confirmation, and renew it on another reversal.
+        self.instability = if changed { 1.0 } else { self.instability * 0.5 };
         self.best = best;
         self.elapsed = elapsed;
         self.last_cost = cost;
-        let target = budget.soft.as_secs_f64() * if changed { 1.4 } else { 1.0 };
+        let target = budget.soft.as_secs_f64() * (1.0 + self.instability);
         let predicted = elapsed.as_secs_f64() + cost.as_secs_f64() * growth;
         predicted > target.min(budget.hard.as_secs_f64())
     }
@@ -120,6 +127,7 @@ mod tests {
                 elapsed: ms(10),
                 last_cost: ms(5),
                 best: Some("d3".parse().unwrap()),
+                instability: 0.0,
             };
             // Last step took 10 ms and doubled in cost. The projected
             // completion at 40 ms lies beyond the normal 32 ms share.
@@ -139,6 +147,28 @@ mod tests {
         assert!(decision("d3", 60));
         assert!(!decision("c4", 60));
         assert!(decision("c4", 35));
+    }
+
+    #[test]
+    fn a_recent_reversal_keeps_some_time_for_confirmation() {
+        let ms = Duration::from_millis;
+        let budget = Budget {
+            soft: ms(32),
+            hard: ms(64),
+        };
+        let depth = |depth| ResultKind::Depth {
+            depth,
+            selectivity: Selectivity::Percent83,
+        };
+        let mut forecast = Forecast::default();
+        let first = Some("d3".parse().unwrap());
+        let second = Some("c4".parse().unwrap());
+        assert!(!forecast.stop(ms(4), depth(6), first, budget));
+        assert!(!forecast.stop(ms(10), depth(8), second, budget));
+        // 20 + 10 * (10 / 6) exceeds the ordinary share, but fits
+        // after a single confirmation of the new best move.
+        assert!(!forecast.stop(ms(20), depth(10), second, budget));
+        assert!(forecast.stop(ms(35), depth(12), second, budget));
     }
 
     #[test]
