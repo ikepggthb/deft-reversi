@@ -152,7 +152,13 @@ pub fn run(args: FlipsightArgs) -> Result<()> {
             None => -1,
             Some(only) if moves.is_empty() => {
                 ctx.begin_turn(position);
-                game_clock::unsearched_turn(&mut ctx, position, received.elapsed());
+                game_clock::unsearched_turn(
+                    &mut ctx,
+                    position,
+                    received.elapsed(),
+                    None,
+                    Some(Action::Place(only)),
+                );
                 i16::from(only.index())
             }
             Some(first) => {
@@ -183,13 +189,15 @@ fn choose(
     ctx.begin_turn(position);
     // The connector spawns us on the first move, so model loading must also respect its deadline.
     let Some(engine) = engine.wait(time_left())? else {
-        game_clock::unsearched_turn(ctx, position, received.elapsed());
+        let played = Some(Action::Place(first));
+        game_clock::unsearched_turn(ctx, position, received.elapsed(), None, played);
         return Ok(first);
     };
     if let Some(choice) = engine.book.as_mut().and_then(|book| book.choose(position))
         && let Action::Place(square) = choice.action
     {
-        game_clock::unsearched_turn(ctx, position, received.elapsed());
+        let played = Some(Action::Place(square));
+        game_clock::unsearched_turn(ctx, position, received.elapsed(), None, played);
         return Ok(square);
     }
     let remaining =
@@ -204,7 +212,8 @@ fn choose(
     let budget = Budget::new(clock, ctx);
     let result = if budget.hard().is_zero() {
         let result = game_clock::reflex(&mut engine.engine, position)?;
-        game_clock::unsearched_turn(ctx, position, received.elapsed());
+        let used = received.elapsed();
+        game_clock::unsearched_turn(ctx, position, used, Some(&budget), result.best_move);
         result
     } else {
         budget.search(&mut engine.engine, position, ctx, |_| {})?

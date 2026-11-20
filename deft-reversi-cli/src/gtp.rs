@@ -84,7 +84,8 @@ pub fn run(args: GtpArgs) -> Result<()> {
         Mode::Level(_) => [Duration::ZERO; 2],
     };
     let mut engine = args.engine.engine()?;
-    let mut ctx = GameContext::default();
+    // Each side remembers its own turns (one process may play both).
+    let mut ctx = [GameContext::default(), GameContext::default()];
     eprintln!("{}", crate::settings::versions());
     let mut pos = Position::initial();
     let stdin = io::stdin();
@@ -144,7 +145,7 @@ pub fn run(args: GtpArgs) -> Result<()> {
                 "boardsize" | "clear_board" => {
                     engine.clear_tt().map_err(|e| e.to_string()).map(|_| {
                         pos = Position::initial();
-                        ctx.new_game();
+                        ctx.iter_mut().for_each(GameContext::new_game);
                         if let Mode::Time { remaining } = &mut mode {
                             *remaining = initial_time;
                         }
@@ -197,7 +198,13 @@ pub fn run(args: GtpArgs) -> Result<()> {
                 },
                 "genmove" => match color(words[1]) {
                     None => Err("invalid color".into()),
-                    Some(side) => generate(&mut engine, &mut pos, &mut mode, &mut ctx, side),
+                    Some(side) => generate(
+                        &mut engine,
+                        &mut pos,
+                        &mut mode,
+                        &mut ctx[clock(side)],
+                        side,
+                    ),
                 },
                 "quit" => Ok(String::new()),
                 _ => Err("unknown command".into()),
@@ -281,11 +288,19 @@ fn generate(
             let budget = Budget::new(clock, ctx);
             limit = budget.hard();
             if moves.len() == 1 {
-                game_clock::unsearched_turn(ctx, next, start.elapsed());
-                Ok(Action::Place(moves.next().unwrap()))
+                let action = Action::Place(moves.next().unwrap());
+                game_clock::unsearched_turn(
+                    ctx,
+                    next,
+                    start.elapsed(),
+                    Some(&budget),
+                    Some(action),
+                );
+                Ok(action)
             } else if limit.is_zero() {
                 let action = searched_action(game_clock::reflex(engine, next));
-                game_clock::unsearched_turn(ctx, next, start.elapsed());
+                let played = action.as_ref().ok().copied();
+                game_clock::unsearched_turn(ctx, next, start.elapsed(), Some(&budget), played);
                 action
             } else {
                 searched_action(budget.search(engine, next, ctx, &mut report))

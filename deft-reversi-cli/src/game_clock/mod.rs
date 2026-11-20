@@ -4,6 +4,7 @@
 //! a value model, a clock model and a stopping policy. `legacy` holds the
 //! current ones. `GameContext` carries what a side remembers between turns.
 mod context;
+mod journal;
 mod legacy;
 mod parts;
 
@@ -21,6 +22,7 @@ use deft_reversi_engine::{
     Action, Engine, EngineError, Goal, Position, Progress, ResultKind, SearchRequest, SearchResult,
     StopReason,
 };
+use serde::Serialize;
 use std::time::{Duration, Instant};
 
 /// The tag of an iteration in logs: `d22` for a midgame depth, `e85` for
@@ -67,10 +69,18 @@ impl Budget {
         let _armed = stop::arm(handle.clone());
         let mut forecast = Forecast::legacy(pos.empty_count());
         let mut forecast_stopped = false;
+        let mut pending = None;
         let hurdle = self.hurdle;
+        let logging = journal::enabled();
         let mut result = engine.search_with(pos, &request, |p| {
             report(p);
-            if forecast.observe(&Finished::from(p), ctx, hurdle).stop {
+            let done = Finished::from(p);
+            let step = forecast.observe(&done, ctx, hurdle);
+            pending = p.next;
+            if logging {
+                journal::write(&IterationRecord::new(ctx, &done, &step, hurdle), false);
+            }
+            if step.stop {
                 forecast_stopped = true;
                 handle.stop();
             }
@@ -80,9 +90,19 @@ impl Budget {
         if forecast_stopped && result.stop_reason == StopReason::Requested {
             result.stop_reason = StopReason::TimeLimit;
         }
+        let used = start.elapsed();
+        if logging {
+            let mut record = TurnRecord::new(ctx, pos, used, Some(self), result.best_move);
+            record.searched = true;
+            record.stop_reason = Some(format!("{:?}", result.stop_reason));
+            record.reached = result.kind.as_ref().map(tag);
+            record.pending = pending.as_ref().map(tag);
+            record.score = result.score;
+            journal::write(&record, true);
+        }
         ctx.end_turn(TurnSummary {
             position: pos,
-            used: start.elapsed(),
+            used,
             reached: result.kind,
             pv: result.pv.clone(),
         });
@@ -90,14 +110,152 @@ impl Budget {
     }
 }
 
-/// A turn decided without a timed search (a forced move or `reflex`).
-pub(crate) fn unsearched_turn(ctx: &mut GameContext, position: Position, used: Duration) {
+/// A turn decided without a timed search: a forced move, a book move, a
+/// move while the model loads, or `reflex`. `budget` is the turn's budget
+/// when one was computed.
+pub(crate) fn unsearched_turn(
+    ctx: &mut GameContext,
+    position: Position,
+    used: Duration,
+    budget: Option<&Budget>,
+    played: Option<Action>,
+) {
+    if journal::enabled() {
+        journal::write(&TurnRecord::new(ctx, position, used, budget, played), true);
+    }
     ctx.end_turn(TurnSummary {
         position,
         used,
         reached: None,
-        pv: Vec::new(),
+        pv: played.into_iter().collect(),
     });
+}
+
+/// One line of the clock log per finished iteration.
+#[derive(Serialize)]
+struct IterationRecord {
+    record: &'static str,
+    session: u32,
+    game: u64,
+    empties: u8,
+    kind: String,
+    /// The iteration planned next; None after the last one.
+    next: Option<String>,
+    /// Seconds since the search started, and of this iteration alone.
+    elapsed: f64,
+    cost: f64,
+    nodes: u64,
+    score: i32,
+    best_move: Option<String>,
+    pv: Vec<String>,
+    /// The cost model's estimate for `next` (seconds, sigma of the log).
+    predicted: Option<f64>,
+    log_sigma: Option<f64>,
+    /// Its chance to finish before hard.
+    p_finish_hard: Option<f64>,
+    instability: f64,
+    expected_discs: Option<f64>,
+    /// The policy stopped the search here.
+    stop: bool,
+}
+
+impl IterationRecord {
+    fn new(ctx: &GameContext, done: &Finished, step: &Step, hurdle: Hurdle) -> Self {
+        let left = hurdle.hard.saturating_sub(done.elapsed).as_secs_f64();
+        Self {
+            record: "iteration",
+            session: journal::session(),
+            game: ctx.game,
+            empties: step.empties,
+            kind: tag(&done.kind),
+            next: done.next.as_ref().map(tag),
+            elapsed: done.elapsed.as_secs_f64(),
+            cost: step.cost.as_secs_f64(),
+            nodes: done.nodes,
+            score: done.score,
+            best_move: done.best_move.map(|m| m.to_string().to_lowercase()),
+            pv: journal::moves(done.pv),
+            predicted: step.estimate.map(|e| e.median),
+            log_sigma: step.estimate.map(|e| e.log_sigma),
+            p_finish_hard: step.estimate.map(|e| e.p_finish(left)),
+            instability: step.gain.instability,
+            expected_discs: step.gain.expected_discs,
+            stop: step.stop,
+        }
+    }
+}
+
+/// One line of the clock log per turn of this side.
+#[derive(Serialize)]
+struct TurnRecord {
+    record: &'static str,
+    session: u32,
+    game: u64,
+    /// False for forced, book, loading and reflex moves.
+    searched: bool,
+    empties: u8,
+    #[serde(flatten)]
+    board: journal::Board,
+    protocol: Option<Protocol>,
+    threads: Option<usize>,
+    /// Seconds: the clock after the reply margin, the turn's limit, and the
+    /// clock model's soft target and hard limit.
+    remaining: Option<f64>,
+    cap: Option<f64>,
+    soft: Option<f64>,
+    hard: Option<f64>,
+    price: Option<f64>,
+    /// Seconds this turn took in the game clock code.
+    used: f64,
+    stop_reason: Option<String>,
+    /// The last finished iteration, and the one planned next when the
+    /// search ended.
+    reached: Option<String>,
+    pending: Option<String>,
+    played: Option<String>,
+    score: Option<i32>,
+    previous_empties: Option<u8>,
+    previous_used: Option<f64>,
+    previous_reached: Option<String>,
+    /// The opponent played the reply the previous turn's pv expected.
+    reply_matched: Option<bool>,
+}
+
+impl TurnRecord {
+    fn new(
+        ctx: &GameContext,
+        position: Position,
+        used: Duration,
+        budget: Option<&Budget>,
+        played: Option<Action>,
+    ) -> Self {
+        let previous = ctx.previous.as_ref();
+        Self {
+            record: "turn",
+            session: journal::session(),
+            game: ctx.game,
+            searched: false,
+            empties: position.empty_count(),
+            board: journal::Board::of(position),
+            protocol: budget.map(|b| b.clock.protocol),
+            threads: budget.map(|b| b.clock.threads),
+            remaining: budget.map(|b| b.clock.remaining.as_secs_f64()),
+            cap: budget.map(|b| b.clock.cap.as_secs_f64()),
+            soft: budget.map(|b| b.hurdle.soft.as_secs_f64()),
+            hard: budget.map(|b| b.hurdle.hard.as_secs_f64()),
+            price: budget.and_then(|b| b.hurdle.price),
+            used: used.as_secs_f64(),
+            stop_reason: None,
+            reached: None,
+            pending: None,
+            played: played.map(|m| m.to_string().to_lowercase()),
+            score: None,
+            previous_empties: previous.map(|p| p.position.empty_count()),
+            previous_used: previous.map(|p| p.used.as_secs_f64()),
+            previous_reached: previous.and_then(|p| p.reached.as_ref().map(tag)),
+            reply_matched: ctx.reply_matched,
+        }
+    }
 }
 
 /// A two-ply search for a clock too short to budget: it takes microseconds
@@ -133,6 +291,11 @@ impl<'a> From<&'a Progress> for Finished<'a> {
 
 /// What the forecast concluded after one iteration.
 struct Step {
+    empties: u8,
+    /// The iteration's own time.
+    cost: Duration,
+    estimate: Option<CostEstimate>,
+    gain: GainEstimate,
     stop: bool,
 }
 
@@ -188,14 +351,20 @@ impl Forecast {
             nodes: done.nodes,
             pv: done.pv,
         };
-        let estimate: Option<CostEstimate> = self.cost.next(&obs, ctx);
-        let gain: GainEstimate = self.value.gain(&obs, ctx);
+        let estimate = self.cost.next(&obs, ctx);
+        let gain = self.value.gain(&obs, ctx);
         let stop = self.policy.stop(&obs, estimate, gain, hurdle);
         self.pending = done
             .next
             .zip(estimate)
             .map(|(next, e)| (Transition::of(done.kind, next), e.median));
-        Step { stop }
+        Step {
+            empties: self.empties,
+            cost,
+            estimate,
+            gain,
+            stop,
+        }
     }
 }
 

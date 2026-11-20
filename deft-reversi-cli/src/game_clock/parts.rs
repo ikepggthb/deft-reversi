@@ -43,8 +43,12 @@ pub(crate) struct Observation<'a> {
     /// The iteration the search runs next; None after the last one.
     pub next: Option<ResultKind>,
     pub best_move: Option<Action>,
+    // Not used by the legacy parts; there for models fitted on the log.
+    #[allow(dead_code)]
     pub score: i32,
+    #[allow(dead_code)]
     pub nodes: u64,
+    #[allow(dead_code)]
     pub pv: &'a [Action],
 }
 
