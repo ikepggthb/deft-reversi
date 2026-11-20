@@ -6,7 +6,7 @@
 
 | 役割 | 場所 |
 |---|---|
-| 予算と打ち切り | `deft-reversi-cli/src/game_clock.rs`（`Budget`、`Forecast`、`reflex`） |
+| 予算と打ち切り | `deft-reversi-cli/src/game_clock/`（`mod.rs` の `Budget`・`Forecast`・`reflex`、`legacy.rs` の計算式。部品の構成とログは `2026-11-20-game-clock-parts.md`） |
 | GTP の時計 | `deft-reversi-cli/src/gtp.rs`（`Mode::Time`） |
 | FlipSight の時計 | `deft-reversi-cli/src/flipsight.rs`（`choose`） |
 | 反復の並び | `deft-reversi-engine/src/search.rs`（`timed_level_iterations`）、`deft-reversi-engine/src/search/level.rs`（`endgame_limits`） |
