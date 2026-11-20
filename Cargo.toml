@@ -1,8 +1,11 @@
 [workspace]
-members = ["deft-reversi-engine", "deft-reversi-book", "deft-reversi-train", "deft-reversi-desktop"]
-# These applications still use the legacy API and require migration.
-exclude = ["deft-reversi-cli", "deft-reversi-web"]
+members = ["deft-reversi-engine", "deft-reversi-book", "deft-reversi-train", "deft-reversi-cli", "deft-reversi-desktop"]
+# The web application still uses the legacy API and requires migration.
+exclude = ["deft-reversi-web"]
 resolver = "2"
+
+[workspace.package]
+version = "1.0.0-dev.1"
 
 [profile.release]
 lto = "fat"

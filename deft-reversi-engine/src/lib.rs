@@ -50,8 +50,9 @@ pub use diagnostics::perft;
 pub use model::Model;
 pub use position::{Color, ParsePositionError, Position};
 pub use search::{
-    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, SearchPlan,
-    SearchRequest, SearchResult, SearchStats, Selectivity, StopHandle, StopReason, level_reading,
+    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind,
+    SEARCH_SEMANTICS_REVISION, SearchPlan, SearchRequest, SearchResult, SearchStats, Selectivity,
+    StopHandle, StopReason, level_reading,
 };
 pub use types::{Action, Moves, Square};
 pub use worker::{EngineWorker, SearchHandle};
@@ -72,3 +73,13 @@ pub use {
 pub fn legacy_main_rules() -> Vec<ProbCutRule> {
     mpc::legacy_main_rules()
 }
+
+/// Version recorded in external analysis provenance.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Git revision used for this build, with a suffix for local source changes.
+pub const GIT_REVISION: &str = env!("DEFT_GIT_REVISION");
+
+/// Engine version and source revision.
+pub const BUILD_VERSION: &str =
+    concat!(env!("CARGO_PKG_VERSION"), " (git ", env!("DEFT_GIT_REVISION"), ")");

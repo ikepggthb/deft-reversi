@@ -1,3 +1,5 @@
+//! 盤面と着手を同じ回転・反転へ変換する。点数の符号と手番の色は変えない。
+//! 正規化はKey::newから使い、対局へ返す着手は逆変換する。
 use super::*;
 /// Same transform order as Board::canonical. Never swaps the two colors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

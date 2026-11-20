@@ -9,6 +9,7 @@ import csv
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -16,13 +17,13 @@ REPO = Path(__file__).resolve().parents[2]
 POSITIONS = Path(__file__).resolve().parent / "positions"
 DEFAULTS = {
     # Built with RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native.
-    "solve": "target-native/release/examples/solve",
-    "gtp": "target-native/release/examples/gtp",
+    "solve": "target-native/release/deft-reversi-cli",
+    "gtp": "target-native/release/deft-reversi-cli",
     "model": "local/release/model-v3-pen-mpc2/deft-eval-v3-pen.dpr2",
-    # Edax 4.5.5 as distributed; it reads data/eval.dat next to its bin/.
-    "edax": "local/edax-4.5.5/bin/lEdax-x86-64-v3",
-    # Egaroucid for Console 7.8.1 built with the official clang++ command.
-    "egaroucid": "local/bench-engines/dl-egaroucid-7.8.1/Egaroucid-console_v7.8.1/bin/Egaroucid_for_Console_clang.out",
+    # Edax 4.5.6 as distributed; it reads data/eval.dat next to its bin/.
+    "edax": "local/bench-engines/edax-4.5.6/bin/lEdax-x86-64-v3",
+    # Egaroucid for Console 7.8.2 built with the official clang++ command.
+    "egaroucid": "local/bench-engines/Egaroucid-console_v7.8.2/bin/Egaroucid_for_Console.out",
 }
 
 
@@ -63,6 +64,7 @@ class Deft:
     def __init__(self, spec, tools):
         self.name, _, settings = spec.partition(":")
         self.solve, self.model, self.tt, self.env = tools["solve"], tools["model"], 256, {}
+        self.reported_versions = set()
         for item in filter(None, settings.split(",")):
             key, _, value = item.partition("=")
             if key == "solve":
@@ -77,9 +79,15 @@ class Deft:
                 raise SystemExit(f"unknown setting {key!r} in {spec!r}")
 
     def solve_file(self, case, goal, threads, cpus):
-        cmd = ["taskset", "-c", cpus, str(self.solve), str(self.model), str(case), goal, str(threads), str(self.tt)]
-        out = subprocess.run(cmd, capture_output=True, text=True, check=True, env={**os.environ, **self.env}).stdout
-        return list(csv.DictReader(io.StringIO(out), delimiter="\t"))
+        goal_args = ["--exact"] if goal == "exact" else (["--level", goal[5:]] if goal.startswith("level") else ["--depth", goal])
+        cmd = ["taskset", "-c", cpus, str(self.solve), "solve", str(Path(case).resolve()),
+               "--model", str(self.model), *goal_args, "--threads", str(threads), "--tt-mib", str(self.tt), "--tsv"]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, env={**os.environ, **self.env})
+        for line in result.stderr.splitlines():
+            if line.startswith("Versions: ") and line not in self.reported_versions:
+                print(f"{self.name}: {line}", file=sys.stderr, flush=True)
+                self.reported_versions.add(line)
+        return list(csv.DictReader(io.StringIO(result.stdout), delimiter="\t"))
 
 
 def engine(spec, tools):

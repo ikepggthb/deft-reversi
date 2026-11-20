@@ -1,7 +1,11 @@
 """Checks of the bench helpers that need no engine: python3 -m unittest discover -s tools/bench/tests"""
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,6 +34,25 @@ class Common(unittest.TestCase):
         with self.assertRaises(SystemExit):
             Deft("bad:depth=3", tools)
         self.assertEqual(engine("edax", tools).binary, tools["edax"])
+
+    def test_searches_use_the_cli_and_keep_machine_results(self):
+        tools = {k: Path("/x") / k for k in DEFAULTS}
+        cli = Deft("cli", tools)
+        output = "position\tscore\taction\tmode\tdepth\tnodes\tseconds\tstop\n1\t38\tA2\tExact\t20\t42\t0.123456789\tCompleted\n"
+        versions = "Versions: CLI 1.0.0-dev.1 | Engine 2.0.0-dev.1 | Book library 1.0.0-dev.1"
+        diagnostics = io.StringIO()
+        for goal, flags in [("exact", ["--exact"]), ("level18", ["--level", "18"]), ("12", ["--depth", "12"])]:
+            with self.subTest(goal=goal), patch(
+                "common.subprocess.run", return_value=SimpleNamespace(stdout=output, stderr=versions+"\n")
+            ) as run, contextlib.redirect_stderr(diagnostics):
+                rows = cli.solve_file(Path("case.obf"), goal, 4, "0,2,4,6")
+                cmd = run.call_args.args[0]
+                self.assertEqual(cmd[:5], ["taskset", "-c", "0,2,4,6", "/x/solve", "solve"])
+                self.assertTrue(Path(cmd[5]).is_absolute())
+                self.assertEqual(cmd[6:], ["--model", "/x/model", *flags, "--threads", "4", "--tt-mib", "256", "--tsv"])
+                self.assertEqual(rows[0]["seconds"], "0.123456789")
+                self.assertEqual(rows[0]["stop"], "Completed")
+        self.assertEqual(diagnostics.getvalue(), f"cli: {versions}\n")
 
     def test_paths_are_absolute(self):
         self.assertTrue(all(p.is_absolute() for p in paths().values()))

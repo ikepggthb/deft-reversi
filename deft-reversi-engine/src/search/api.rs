@@ -1,5 +1,10 @@
 use super::*;
 
+/// Compatibility epoch for persisted estimated search values. Increment when
+/// evaluation/search/MPC semantics change incompatibly, including level plans.
+/// Thread counts, time limits and performance-only changes do not require a bump.
+pub const SEARCH_SEMANTICS_REVISION: u32 = 2;
+
 /// The internal search driver mode a request resolves to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SearchMode {
@@ -60,10 +65,9 @@ impl EngineOptions {
         self
     }
 }
-/// How strongly multi-ProbCut prunes: the probability that a pruned move is
-/// really outside the window. `Full` does not prune. The stages are ordered
-/// from the least accurate one to `Full`.
+/// ProbCut confidence, ordered from least accurate to full search.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
 pub enum Selectivity {
     Percent83,
     Percent85,
@@ -227,8 +231,17 @@ pub struct SearchRequest {
     pub(super) goal: Goal,
     pub(super) selectivity: Option<Selectivity>,
     pub(super) time_limit: Option<Duration>,
+    pub(super) timed_levels: bool,
     pub(super) node_limit: Option<u64>,
     pub(super) all_moves: bool,
+    pub(super) move_pvs: bool,
+    pub(super) review_move: Option<crate::Square>,
+    pub(super) root_moves: Option<u64>,
+    pub(super) preferred_move: Option<crate::Square>,
+    pub(super) minimum_score: Option<i32>,
+    pub(super) reuse_pv: bool,
+    pub(super) recover_endgame_pv: bool,
+    pub(super) skip_pv_recovery: bool,
     pub(super) stop: StopHandle,
 }
 impl SearchRequest {
@@ -237,15 +250,71 @@ impl SearchRequest {
             goal,
             selectivity: None,
             time_limit: None,
+            timed_levels: false,
             node_limit: None,
             all_moves: false,
+            move_pvs: false,
+            review_move: None,
+            root_moves: None,
+            preferred_move: None,
+            minimum_score: None,
+            reuse_pv: false,
+            recover_endgame_pv: false,
+            skip_pv_recovery: false,
             stop: StopHandle::new(),
+        }
+    }
+    /// Iteratively search up to `level` under one clock, returning the best
+    /// move from the last completed iteration. With a calibrated model, the
+    /// root's empty-square count determines the last evaluation depth and
+    /// endgame stages from the level table. Evaluation depths advance by two.
+    pub fn timed_levels(level: u8, limit: Duration) -> Self {
+        Self {
+            timed_levels: true,
+            ..Self::new(Goal::Level(level)).time_limit(limit)
         }
     }
     /// Pruning for `Depth` and `Endgame`; `Full` when not set. A `Level`
     /// chooses its own, so setting one there is an invalid request.
     pub fn selectivity(mut self, selectivity: Selectivity) -> Self {
         self.selectivity = Some(selectivity);
+        self
+    }
+    /// Search only these legal root squares. Descendants are unrestricted.
+    /// A subset result proves at most the selected moves, not the whole root.
+    /// For a forced pass or terminal root the only valid mask is zero.
+    pub fn root_moves(mut self, mask: u64) -> Self {
+        self.root_moves = Some(mask);
+        self
+    }
+    /// A legal ordering hint; ignored if outside the selected root moves.
+    pub fn preferred_move(mut self, square: crate::Square) -> Self {
+        self.preferred_move = Some(square);
+        self
+    }
+    /// At the final midgame depth, first test whether any selected move
+    /// reaches this score. A failed test returns an upper bound for the
+    /// entire mask; a successful test is followed by a normal point search.
+    pub fn minimum_score(mut self, score: i32) -> Self {
+        self.minimum_score = Some(score);
+        self
+    }
+    /// Reuse a compatible transposition-table result as a warm start. The
+    /// target iteration is still searched with the requested root mask.
+    pub fn reuse_pv(mut self) -> Self {
+        self.reuse_pv = true;
+        self
+    }
+    /// Try to extend a selective endgame PV at the completed search stage.
+    /// Recovery shares the search limits and may leave a partial line.
+    pub fn recover_endgame_pv(mut self) -> Self {
+        self.recover_endgame_pv = true;
+        self
+    }
+    /// Return the line found during search without a separate PV recovery
+    /// pass. The best move and score still come from the completed search.
+    pub fn skip_pv_recovery(mut self) -> Self {
+        self.skip_pv_recovery = true;
         self
     }
     /// Stops after this much time, returning the last completed iteration.
@@ -258,10 +327,24 @@ impl SearchRequest {
         self.node_limit = Some(limit);
         self
     }
-    /// Also scores every legal move with a full window (`SearchResult::moves`).
+    /// Also scores every selected legal root move with a full window (`SearchResult::moves`).
     /// This searches each move again, so it takes several times longer.
     pub fn all_moves(mut self) -> Self {
         self.all_moves = true;
+        self
+    }
+    /// Score every selected root move and retain its principal variation from
+    /// the scoring search. TT cutoffs may leave a partial line.
+    pub fn all_moves_with_pv(mut self) -> Self {
+        self.all_moves = true;
+        self.move_pvs = true;
+        self
+    }
+    /// Score the principal move and the specified legal move with full windows
+    /// at the final search stage. Intended for reviewing a played move.
+    /// This skips full PV recovery. If `all_moves` is set, score every root move.
+    pub fn review_move(mut self, square: crate::Square) -> Self {
+        self.review_move = Some(square);
         self
     }
     /// Stops on `stop` instead of a handle of its own, so that one handle
@@ -297,6 +380,8 @@ pub struct SearchStats {
     pub probcut_tries: u64,
     pub probcut_cuts: u64,
     pub stability_cuts: u64,
+    /// Number of initial iterations skipped using a compatible TT entry.
+    pub reused_iterations: u64,
 }
 impl SearchStats {
     pub(super) fn merge(&mut self, other: &Self) {
@@ -314,6 +399,7 @@ impl SearchStats {
         self.probcut_tries += other.probcut_tries;
         self.probcut_cuts += other.probcut_cuts;
         self.stability_cuts += other.stability_cuts;
+        self.reused_iterations += other.reused_iterations;
     }
 }
 /// What a completed iteration searched.
@@ -341,28 +427,48 @@ pub struct MoveScore {
 #[non_exhaustive]
 pub struct SearchResult {
     /// None only at the end of the game. A search stopped before any
-    /// iteration completed still returns a legal action.
+    /// iteration completed still returns a legal action. For a mask upper
+    /// bound it is a legal representative, without any optimality claim.
     pub best_move: Option<Action>,
     /// None when no iteration completed.
     pub score: Option<i32>,
+    /// True when the last iteration only proved an upper bound for the mask.
+    pub score_is_upper_bound: bool,
     /// The last completed iteration; None with `score`.
     pub kind: Option<ResultKind>,
     pub pv: Vec<Action>,
-    /// Every legal move with its score, best first, when the request asked
-    /// for `all_moves` and the search completed.
+    /// Scores best first for the root moves requested by `all_moves` or
+    /// `review_move`, after the final iteration completed.
     pub moves: Vec<MoveScore>,
+    /// Lines corresponding to `moves`, when requested by `all_moves_with_pv`.
+    pub move_pvs: Vec<Vec<Action>>,
     pub stop_reason: StopReason,
     pub stats: SearchStats,
     pub elapsed: Duration,
+    /// Root squares included in this result (zero at a forced pass/terminal).
+    pub root_moves: u64,
+    /// True when legal root moves were deliberately excluded.
+    pub root_restricted: bool,
 }
 impl SearchResult {
+    /// The terminal disc difference reached by replaying the PV, from the
+    /// root side's perspective. Returns None for a partial or illegal PV.
+    pub fn pv_final_score(&self, position: impl Into<crate::Board>) -> Option<i32> {
+        super::pv::terminal_score(position.into(), &self.pv)
+    }
     /// Whether `score` is the exact game value: a full-selectivity endgame
     /// iteration completed.
     pub fn is_solved(&self) -> bool {
-        self.kind
-            == Some(ResultKind::Endgame {
-                selectivity: Selectivity::Full,
-            })
+        !self.root_restricted && self.is_subset_solved()
+    }
+    /// Exact maximum over the selected root moves. Does not certify excluded
+    /// moves; callers must retain the mask when backing this result up.
+    pub fn is_subset_solved(&self) -> bool {
+        !self.score_is_upper_bound
+            && self.kind
+                == Some(ResultKind::Endgame {
+                    selectivity: Selectivity::Full,
+                })
     }
 }
 

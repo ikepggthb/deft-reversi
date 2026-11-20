@@ -62,6 +62,15 @@ impl RootSearch {
             bounds: [RootBound::UNBOUNDED; 64],
         }
     }
+    pub(super) fn restrict(&mut self, mask: u64, preferred: Option<Square>) {
+        self.candidates
+            .retain(|c| mask & (1u64 << c.square.index()) != 0);
+        if let Some(square) = preferred
+            && let Some(i) = self.candidates.iter().position(|c| c.square == square)
+        {
+            self.candidates.swap(0, i);
+        }
+    }
     pub(super) fn iteration(
         &mut self,
         context: &mut Context,
@@ -82,34 +91,49 @@ impl RootSearch {
         }
         outcome
     }
-    /// Scores every root move with a full window, best first. `on_move` sees
-    /// the moves scored so far, best first, after each one.
+    pub(super) fn below_minimum(
+        &mut self,
+        context: &mut Context,
+        spec: SearchSpec,
+        minimum: i32,
+    ) -> Result<bool, Aborted> {
+        self.bounds.fill(RootBound::UNBOUNDED);
+        Ok(self.window(context, spec, minimum - 1, minimum)?.score < minimum)
+    }
+    /// Scores the requested root moves with a full window, best first.
+    /// `on_move` sees the moves scored so far, best first, as they finish.
     pub(super) fn move_scores(
         &self,
         context: &mut Context,
         spec: SearchSpec,
+        mask: u64,
+        keep_pv: bool,
         on_move: &mut dyn FnMut(&Context, &[MoveScore]),
-    ) -> Result<Vec<MoveScore>, Aborted> {
-        let mut moves = Vec::with_capacity(self.candidates.len());
-        for candidate in &self.candidates {
-            let child = context.node(
-                candidate.child(self.position, true),
-                -64,
-                64,
-                SearchSpec {
-                    depth: spec.depth - 1,
-                    ..spec
-                },
-            )?;
-            moves.push(MoveScore {
-                action: candidate.action(),
-                score: -child.score,
-            });
-            let mut sorted = moves.clone();
-            sorted.sort_by_key(|entry| std::cmp::Reverse(entry.score));
-            on_move(context, &sorted);
-        }
-        moves.sort_by_key(|entry| std::cmp::Reverse(entry.score));
+    ) -> Result<Vec<ScoredMove>, Aborted> {
+        let candidates: Vec<_> = self
+            .candidates
+            .iter()
+            .copied()
+            .filter(|c| c.square.bit() & mask != 0)
+            .collect();
+        let can_split = context.runtime.parallel && candidates.len() >= 3 && spec.depth >= 8;
+        let mut moves = if can_split {
+            score_parallel(context, self.position, spec, candidates, keep_pv, on_move)?
+        } else {
+            let mut moves = Vec::with_capacity(candidates.len());
+            for candidate in candidates {
+                moves.push(score_candidate(
+                    context,
+                    self.position,
+                    spec,
+                    candidate,
+                    keep_pv,
+                )?);
+                on_move(context, &best_first(moves.iter().map(|(entry, _)| *entry)));
+            }
+            moves
+        };
+        moves.sort_by_key(|(entry, _)| std::cmp::Reverse(entry.score));
         Ok(moves)
     }
     fn aspiration(
@@ -307,6 +331,146 @@ fn root_line(action: Action, score: i32) -> Line {
     line.actions[0] = Some(action);
     line.len = 1;
     line
+}
+
+type ScoredMove = (MoveScore, Vec<Action>);
+
+/// The moves scored so far, best first.
+fn best_first(moves: impl Iterator<Item = MoveScore>) -> Vec<MoveScore> {
+    let mut moves: Vec<_> = moves.collect();
+    moves.sort_by_key(|entry| std::cmp::Reverse(entry.score));
+    moves
+}
+
+fn score_candidate(
+    context: &mut Context,
+    position: Position,
+    spec: SearchSpec,
+    candidate: Candidate,
+    keep_pv: bool,
+) -> Result<ScoredMove, Aborted> {
+    let child = context.node(
+        candidate.child(position, true),
+        -64,
+        64,
+        SearchSpec {
+            depth: spec.depth - 1,
+            ..spec
+        },
+    )?;
+    let action = candidate.action();
+    let pv = if keep_pv {
+        std::iter::once(action)
+            .chain(child.actions[..child.len].iter().flatten().copied())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok((
+        MoveScore {
+            action,
+            score: -child.score,
+        },
+        pv,
+    ))
+}
+
+// Each candidate has its own window. Reuse the regular worker pool and
+// shared stop control instead of running one engine per candidate.
+struct CandidateBatch {
+    position: Position,
+    spec: SearchSpec,
+    candidates: Vec<Candidate>,
+    keep_pv: bool,
+    next: AtomicUsize,
+    results: Mutex<Vec<Option<ScoredMove>>>,
+}
+
+impl CandidateBatch {
+    /// The calling thread passes `on_move`, which sees every move finished
+    /// so far, by any thread, each time it finishes one of its own.
+    fn run(
+        &self,
+        context: &mut Context,
+        mut on_move: Option<&mut dyn FnMut(&Context, &[MoveScore])>,
+    ) -> Result<(), Aborted> {
+        while !context.aborted() {
+            let index = self.next.fetch_add(1, Ordering::Relaxed);
+            let Some(&candidate) = self.candidates.get(index) else {
+                return Ok(());
+            };
+            let result =
+                score_candidate(context, self.position, self.spec, candidate, self.keep_pv)?;
+            let done = {
+                let mut results = parallel::lock(&self.results);
+                results[index] = Some(result);
+                on_move.is_some().then(|| {
+                    best_first(results.iter().flatten().map(|(entry, _)| *entry))
+                })
+            };
+            if let (Some(on_move), Some(done)) = (on_move.as_mut(), done) {
+                on_move(context, &done);
+            }
+        }
+        Err(Aborted)
+    }
+}
+
+fn score_parallel(
+    context: &mut Context,
+    position: Position,
+    spec: SearchSpec,
+    candidates: Vec<Candidate>,
+    keep_pv: bool,
+    on_move: &mut dyn FnMut(&Context, &[MoveScore]),
+) -> Result<Vec<ScoredMove>, Aborted> {
+    let count = candidates.len();
+    let batch = Arc::new(CandidateBatch {
+        position,
+        spec,
+        candidates,
+        keep_pv,
+        next: AtomicUsize::new(0),
+        results: Mutex::new(vec![None; count]),
+    });
+    let runtime = context.runtime.clone();
+    for _ in 1..count {
+        let batch = batch.clone();
+        let worker = runtime.clone();
+        runtime.pending.fetch_add(1, Ordering::AcqRel);
+        let job = Box::new(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut context = Context::new(worker.clone(), Vec::new(), Vec::new());
+                let epoch = worker.cache_epoch;
+                context.end_cache = EndgameCache::take_thread(epoch);
+                context.stats.helper_jobs += 1;
+                let _ = batch.run(&mut context, None);
+                std::mem::take(&mut context.end_cache).put_thread(epoch);
+            }));
+            if outcome.is_err() {
+                worker.control.fail();
+            }
+            worker.finish_pending();
+        });
+        if runtime.pool.offer(job, &[]).is_err() {
+            runtime.finish_pending();
+            break;
+        }
+        context.stats.worker_dispatches += 1;
+    }
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| batch.run(context, Some(on_move))));
+    if outcome.is_err() {
+        runtime.control.fail();
+    }
+    runtime.drain();
+    outcome.map_err(|_| Aborted)??;
+    if context.aborted() {
+        return Err(Aborted);
+    }
+    parallel::lock(&batch.results)
+        .drain(..)
+        .map(|result| result.ok_or(Aborted))
+        .collect()
 }
 
 #[cfg(test)]

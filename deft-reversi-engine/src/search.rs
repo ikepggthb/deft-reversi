@@ -63,6 +63,46 @@ impl Engine {
             cache_epoch: new_cache_epoch(),
         })
     }
+    /// Independent search state sharing immutable model/calibration weights.
+    /// Tables and workers obey the supplied budgets and are not duplicated
+    /// from the source. Useful for a bounded pool of independent batch jobs.
+    pub fn fork(&self, options: EngineOptions) -> Result<Self, EngineError> {
+        if options.threads == 0 || options.threads > 256 {
+            return Err(EngineError::InvalidOptions("threads must be 1..=256"));
+        }
+        let (table, pv_table) = new_tables(options.tt_mib)?;
+        Ok(Self {
+            model: self.model.clone(),
+            calibration: self.calibration.clone(),
+            sigmas: self.sigmas,
+            table,
+            pv_table,
+            workers: Workers::new(options.threads - 1).map_err(EngineError::Thread)?,
+            options,
+            generation: 0,
+            end_cache: EndgameCache::default(),
+            cache_epoch: new_cache_epoch(),
+        })
+    }
+    /// Reconfigure idle search resources. Existing tables survive unchanged
+    /// sizes; changing worker count joins old workers before creating new ones.
+    pub fn set_resources(&mut self, options: EngineOptions) -> Result<(), EngineError> {
+        if options.threads == 0 || options.threads > 256 {
+            return Err(EngineError::InvalidOptions("threads must be 1..=256"));
+        }
+        if options.tt_mib != self.options.tt_mib {
+            (self.table, self.pv_table) = new_tables(options.tt_mib)?;
+            self.invalidate_end_caches();
+            self.options.tt_mib = options.tt_mib;
+        }
+        if options.threads != self.options.threads {
+            self.workers = Workers::new(0).map_err(EngineError::Thread)?;
+            self.options.threads = 1;
+            self.workers = Workers::new(options.threads - 1).map_err(EngineError::Thread)?;
+        }
+        self.options = options;
+        Ok(())
+    }
     pub fn options(&self) -> EngineOptions {
         self.options
     }
@@ -78,6 +118,26 @@ impl Engine {
         (self.table, self.pv_table) = new_tables(self.options.tt_mib)?;
         self.invalidate_end_caches();
         Ok(())
+    }
+    /// Resolves the requested depth/mode and selectivity without searching.
+    /// A plan is a target, not evidence that a search completed or solved a game.
+    /// This validates the goal but does not require MPC calibration; calibration
+    /// is checked when an actual selective search is requested.
+    pub fn search_plan(
+        &self,
+        position: impl Into<Board>,
+        request: &SearchRequest,
+    ) -> Result<ResultKind, EngineError> {
+        let job = self.resolve(position.into(), request)?;
+        Ok(match job.mode {
+            SearchMode::Depth(depth) => ResultKind::Depth {
+                depth: depth.min(job.board.empty_count()),
+                selectivity: job.selectivity,
+            },
+            SearchMode::Exact | SearchMode::SelectiveEndgame => ResultKind::Endgame {
+                selectivity: job.selectivity,
+            },
+        })
     }
     /// Searches `position`, blocking the calling thread.
     pub fn search(
@@ -96,6 +156,11 @@ impl Engine {
         mut on_progress: impl FnMut(&Progress),
     ) -> Result<SearchResult, EngineError> {
         let job = self.resolve(position.into(), request)?;
+        if job.selectivity != Selectivity::Full && self.calibration.is_empty() {
+            return Err(EngineError::InvalidCalibration(
+                "ProbCut requires model-specific calibration",
+            ));
+        }
         self.run(job, &mut on_progress)
     }
     /// Use the MPC table from the legacy main-branch evaluator. This is an
@@ -173,19 +238,49 @@ impl Engine {
                 (mode, selectivity, Some(plan.midgame_depth()))
             }
         };
-        if selectivity != Selectivity::Full && self.calibration.is_empty() {
-            return Err(EngineError::InvalidCalibration(
-                "ProbCut requires model-specific calibration",
+        if let Some(mask) = request.root_moves {
+            let legal = board.get_moves();
+            if mask & !legal != 0 || (legal != 0 && mask == 0) {
+                return Err(EngineError::InvalidRequest(
+                    "root move mask must be a nonempty legal subset",
+                ));
+            }
+        }
+        if request.review_move.is_some_and(|square| {
+            request.root_moves.unwrap_or_else(|| board.get_moves()) & square.bit() == 0
+        }) {
+            return Err(EngineError::InvalidRequest(
+                "review move must be in the legal root mask",
+            ));
+        }
+        if request.minimum_score.is_some_and(|score| {
+            !(-63..=64).contains(&score)
+                || request.all_moves
+                || request.review_move.is_some()
+                || board.get_moves() == 0
+                || !matches!(mode, SearchMode::Depth(d) if d > 0 && d < board.empty_count())
+        }) {
+            return Err(EngineError::InvalidRequest(
+                "minimum score requires a positive midgame depth and legal root moves",
             ));
         }
         Ok(Job {
+            minimum_score: request.minimum_score,
+            reuse_pv: request.reuse_pv,
+            recover_endgame_pv: request.recover_endgame_pv,
+            skip_pv_recovery: request.skip_pv_recovery,
+            root_moves: request.root_moves,
+            preferred_move: request.preferred_move,
             board,
             mode,
             selectivity,
             level,
             time_limit: request.time_limit,
+            timed_levels: request.timed_levels && !self.calibration.is_empty(),
             node_limit: request.node_limit,
             all_moves: request.all_moves,
+            move_pvs: request.move_pvs,
+            review_move: request.review_move,
             stop: request.stop.clone(),
         })
     }
@@ -198,9 +293,13 @@ impl Engine {
         if job.board.must_pass() {
             let pass_start = Instant::now();
             let all_moves = job.all_moves;
+            let move_pvs = job.move_pvs;
             let passed = Job {
                 board: job.board.board_after_pass(),
                 all_moves: false,
+                move_pvs: false,
+                root_moves: None,
+                preferred_move: None,
                 ..job
             };
             let mut forward = |progress: &Progress| {
@@ -226,7 +325,17 @@ impl Engine {
                     action: Action::Pass,
                     score,
                 }];
+                if move_pvs {
+                    let pv = if result.pv.is_empty() {
+                        vec![Action::Pass]
+                    } else {
+                        result.pv.clone()
+                    };
+                    result.move_pvs.push(pv);
+                }
             }
+            result.root_moves = 0;
+            result.root_restricted = false;
             result.elapsed = pass_start.elapsed();
             return Ok(result);
         }
@@ -245,6 +354,12 @@ impl Engine {
         };
         let board = job.board;
         let mut result = initial_result(board);
+        let mask = job.root_moves.unwrap_or_else(|| board.get_moves());
+        result.root_moves = mask;
+        result.root_restricted = mask != board.get_moves();
+        if mask != 0 {
+            result.best_move = Some(Action::Place(Square::lowest(mask)));
+        }
         if result.best_move.is_none() {
             result.score = Some(board.final_score());
             result.kind = Some(ResultKind::Endgame {
@@ -256,16 +371,32 @@ impl Engine {
         let runtime = self.runtime(&job, deadline);
         let state = EvalState::from_board(board);
         let mut root = root::RootSearch::new(Position { board, state });
+        root.restrict(mask, job.preferred_move);
         let mut context = Context::new(runtime.clone(), Vec::new(), Vec::new());
         // Owned by the active context; retained by this Engine between requests.
         context.end_cache = std::mem::take(&mut self.end_cache);
         let mut last = None;
-        for iteration in self.plan(&job) {
+        let plan = self.plan(&job);
+        let warm = self.warm_start(&job, mask, &plan);
+        let (skip, mut prediction) = if let Some((skip, square, score)) = warm {
+            root.restrict(mask, Some(square));
+            context.stats.reused_iterations += skip as u64;
+            (skip, score)
+        } else {
+            (0, self.model.evaluate(&board))
+        };
+        for (index, &iteration) in plan.iter().enumerate().skip(skip) {
             runtime.drain();
             runtime.set_stage(iteration.selectivity);
-            let prediction = result.score.unwrap_or_else(|| self.model.evaluate(&board));
             let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if index + 1 == plan.len()
+                    && let Some(minimum) = job.minimum_score
+                    && root.below_minimum(&mut context, iteration.spec(), minimum)?
+                {
+                    return Ok((Line::leaf(minimum - 1), true));
+                }
                 root.iteration(&mut context, iteration.spec(), prediction)
+                    .map(|line| (line, false))
             }));
             let completed = match attempt {
                 Ok(Ok(line)) if !context.aborted() => Some(line),
@@ -275,8 +406,16 @@ impl Engine {
                     None
                 }
             };
-            let Some(line) = completed else { break };
+            let Some((line, upper)) = completed else {
+                break;
+            };
             iteration.record(&mut result, &line);
+            if upper {
+                result.score_is_upper_bound = true;
+                result.best_move = Some(Action::Place(Square::lowest(mask)));
+                break;
+            }
+            prediction = line.score;
             last = Some(iteration);
             // Helpers merge their counters when they finish.
             runtime.drain();
@@ -293,35 +432,74 @@ impl Engine {
         runtime.drain();
         // Full TT cutoffs return scores without a recursion-built PV. Recover
         // the line separately, verifying each suggested move against the value.
-        if !context.aborted()
+        if !job.skip_pv_recovery
+            && !result.score_is_upper_bound
+            && !context.aborted()
             && let Some(last) = last
-            && last.selectivity == Selectivity::Full
+            && (job.review_move.is_none() || job.all_moves)
             && last.depth > 0
             && let Some(score) = result.score
-            && let Ok(pv) =
-                context.extract_pv(board, score, last.depth, last.exact, result.best_move)
         {
-            result.pv = pv;
+            let full = last.selectivity == Selectivity::Full;
+            let selective_recovery =
+                job.recover_endgame_pv && last.exact && result.pv_final_score(board) != Some(score);
+            if (full || selective_recovery)
+                && let Ok(pv) =
+                    context.extract_pv(board, score, last.depth, last.exact, result.best_move)
+                && (full
+                    || pv::terminal_score(board, &pv) == Some(score)
+                    || (result.pv_final_score(board).is_none() && pv.len() > result.pv.len()))
+            {
+                result.pv = pv;
+            }
         }
         runtime.drain();
-        if job.all_moves
+        let score_mask = if job.all_moves {
+            mask
+        } else if let (Some(played), Some(Action::Place(best))) =
+            (job.review_move, result.best_move)
+        {
+            played.bit() | best.bit()
+        } else {
+            0
+        };
+        if score_mask != 0
             && !context.aborted()
             && let Some(last) = last
             && last.depth > 0
-            && let Ok(moves) = root.move_scores(&mut context, last.spec(), &mut |context, moves| {
-                on_progress(&Progress {
-                    kind: result.kind.unwrap(),
-                    score: result.score.unwrap_or_default(),
-                    best_move: result.best_move,
-                    pv: result.pv.clone(),
-                    nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
-                    elapsed: start.elapsed(),
-                    moves: moves.to_vec(),
-                })
-            })
+            && let Ok(moves) = root.move_scores(
+                &mut context,
+                last.spec(),
+                score_mask,
+                job.move_pvs,
+                &mut |context, moves| {
+                    on_progress(&Progress {
+                        kind: result.kind.unwrap(),
+                        score: result.score.unwrap_or_default(),
+                        best_move: result.best_move,
+                        pv: result.pv.clone(),
+                        nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
+                        elapsed: start.elapsed(),
+                        moves: moves.to_vec(),
+                    })
+                },
+            )
             && !context.aborted()
         {
-            result.moves = moves;
+            for (score, pv) in moves {
+                result.moves.push(score);
+                if job.move_pvs {
+                    let pv = if result.best_move == Some(score.action)
+                        && result.score == Some(score.score)
+                        && result.pv.len() > pv.len()
+                    {
+                        result.pv.clone()
+                    } else {
+                        pv
+                    };
+                    result.move_pvs.push(pv);
+                }
+            }
         }
         runtime.drain();
         if runtime.control.reason() != StopReason::WorkerFailed {
@@ -332,6 +510,29 @@ impl Engine {
         result.stats = parallel::lock(&runtime.stats).clone();
         result.elapsed = start.elapsed();
         Ok(result)
+    }
+    fn warm_start(&self, job: &Job, mask: u64, plan: &[Iteration]) -> Option<(usize, Square, i32)> {
+        if !job.reuse_pv || plan.len() < 2 {
+            return None;
+        }
+        [self.pv_table.get(job.board), self.table.get(job.board)]
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let best = Square::new(entry.best)?;
+                if mask & best.bit() == 0 || entry.lower != entry.upper {
+                    return None;
+                }
+                // Only skip iterations of the same search mode and MPC stage.
+                // Retain the target iteration even for a matching deeper entry.
+                let index = plan[..plan.len() - 1].iter().rposition(|iteration| {
+                    entry.exact_mode == iteration.exact
+                        && entry.quality == iteration.selectivity.quality()
+                        && entry.depth >= iteration.depth
+                })?;
+                Some((index + 1, best, i32::from(entry.lower)))
+            })
+            .max_by_key(|(skip, _, _)| *skip)
     }
     fn runtime(&self, job: &Job, deadline: Option<Instant>) -> Arc<Runtime> {
         Arc::new(Runtime {
@@ -357,10 +558,10 @@ impl Engine {
             quality: AtomicU8::new(0),
             rules: self.calibration.clone(),
             sigmas: self.sigmas,
-            // Exact requests use selective stages only to seed the tables;
-            // results below this bound are exact and reused by the final stage.
+            // The timed ladder treats selective stages as level goals, using
+            // their own ProbCut range. A fixed exact search uses them as preparation.
             cache_epoch: self.cache_epoch,
-            endgame_probcut_min: if job.mode == SearchMode::Exact {
+            endgame_probcut_min: if job.mode == SearchMode::Exact && !job.timed_levels {
                 endgame::EXACT_PREPARATION_PROBCUT_MIN
             } else {
                 endgame::PROBCUT_MIN_EMPTIES
@@ -371,6 +572,10 @@ impl Engine {
     /// endgame requests the selective stages and the final solve.
     fn plan(&self, job: &Job) -> Vec<Iteration> {
         let board = job.board;
+        if job.timed_levels {
+            let max_level = job.level.expect("timed levels use a level goal");
+            return timed_level_iterations(max_level, board.empty_count());
+        }
         let target = match job.mode {
             SearchMode::Depth(d) => d.min(board.empty_count()),
             SearchMode::Exact | SearchMode::SelectiveEndgame => board.empty_count(),
@@ -427,6 +632,10 @@ impl Engine {
 
 /// A request resolved against its root position.
 struct Job {
+    minimum_score: Option<i32>,
+    reuse_pv: bool,
+    recover_endgame_pv: bool,
+    skip_pv_recovery: bool,
     board: Board,
     mode: SearchMode,
     selectivity: Selectivity,
@@ -434,8 +643,13 @@ struct Job {
     /// endgame preparation depth.
     level: Option<u8>,
     time_limit: Option<Duration>,
+    timed_levels: bool,
     node_limit: Option<u64>,
     all_moves: bool,
+    move_pvs: bool,
+    review_move: Option<Square>,
+    root_moves: Option<u64>,
+    preferred_move: Option<Square>,
     stop: StopHandle,
 }
 
@@ -458,12 +672,16 @@ fn initial_result(board: Board) -> SearchResult {
     SearchResult {
         best_move,
         score: None,
+        score_is_upper_bound: false,
         kind: None,
         pv: Vec::new(),
         moves: Vec::new(),
+        move_pvs: Vec::new(),
         stop_reason: StopReason::Completed,
         stats: SearchStats::default(),
         elapsed: Duration::ZERO,
+        root_moves: moves,
+        root_restricted: false,
     }
 }
 
@@ -473,7 +691,7 @@ fn searched(kind: ResultKind) -> bool {
 }
 
 /// One root iteration of `Engine::search`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Iteration {
     depth: u8,
     /// Searches to the end of the game rather than to an evaluation.
@@ -509,6 +727,35 @@ impl Iteration {
             result.pv.clear();
         }
     }
+}
+
+fn timed_level_iterations(max_level: u8, empties: u8) -> Vec<Iteration> {
+    let mut steps: Vec<_> = (1..=max_level)
+        .map(|level| {
+            let (mode, selectivity) = level::plan(level).at(empties);
+            let (depth, exact) = match mode {
+                SearchMode::Depth(depth) => (depth, false),
+                SearchMode::Exact | SearchMode::SelectiveEndgame => (empties, true),
+            };
+            Iteration {
+                depth,
+                exact,
+                selectivity,
+            }
+        })
+        .collect();
+    steps.dedup();
+    let endgame_start = steps.partition_point(|step| !step.exact);
+    if let Some(&target) = steps[..endgame_start].last() {
+        // Keep the depth at the table's transition, including its parity.
+        steps.splice(
+            ..endgame_start,
+            iterative_depths(target.depth)
+                .into_iter()
+                .map(|depth| Iteration { depth, ..target }),
+        );
+    }
+    steps
 }
 
 /// Reference solver: begin at 5/6 when possible, retaining target parity.
@@ -613,8 +860,11 @@ impl Engine {
     }
 
     /// Serialize the effective analysis settings in a stable order.
-    /// Includes the compiled evaluation variant and expanded calibration rules.
+    /// Includes the search compatibility revision, compiled evaluation variant,
+    /// and expanded calibration rules.
     pub fn write_analysis_settings(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
+        out.write_all(b"deft-search-semantics")?;
+        out.write_all(&SEARCH_SEMANTICS_REVISION.to_le_bytes())?;
         out.write_all(&[u8::from(cfg!(feature = "endgame-pattern-ordering"))])?;
         for rule in self.calibration.iter().flatten() {
             out.write_all(&[
@@ -635,5 +885,125 @@ impl Engine {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+    #[test]
+    fn forks_share_only_immutable_weights_and_stable_resize_keeps_tables() {
+        let mut engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let fork = engine
+            .fork(EngineOptions::default().threads(2).tt_mib(1))
+            .unwrap();
+        assert!(Arc::ptr_eq(&engine.model, &fork.model));
+        assert!(Arc::ptr_eq(&engine.calibration, &fork.calibration));
+        assert!(!Arc::ptr_eq(&engine.table, &fork.table));
+        assert!(!Arc::ptr_eq(&engine.pv_table, &fork.pv_table));
+        let table = engine.table.clone();
+        engine.set_resources(engine.options()).unwrap();
+        assert!(Arc::ptr_eq(&engine.table, &table));
+    }
+}
+
+#[cfg(test)]
+mod timed_level_tests {
+    use super::*;
+
+    #[test]
+    fn depth_and_endgame_stages_follow_the_level_table() {
+        use Selectivity::*;
+        for (empties, level, first_depth, max_depth, endgame) in [
+            (7, 60, 1, 0, &[Full][..]),
+            (14, 1, 1, 1, &[]),
+            (14, 60, 2, 4, &[Percent85, Full]),
+            (24, 60, 6, 18, &[Percent85, Percent98, Percent99, Full]),
+            (28, 21, 5, 21, &[]),
+            (28, 22, 5, 21, &[Percent85]),
+            (
+                28,
+                60,
+                5,
+                21,
+                &[Percent85, Percent95, Percent98, Percent99, Full],
+            ),
+            (
+                40,
+                60,
+                6,
+                36,
+                &[Percent85, Percent95, Percent98, Percent99, Full],
+            ),
+            (60, 60, 6, 56, &[Percent85, Percent98, Percent99, Full]),
+        ] {
+            let expected: Vec<_> = (first_depth..=max_depth)
+                .step_by(2)
+                .map(|depth| Iteration {
+                    depth,
+                    exact: false,
+                    selectivity: Percent83,
+                })
+                .chain(endgame.iter().map(|&selectivity| Iteration {
+                    depth: empties,
+                    exact: true,
+                    selectivity,
+                }))
+                .collect();
+            assert_eq!(timed_level_iterations(level, empties), expected);
+        }
+    }
+}
+
+#[cfg(test)]
+mod warm_start_tests {
+    use super::*;
+
+    #[test]
+    fn warm_start_keeps_the_target_and_requires_the_cached_move_in_the_mask() {
+        let mut engine = Engine::new(
+            crate::Model::from_pattern(crate::PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let board = Board::new();
+        let best = board.legal_moves().next().unwrap();
+        engine.pv_table.store(
+            board,
+            crate::transposition::Entry {
+                lower: 0,
+                upper: 0,
+                depth: 6,
+                quality: Selectivity::Full.quality(),
+                best: best.index(),
+                second: 255,
+                generation: 0,
+                exact_mode: false,
+            },
+        );
+        let request = SearchRequest::new(Goal::Depth(8)).reuse_pv();
+        let excluded = engine
+            .search(
+                board,
+                &request.clone().root_moves(board.get_moves() & !best.bit()),
+            )
+            .unwrap();
+        assert_eq!(excluded.stats.reused_iterations, 0);
+
+        let warmed = engine.search(board, &request).unwrap();
+        assert_eq!(warmed.stats.reused_iterations, 1);
+        assert_eq!(
+            warmed.kind,
+            Some(ResultKind::Depth {
+                depth: 8,
+                selectivity: Selectivity::Full,
+            })
+        );
+        assert_eq!(warmed.score, Some(0));
+        assert!(!warmed.score_is_upper_bound);
     }
 }

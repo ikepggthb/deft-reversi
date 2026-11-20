@@ -65,3 +65,8 @@
 | [2026-11-09-endgame-mpc](2026-11-09-endgame-mpc/README.md) | 終盤MPCの確率と中盤83%の深さ：空き14〜24の着手精度と時間 |
 | [2026-11-09-level-endgame](2026-11-09-level-endgame/README.md) | レベル表の終盤への切り替え：空き数−レベルの規則（1〜10倍）と旧表の対局、レベル12・16・20付近 |
 | [2026-11-15-level-table](2026-11-15-level-table/README.md) | レベル表1〜60の決定：局面ごとの損失と石の値段、旧表・Edax・Egaroucid との対局、L1〜10 の形、L21〜60 の規則 |
+| [2026-11-16-ffo-latest](2026-11-16-ffo-latest/README.md) | FFO40〜59：Deft・Edax 4.5.6・Egaroucid Console 7.8.2、i3-14100で1スレッド・4物理コア比較 |
+| [2026-11-16-ffo-console-4core](2026-11-16-ffo-console-4core/README.md) | CLI経由のFFO40〜59：4物理コア、各1回、Edax 4.5.6・Egaroucid Console 7.8.2と比較 |
+| [2026-11-16-ffo-console-8thread](2026-11-16-ffo-console-8thread/README.md) | CLI経由のFFO40〜59：8スレッド（4物理コア＋SMT）、各1回、4スレッドとの比較 |
+| [2026-11-16-ffo33-51-console-8thread](2026-11-16-ffo33-51-console-8thread/README.md) | CLI経由のFFO33〜51：8スレッド（4物理コア＋SMT）、各1回、全57解が正解と一致 |
+| [2026-11-16-edax456-audit](2026-11-16-edax456-audit/README.md) | Edax 4.5.6の設定確認、公式配布版・GCC/Clang native再ビルドの比較、TT容量の確認 |

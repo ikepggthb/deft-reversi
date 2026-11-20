@@ -68,6 +68,18 @@ fn exact_matches_exhaustive_and_pv_is_legal() {
     }
 }
 #[test]
+fn skipping_pv_recovery_keeps_the_best_move_and_score() {
+    let board = position(9, 14);
+    let mut engine = engine(1);
+    let expected = engine.search(board, &exact()).unwrap();
+    let without_recovery = engine.search(board, &exact().skip_pv_recovery()).unwrap();
+    assert_eq!(without_recovery.stop_reason, StopReason::Completed);
+    assert!(without_recovery.is_solved());
+    assert_eq!(without_recovery.best_move, expected.best_move);
+    assert_eq!(without_recovery.score, expected.score);
+    assert!(without_recovery.stats.tt_hits > 0);
+}
+#[test]
 fn interrupted_search_never_claims_an_exact_solution() {
     for kind in 0..3 {
         let mut engine = engine(2);
@@ -101,6 +113,54 @@ fn budget_is_shared_across_workers_and_iterations() {
         assert!(matches!(result.kind, Some(ResultKind::Depth { depth, .. }) if depth > 0));
     }
 }
+#[test]
+fn timed_levels_return_last_completed_stage_on_timeout() {
+    let mut engine = engine(4);
+    let board = position(21, 28);
+    let budget = Duration::from_millis(500);
+    let request = SearchRequest::timed_levels(60, budget).skip_pv_recovery();
+    let mut last = None;
+    let result = engine
+        .search_with(board, &request, |progress| {
+            last = Some(progress.clone());
+            // Let the actual search clock expire between two stages.
+            std::thread::sleep(budget.saturating_sub(progress.elapsed));
+        })
+        .unwrap();
+    let last = last.expect("the first stage should complete");
+    assert_eq!(last.kind, ResultKind::Depth { depth: 5, selectivity: Selectivity::Percent83 });
+    assert_eq!(result.stop_reason, StopReason::TimeLimit);
+    assert_eq!(result.kind, Some(last.kind));
+    assert_eq!(result.score, Some(last.score));
+    assert_eq!(result.best_move, last.best_move);
+    assert!(board.play(result.best_move.unwrap()).is_ok());
+}
+
+#[test]
+fn timed_levels_searches_selective_stages_and_solves_exactly() {
+    let mut engine = engine(4);
+    let board = position(9, 14);
+    let fixed = engine.search(board, &exact()).unwrap();
+    let budget = Duration::from_secs(5);
+    let mut reported = Vec::new();
+    let timed = engine
+        .search_with(board, &SearchRequest::timed_levels(60, budget), |progress| {
+            reported.push(progress.kind);
+        })
+        .unwrap();
+    assert_eq!(timed.stop_reason, StopReason::Completed);
+    assert!(timed.is_solved());
+    assert_eq!(timed.score, fixed.score);
+    assert!(timed.stats.tt_hits > 0);
+    let expected: Vec<_> = [2, 4].into_iter()
+        .map(|depth| ResultKind::Depth { depth, selectivity: Selectivity::Percent83 })
+        .chain([Selectivity::Percent85, Selectivity::Full].map(|selectivity| {
+            ResultKind::Endgame { selectivity }
+        }))
+        .collect();
+    assert_eq!(reported, expected);
+}
+
 #[test]
 fn pass_and_terminal_are_distinct() {
     let board = Board::from_bits(2, 1).unwrap();
@@ -381,6 +441,24 @@ fn selective_endgame_scores_are_even() {
 }
 
 #[test]
+fn selective_endgame_recovers_a_warm_pv_without_changing_the_result() {
+    let board = position(9, 14);
+    let request = exact().selectivity(Selectivity::Percent99);
+    let run = |request_with_pv| {
+        let mut engine = engine(1);
+        engine.search(board, &request).unwrap();
+        engine.search(board, &request_with_pv).unwrap()
+    };
+    let warm = run(request.clone());
+    assert!(warm.pv_final_score(board).is_none());
+    let recovered = run(request.clone().recover_endgame_pv());
+    assert_eq!(recovered.best_move, warm.best_move);
+    assert_eq!(recovered.score, warm.score);
+    assert_eq!(recovered.kind, warm.kind);
+    assert_eq!(recovered.pv_final_score(board), warm.score);
+}
+
+#[test]
 fn stopping_after_selective_preparation_does_not_report_exact() {
     // Exact preparation stops endgame ProbCut below thirteen empties; a rule at
     // thirteen makes it search the same tree as the selective request.
@@ -413,6 +491,7 @@ fn stopping_after_selective_preparation_does_not_report_exact() {
         })
     );
     assert_eq!(stopped.score, prepared.score);
+    assert_eq!(stopped.best_move, prepared.best_move);
 }
 
 #[test]
@@ -452,11 +531,51 @@ fn all_moves_scores_every_move_exactly() {
             assert_eq!(result.moves[0].score, result.score.unwrap());
         }
     }
+    let board = position(9, 8);
+    let mut reviewer = engine(1);
+    let all = reviewer.search(board, &exact().all_moves()).unwrap();
+    for played in board.legal_moves() {
+        let result = reviewer.search(board, &exact().review_move(played)).unwrap();
+        assert_eq!(result.score, all.score);
+        assert_eq!(result.moves[0].score, all.score.unwrap());
+        assert_eq!(
+            result.moves.len(),
+            if result.best_move == Some(Action::Place(played)) { 1 } else { 2 }
+        );
+        assert!(result.moves.iter().all(|score| all.moves.contains(score)));
+        assert!(result.moves.iter().any(|m| m.action == Action::Place(played)));
+    }
     // A stopped search leaves the list empty rather than partial.
     let result = engine(1)
         .search(Board::new(), &depth(10).all_moves().node_limit(500))
         .unwrap();
     assert!(result.moves.is_empty());
+}
+
+#[test]
+fn candidate_lines_are_legal_and_match_full_window_scores() {
+    let board = position(9, 8);
+    let mut engine = engine(4);
+    let result = engine.search(board, &exact().all_moves_with_pv()).unwrap();
+    assert!(result.is_solved());
+    assert_eq!(result.moves.len(), board.legal_moves().count());
+    assert_eq!(result.moves.len(), result.move_pvs.len());
+    for (scored, pv) in result.moves.iter().zip(result.move_pvs) {
+        assert_eq!(pv.first(), Some(&scored.action));
+        let child = board.play(scored.action).unwrap();
+        assert_eq!(scored.score, -reference(child));
+        let final_board = pv.iter().try_fold(board, |board, &action| board.play(action)).unwrap();
+        if final_board.is_terminal() {
+            let score = final_board.final_score();
+            assert_eq!(scored.score, if pv.len() % 2 == 0 { score } else { -score });
+        }
+    }
+
+    let stopped = engine
+        .search(Board::new(), &depth(14).all_moves_with_pv().node_limit(500))
+        .unwrap();
+    assert!(stopped.moves.is_empty());
+    assert!(stopped.move_pvs.is_empty());
 }
 
 #[test]
@@ -682,4 +801,26 @@ fn depth_searches_reaching_the_end_score_finished_games_exactly() {
         let result = engine.search(board, &depth(board.empty_count())).unwrap();
         assert_eq!(result.score, Some(reference(board)), "seed {seed}");
     }
+}
+
+#[test]
+fn root_threshold_keeps_equal_moves_and_reports_only_an_upper_bound_on_failure() {
+    let mut engine = engine(1);
+    let board = Board::new();
+    let square = board.legal_moves().next().unwrap();
+    let request = depth(6).root_moves(1 << square.index());
+
+    let rejected = engine
+        .search(board, &request.clone().minimum_score(1))
+        .unwrap();
+    assert_eq!(rejected.stop_reason, StopReason::Completed);
+    assert_eq!(rejected.score, Some(0));
+    assert!(rejected.score_is_upper_bound);
+    assert!(rejected.pv.is_empty());
+    assert_eq!(rejected.root_moves, 1 << square.index());
+
+    let accepted = engine.search(board, &request.minimum_score(0)).unwrap();
+    assert_eq!(accepted.score, Some(0));
+    assert!(!accepted.score_is_upper_bound);
+    assert_eq!(accepted.pv.first(), Some(&Action::Place(square)));
 }
