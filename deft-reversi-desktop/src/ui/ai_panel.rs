@@ -18,6 +18,7 @@ pub(super) fn reading_text(s: &Strings, reading: Reading) -> String {
         Reading::Depth { depth, percent } => format!("{} @ {percent}%", s.depth(depth)),
         Reading::Endgame { percent: 100 } => s.exact.into(),
         Reading::Endgame { percent } => format!("{} @ {percent}%", s.selective_endgame),
+        Reading::Book => s.book.into(),
     }
 }
 

@@ -87,6 +87,7 @@ pub const MOVE_TIMES: [Duration; 5] = [
 ];
 
 impl Strength {
+
     pub fn spec(self) -> SearchSpec {
         match self {
             Self::Preset(preset) => SearchSpec::new(Goal::Level(preset.level())),

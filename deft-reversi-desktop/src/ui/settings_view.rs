@@ -4,14 +4,14 @@ use crate::{
     app::{AnalysisSettings, Command},
     domain::settings::{Animation, TT_SIZES_MIB, ThemeChoice},
     i18n::Lang,
-    services::engine::Resources,
+    services::engine::{BookStatus, Resources},
 };
 use gpui::{Context, Div, FontWeight, IntoElement, SharedString, div, prelude::*, px};
 
 impl RootView {
     pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
-        let settings = self.settings;
+        let settings = self.settings.clone();
         let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
 
         let group = |title: &'static str| {
@@ -233,8 +233,113 @@ impl RootView {
             cx,
         );
 
+        let book = settings.book.clone();
+        let book_name = book.path.as_ref().map(|p| {
+            p.file_name()
+                .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into())
+        });
+        let book_state: Option<SharedString> = match (&book.path, &self.book_status) {
+            (None, _) => None,
+            (Some(_), None) => Some(s.book_loading.into()),
+            (Some(_), Some(BookStatus::Loaded { positions })) => {
+                Some(s.book_loaded(*positions).into())
+            }
+            (Some(_), Some(BookStatus::OtherModel)) => Some(s.book_other_model.into()),
+            (Some(_), Some(BookStatus::Failed(_))) => Some(s.book_failed.into()),
+            (Some(_), Some(BookStatus::None)) => None,
+        };
+        let book_file = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.))
+            .child(
+                div()
+                    .max_w(px(200.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(if book_name.is_some() {
+                        theme::text()
+                    } else {
+                        theme::text_muted()
+                    })
+                    .child(book_name.unwrap_or_else(|| s.book_none.into())),
+            )
+            .child(widgets::button(
+                "book-choose",
+                s.book_choose,
+                widgets::handler(|this, cx| this.choose_book(cx)),
+                cx,
+            ))
+            .when(book.path.is_some(), |el| {
+                el.child(widgets::link(
+                    "book-remove",
+                    s.book_remove,
+                    widgets::handler(|this, cx| this.set_book_path(None, cx)),
+                    cx,
+                ))
+            });
+        let book_use = widgets::segmented(
+            "book-use",
+            [(true, s.on), (false, s.off)]
+                .into_iter()
+                .map(|(on, label)| {
+                    (
+                        SharedString::from(label),
+                        book.enabled == on,
+                        widgets::handler(move |this, cx| this.set_book_use(on, cx)),
+                    )
+                })
+                .collect(),
+            cx,
+        );
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .child(group(s.board_group))
+            .child(row(s.legal_moves, legal, None))
+            .child(row(s.candidate_values, candidate_values, None))
+            .child(row(s.flip_animation, animation, None))
+            .child(row(s.sound, sound, None))
+            .child(group(s.analysis))
+            .child(row(s.analysis_level, level, None))
+            .child(row(s.loss_threshold, loss, Some(s.discs_or_more.into())))
+            .child(group(s.appearance))
+            .child(row(s.theme, theme_choice, None))
+            .child(row(s.language, language, None))
+            .child(group(s.book_group))
+            .child(row(s.book_file, book_file, book_state))
+            .child(row(s.book_use, book_use, None))
+            .child(
+                div()
+                    .pl(px(14.))
+                    .py(px(4.))
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(s.book_note),
+            )
+            .child(group(s.engine_group))
+            .child(row(s.threads, threads, Some(s.logical_cpus(cpus).into())))
+            .child(row(s.hash_table, tt, Some("MiB".into())))
+            .child(
+                div()
+                    .mt(px(14.))
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(format!(
+                        "{} · deft-reversi {}",
+                        crate::engine_loader::MODEL_FILE.trim_end_matches(".dpr2"),
+                        env!("CARGO_PKG_VERSION")
+                    )),
+            );
+
+        // The title stays; the rest scrolls when the window is short.
         div()
-            .w(px(660.))
+            .w(px(680.))
+            // The window size from the last frame; the title stays on screen.
+            .max_h(px(self.viewport.map_or(900., |(_, h)| h as f32 - 60.)))
             .flex()
             .flex_col()
             .px(px(20.))
@@ -262,30 +367,11 @@ impl RootView {
                         cx,
                     )),
             )
-            .child(group(s.board_group))
-            .child(row(s.legal_moves, legal, None))
-            .child(row(s.candidate_values, candidate_values, None))
-            .child(row(s.flip_animation, animation, None))
-            .child(row(s.sound, sound, None))
-            .child(group(s.analysis))
-            .child(row(s.analysis_level, level, None))
-            .child(row(s.loss_threshold, loss, Some(s.discs_or_more.into())))
-            .child(group(s.appearance))
-            .child(row(s.theme, theme_choice, None))
-            .child(row(s.language, language, None))
-            .child(group(s.engine_group))
-            .child(row(s.threads, threads, Some(s.logical_cpus(cpus).into())))
-            .child(row(s.hash_table, tt, Some("MiB".into())))
-            .child(
-                div()
-                    .mt(px(14.))
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(format!(
-                        "{} · deft-reversi {}",
-                        crate::engine_loader::MODEL_FILE.trim_end_matches(".dpr2"),
-                        env!("CARGO_PKG_VERSION")
-                    )),
-            )
+            .child(widgets::scroll_area(
+                "settings-body",
+                &self.settings_scroll,
+                body,
+                cx,
+            ))
     }
 }

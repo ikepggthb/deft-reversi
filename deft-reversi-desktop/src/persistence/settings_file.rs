@@ -4,17 +4,17 @@ use super::atomic_file;
 use crate::{
     app::AnalysisSettings,
     domain::{
-        Preset, Settings,
+        BoardView, Preset, Settings,
         player::MOVE_TIMES,
         settings::{
-            AiChoice, Animation, ManualMode, NewGameForm, SideForm, TT_SIZES_MIB, ThemeChoice,
+            AiChoice, Animation, BookSettings, ManualMode, NewGameForm, SideForm, TT_SIZES_MIB, ThemeChoice,
         },
     },
     i18n::Lang,
     services::engine::Resources,
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_BYTES: u64 = 64 * 1024;
@@ -41,6 +41,12 @@ pub struct SettingsV1 {
     pub window_width: Option<u32>,
     pub window_height: Option<u32>,
     pub new_game: NewGameV1,
+    /// Quarter turns clockwise and whether the board is mirrored.
+    pub board_turns: u8,
+    pub board_mirrored: bool,
+    /// The opening book file and its use by the AI.
+    pub book_path: Option<String>,
+    pub book_enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +173,10 @@ impl From<Settings> for SettingsV1 {
             window_width: s.window_size.map(|(w, _)| w),
             window_height: s.window_size.map(|(_, h)| h),
             new_game: s.new_game.into(),
+            board_turns: s.board_view.turns,
+            board_mirrored: s.board_view.mirrored,
+            book_path: s.book.path.as_ref().map(|p| p.display().to_string()),
+            book_enabled: s.book.enabled,
         }
     }
 }
@@ -228,6 +238,14 @@ impl SettingsV1 {
                 ],
                 from_current: false,
             },
+            board_view: BoardView {
+                turns: self.board_turns % 4,
+                mirrored: self.board_mirrored,
+            },
+            book: BookSettings {
+                path: self.book_path.as_ref().map(PathBuf::from),
+                enabled: self.book_enabled,
+            },
         }
     }
 
@@ -278,9 +296,13 @@ mod tests {
             lang: Lang::En,
             show_legal_moves: false,
             new_game,
+            book: BookSettings {
+                path: Some(PathBuf::from("openings.dbook")),
+                enabled: false,
+            },
             ..defaults
         };
-        atomic_file::write(&path, SettingsV1::from(settings).to_json().as_bytes()).unwrap();
+        atomic_file::write(&path, SettingsV1::from(settings.clone()).to_json().as_bytes()).unwrap();
         assert_eq!(load(&path), settings);
 
         // Unknown and missing fields; values out of range.

@@ -1486,6 +1486,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel 2.5.0",
  "chrono",
+ "deft_reversi_book",
  "deft_reversi_engine",
  "dirs",
  "gpui",

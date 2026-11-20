@@ -93,6 +93,10 @@ pub fn last_move_dot() -> Rgba {
 pub fn focus_ring() -> Rgba {
     rgb(0xfac775)
 }
+/// The note under a value on the board of how it was read.
+pub fn candidate_mark() -> Rgba {
+    rgb(0x9fc2ad)
+}
 pub fn candidate_text() -> Rgba {
     rgb(0xd8e8de)
 }

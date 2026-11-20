@@ -108,7 +108,7 @@ impl RootSearch {
         spec: SearchSpec,
         mask: u64,
         keep_pv: bool,
-        on_move: &mut dyn FnMut(&Context, &[MoveScore]),
+        on_move: OnMove<'_>,
     ) -> Result<Vec<ScoredMove>, Aborted> {
         let candidates: Vec<_> = self
             .candidates
@@ -334,6 +334,8 @@ fn root_line(action: Action, score: i32) -> Line {
 }
 
 type ScoredMove = (MoveScore, Vec<Action>);
+/// Sees the root moves scored so far, best first.
+type OnMove<'a> = &'a mut dyn FnMut(&Context, &[MoveScore]);
 
 /// The moves scored so far, best first.
 fn best_first(moves: impl Iterator<Item = MoveScore>) -> Vec<MoveScore> {
@@ -392,7 +394,7 @@ impl CandidateBatch {
     fn run(
         &self,
         context: &mut Context,
-        mut on_move: Option<&mut dyn FnMut(&Context, &[MoveScore])>,
+        mut on_move: Option<OnMove<'_>>,
     ) -> Result<(), Aborted> {
         while !context.aborted() {
             let index = self.next.fetch_add(1, Ordering::Relaxed);
@@ -422,7 +424,7 @@ fn score_parallel(
     spec: SearchSpec,
     candidates: Vec<Candidate>,
     keep_pv: bool,
-    on_move: &mut dyn FnMut(&Context, &[MoveScore]),
+    on_move: OnMove<'_>,
 ) -> Result<Vec<ScoredMove>, Aborted> {
     let count = candidates.len();
     let batch = Arc::new(CandidateBatch {

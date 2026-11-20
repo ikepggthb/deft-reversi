@@ -1,6 +1,9 @@
 //! The board with its coordinates, and the record navigation below it.
-use super::{animation::Frame, root::RootView, theme, widgets};
-use crate::app::{Command, Status};
+use super::{analysis_panel::signed, animation::Frame, root::RootView, theme, widgets};
+use crate::{
+    app::{Command, Status},
+    services::engine::Reading,
+};
 use deft_reversi_engine::{Action, Color, Square};
 use gpui::{
     ClickEvent, Context, Div, FontWeight, MouseButton, Pixels, Rgba, Window, div, prelude::*, px,
@@ -28,29 +31,49 @@ impl RootView {
         // Not while the AI is about to move: the values would be a hint.
         let ai_moving =
             self.controller.ai_to_move().is_some() && self.controller.status() == Status::Playing;
+        // The board shows one level's values at a time: the last level read
+        // through, or the first one while it is read.
         let analysis = (self.controller.analyzing() && !ai_moving).then(|| {
             let analyzer = self.controller.analyzer();
             analyzer
-                .live(position)
+                .get(position)
+                .map(|a| &a.report)
                 .filter(|r| !r.moves.is_empty())
-                .or_else(|| analyzer.get(position).map(|a| &a.report))
-                .map(|r| r.moves.clone())
+                .or_else(|| analyzer.live(position))
+                .map(|r| (r.moves.clone(), r.reading))
                 .unwrap_or_default()
         });
         let best = analysis
             .as_ref()
-            .and_then(|moves| moves.iter().map(|m| m.score).max());
+            .and_then(|(moves, _)| moves.iter().map(|m| m.score).max());
         let value_of = |square: Square| {
-            analysis.as_ref()?.iter().find_map(|m| match m.action {
+            analysis.as_ref()?.0.iter().find_map(|m| match m.action {
                 Action::Place(s) if s == square => Some(m.score),
                 _ => None,
             })
         };
+        // How the values were read, in a few characters under each one.
+        let s = self.settings.lang.strings();
+        let mark =
+            analysis
+                .as_ref()
+                .and_then(|(_, reading)| *reading)
+                .map(|reading| match reading {
+                    Reading::Depth { depth, .. } => s.depth_mark(depth),
+                    Reading::Endgame { percent: 100 } => s.exact_mark.into(),
+                    Reading::Endgame { percent } => format!("{percent}%"),
+                    Reading::Book => s.book.into(),
+                });
+        let exact = matches!(
+            analysis.as_ref().and_then(|(_, reading)| *reading),
+            Some(Reading::Endgame { percent: 100 })
+        );
         let cursor = self
             .board_focus
             .is_focused(window)
             .then_some(self.board_cursor);
 
+        let view = self.settings.board_view;
         let label = |text: String| {
             div()
                 .flex()
@@ -60,17 +83,28 @@ impl RootView {
                 .text_color(theme::text_muted())
                 .child(text)
         };
+        // A line of squares shares a file or a rank, whichever way the
+        // board is turned; its label is that one.
+        let line_label = |a: Square, b: Square| {
+            if a.x() == b.x() {
+                ((b'a' + a.x()) as char).to_string()
+            } else {
+                (a.y() + 1).to_string()
+            }
+        };
         let files = div()
             .flex()
             .flex_row()
             .pl(px(LABEL + 2.))
             .gap(px(1.))
-            .children(
-                (0..8u8).map(|x| label(((b'a' + x) as char).to_string()).w(cell).h(px(LABEL))),
-            );
+            .children((0..8u8).map(|x| {
+                label(line_label(view.square_at(x, 0), view.square_at(x, 1)))
+                    .w(cell)
+                    .h(px(LABEL))
+            }));
         let rows = (0..8u8).map(|y| {
             let squares = (0..8u8).map(|x| {
-                let square = Square::from_xy(x, y).expect("x and y are 0..8");
+                let square = view.square_at(x, y);
                 let disc = if position.black() & square.bit() != 0 {
                     Some(theme::black_disc())
                 } else if position.white() & square.bit() != 0 {
@@ -123,14 +157,34 @@ impl RootView {
                             match value_of(square).filter(|_| self.settings.candidate_values) {
                                 Some(value) => el.child(
                                     div()
-                                        .text_size(cell * 0.3)
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(if Some(value) == best {
-                                            theme::focus_ring()
-                                        } else {
-                                            theme::candidate_text()
-                                        })
-                                        .child(format!("{value:+}").replace('-', "−")),
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .child(
+                                            div()
+                                                .text_size(cell * 0.3)
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(if Some(value) == best {
+                                                    theme::focus_ring()
+                                                } else {
+                                                    theme::candidate_text()
+                                                })
+                                                .child(signed(value)),
+                                        )
+                                        .children(mark.clone().map(|mark| {
+                                            div()
+                                                .text_size(cell * 0.16)
+                                                .line_height(cell * 0.18)
+                                                .when(exact, |el| {
+                                                    el.font_weight(FontWeight::MEDIUM)
+                                                })
+                                                .text_color(if exact {
+                                                    theme::candidate_text()
+                                                } else {
+                                                    theme::candidate_mark()
+                                                })
+                                                .child(mark)
+                                        })),
                                 ),
                                 None if self.settings.show_legal_moves || analysis.is_some() => el
                                     .child(
@@ -155,7 +209,11 @@ impl RootView {
             .flex_col()
             .pt(px(2.))
             .gap(px(1.))
-            .children((1..=8).map(|rank| label(rank.to_string()).w(px(LABEL)).h(cell)));
+            .children((0..8u8).map(|y| {
+                label(line_label(view.square_at(0, y), view.square_at(1, y)))
+                    .w(px(LABEL))
+                    .h(cell)
+            }));
         let frame = div()
             .flex()
             .flex_col()

@@ -5,7 +5,7 @@
 use super::Effect;
 use crate::{
     domain::{History, editor},
-    services::engine::{Report, SearchId, SearchJob, SearchSpec},
+    services::engine::{Reading, Report, SearchId, SearchJob, SearchSpec},
 };
 use deft_reversi_engine::{Action, Color, Goal, Position, Selectivity};
 use std::collections::HashMap;
@@ -32,8 +32,28 @@ impl Default for AnalysisSettings {
 pub struct Analysis {
     /// Scores are for the side to move.
     pub report: Report,
-    /// The full analysis ran here, so it is not asked for again.
-    full: bool,
+    /// The level searched; `None` for the exact solve.
+    pub level: Option<u8>,
+    /// Stopped by the user: not searched further.
+    settled: bool,
+}
+
+impl Analysis {
+    /// The values are exact: solved to the end with no pruning.
+    pub fn is_exact(&self) -> bool {
+        matches!(self.report.reading, Some(Reading::Endgame { percent: 100 }))
+    }
+}
+
+/// The shown position is searched at rising levels up to the setting, so a
+/// value comes at once and then improves: 1, 4, 8, 12, … every four levels.
+pub fn next_level(searched: u8, target: u8) -> u8 {
+    let next = match searched {
+        0 => 1,
+        1..=3 => 4,
+        _ => (searched / 4 + 1) * 4,
+    };
+    next.min(target)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,7 +67,11 @@ struct Running {
     id: SearchId,
     job: Job,
     position: Position,
+    /// `None` for the exact solve.
+    level: Option<u8>,
     live: Option<Report>,
+    /// The user stopped it: what it found is final.
+    stopping: bool,
 }
 
 #[derive(Default)]
@@ -84,6 +108,40 @@ impl Analyzer {
             .is_some_and(|r| r.position == position && r.job != Job::Batch)
     }
 
+    /// The level now searched at `position`: `Some(None)` for the exact solve.
+    #[cfg(test)]
+    pub fn searching_level(&self, position: Position) -> Option<Option<u8>> {
+        self.running
+            .as_ref()
+            .filter(|r| r.position == position && r.job != Job::Batch)
+            .map(|r| r.level)
+    }
+
+    /// The level the shown position needs next, if any.
+    fn wanted_level(&self, position: Position) -> Option<u8> {
+        let target = self.settings.level;
+        let Some(analysis) = self.cache.get(&position) else {
+            return Some(next_level(0, target));
+        };
+        if analysis.settled {
+            return None;
+        }
+        // The exact solve is as far as it goes; it scores the moves itself.
+        let level = analysis.level?;
+        if analysis.report.moves.is_empty() {
+            // A record search, even an exact one, has no move values yet.
+            return Some(if level < target {
+                next_level(level, target)
+            } else {
+                target
+            });
+        }
+        if analysis.is_exact() || level >= target {
+            return None;
+        }
+        Some(next_level(level, target))
+    }
+
     /// Positions done and in all, while the whole record is analysed.
     pub fn batch_progress(&self) -> Option<(usize, usize)> {
         self.batch
@@ -94,6 +152,16 @@ impl Analyzer {
     /// The value for Black of the position after `index` actions: exact at
     /// the end of the game, the search's score otherwise. A forced pass
     /// shows the same discs as the next position, so it takes its value.
+    /// The analysis behind the value of the position after `index` actions;
+    /// for a forced pass, the next position's.
+    pub fn analysis_at(&self, history: &History, index: usize) -> Option<&Analysis> {
+        let mut position = history.position(index);
+        if position.must_pass() && !position.is_terminal() {
+            position = position.play(Action::Pass).ok()?;
+        }
+        self.cache.get(&position)
+    }
+
     pub fn black_value(&self, history: &History, index: usize) -> Option<i32> {
         let mut position = history.position(index);
         if position.is_terminal() {
@@ -125,10 +193,10 @@ impl Analyzer {
     }
 
     pub fn settings_changed(&mut self, settings: AnalysisSettings) {
-        if settings.level != self.settings.level {
-            // Shown positions are searched again at the new level.
+        if settings.level > self.settings.level {
+            // Shown positions go on up to the new level.
             for analysis in self.cache.values_mut() {
-                analysis.full = false;
+                analysis.settled = false;
             }
         }
         self.settings = settings;
@@ -158,15 +226,26 @@ impl Analyzer {
     /// Stops the running search but keeps what it found; ends the batch.
     pub fn stop(&mut self, effects: &mut Vec<Effect>) {
         self.batch = None;
-        if self.running.is_some() {
+        if let Some(running) = &mut self.running {
+            running.stopping = true;
             effects.push(Effect::MoveNow);
         }
     }
 
-    pub fn start_batch(&mut self, history: &History) {
+    /// Whether a record search of `position` has nothing to add: it is
+    /// solved exactly, or with `redo` unset, read at the level already.
+    fn batch_done(&self, position: Position, redo: bool) -> bool {
+        self.cache.get(&position).is_some_and(|a| match a.level {
+            None => true,
+            _ if a.is_exact() => true,
+            Some(level) => !redo && level >= self.settings.level,
+        })
+    }
+
+    pub fn start_batch(&mut self, history: &History, redo: bool) {
         let queue: Vec<Position> = (0..=history.actions().len())
             .map(|i| history.position(i))
-            .filter(|&p| searchable(p) && !self.cache.contains_key(&p))
+            .filter(|&p| searchable(p) && !self.batch_done(p, redo))
             .collect();
         // Popped from the end: the record is searched backwards, so the
         // endgame results in the table help the earlier positions.
@@ -182,9 +261,10 @@ impl Analyzer {
         self.cancel(effects);
         let spec = SearchSpec {
             selectivity: Some(Selectivity::Full),
+            all_moves: true,
             ..SearchSpec::new(Goal::Endgame)
         };
-        self.start(Job::Exact, position, spec, next_id, effects);
+        self.start(Job::Exact, position, None, spec, next_id, effects);
     }
 
     /// Starts the next search when the engine is free: the batch first,
@@ -199,22 +279,30 @@ impl Analyzer {
         }
         if let Some((queue, _)) = &mut self.batch {
             while let Some(position) = queue.pop() {
-                if self.cache.contains_key(&position) {
+                // Solved exactly since it was queued, say by the shown search.
+                if self
+                    .cache
+                    .get(&position)
+                    .is_some_and(|a| a.level.is_none() || a.is_exact())
+                {
                     continue;
                 }
-                let spec = SearchSpec::new(Goal::Level(self.settings.level));
-                self.start(Job::Batch, position, spec, next_id, effects);
+                let level = self.settings.level;
+                let spec = SearchSpec::new(Goal::Level(level));
+                self.start(Job::Batch, position, Some(level), spec, next_id, effects);
                 return;
             }
             self.batch = None;
         }
-        let needed = searchable(shown) && self.cache.get(&shown).is_none_or(|a| !a.full);
-        if needed {
+        if !searchable(shown) {
+            return;
+        }
+        if let Some(level) = self.wanted_level(shown) {
             let spec = SearchSpec {
                 all_moves: true,
-                ..SearchSpec::new(Goal::Level(self.settings.level))
+                ..SearchSpec::new(Goal::Level(level))
             };
-            self.start(Job::Shown, shown, spec, next_id, effects);
+            self.start(Job::Shown, shown, Some(level), spec, next_id, effects);
         }
     }
 
@@ -222,6 +310,7 @@ impl Analyzer {
         &mut self,
         job: Job,
         position: Position,
+        level: Option<u8>,
         spec: SearchSpec,
         next_id: &mut u64,
         effects: &mut Vec<Effect>,
@@ -232,7 +321,9 @@ impl Analyzer {
             id,
             job,
             position,
+            level,
             live: None,
+            stopping: false,
         });
         effects.push(Effect::StartSearch {
             job: SearchJob { id, position, spec },
@@ -266,10 +357,18 @@ impl Analyzer {
             }
             report
         };
+        let settled = running.stopping;
         let analysis = match running.job {
+            // Stopped before every move was scored: the lower level's whole
+            // list stays, so the board shows one level's values.
+            Job::Shown if report.moves.is_empty() && previous.is_some() => Analysis {
+                settled,
+                ..previous.clone().unwrap()
+            },
             Job::Shown => Analysis {
                 report: keep_moves(report),
-                full: true,
+                level: running.level,
+                settled,
             },
             // A solve without a score was stopped early; the old one stays.
             Job::Exact if report.score.is_none() => match previous.clone() {
@@ -278,13 +377,28 @@ impl Analyzer {
             },
             Job::Exact => Analysis {
                 report: keep_moves(report),
-                full: previous.as_ref().is_some_and(|p| p.full),
+                level: None,
+                settled: true,
+            },
+            // A stopped record search keeps what was there.
+            Job::Batch if report.score.is_none() => match previous.clone() {
+                Some(previous) => previous,
+                None => return true,
             },
             Job::Batch => match previous.clone() {
-                Some(previous) => previous,
-                None => Analysis {
-                    report,
-                    full: false,
+                Some(previous) if previous.level.is_none() || previous.is_exact() => previous,
+                // The new value replaces the old; the move values stay only
+                // when they are of the same level.
+                previous => Analysis {
+                    report: Report {
+                        moves: previous
+                            .filter(|p| p.level == running.level)
+                            .map(|p| p.report.moves)
+                            .unwrap_or_default(),
+                        ..report
+                    },
+                    level: running.level,
+                    settled: false,
                 },
             },
         };
@@ -336,26 +450,135 @@ mod tests {
             .collect()
     }
 
+    fn f5_scored(score: i32) -> Vec<MoveScore> {
+        vec![MoveScore {
+            action: place("f5"),
+            score,
+        }]
+    }
+
     #[test]
-    fn the_shown_position_is_searched_once_with_every_move() {
+    fn levels_rise_by_four_up_to_the_setting() {
+        assert_eq!(next_level(0, 20), 1);
+        assert_eq!(next_level(1, 20), 4);
+        assert_eq!(next_level(4, 20), 8);
+        assert_eq!(next_level(17, 20), 20);
+        assert_eq!(next_level(0, 2), 1);
+        assert_eq!(next_level(1, 2), 2);
+    }
+
+    #[test]
+    fn the_shown_position_is_searched_at_rising_levels_with_every_move() {
+        let mut a = Analyzer::default();
+        let mut ids = 1;
+        let start = Position::initial();
+        let mut levels = Vec::new();
+        loop {
+            let mut effects = Vec::new();
+            a.pump(start, &mut ids, &mut effects);
+            let Some(&(id, position, spec)) = started(&effects).first() else {
+                break;
+            };
+            assert_eq!(position, start);
+            assert!(spec.all_moves);
+            let Goal::Level(level) = spec.goal else {
+                panic!("a level search");
+            };
+            levels.push(level);
+            // While it runs, nothing else starts.
+            effects.clear();
+            a.pump(start, &mut ids, &mut effects);
+            assert!(effects.is_empty());
+            assert_eq!(a.searching_level(start), Some(Some(level)));
+            assert!(a.on_finished(id, report(i32::from(level), f5_scored(0))));
+            assert_eq!(a.get(start).unwrap().level, Some(level));
+        }
+        assert_eq!(levels, [1, 4, 8, 12, 16, 20]);
+        assert_eq!(a.get(start).unwrap().report.score, Some(20));
+    }
+
+    #[test]
+    fn a_stopped_level_keeps_the_lower_values_and_goes_no_further() {
         let mut a = Analyzer::default();
         let mut ids = 1;
         let mut effects = Vec::new();
         let start = Position::initial();
         a.pump(start, &mut ids, &mut effects);
-        let [(id, position, spec)] = started(&effects)[..] else {
-            panic!("one search");
-        };
-        assert_eq!(position, start);
-        assert!(spec.all_moves);
-        // While it runs, nothing else starts.
+        a.on_finished(SearchId(1), report(1, f5_scored(1)));
         effects.clear();
         a.pump(start, &mut ids, &mut effects);
-        assert!(effects.is_empty());
-        assert!(a.on_finished(id, report(0, Vec::new())));
+        let (id, _, _) = started(&effects)[0];
+        a.stop(&mut effects);
+        a.on_finished(id, report(9, Vec::new()));
+        let analysis = a.get(start).unwrap();
+        assert_eq!((analysis.level, analysis.report.score), (Some(1), Some(1)));
+        effects.clear();
         a.pump(start, &mut ids, &mut effects);
-        assert!(effects.is_empty(), "searched already");
-        assert_eq!(a.get(start).unwrap().report.score, Some(0));
+        assert!(started(&effects).is_empty());
+    }
+
+    #[test]
+    fn an_exact_record_value_still_gets_its_move_values() {
+        let history = History::new(Position::initial());
+        let mut a = Analyzer::default();
+        let mut ids = 1;
+        a.start_batch(&history, false);
+        let mut effects = Vec::new();
+        a.pump(history.current(), &mut ids, &mut effects);
+        let (id, _, spec) = started(&effects)[0];
+        assert!(!spec.all_moves);
+        let exact = Report {
+            reading: Some(Reading::Endgame { percent: 100 }),
+            ..report(0, Vec::new())
+        };
+        a.on_finished(id, exact);
+        effects.clear();
+        a.pump(history.current(), &mut ids, &mut effects);
+        let [(_, _, spec)] = started(&effects)[..] else {
+            panic!("the moves are searched");
+        };
+        assert!(spec.all_moves);
+        assert_eq!(spec.goal, Goal::Level(20));
+    }
+
+    #[test]
+    fn a_redo_searches_the_record_again_but_not_what_is_exact() {
+        let mut history = History::new(Position::initial());
+        history.play(place("f5"), Grouping::NewGroup).unwrap();
+        let mut a = Analyzer::default();
+        let mut ids = 1;
+        a.start_batch(&history, false);
+        let exact = Report {
+            reading: Some(Reading::Endgame { percent: 100 }),
+            ..report(0, Vec::new())
+        };
+        for finished in [report(1, Vec::new()), exact] {
+            let mut effects = Vec::new();
+            a.pump(history.current(), &mut ids, &mut effects);
+            a.on_finished(started(&effects)[0].0, finished);
+        }
+        a.start_batch(&history, false);
+        assert_eq!(a.batch_progress(), None, "nothing new at this level");
+        a.start_batch(&history, true);
+        assert_eq!(a.batch_progress(), Some((0, 1)), "all but the exact one");
+    }
+
+    #[test]
+    fn an_exact_result_ends_the_levels() {
+        let mut a = Analyzer::default();
+        let mut ids = 1;
+        let mut effects = Vec::new();
+        let start = Position::initial();
+        a.pump(start, &mut ids, &mut effects);
+        let exact = Report {
+            reading: Some(Reading::Endgame { percent: 100 }),
+            ..report(2, f5_scored(2))
+        };
+        a.on_finished(SearchId(1), exact);
+        assert!(a.get(start).unwrap().is_exact());
+        effects.clear();
+        a.pump(start, &mut ids, &mut effects);
+        assert!(started(&effects).is_empty());
     }
 
     #[test]
@@ -383,7 +606,7 @@ mod tests {
         }
         let mut a = Analyzer::default();
         let mut ids = 1;
-        a.start_batch(&history);
+        a.start_batch(&history, false);
         assert_eq!(a.batch_progress(), Some((0, 4)));
         // Scores for the side to move: 0, -1, +3 (a bad d6), -2.
         let scores = [0, -1, 3, -2];

@@ -1,12 +1,20 @@
 //! The `engine-ctl` thread: it owns the engine, runs one search at a time,
-//! and reports to the UI over a channel the UI awaits.
+//! and reports to the UI over a channel the UI awaits. It also holds the
+//! opening book, which answers a move search before the engine does.
+use deft_reversi_book::{
+    AnalysisIdentity, Book, BookDecision, BookPlayer, ReadLimits, UsePolicy,
+};
 use deft_reversi_engine::{
     Action, Engine, EngineWorker, Goal, MoveScore, Position, Progress, ResultKind, SearchHandle,
     SearchRequest, SearchResult, Selectivity,
 };
 use std::{
     collections::VecDeque,
-    sync::mpsc::{self, RecvTimeoutError},
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        mpsc::{self, RecvTimeoutError},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -27,6 +35,8 @@ pub struct SearchSpec {
     pub all_moves: bool,
     /// For `Goal::Endgame`; a level chooses its own.
     pub selectivity: Option<Selectivity>,
+    /// A move search first asks the book, which plays its best move.
+    pub book: bool,
 }
 
 impl SearchSpec {
@@ -36,8 +46,19 @@ impl SearchSpec {
             time_limit: None,
             all_moves: false,
             selectivity: None,
+            book: false,
         }
     }
+}
+
+/// The opening book the engine thread holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BookStatus {
+    None,
+    Loaded { positions: usize },
+    /// Made with another model, so none of its values are used.
+    OtherModel,
+    Failed(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +85,8 @@ pub enum EngineCommand {
     ClearTt,
     /// Builds a new engine after the running search is dropped.
     Reconfigure(Resources),
+    /// Reads the book at the path, or drops the book.
+    SetBook(Option<PathBuf>),
     Shutdown,
 }
 
@@ -74,6 +97,8 @@ pub enum EngineCommand {
 pub enum Reading {
     Depth { depth: u8, percent: u8 },
     Endgame { percent: u8 },
+    /// The move came from the opening book, not a search.
+    Book,
 }
 
 impl From<ResultKind> for Reading {
@@ -140,6 +165,7 @@ pub enum EngineEvent {
     LoadFailed(String),
     /// The engine keeps its previous resources.
     ReconfigureFailed(String),
+    Book(BookStatus),
     Progress {
         id: SearchId,
         report: Report,
@@ -160,6 +186,7 @@ pub trait Backend {
     fn start(&mut self, position: Position, spec: SearchSpec) -> Result<Self::Running, String>;
     fn clear_tt(&mut self) -> Result<(), String>;
     fn reconfigure(&mut self, resources: Resources) -> Result<(), String>;
+    fn set_book(&mut self, path: Option<&Path>) -> BookStatus;
 }
 
 pub trait Running {
@@ -309,6 +336,10 @@ fn run<B, F>(
                         Err(error) => EngineEvent::ReconfigureFailed(error),
                     });
                 }
+                // A running search goes on; the next one asks the new book.
+                EngineCommand::SetBook(path) => {
+                    send(EngineEvent::Book(backend.set_book(path.as_deref())))
+                }
                 EngineCommand::Shutdown => {
                     drop_search(&mut current);
                     return;
@@ -352,6 +383,13 @@ fn drop_search<R: Running>(current: &mut Option<Current<R>>) {
 pub struct EngineBackend {
     worker: EngineWorker,
     make: Box<dyn FnMut(Resources) -> Result<Engine, String>>,
+    /// What the model and its calibration make; a book made by another
+    /// model has values that do not fit this one.
+    identity: Option<AnalysisIdentity>,
+    book: Option<Arc<Book>>,
+    /// Made from the book when a search first asks it, as that needs the
+    /// engine idle.
+    player: Option<BookPlayer>,
 }
 
 impl EngineBackend {
@@ -360,17 +398,70 @@ impl EngineBackend {
         mut make: impl FnMut(Resources) -> Result<Engine, String> + 'static,
     ) -> Result<Self, String> {
         let engine = make(resources)?;
+        let identity = deft_reversi_book::analysis_identity(&engine).ok();
         Ok(Self {
             worker: EngineWorker::new(engine),
             make: Box::new(make),
+            identity,
+            book: None,
+            player: None,
+        })
+    }
+
+    /// The book's move when it has one for this position.
+    fn book_move(&mut self, position: Position) -> Option<Report> {
+        let book = self.book.clone()?;
+        if self.player.is_none() {
+            // The same conditions as the command line's play.
+            let policy = UsePolicy {
+                min_selectivity: Selectivity::Percent83,
+                ..UsePolicy::default()
+            };
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64);
+            self.player = self
+                .worker
+                .with(|engine| BookPlayer::new(engine, Some(book), policy, seed))
+                .map_err(|error| eprintln!("[book] {error}"))
+                .ok();
+        }
+        let player = self.player.as_mut()?;
+        let started = Instant::now();
+        let BookDecision::Chosen(choice) = player.decide(position) else {
+            return None;
+        };
+        Some(Report {
+            best_move: Some(choice.action),
+            score: choice
+                .value
+                .result()
+                .point_value()
+                .map(i32::from),
+            reading: Some(Reading::Book),
+            pv: vec![choice.action],
+            moves: Vec::new(),
+            nodes: 0,
+            elapsed: started.elapsed(),
         })
     }
 }
 
-impl Backend for EngineBackend {
-    type Running = SearchHandle;
+/// A search, or a move the book answered at once.
+pub enum Answer {
+    Search(SearchHandle),
+    Book(Report),
+}
 
-    fn start(&mut self, position: Position, spec: SearchSpec) -> Result<SearchHandle, String> {
+impl Backend for EngineBackend {
+    type Running = Answer;
+
+    fn start(&mut self, position: Position, spec: SearchSpec) -> Result<Answer, String> {
+        if spec.book
+            && let Some(report) = self.book_move(position)
+        {
+            return Ok(Answer::Book(report));
+        }
         let mut request = SearchRequest::new(spec.goal);
         if let Some(limit) = spec.time_limit {
             request = request.time_limit(limit);
@@ -383,6 +474,7 @@ impl Backend for EngineBackend {
         }
         self.worker
             .start(position, request)
+            .map(Answer::Search)
             .map_err(|error| error.to_string())
     }
 
@@ -397,27 +489,59 @@ impl Backend for EngineBackend {
         // not held at the same time.
         let engine = (self.make)(resources)?;
         self.worker = EngineWorker::new(engine);
+        // The player is made again from the new engine.
+        self.player = None;
         Ok(())
+    }
+
+    fn set_book(&mut self, path: Option<&Path>) -> BookStatus {
+        self.book = None;
+        self.player = None;
+        let Some(path) = path else {
+            return BookStatus::None;
+        };
+        let book = match Book::load(path, ReadLimits::default()) {
+            Ok(book) => book,
+            Err(error) => return BookStatus::Failed(format!("{}: {error}", path.display())),
+        };
+        if self.identity != Some(book.identity()) {
+            return BookStatus::OtherModel;
+        }
+        let positions = book.stats().positions;
+        self.book = Some(Arc::new(book));
+        BookStatus::Loaded { positions }
     }
 }
 
-impl Running for SearchHandle {
+impl Running for Answer {
     fn latest(&mut self) -> Option<Report> {
-        self.events().try_iter().last().map(Report::from)
+        match self {
+            Self::Search(handle) => handle.events().try_iter().last().map(Report::from),
+            Self::Book(_) => None,
+        }
     }
 
     fn stop(&self) {
-        SearchHandle::stop(self);
+        if let Self::Search(handle) = self {
+            handle.stop();
+        }
     }
 
     fn is_finished(&self) -> bool {
-        SearchHandle::is_finished(self)
+        match self {
+            Self::Search(handle) => handle.is_finished(),
+            Self::Book(_) => true,
+        }
     }
 
     fn wait(self) -> Result<Report, String> {
-        SearchHandle::wait(self)
-            .map(Report::from)
-            .map_err(|error| error.to_string())
+        match self {
+            Self::Search(handle) => handle
+                .wait()
+                .map(Report::from)
+                .map_err(|error| error.to_string()),
+            Self::Book(report) => Ok(report),
+        }
     }
 }
 
@@ -476,6 +600,10 @@ mod tests {
             }
             self.log.lock().unwrap().push("reconfigure".into());
             Ok(())
+        }
+
+        fn set_book(&mut self, _: Option<&Path>) -> BookStatus {
+            BookStatus::None
         }
     }
 

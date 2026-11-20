@@ -257,17 +257,28 @@ impl RootView {
                 .text_color(theme::text_muted())
                 .child(text)
         };
+        // Turned as the game's board is, with the labels following.
+        let view = self.settings.board_view;
+        let line_label = |a: Square, b: Square| {
+            if a.x() == b.x() {
+                ((b'a' + a.x()) as char).to_string()
+            } else {
+                (a.y() + 1).to_string()
+            }
+        };
         let files = div()
             .flex()
             .flex_row()
             .pl(px(LABEL + 2.))
             .gap(px(1.))
-            .children(
-                (0..8u8).map(|x| label(((b'a' + x) as char).to_string()).w(cell).h(px(LABEL))),
-            );
+            .children((0..8u8).map(|x| {
+                label(line_label(view.square_at(x, 0), view.square_at(x, 1)))
+                    .w(cell)
+                    .h(px(LABEL))
+            }));
         let rows = (0..8u8).map(|y| {
             let squares = (0..8u8).map(|x| {
-                let square = Square::from_xy(x, y).expect("x and y are 0..8");
+                let square = view.square_at(x, y);
                 let disc = if position.black() & square.bit() != 0 {
                     Some(theme::black_disc())
                 } else if position.white() & square.bit() != 0 {
@@ -334,7 +345,11 @@ impl RootView {
             .flex_col()
             .pt(px(2.))
             .gap(px(1.))
-            .children((1..=8).map(|rank| label(rank.to_string()).w(px(LABEL)).h(cell)));
+            .children((0..8u8).map(|y| {
+                label(line_label(view.square_at(0, y), view.square_at(1, y)))
+                    .w(px(LABEL))
+                    .h(cell)
+            }));
         let frame = div()
             .flex()
             .flex_col()

@@ -3,7 +3,7 @@
 use crate::{
     domain::{GameInfo, Grouping, History, Player, Strength, editor},
     persistence::record::LoadedGame,
-    services::engine::{EngineEvent, Report, Resources, SearchId, SearchJob},
+    services::engine::{EngineEvent, Report, Resources, SearchId, SearchJob, SearchSpec},
 };
 use deft_reversi_engine::{Action, Color, Position, Square};
 mod analysis;
@@ -49,11 +49,16 @@ pub enum Command {
     /// Analysis mode pauses the game and searches the shown position.
     SetAnalysis(bool),
     AnalyzeExact,
-    /// Searches every position of the record, from the end.
-    AnalyzeRecord,
+    /// Searches the positions of the record not yet read at the level,
+    /// from the end; with `redo`, every one that is not solved exactly.
+    AnalyzeRecord {
+        redo: bool,
+    },
     /// Stops the analysis search, keeping what it found, and the batch.
     StopAnalysis,
     SetAnalysisSettings(AnalysisSettings),
+    /// Whether AI moves may come from the opening book.
+    SetBook(bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +132,8 @@ pub struct Controller {
     notice: Option<String>,
     /// Every AI move of this game, oldest first; Undo keeps them.
     ai_log: Vec<AiMove>,
+    /// See `Command::SetBook`.
+    book: bool,
 }
 
 impl Default for Controller {
@@ -145,6 +152,7 @@ impl Default for Controller {
             analyzer: Analyzer::default(),
             notice: None,
             ai_log: Vec::new(),
+            book: false,
         }
     }
 }
@@ -299,13 +307,14 @@ impl Controller {
                         .exact(position, &mut self.next_search, &mut effects);
                 }
             }
-            Command::AnalyzeRecord => {
+            Command::AnalyzeRecord { redo } => {
                 if self.analyzing {
-                    self.analyzer.start_batch(&self.history);
+                    self.analyzer.start_batch(&self.history, redo);
                 }
             }
             Command::StopAnalysis => self.analyzer.stop(&mut effects),
             Command::SetAnalysisSettings(settings) => self.analyzer.settings_changed(settings),
+            Command::SetBook(book) => self.book = book,
         }
         self.autoplay(&mut effects);
         self.pump_analysis(&mut effects);
@@ -316,6 +325,8 @@ impl Controller {
         let mut effects = Vec::new();
         match event {
             EngineEvent::Ready { .. } => self.engine = EngineStatus::Ready,
+            // The settings screen shows it.
+            EngineEvent::Book(_) => {}
             EngineEvent::LoadFailed(error) => {
                 self.thinking = None;
                 self.analyzer.cancel(&mut Vec::new());
@@ -484,7 +495,10 @@ impl Controller {
             job: SearchJob {
                 id,
                 position,
-                spec: strength.spec(),
+                spec: SearchSpec {
+                    book: self.book,
+                    ..strength.spec()
+                },
             },
         });
     }
@@ -545,6 +559,42 @@ mod tests {
                 elapsed: Duration::ZERO,
             },
         })
+    }
+
+    #[test]
+    fn every_ai_asks_the_book_when_there_is_one() {
+        let strengths = [
+            Strength::Preset(Preset::Beginner),
+            Strength::Preset(Preset::Strongest),
+            Strength::Level(8),
+        ];
+        for strength in strengths {
+            let mut c = Controller::default();
+            c.apply(Command::SetBook(true));
+            c.on_engine(EngineEvent::Ready {
+                resources: Resources {
+                    threads: 1,
+                    tt_mib: 1,
+                },
+                load_time: Duration::ZERO,
+            });
+            let effects = c.apply(Command::NewGame(NewGame {
+                players: [Player::Ai(strength), Player::Human],
+                start: Position::initial(),
+            }));
+            let spec = effects.iter().find_map(|e| match e {
+                Effect::StartSearch { job } => Some(job.spec),
+                _ => None,
+            });
+            assert_eq!(spec.map(|s| s.book), Some(true), "{strength:?}");
+        }
+        // Without a book, no AI asks it.
+        let mut c = ready([Player::Human, Player::Ai(Strength::Level(8))]);
+        let effects = play(&mut c, "f5");
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::StartSearch { job } if !job.spec.book
+        )));
     }
 
     #[test]

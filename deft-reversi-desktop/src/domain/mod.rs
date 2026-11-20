@@ -10,4 +10,4 @@ pub mod transcript;
 pub use game::GameInfo;
 pub use history::{Grouping, History};
 pub use player::{Player, Preset, Strength};
-pub use settings::Settings;
+pub use settings::{BoardView, Settings};

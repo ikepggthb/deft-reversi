@@ -17,9 +17,17 @@ use gpui::{
 };
 use std::time::Duration;
 
-/// Only letters and digits make a record, so anything else is dropped.
+/// Only letters and digits make a record, so anything else is dropped;
+/// full-width ones, as a Japanese keyboard may type them, count as the
+/// plain ones.
 fn record_chars(text: &str) -> impl Iterator<Item = char> + '_ {
     text.chars()
+        .map(|c| match c {
+            '０'..='９' | 'ａ'..='ｚ' | 'Ａ'..='Ｚ' => {
+                char::from_u32(u32::from(c) - 0xFEE0).unwrap_or(c)
+            }
+            _ => c,
+        })
         .filter(char::is_ascii_alphanumeric)
         .map(|c| c.to_ascii_lowercase())
 }
@@ -47,36 +55,123 @@ impl RootView {
 
     /// Opens the record dialog, with the clipboard's text when pasting.
     pub(super) fn enter_record(&mut self, paste: bool, cx: &mut Context<Self>) {
-        self.record_input = if paste {
-            cx.read_from_clipboard()
-                .and_then(|item| item.text())
-                .map(|text| record_chars(&text).collect())
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        self.record_input.clear();
+        self.record_caret = 0;
+        self.record_all = false;
+        self.record_pending = None;
+        if paste && let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            self.record_insert(&text);
+        }
         self.open_dialog(Dialog::EnterRecord, cx);
+    }
+
+    fn record_moves(&self) -> usize {
+        self.record_input.len() / 2
+    }
+
+    fn record_clear(&mut self) {
+        self.record_input.clear();
+        self.record_caret = 0;
+        self.record_all = false;
+        self.record_pending = None;
+    }
+
+    /// Types `text` at the caret, in place of everything when it is all
+    /// selected. Characters pair up into moves, so the moves after the
+    /// caret keep their places; an odd one out waits for its pair.
+    fn record_insert(&mut self, text: &str) {
+        if self.record_all {
+            self.record_clear();
+        }
+        for c in record_chars(text) {
+            match self.record_pending.take() {
+                None => self.record_pending = Some(c),
+                Some(first) => {
+                    let at = 2 * self.record_caret;
+                    self.record_input.insert(at, c);
+                    self.record_input.insert(at, first);
+                    self.record_caret += 1;
+                }
+            }
+        }
+    }
+
+    /// Takes out the selection, the half-typed move, or the whole move
+    /// before or after the caret.
+    fn record_delete(&mut self, forward: bool) {
+        if self.record_all {
+            self.record_clear();
+        } else if self.record_pending.take().is_some() {
+        } else if forward {
+            if self.record_caret < self.record_moves() {
+                let at = 2 * self.record_caret;
+                self.record_input.replace_range(at..at + 2, "");
+            }
+        } else if self.record_caret > 0 {
+            self.record_caret -= 1;
+            let at = 2 * self.record_caret;
+            self.record_input.replace_range(at..at + 2, "");
+        }
     }
 
     pub(super) fn record_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         let key = &event.keystroke;
-        if key.modifiers.control || key.modifiers.platform {
-            if key.key == "v"
-                && let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
-            {
-                self.record_input.extend(record_chars(&text));
+        let moves = self.record_moves();
+        let ctrl = key.modifiers.control || key.modifiers.platform;
+        match key.key.as_str() {
+            "left" | "right" | "home" | "end" => {
+                // Moving drops a half-typed move.
+                self.record_pending = None;
+                self.record_caret = match key.key.as_str() {
+                    "home" => 0,
+                    "end" => moves,
+                    "left" if self.record_all => 0,
+                    "right" if self.record_all => moves,
+                    "left" => self.record_caret.saturating_sub(1),
+                    _ => (self.record_caret + 1).min(moves),
+                };
+                self.record_all = false;
             }
-        } else if key.key == "backspace" {
-            self.record_input.pop();
-        } else if let Some(typed) = &key.key_char {
-            self.record_input.extend(record_chars(typed));
+            "backspace" => self.record_delete(false),
+            "delete" => self.record_delete(true),
+            "a" if ctrl => self.record_all = moves > 0,
+            "c" | "x" if ctrl => {
+                cx.write_to_clipboard(ClipboardItem::new_string(self.record_input.clone()));
+                if key.key == "x" {
+                    self.record_clear();
+                }
+            }
+            "v" if ctrl => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    self.record_insert(&text);
+                }
+            }
+            _ if ctrl => return,
+            _ => {
+                if let Some(typed) = &key.key_char
+                    && record_chars(typed).next().is_some()
+                {
+                    self.record_insert(typed);
+                }
+            }
         }
+        cx.notify();
+    }
+
+    /// A click on a move puts the caret after it.
+    fn record_click(&mut self, caret: usize, cx: &mut Context<Self>) {
+        self.record_caret = caret.min(self.record_moves());
+        self.record_all = false;
+        self.record_pending = None;
         cx.notify();
     }
 
     /// The typed record replaces the game, with the same players; like any
     /// loaded game it opens paused.
     pub(super) fn load_record(&mut self, cx: &mut Context<Self>) {
+        if self.record_pending.is_some() {
+            return;
+        }
         let Ok(history) = transcript::parse(&self.record_input) else {
             return;
         };
@@ -95,13 +190,61 @@ impl RootView {
     pub(super) fn render_record_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
         let parsed = transcript::parse(&self.record_input);
-        // Shown in pairs, one move each, so a long record wraps.
+        let failed = parsed.as_ref().err().map(|&number| number - 1);
+        let caret = self.record_caret;
+        let all = self.record_all;
+        // The caret, with the half-typed move before it.
+        let typing = || {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(1.))
+                .children(self.record_pending.map(|c| {
+                    div()
+                        .px(px(3.))
+                        .text_color(theme::warning())
+                        .child(c.to_string())
+                }))
+                .child(div().w(px(2.)).h(px(18.)).bg(theme::text()))
+        };
+        // One chip a move, so a long record wraps between moves; the first
+        // move that cannot be played is red and the rest are faint.
         let chars: Vec<char> = self.record_input.chars().collect();
-        let shown = chars
-            .chunks(2)
-            .map(|pair| pair.iter().collect::<String>())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let chips = chars.chunks(2).enumerate().map(|(i, pair)| {
+            let color = match failed {
+                Some(f) if i == f => theme::danger(),
+                Some(f) if i > f => theme::text_muted(),
+                _ => theme::text(),
+            };
+            let chip = div()
+                .h(px(24.))
+                .px(px(3.))
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                .cursor_text()
+                .text_color(color)
+                .when(all, |el| el.bg(theme::selected()))
+                .when(failed == Some(i), |el| {
+                    el.border_1().border_color(theme::danger())
+                })
+                .child(pair.iter().collect::<String>())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.record_click(i + 1, cx)
+                    }),
+                );
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(2.))
+                .child(chip)
+                .when(!all && caret == i + 1, |el| el.child(typing()))
+        });
         let status = match &parsed {
             _ if self.record_input.is_empty() => div(),
             Ok(history) => div()
@@ -111,7 +254,8 @@ impl RootView {
                 .text_color(theme::danger())
                 .child(s.record_error(*number)),
         };
-        let ready = parsed.as_ref().is_ok_and(|h| !h.actions().is_empty());
+        let ready =
+            self.record_pending.is_none() && parsed.as_ref().is_ok_and(|h| !h.actions().is_empty());
         div()
             .w(px(560.))
             .flex()
@@ -138,11 +282,31 @@ impl RootView {
                     .border_color(theme::focus_ring())
                     .rounded(px(6.))
                     .bg(theme::background())
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .content_start()
+                    .items_center()
+                    .gap(px(4.))
+                    .font_family("Consolas")
+                    // A click past the last move puts the caret at the end.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                            let end = this.record_input.len();
+                            this.record_click(end, cx)
+                        }),
+                    )
+                    .when(caret == 0 && !all, |el| el.child(typing()))
                     .map(|el| {
-                        if self.record_input.is_empty() {
-                            el.text_color(theme::text_muted()).child(s.record_example)
+                        if self.record_input.is_empty() && self.record_pending.is_none() {
+                            el.child(
+                                div()
+                                    .text_color(theme::text_muted())
+                                    .child(s.record_example),
+                            )
                         } else {
-                            el.child(format!("{shown}▏"))
+                            el.children(chips)
                         }
                     }),
             )
@@ -213,5 +377,16 @@ impl RootView {
                     ),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_chars;
+
+    #[test]
+    fn full_width_letters_and_digits_count_as_plain_ones() {
+        let typed: String = record_chars("Ｆ５ ｄ６-c3").collect();
+        assert_eq!(typed, "f5d6c3");
     }
 }

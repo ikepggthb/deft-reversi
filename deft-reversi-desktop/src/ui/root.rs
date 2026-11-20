@@ -10,7 +10,7 @@ use crate::{
     persistence::paths::Paths,
     services::{
         audio::AudioService,
-        engine::{EngineCommand, EngineEvent, EngineService},
+        engine::{BookStatus, EngineCommand, EngineEvent, EngineService},
         storage::{GameSummary, StorageEvent, StorageService},
     },
 };
@@ -113,6 +113,8 @@ pub struct RootView {
     pub(super) controller: Controller,
     /// None when the model was not found.
     engine: Option<EngineService>,
+    /// What the engine thread said of the book; None while it reads one.
+    pub(super) book_status: Option<BookStatus>,
     pub(super) settings: Settings,
     pub(super) dialog: Option<Dialog>,
     /// None when the OS gives no folders; then nothing is saved.
@@ -136,16 +138,22 @@ pub struct RootView {
     pub(super) graph_hover: Option<usize>,
     /// Who passed and when, while it is shown over the board.
     pub(super) pass_notice: Option<(Color, Instant)>,
-    /// The record being typed in its dialog.
+    /// The record being typed in its dialog (whole moves), its caret (in
+    /// moves), the first half of a move being typed there, and
+    /// whether all of it is selected.
     pub(super) record_input: String,
+    pub(super) record_caret: usize,
+    pub(super) record_all: bool,
+    pub(super) record_pending: Option<char>,
     /// The record was just copied; the link says so for a moment.
     pub(super) record_copied: bool,
     pub(super) games_scroll: ScrollHandle,
     pub(super) log_scroll: ScrollHandle,
+    pub(super) settings_scroll: ScrollHandle,
     pub(super) scroll_drag: Option<widgets::ScrollDrag>,
     audio: AudioService,
     /// The window size at the last frame, saved on quit.
-    viewport: Option<(u32, u32)>,
+    pub(super) viewport: Option<(u32, u32)>,
     /// `DEFT_DESKTOP_TRACE=1`: frame times while discs turn and search
     /// results go to stderr, for the measurements of §11.
     trace: Option<Vec<Instant>>,
@@ -222,6 +230,9 @@ impl RootView {
                                 report.elapsed.as_millis()
                             );
                         }
+                        if let EngineEvent::Book(status) = &event {
+                            this.book_status = Some(status.clone());
+                        }
                         let effects = this.controller.on_engine(event);
                         this.dispatch(effects);
                         cx.notify();
@@ -236,14 +247,14 @@ impl RootView {
         });
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        Self {
+        let mut view = Self {
             controller: {
                 let mut controller = Controller::default();
                 controller.apply(Command::SetAnalysisSettings(settings.analysis));
                 controller
             },
             engine,
-            settings,
+            settings: settings.clone(),
             dialog: None,
             storage,
             paths,
@@ -258,9 +269,13 @@ impl RootView {
             graph_hover: None,
             pass_notice: None,
             record_input: String::new(),
+            record_caret: 0,
+            record_all: false,
+            record_pending: None,
             record_copied: false,
             games_scroll: ScrollHandle::new(),
             log_scroll: ScrollHandle::new(),
+            settings_scroll: ScrollHandle::new(),
             scroll_drag: None,
             audio: AudioService::spawn(),
             viewport: None,
@@ -273,7 +288,10 @@ impl RootView {
             board_cursor: "d3".parse().expect("a square name"),
             launched,
             first_frame: None,
-        }
+            book_status: None,
+        };
+        view.apply_book();
+        view
     }
 
     pub(super) fn has_engine(&self) -> bool {
@@ -320,9 +338,13 @@ impl RootView {
                     continue;
                 }
             };
-            if let Some(engine) = &self.engine {
-                engine.send(command);
-            }
+            self.send_engine(command);
+        }
+    }
+
+    pub(super) fn send_engine(&self, command: EngineCommand) {
+        if let Some(engine) = &self.engine {
+            engine.send(command);
         }
     }
 
@@ -395,10 +417,13 @@ impl RootView {
         cx.notify();
     }
 
+    /// The arrows move the cursor as the board is shown, however it is turned.
     fn move_board_cursor(&mut self, dx: i8, dy: i8, cx: &mut Context<Self>) {
-        let x = (self.board_cursor.x() as i8 + dx).clamp(0, 7) as u8;
-        let y = (self.board_cursor.y() as i8 + dy).clamp(0, 7) as u8;
-        self.board_cursor = Square::from_xy(x, y).expect("clamped to the board");
+        let view = self.settings.board_view;
+        let (x, y) = view.place_of(self.board_cursor);
+        let x = (x as i8 + dx).clamp(0, 7) as u8;
+        let y = (y as i8 + dy).clamp(0, 7) as u8;
+        self.board_cursor = view.square_at(x, y);
         cx.notify();
     }
 
@@ -459,6 +484,23 @@ impl RootView {
                 }),
             )
             .child(div().flex_1())
+            // How the board is shown; kept in the settings.
+            .child(widgets::link(
+                "turn-board",
+                s.turn_board,
+                widgets::handler(|this, _| {
+                    this.settings.board_view = this.settings.board_view.turned()
+                }),
+                cx,
+            ))
+            .child(widgets::link(
+                "mirror-board",
+                s.mirror_board,
+                widgets::handler(|this, _| {
+                    this.settings.board_view = this.settings.board_view.mirrored()
+                }),
+                cx,
+            ))
             .child(widgets::link(
                 "ai-log",
                 s.ai_log,

@@ -99,7 +99,12 @@ impl RootView {
                                 .child(report.reading.map_or("–".into(), |r| reading_text(s, r))),
                         )
                         .child(cell(TIME).child(format!("{seconds:.2} s")))
-                        .child(cell(NODES).child(nodes_text(report.nodes)))
+                        // A book move reads nothing.
+                        .child(cell(NODES).child(if report.nodes == 0 {
+                            "–".into()
+                        } else {
+                            nodes_text(report.nodes)
+                        }))
                         .child(cell(NPS).child(nps))
                         .child(
                             div()

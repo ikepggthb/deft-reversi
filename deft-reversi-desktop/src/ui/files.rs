@@ -52,9 +52,9 @@ impl RootView {
             self.send_storage(StorageCommand::SaveGame(self.record()));
         }
         if self.settings != self.saved_settings {
-            self.saved_settings = self.settings;
+            self.saved_settings = self.settings.clone();
             self.send_storage(StorageCommand::SaveSettings(SettingsV1::from(
-                self.settings,
+                self.settings.clone(),
             )));
         }
     }

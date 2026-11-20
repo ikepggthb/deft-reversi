@@ -9,7 +9,7 @@ use super::{
     widgets::{self, caption, card, heading},
 };
 use crate::{app::Command, services::engine::Report};
-use deft_reversi_engine::{Action, Color};
+use deft_reversi_engine::{Action, Color, Square};
 use gpui::{
     Bounds, ClickEvent, Context, Div, FontWeight, PathBuilder, Pixels, Rgba, SharedString, Window,
     canvas, div, fill, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
@@ -263,44 +263,60 @@ impl RootView {
             .filter(|m| !m.is_empty())
             .or_else(|| analyzer.get(position).map(|a| &a.report.moves));
         let candidates = moves.map(|moves| {
-            let list = if moves.is_empty() {
-                div().children((!searching).then(|| caption(s.moves_incomplete)))
-            } else {
-                let best_score = moves[0].score;
-                let waiting = position
-                    .legal_moves()
-                    .filter(|&square| !moves.iter().any(|m| m.action == Action::Place(square)));
-                div()
-                    .flex()
-                    .flex_col()
-                    .children(moves.iter().enumerate().map(|(i, m)| {
-                        let color: Rgba = if m.score == best_score {
-                            theme::warning()
-                        } else if i < 3 {
-                            theme::text()
-                        } else {
-                            theme::text_secondary()
+            let list =
+                if moves.is_empty() {
+                    div().children((!searching).then(|| caption(s.moves_incomplete)))
+                } else {
+                    let best_score = moves[0].score;
+                    // Moves the running level has not reached show the lower
+                    // level's value, faintly, in that order.
+                    let earlier =
+                        |square: Square| {
+                            analyzer.get(position)?.report.moves.iter().find_map(|m| {
+                                (m.action == Action::Place(square)).then_some(m.score)
+                            })
                         };
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .h(px(22.))
-                            .text_color(color)
-                            .child(div().w(px(36.)).child(action_text(m.action)))
-                            .child(div().w(px(40.)).child(signed(m.score)))
-                    }))
-                    .children(waiting.map(|square| {
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .h(px(22.))
-                            .text_color(theme::text_muted())
-                            .child(div().w(px(36.)).child(action_text(Action::Place(square))))
-                            .child(div().w(px(40.)).child(if searching { "…" } else { "–" }))
-                    }))
-            };
+                    let mut waiting: Vec<(Square, Option<i32>)> = position
+                        .legal_moves()
+                        .filter(|&square| !moves.iter().any(|m| m.action == Action::Place(square)))
+                        .map(|square| (square, earlier(square)))
+                        .collect();
+                    waiting.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(moves.iter().enumerate().map(|(i, m)| {
+                            let color: Rgba = if m.score == best_score {
+                                theme::warning()
+                            } else if i < 3 {
+                                theme::text()
+                            } else {
+                                theme::text_secondary()
+                            };
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .h(px(22.))
+                                .text_color(color)
+                                .child(div().w(px(36.)).child(action_text(m.action)))
+                                .child(div().w(px(40.)).child(signed(m.score)))
+                        }))
+                        .children(waiting.into_iter().map(|(square, score)| {
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .h(px(22.))
+                                .text_color(theme::text_muted())
+                                .child(div().w(px(36.)).child(action_text(Action::Place(square))))
+                                .child(div().w(px(40.)).child(match score {
+                                    Some(score) => signed(score),
+                                    None if searching => "…".into(),
+                                    None => "–".into(),
+                                }))
+                        }))
+                };
             div()
                 .flex()
                 .flex_col()
@@ -448,6 +464,31 @@ impl RootView {
                     .text_color(theme::text())
                     .child(values[k].map_or("–".into(), |v| s.lead(v))),
             );
+        // How that value was read: the level, the depth and the probability,
+        // in the plot's top right corner.
+        let how = analyzer
+            .analysis_at(history, k)
+            .filter(|_| !history.position(k).is_terminal())
+            .and_then(|a| {
+                let reading = reading_text(s, a.report.reading?);
+                Some(match a.level {
+                    Some(level) => format!("Lv {level} · {reading}"),
+                    None => reading,
+                })
+            })
+            .map(|text| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .bg(theme::surface())
+                    .text_xs()
+                    .text_color(theme::text_secondary())
+                    .whitespace_nowrap()
+                    .child(text)
+            });
 
         let actions = match analyzer.batch_progress() {
             Some((done, total)) => Some(
@@ -466,13 +507,19 @@ impl RootView {
                         cx,
                     )),
             ),
-            None if missing => Some(div().child(widgets::button(
+            // Once every value is there, the record can be read again.
+            None => Some(div().child(widgets::button(
                 "analyze-record",
-                s.analyze_record,
-                widgets::handler(|this, cx| this.run(Command::AnalyzeRecord, cx)),
+                if missing {
+                    s.analyze_record
+                } else {
+                    s.reanalyze_record
+                },
+                widgets::handler(move |this, cx| {
+                    this.run(Command::AnalyzeRecord { redo: !missing }, cx)
+                }),
                 cx,
             ))),
-            None => None,
         };
 
         // On a narrow window the legend gives way first, then the readout
@@ -528,7 +575,8 @@ impl RootView {
                                 .flex()
                                 .flex_row()
                                 .children(columns)
-                                .child(lines),
+                                .child(lines)
+                                .children(how),
                         ),
                     )
                     .child(axis),
