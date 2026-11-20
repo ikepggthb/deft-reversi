@@ -1,12 +1,12 @@
 //! GTP interface for CLI-based matches.
 use crate::{
     EngineArgs, Result,
-    game_clock::{self, Budget},
+    game_clock::{self, Budget, ClockState, GameContext, Protocol},
     stop,
 };
 use clap::Args;
 use deft_reversi_engine::{
-    Action, Color, EngineError, Goal, Position, ResultKind, SearchRequest, SearchResult, StopReason,
+    Action, Color, EngineError, Goal, Position, SearchRequest, SearchResult, StopReason,
 };
 use std::{
     io::{self, BufRead, Write},
@@ -84,6 +84,7 @@ pub fn run(args: GtpArgs) -> Result<()> {
         Mode::Level(_) => [Duration::ZERO; 2],
     };
     let mut engine = args.engine.engine()?;
+    let mut ctx = GameContext::default();
     eprintln!("{}", crate::settings::versions());
     let mut pos = Position::initial();
     let stdin = io::stdin();
@@ -143,6 +144,7 @@ pub fn run(args: GtpArgs) -> Result<()> {
                 "boardsize" | "clear_board" => {
                     engine.clear_tt().map_err(|e| e.to_string()).map(|_| {
                         pos = Position::initial();
+                        ctx.new_game();
                         if let Mode::Time { remaining } = &mut mode {
                             *remaining = initial_time;
                         }
@@ -195,7 +197,7 @@ pub fn run(args: GtpArgs) -> Result<()> {
                 },
                 "genmove" => match color(words[1]) {
                     None => Err("invalid color".into()),
-                    Some(side) => generate(&mut engine, &mut pos, &mut mode, side),
+                    Some(side) => generate(&mut engine, &mut pos, &mut mode, &mut ctx, side),
                 },
                 "quit" => Ok(String::new()),
                 _ => Err("unknown command".into()),
@@ -230,6 +232,7 @@ fn generate(
     engine: &mut crate::Engine,
     pos: &mut Position,
     mode: &mut Mode,
+    ctx: &mut GameContext,
     side: Color,
 ) -> std::result::Result<String, String> {
     let mut next = *pos;
@@ -250,10 +253,7 @@ fn generate(
     let log = std::env::var_os("DEFT_GTP_LOG").is_some();
     let mut last = None;
     let mut steps = String::new();
-    let tag = |kind: &ResultKind| match kind {
-        ResultKind::Depth { depth, .. } => format!("d{depth}"),
-        ResultKind::Endgame { selectivity } => format!("e{}", selectivity.percent()),
-    };
+    let tag = game_clock::tag;
     let mut report = |p: &deft_reversi_engine::Progress| {
         if log {
             last = Some((p.elapsed, p.kind, p.next));
@@ -270,14 +270,25 @@ fn generate(
         Mode::Time { remaining } => {
             let mut moves = next.legal_moves();
             let left = remaining[clock(side)].saturating_sub(Duration::from_millis(10));
-            let budget = Budget::new(next.empty_count(), left, left);
-            limit = budget.hard;
+            ctx.begin_turn(next);
+            let clock = ClockState {
+                empties: next.empty_count(),
+                remaining: left,
+                cap: left,
+                protocol: Protocol::Gtp,
+                threads: engine.options().threads,
+            };
+            let budget = Budget::new(clock, ctx);
+            limit = budget.hard();
             if moves.len() == 1 {
+                game_clock::unsearched_turn(ctx, next, start.elapsed());
                 Ok(Action::Place(moves.next().unwrap()))
             } else if limit.is_zero() {
-                searched_action(game_clock::reflex(engine, next))
+                let action = searched_action(game_clock::reflex(engine, next));
+                game_clock::unsearched_turn(ctx, next, start.elapsed());
+                action
             } else {
-                searched_action(budget.search(engine, next, &mut report))
+                searched_action(budget.search(engine, next, ctx, &mut report))
             }
         }
     };

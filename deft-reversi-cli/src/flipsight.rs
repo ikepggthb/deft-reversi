@@ -1,6 +1,6 @@
 use crate::{
     Engine, EngineArgs, Result, book_view,
-    game_clock::{self, Budget},
+    game_clock::{self, Budget, ClockState, GameContext, Protocol},
 };
 use clap::Args;
 use deft_reversi_book::{BookPlayer, MovePolicy};
@@ -138,6 +138,7 @@ impl SearchEngine {
 
 pub fn run(args: FlipsightArgs) -> Result<()> {
     let mut engine = None;
+    let mut ctx = GameContext::default();
     let mut out = io::stdout().lock();
     for line in io::stdin().lock().lines() {
         let received = Instant::now();
@@ -149,13 +150,17 @@ pub fn run(args: FlipsightArgs) -> Result<()> {
         let (position, mut moves) = turn.position()?;
         let square = match moves.next() {
             None => -1,
-            Some(only) if moves.is_empty() => i16::from(only.index()),
+            Some(only) if moves.is_empty() => {
+                ctx.begin_turn(position);
+                game_clock::unsearched_turn(&mut ctx, position, received.elapsed());
+                i16::from(only.index())
+            }
             Some(first) => {
                 let engine = match &mut engine {
                     Some(engine) => engine,
                     None => engine.insert(SearchEngine::start(args.clone())?),
                 };
-                i16::from(choose(engine, &turn, position, first, received)?.index())
+                i16::from(choose(engine, &mut ctx, &turn, position, first, received)?.index())
             }
         };
         serde_json::to_writer(&mut out, &Reply { square })?;
@@ -167,6 +172,7 @@ pub fn run(args: FlipsightArgs) -> Result<()> {
 
 fn choose(
     engine: &mut SearchEngine,
+    ctx: &mut GameContext,
     turn: &Turn,
     position: Position,
     first: Square,
@@ -174,22 +180,34 @@ fn choose(
 ) -> Result<Square> {
     let hard_limit = Duration::from_millis(turn.budget_ms.min(turn.remaining_ms));
     let time_left = || hard_limit.saturating_sub(received.elapsed() + REPLY_MARGIN);
+    ctx.begin_turn(position);
     // The connector spawns us on the first move, so model loading must also respect its deadline.
     let Some(engine) = engine.wait(time_left())? else {
+        game_clock::unsearched_turn(ctx, position, received.elapsed());
         return Ok(first);
     };
     if let Some(choice) = engine.book.as_mut().and_then(|book| book.choose(position))
         && let Action::Place(square) = choice.action
     {
+        game_clock::unsearched_turn(ctx, position, received.elapsed());
         return Ok(square);
     }
     let remaining =
         Duration::from_millis(turn.remaining_ms).saturating_sub(received.elapsed() + REPLY_MARGIN);
-    let budget = Budget::new(position.empty_count(), remaining, time_left());
-    let result = if budget.hard.is_zero() {
-        game_clock::reflex(&mut engine.engine, position)?
+    let clock = ClockState {
+        empties: position.empty_count(),
+        remaining,
+        cap: time_left(),
+        protocol: Protocol::FlipSight,
+        threads: engine.engine.options().threads,
+    };
+    let budget = Budget::new(clock, ctx);
+    let result = if budget.hard().is_zero() {
+        let result = game_clock::reflex(&mut engine.engine, position)?;
+        game_clock::unsearched_turn(ctx, position, received.elapsed());
+        result
     } else {
-        budget.search(&mut engine.engine, position, |_| {})?
+        budget.search(&mut engine.engine, position, ctx, |_| {})?
     };
     match (result.stop_reason, result.best_move) {
         (StopReason::WorkerFailed, _) => Err("search worker failed".into()),
