@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """How well features predict the next iteration's time, by transition.
 
-usage: cost_fit.py TABLE [--min-cost S] [--transition mid|entry|stage|exact]
+usage: cost_fit.py TABLE [--min-cost S] [--transition mid|entry|stage|exact] [--no-board]
+
+--no-board leaves out the board features (for logtable.py tables).
 
 TABLE is the output of features.py. The target is ln(next_cost / cost),
 the log of the ratio the forecast multiplies by. Rows with a censored next
@@ -109,6 +111,8 @@ FEATURES = {
     "next_full": lambda r: 1.0 if r["next_tag"] == "e100" else 0.0,
     "stage": lambda r: int(r["tag"][1:]) if r["tag"][0] == "e" else 0,
 }
+
+BOARD = {"side_mob", "opp_mob", "odd_regions", "regions", "corners", "abs_score"}
 
 SHORT = {"prev_ratio": "prev", "has_prev": "", "empties": "e", "depth": "d", "depth_odd": "odd",
          "log_cost": "cost", "side_mob": "mob", "opp_mob": "omob", "odd_regions": "par",
@@ -240,8 +244,11 @@ def report(name, errs, cens, ll=None):
 def main():
     path = sys.argv[1]
     args = sys.argv[2:]
-    min_cost, trs = 0.01, ["mid", "entry", "exact", "stage"]
+    min_cost, trs, board = 0.01, ["mid", "entry", "exact", "stage"], True
     while args:
+        if args[0] == "--no-board":
+            board, args = False, args[1:]
+            continue
         if args[0] == "--min-cost":
             min_cost, args = float(args[1]), args[2:]
         elif args[0] == "--transition":
@@ -258,12 +265,20 @@ def main():
         cens = np.array([r["cens"] for r in rows])
         cur = np.array([r["y"] - current(r) for r in rows])
         report("current (game_clock.rs)", cur, cens)
-        for names in MODELS[tr]:
+        models = MODELS[tr]
+        if not board:
+            seen, models = set(), []
+            for names in MODELS[tr]:
+                kept = tuple(n for n in names if n not in BOARD)
+                if kept not in seen:
+                    seen.add(kept)
+                    models.append(list(kept))
+        for names in models:
             label = "+".join(x for x in (SHORT.get(n, n) for n in names) if x) if names else "constant"
             for use_tobit in (False, True):
                 errs, ll = evaluate(rows, names, use_tobit)
                 report(("tobit " if use_tobit else "ols   ") + label, errs, cens, ll)
-        full = MODELS[tr][-1]
+        full = models[-1]
         y = np.array([r["y"] for r in rows])
         beta, sigma = tobit(design(rows, full), y, cens)
         print("  tobit coefficients of the last model (all rows): " +
