@@ -13,10 +13,13 @@ pub(crate) struct Budget {
 }
 
 impl Budget {
-    pub fn new(empties: u8, remaining: Duration, cap: Duration) -> Self {
+    pub fn new(empties: u8, remaining: Duration, cap: Duration, threads: usize) -> Self {
         // Full solves in the level-table measurements cost about 6 ms at
-        // 17 empties, doubling per empty. Only price *future* turns with
-        // this prior: today's position can be much harder than the average.
+        // 17 empties, doubling per empty, on one thread. Four threads solve
+        // 20-30 empties about 3.3 times faster (4^0.86). Only price *future*
+        // turns with this prior: today's position can be much harder than
+        // the average.
+        let speedup = (threads.max(1) as f64).powf(0.85);
         let turns = u32::from(empties.div_ceil(2)).max(1);
         let mut pool = remaining;
         let mut turns_left = turns;
@@ -25,7 +28,7 @@ impl Budget {
             // Allow for slower hardware, cold tables and the spread of solve
             // costs. Even a trivial turn needs a round trip on an integer-ms clock.
             let solve = Duration::from_millis(2).saturating_add(Duration::from_secs_f64(
-                3.0 * 0.006 * 2_f64.powi(future - 17),
+                3.0 * 0.006 * 2_f64.powi(future - 17) / speedup,
             ));
             if solve >= pool / turns_left {
                 break;
@@ -265,7 +268,7 @@ mod tests {
     #[test]
     fn a_long_think_preserves_round_trips_for_cheap_future_solves() {
         let left = Duration::from_millis(80);
-        let budget = Budget::new(12, left, left);
+        let budget = Budget::new(12, left, left, 1);
         assert!(left - budget.hard >= Duration::from_millis(10));
     }
 
@@ -416,10 +419,18 @@ mod tests {
     fn future_exact_solves_release_time_as_the_clock_grows() {
         let share = |sec| {
             let left = Duration::from_secs(sec);
-            Budget::new(40, left, left).soft.as_secs_f64() / sec as f64
+            Budget::new(40, left, left, 1).soft.as_secs_f64() / sec as f64
         };
         assert!(share(1) > 1.0 / 20.0);
         assert!(share(60) > share(1));
+    }
+
+    #[test]
+    fn more_threads_reserve_less_for_future_solves() {
+        let left = Duration::from_secs(2);
+        let share = |threads| Budget::new(30, left, left, threads).soft;
+        assert!(share(4) > share(1));
+        assert_eq!(share(1), share(0));
     }
 
     #[test]
@@ -427,11 +438,14 @@ mod tests {
         let left = Duration::from_secs(1);
         let cap = Duration::from_millis(5);
         for empty in 1..=60 {
-            let b = Budget::new(empty, left, cap);
+            let b = Budget::new(empty, left, cap, 1);
             assert!(b.soft <= b.hard && b.hard <= cap);
-            assert_eq!(Budget::new(empty, Duration::ZERO, cap).hard, Duration::ZERO);
+            assert_eq!(
+                Budget::new(empty, Duration::ZERO, cap, 1).hard,
+                Duration::ZERO
+            );
         }
-        assert!(Budget::new(22, left, left).hard < left);
-        assert_eq!(Budget::new(1, left, left).soft, left);
+        assert!(Budget::new(22, left, left, 1).hard < left);
+        assert_eq!(Budget::new(1, left, left, 1).soft, left);
     }
 }
