@@ -270,7 +270,7 @@ fn generate(
         Mode::Time { remaining } => {
             let mut moves = next.legal_moves();
             let left = remaining[clock(side)].saturating_sub(Duration::from_millis(10));
-            let budget = Budget::new(next.empty_count(), left, left, engine.options().threads);
+            let budget = Budget::new(next.empty_count(), left, left);
             limit = budget.hard;
             if moves.len() == 1 {
                 Ok(Action::Place(moves.next().unwrap()))

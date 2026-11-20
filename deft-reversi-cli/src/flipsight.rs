@@ -185,12 +185,7 @@ fn choose(
     }
     let remaining =
         Duration::from_millis(turn.remaining_ms).saturating_sub(received.elapsed() + REPLY_MARGIN);
-    let budget = Budget::new(
-        position.empty_count(),
-        remaining,
-        time_left(),
-        engine.engine.options().threads,
-    );
+    let budget = Budget::new(position.empty_count(), remaining, time_left());
     let result = if budget.hard.is_zero() {
         game_clock::reflex(&mut engine.engine, position)?
     } else {
