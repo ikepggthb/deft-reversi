@@ -72,3 +72,4 @@
 | [2026-11-16-edax456-audit](2026-11-16-edax456-audit/README.md) | Edax 4.5.6の設定確認、公式配布版・GCC/Clang native再ビルドの比較、TT容量の確認 |
 | [2026-11-20-game-clock](2026-11-20-game-clock/README.md) | 持ち時間制対局（FlipSight / GTP）の時間管理最適化と644局の直接対局評価 |
 | [2026-11-20-game-clock-v2](2026-11-20-game-clock-v2/README.md) | 60秒対局を見据えた `reuse_pv` 導入と不安定度減衰の256局独立評価 |
+| [2026-11-20-time-control-forecast](2026-11-20-time-control-forecast/README.md) | 持ち時間制：`Progress::next` による次の反復の予測と `a21b8c9` との評価（9条件・2,628局、時間切れ0、捨てた時間 5.0%→0.5%） |
