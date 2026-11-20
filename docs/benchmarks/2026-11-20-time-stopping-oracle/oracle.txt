@@ -1,0 +1,25 @@
+games 264, positions per game 10.0
+
+== 1.5 probe seconds per game
+  current  loss  2.49  time   1.50s
+  flat     loss  2.62  time   1.50s  minus current +0.12 (SE 0.10)
+  kind     loss  2.51  time   1.50s  minus current +0.02 (SE 0.10)
+  value    loss  2.41  time   1.52s  minus current -0.09 (SE 0.10)
+
+== 4 probe seconds per game
+  current  loss  1.85  time   4.01s
+  flat     loss  1.91  time   4.00s  minus current +0.06 (SE 0.06)
+  kind     loss  1.98  time   3.99s  minus current +0.13 (SE 0.06)
+  value    loss  1.77  time   3.92s  minus current -0.08 (SE 0.07)
+
+== 10 probe seconds per game
+  current  loss  1.20  time  10.01s
+  flat     loss  1.28  time  10.01s  minus current +0.08 (SE 0.05)
+  kind     loss  1.29  time   9.96s  minus current +0.09 (SE 0.06)
+  value    loss  1.12  time  10.02s  minus current -0.08 (SE 0.05)
+
+== 20 probe seconds per game
+  current  loss  0.78  time  19.97s
+  flat     loss  0.77  time  19.91s  minus current -0.01 (SE 0.01)
+  kind     loss  0.81  time  19.95s  minus current +0.03 (SE 0.01)
+  value    loss  0.81  time  19.94s  minus current +0.03 (SE 0.02)
