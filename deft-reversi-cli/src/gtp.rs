@@ -6,7 +6,7 @@ use crate::{
 };
 use clap::Args;
 use deft_reversi_engine::{
-    Action, Color, EngineError, Goal, Position, SearchRequest, SearchResult, StopReason,
+    Action, Color, EngineError, Goal, Position, ResultKind, SearchRequest, SearchResult, StopReason,
 };
 use std::{
     io::{self, BufRead, Write},
@@ -249,9 +249,15 @@ fn generate(
     let start = Instant::now();
     let log = std::env::var_os("DEFT_GTP_LOG").is_some();
     let mut last = None;
+    let mut steps = String::new();
+    let tag = |kind: &ResultKind| match kind {
+        ResultKind::Depth { depth, .. } => format!("d{depth}"),
+        ResultKind::Endgame { selectivity } => format!("e{}", selectivity.percent()),
+    };
     let mut report = |p: &deft_reversi_engine::Progress| {
         if log {
-            last = Some((p.elapsed, p.kind));
+            last = Some((p.elapsed, p.kind, p.next));
+            steps.push_str(&format!(" {}:{:.4}", tag(&p.kind), p.elapsed.as_secs_f64()));
         }
     };
     let mut limit = Duration::ZERO;
@@ -276,11 +282,18 @@ fn generate(
         }
     };
     if log {
-        let (elapsed, kind) = last.map_or((Duration::ZERO, String::new()), |(t, k)| {
-            (t, format!("{k:?}").replace(' ', ""))
-        });
+        let (elapsed, kind, pending) =
+            last.map_or((Duration::ZERO, String::new(), "-".into()), |(t, k, n)| {
+                (
+                    t,
+                    format!("{k:?}").replace(' ', ""),
+                    n.as_ref().map_or("-".into(), tag),
+                )
+            });
+        // `next` is the iteration that was running (or would have run) when
+        // the search stopped; `steps` lists each completed iteration.
         eprintln!(
-            "empties {} budget {:.4} used {:.4} last_done {:.4} kind {}",
+            "empties {} budget {:.4} used {:.4} last_done {:.4} kind {} next {pending} steps{steps}",
             next.empty_count(),
             limit.as_secs_f64(),
             start.elapsed().as_secs_f64(),
