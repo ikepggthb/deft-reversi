@@ -59,10 +59,29 @@ impl Budget {
         engine: &mut Engine,
         pos: Position,
         ctx: &mut GameContext,
-        mut report: impl FnMut(&Progress),
+        report: impl FnMut(&Progress),
     ) -> Result<SearchResult, EngineError> {
+        let extend = extension::seconds(ctx, pos.empty_count());
+        self.run(engine, pos, ctx, report, extend)
+            .map(|(result, _)| result)
+    }
+
+    /// `extend`: run in extension mode up to this time (see `extension`).
+    fn run(
+        &self,
+        engine: &mut Engine,
+        pos: Position,
+        ctx: &mut GameContext,
+        mut report: impl FnMut(&Progress),
+        extend: Option<Duration>,
+    ) -> Result<(SearchResult, Decision), EngineError> {
         let start = Instant::now();
-        let request = SearchRequest::timed_levels(60, self.hurdle.hard)
+        let hard = self.hurdle.hard;
+        if extend.is_some() {
+            ctx.extended = true;
+        }
+        let limit = extend.map_or(hard, |e| e.max(hard));
+        let request = SearchRequest::timed_levels(60, limit)
             .reuse_pv()
             .skip_pv_recovery();
         let handle = request.stop_handle();
@@ -70,17 +89,41 @@ impl Budget {
         let mut forecast = Forecast::legacy(pos.empty_count());
         let mut forecast_stopped = false;
         let mut pending = None;
+        let mut decision = Decision::default();
         let hurdle = self.hurdle;
         let logging = journal::enabled();
         let mut result = engine.search_with(pos, &request, |p| {
             report(p);
             let done = Finished::from(p);
             let step = forecast.observe(&done, ctx, hurdle);
-            pending = p.next;
-            if logging {
-                journal::write(&IterationRecord::new(ctx, &done, &step, hurdle), false);
+            let after_decision = decision.made;
+            if !decision.made {
+                if p.elapsed > hard {
+                    // A real search would have ended at hard, inside this
+                    // iteration, with the previous iteration's move.
+                    decision.made = true;
+                } else {
+                    decision.best_move = p.best_move;
+                    decision.reached = Some(p.kind);
+                    decision.pending = p.next;
+                    decision.elapsed = p.elapsed;
+                    decision.made = step.stop;
+                }
             }
-            if step.stop {
+            if !after_decision {
+                pending = p.next;
+            }
+            if logging {
+                let mut record = IterationRecord::new(ctx, &done, &step, hurdle);
+                if extend.is_some() {
+                    record.extension = Some(ExtensionFlags {
+                        after_decision,
+                        beyond_hard: p.elapsed > hard,
+                    });
+                }
+                journal::write(&record, false);
+            }
+            if step.stop && extend.is_none() {
                 forecast_stopped = true;
                 handle.stop();
             }
@@ -90,6 +133,10 @@ impl Budget {
         if forecast_stopped && result.stop_reason == StopReason::Requested {
             result.stop_reason = StopReason::TimeLimit;
         }
+        if extend.is_some() && decision.reached.is_some() {
+            // Play what the clock would have played.
+            result.best_move = decision.best_move;
+        }
         let used = start.elapsed();
         if logging {
             let mut record = TurnRecord::new(ctx, pos, used, Some(self), result.best_move);
@@ -98,6 +145,13 @@ impl Budget {
             record.reached = result.kind.as_ref().map(tag);
             record.pending = pending.as_ref().map(tag);
             record.score = result.score;
+            record.extended = extend.is_some();
+            record.after_extension = ctx.extended && extend.is_none();
+            if extend.is_some() {
+                record.decision_elapsed = Some(decision.elapsed.as_secs_f64());
+                record.decision_reached = decision.reached.as_ref().map(tag);
+                record.pending = decision.pending.as_ref().map(tag);
+            }
             journal::write(&record, true);
         }
         ctx.end_turn(TurnSummary {
@@ -106,7 +160,56 @@ impl Budget {
             reached: result.kind,
             pv: result.pv.clone(),
         });
-        Ok(result)
+        Ok((result, decision))
+    }
+}
+
+/// Where the game clock decided to stop. In extension mode the search goes
+/// on, but the move played is this one.
+#[derive(Clone, Copy, Debug, Default)]
+struct Decision {
+    made: bool,
+    best_move: Option<Action>,
+    /// The last iteration before the decision, the one it would have run
+    /// next, and when the former finished.
+    reached: Option<ResultKind>,
+    pending: Option<ResultKind>,
+    elapsed: Duration,
+}
+
+/// Extension mode, for data on the iterations the clock does not run: with
+/// `DEFT_CLOCK_EXTEND=EMPTIES:SECONDS`, the first turn of each game with at
+/// most EMPTIES empties searches on to SECONDS (or hard, if later) after the
+/// clock would have stopped, logging every iteration, and plays the move
+/// the clock would have played. The extra time and table entries change
+/// the rest of the game, which the log marks (`after_extension`); data
+/// runs end the game there.
+mod extension {
+    use super::GameContext;
+    use std::{sync::OnceLock, time::Duration};
+
+    static SETTING: OnceLock<Option<(u8, Duration)>> = OnceLock::new();
+
+    pub fn parse(text: &str) -> Option<(u8, Duration)> {
+        let (empties, seconds) = text.split_once(':')?;
+        let seconds: f64 = seconds.parse().ok()?;
+        (seconds.is_finite() && seconds > 0.0)
+            .then(|| Some((empties.parse().ok()?, Duration::from_secs_f64(seconds))))
+            .flatten()
+    }
+
+    /// The extension for this turn, if it is the one to extend.
+    pub fn seconds(ctx: &GameContext, empties: u8) -> Option<Duration> {
+        let setting = SETTING.get_or_init(|| {
+            let text = std::env::var("DEFT_CLOCK_EXTEND").ok()?;
+            let parsed = parse(&text);
+            if parsed.is_none() {
+                eprintln!("DEFT_CLOCK_EXTEND: expected EMPTIES:SECONDS, got {text}");
+            }
+            parsed
+        });
+        let (at_most, seconds) = (*setting)?;
+        (!ctx.extended && empties <= at_most).then_some(seconds)
     }
 }
 
@@ -148,7 +251,8 @@ struct IterationRecord {
     score: i32,
     best_move: Option<String>,
     pv: Vec<String>,
-    /// The cost model's estimate for `next` (seconds, sigma of the log).
+    /// The cost model's estimate of `next`'s own time (median seconds and
+    /// sigma of the log); `elapsed + predicted` is its predicted end.
     predicted: Option<f64>,
     log_sigma: Option<f64>,
     /// Its chance to finish before hard.
@@ -157,6 +261,18 @@ struct IterationRecord {
     expected_discs: Option<f64>,
     /// The policy stopped the search here.
     stop: bool,
+    /// Extension mode only.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    extension: Option<ExtensionFlags>,
+}
+
+#[derive(Serialize)]
+struct ExtensionFlags {
+    /// The clock had already decided to stop before this iteration ended
+    /// (a real search would not have finished it).
+    after_decision: bool,
+    /// The iteration ended after hard.
+    beyond_hard: bool,
 }
 
 impl IterationRecord {
@@ -181,6 +297,7 @@ impl IterationRecord {
             instability: step.gain.instability,
             expected_discs: step.gain.expected_discs,
             stop: step.stop,
+            extension: None,
         }
     }
 }
@@ -219,6 +336,13 @@ struct TurnRecord {
     previous_reached: Option<String>,
     /// The opponent played the reply the previous turn's pv expected.
     reply_matched: Option<bool>,
+    /// This turn ran in extension mode: `reached` and `pending` are then
+    /// where the search ended, `decision_*` where the clock decided.
+    extended: bool,
+    /// An earlier turn of this game ran in extension mode.
+    after_extension: bool,
+    decision_elapsed: Option<f64>,
+    decision_reached: Option<String>,
 }
 
 impl TurnRecord {
@@ -254,6 +378,10 @@ impl TurnRecord {
             previous_used: previous.map(|p| p.used.as_secs_f64()),
             previous_reached: previous.and_then(|p| p.reached.as_ref().map(tag)),
             reply_matched: ctx.reply_matched,
+            extended: false,
+            after_extension: ctx.extended,
+            decision_elapsed: None,
+            decision_reached: None,
         }
     }
 }
@@ -622,6 +750,82 @@ mod tests {
         }
         assert!(budget(22, left, left).1 < left);
         assert_eq!(budget(1, left, left).0, left);
+    }
+
+    #[test]
+    fn extension_settings_are_parsed_strictly() {
+        assert_eq!(
+            extension::parse("26:10"),
+            Some((26, Duration::from_secs(10)))
+        );
+        assert_eq!(extension::parse("30:0.5"), Some((30, ms(500))));
+        for bad in [
+            "26", "26:", ":10", "x:10", "26:0", "26:-1", "26:inf", "26:nan",
+        ] {
+            assert_eq!(extension::parse(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn extension_mode_searches_on_but_plays_the_clock_move() {
+        let mut engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default().tt_mib(16),
+        )
+        .unwrap();
+        let mut pos = Position::initial();
+        let mut ply = 0;
+        while pos.empty_count() > 34 {
+            if pos.must_pass() {
+                pos = pos.play(Action::Pass).unwrap();
+                continue;
+            }
+            let moves: Vec<_> = pos.legal_moves().collect();
+            ply += 1;
+            pos = pos
+                .play(Action::Place(moves[(ply * 5) % moves.len()]))
+                .unwrap();
+        }
+        let budget = Budget {
+            clock: ClockState {
+                empties: pos.empty_count(),
+                remaining: Duration::from_secs(1),
+                cap: Duration::from_secs(1),
+                protocol: Protocol::Gtp,
+                threads: 1,
+            },
+            hurdle: hurdle(1, 3),
+        };
+        let mut ctx = GameContext::default();
+        ctx.begin_turn(pos);
+        let mut seen = Vec::new();
+        let (result, decision) = budget
+            .run(
+                &mut engine,
+                pos,
+                &mut ctx,
+                |p| seen.push(p.elapsed),
+                Some(ms(300)),
+            )
+            .unwrap();
+        assert!(decision.made && decision.reached.is_some());
+        assert!(decision.elapsed <= ms(3), "{decision:?}");
+        assert!(
+            seen.iter().any(|&t| t > ms(3)),
+            "nothing after the decision: {seen:?}"
+        );
+        assert_eq!(result.best_move, decision.best_move);
+        assert!(ctx.extended);
+        // Without the extension the same budget stops at the decision.
+        let mut plain = GameContext::default();
+        plain.begin_turn(pos);
+        engine.clear_tt().unwrap();
+        let (result, decision) = budget
+            .run(&mut engine, pos, &mut plain, |_| {}, None)
+            .unwrap();
+        assert!(!plain.extended);
+        assert!(result.elapsed < ms(100), "{:?}", result.elapsed);
+        assert_eq!(result.kind, decision.reached);
     }
 
     #[test]
