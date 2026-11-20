@@ -2,7 +2,7 @@
 
 ブランチ `ccr-a29b8244-tag4vo`（`feature/cli-v2` をマージ済み）。ベンチマーク用のPCで作業を続けるためのメモ。
 
-> **2026-11-20 追記**：2章（2.1〜2.5）は終わった。結果は `docs/benchmarks/2026-11-20-time-control-forecast/`、設計は `docs/design/2026-11-18-time-management.md` にある。3章のうち、止めた理由（`TimeLimit` で返すようにした）とスレッド数（試したが FlipSight 6秒・4スレッドで −0.33石 [−0.63, −0.03] だったので取り消した）は対応済み。予約を多めに数えている点と4章の配分の最適化は未対応で、損失の表のツール（`tools/time-control/losses.py`、`probe/src/bin/truth.rs`）だけ用意した。2.4 の `referee.py` の使い方は古い。今の使い方はファイル先頭の説明を見ること。
+> **2026-11-20 追記**：2章（2.1〜2.5）は終わった。結果は `docs/benchmarks/2026-11-20-time-control-forecast/`、設計は `docs/design/2026-11-18-time-management.md` にある。3章のうち、止めた理由（`TimeLimit` で返すようにした）とスレッド数（試したが FlipSight 6秒・4スレッドで −0.33石 [−0.63, −0.03] だったので取り消した）は対応済み。4章の方法は `docs/benchmarks/2026-11-20-time-allocation-loss-table/` で試した。空き数あたり64局面では、配分の違いを見分けられなかった。予約を多めに数えている点は未対応。2.4 の `referee.py` の使い方は古い。今の使い方はファイル先頭の説明を見ること。
 
 ## 1. 今の状態
 

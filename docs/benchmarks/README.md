@@ -73,3 +73,4 @@
 | [2026-11-20-game-clock](2026-11-20-game-clock/README.md) | 持ち時間制対局（FlipSight / GTP）の時間管理最適化と644局の直接対局評価 |
 | [2026-11-20-game-clock-v2](2026-11-20-game-clock-v2/README.md) | 60秒対局を見据えた `reuse_pv` 導入と不安定度減衰の256局独立評価 |
 | [2026-11-20-time-control-forecast](2026-11-20-time-control-forecast/README.md) | 持ち時間制：`Progress::next` による次の反復の予測と `a21b8c9` との評価（9条件・2,628局、時間切れ0、捨てた時間 5.0%→0.5%） |
+| [2026-11-20-time-allocation-loss-table](2026-11-20-time-allocation-loss-table/README.md) | 持ち時間の配分：20〜48空き各64局面の損失の表と最適配分の計算（交差検証で今の配分との差は見えず） |
