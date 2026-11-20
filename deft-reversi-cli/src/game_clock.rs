@@ -54,10 +54,13 @@ impl Budget {
             .skip_pv_recovery();
         let handle = request.stop_handle();
         let _armed = stop::arm(handle.clone());
-        let mut forecast = Forecast::default();
+        let mut forecast = Forecast {
+            empties: pos.empty_count(),
+            ..Forecast::default()
+        };
         engine.search_with(pos, &request, |p| {
             report(p);
-            if forecast.stop(p.elapsed, p.kind, p.best_move, self) {
+            if forecast.stop(p.elapsed, p.kind, p.next, p.best_move, self) {
                 handle.stop();
             }
         })
@@ -72,34 +75,27 @@ pub(crate) fn reflex(engine: &mut Engine, pos: Position) -> Result<SearchResult,
 
 #[derive(Default)]
 struct Forecast {
+    empties: u8,
     elapsed: Duration,
     last_cost: Duration,
+    last_depth: Option<u8>,
     best: Option<Action>,
     instability: f64,
 }
 
 impl Forecast {
+    /// After an iteration finishes: whether the planned `next` one would
+    /// end beyond the budget, so the search should stop now.
     fn stop(
         &mut self,
         elapsed: Duration,
         kind: ResultKind,
+        next: Option<ResultKind>,
         best: Option<Action>,
         budget: Budget,
     ) -> bool {
         let cost = elapsed.saturating_sub(self.elapsed);
-        let growth = match kind {
-            // Tree growth between successive two-ply iterations. Clamp
-            // noisy ratios (TT hits and cheap shallow iterations).
-            ResultKind::Depth { .. } if !self.last_cost.is_zero() => {
-                (cost.as_secs_f64() / self.last_cost.as_secs_f64()).clamp(1.5, 6.0)
-            }
-            ResultKind::Depth { .. } => 3.0,
-            // Re-searching the same depth at a higher MPC confidence.
-            ResultKind::Endgame {
-                selectivity: Selectivity::Full,
-            } => return false,
-            ResultKind::Endgame { .. } => 1.6,
-        };
+        let growth = next.map(|next| self.growth(kind, next, cost));
         let changed = self.best.is_some() && self.best != best;
         // A reversal two plies ago still matters even if the latest
         // iteration confirmed the new move. Decay the evidence with each
@@ -108,11 +104,97 @@ impl Forecast {
         self.best = best;
         self.elapsed = elapsed;
         self.last_cost = cost;
+        self.last_depth = match kind {
+            ResultKind::Depth { depth, .. } => Some(depth),
+            ResultKind::Endgame { .. } => None,
+        };
+        // The last iteration: nothing left to forecast.
+        let Some(growth) = growth else {
+            return false;
+        };
         let target = budget.soft.as_secs_f64() * (1.0 + self.instability);
         let predicted = elapsed.as_secs_f64() + cost.as_secs_f64() * growth;
         predicted > target.min(budget.hard.as_secs_f64())
     }
+
+    /// Predicted cost of `next` over the cost of `kind`, which just took `cost`.
+    fn growth(&self, kind: ResultKind, next: ResultKind, cost: Duration) -> f64 {
+        let empties = f64::from(self.empties);
+        match (kind, next) {
+            (ResultKind::Depth { depth, .. }, ResultKind::Depth { depth: deeper, .. }) => {
+                // Tree growth per two plies, from the last two iterations.
+                // Clamp noisy ratios (TT hits and cheap shallow iterations).
+                let per_two_plies = match self.last_depth {
+                    Some(previous) if !self.last_cost.is_zero() && depth > previous => {
+                        let ratio = cost.as_secs_f64() / self.last_cost.as_secs_f64();
+                        ratio
+                            .powf(2.0 / f64::from(depth - previous))
+                            .clamp(1.5, 6.0)
+                    }
+                    _ => 3.0,
+                };
+                per_two_plies.powf(f64::from(deeper.saturating_sub(depth)) / 2.0)
+            }
+            // The first endgame stage searches to the end of the game, far
+            // deeper than the last midgame depth.
+            (
+                ResultKind::Depth { .. },
+                ResultKind::Endgame {
+                    selectivity: Selectivity::Full,
+                },
+            ) => ENTRY.at(empties) * EXACT.at(empties),
+            (ResultKind::Depth { .. }, ResultKind::Endgame { .. }) => ENTRY.at(empties),
+            (
+                ResultKind::Endgame { .. },
+                ResultKind::Endgame {
+                    selectivity: Selectivity::Full,
+                },
+            ) => EXACT.at(empties),
+            // Re-searching the same depth at a higher MPC confidence.
+            (ResultKind::Endgame { .. }, ResultKind::Endgame { .. }) => STAGE,
+            // Plans never return to the midgame; be cautious if one does.
+            (ResultKind::Endgame { .. }, ResultKind::Depth { .. }) => ENTRY.at(empties),
+        }
+    }
 }
+
+/// A cost ratio that grows geometrically with the empties, from `base` at
+/// `pivot` empties, and never falls below `floor`.
+struct Ratio {
+    floor: f64,
+    base: f64,
+    pivot: f64,
+    per_empty: f64,
+}
+
+impl Ratio {
+    fn at(&self, empties: f64) -> f64 {
+        (self.base * self.per_empty.powf(empties - self.pivot)).max(self.floor)
+    }
+}
+
+// Median ratios measured on cold tables (probe, 1 and 4 threads) and in
+// games (DEFT_GTP_LOG), see docs/benchmarks/2026-11-20-time-control-forecast.
+// The soft target leaves room up to the hard limit for the upper tail. The
+// thread count barely changes the medians.
+/// Last midgame depth -> first endgame stage: about 5 from 20 to 31
+/// empties, less with few empties and a warm table.
+const ENTRY: Ratio = Ratio {
+    floor: 2.0,
+    base: 5.0,
+    pivot: 24.0,
+    per_empty: 1.06,
+};
+/// Last selective endgame stage -> exact solve: 2.5-3.4 at 20-23 empties,
+/// 4-5 at 24-27, 6 or more from 28.
+const EXACT: Ratio = Ratio {
+    floor: 1.0,
+    base: 3.0,
+    pivot: 22.0,
+    per_empty: 1.15,
+};
+/// Selective endgame stage -> the next one: medians 1.0-1.25.
+const STAGE: f64 = 1.25;
 
 #[cfg(test)]
 mod tests {
@@ -194,8 +276,9 @@ mod tests {
             let mut forecast = Forecast {
                 elapsed: ms(10),
                 last_cost: ms(5),
+                last_depth: Some(8),
                 best: Some("d3".parse().unwrap()),
-                instability: 0.0,
+                ..Forecast::default()
             };
             // Last step took 10 ms and doubled in cost. The projected
             // completion at 40 ms lies beyond the normal 32 ms share.
@@ -205,6 +288,10 @@ mod tests {
                     depth: 10,
                     selectivity: Selectivity::Percent83,
                 },
+                Some(ResultKind::Depth {
+                    depth: 12,
+                    selectivity: Selectivity::Percent83,
+                }),
                 Some(mv.parse().unwrap()),
                 Budget {
                     soft: ms(32),
@@ -231,12 +318,98 @@ mod tests {
         let mut forecast = Forecast::default();
         let first = Some("d3".parse().unwrap());
         let second = Some("c4".parse().unwrap());
-        assert!(!forecast.stop(ms(4), depth(6), first, budget));
-        assert!(!forecast.stop(ms(10), depth(8), second, budget));
+        let next = |d: u8| Some(depth(d + 2));
+        assert!(!forecast.stop(ms(4), depth(6), next(6), first, budget));
+        assert!(!forecast.stop(ms(10), depth(8), next(8), second, budget));
         // 20 + 10 * (10 / 6) exceeds the ordinary share, but fits
         // after a single confirmation of the new best move.
-        assert!(!forecast.stop(ms(20), depth(10), second, budget));
-        assert!(forecast.stop(ms(35), depth(12), second, budget));
+        assert!(!forecast.stop(ms(20), depth(10), next(10), second, budget));
+        assert!(forecast.stop(ms(35), depth(12), next(12), second, budget));
+    }
+
+    const fn stage(selectivity: Selectivity) -> ResultKind {
+        ResultKind::Endgame { selectivity }
+    }
+
+    /// Whether a forecast that saw the midgame grow 1.5x per two plies
+    /// (4 ms, then 6 ms ending at 12 ms) stops before `next`.
+    fn after_midgame(empties: u8, next: Option<ResultKind>) -> bool {
+        let ms = Duration::from_millis;
+        let mut forecast = Forecast {
+            empties,
+            elapsed: ms(6),
+            last_cost: ms(4),
+            last_depth: Some(14),
+            ..Forecast::default()
+        };
+        let depth = ResultKind::Depth {
+            depth: 16,
+            selectivity: Selectivity::Percent83,
+        };
+        let budget = Budget {
+            soft: ms(32),
+            hard: ms(64),
+        };
+        forecast.stop(ms(12), depth, next, None, budget)
+    }
+
+    #[test]
+    fn the_first_endgame_stage_is_not_priced_like_a_midgame_step() {
+        let deeper = ResultKind::Depth {
+            depth: 18,
+            selectivity: Selectivity::Percent83,
+        };
+        // 12 + 6 * 1.5 fits in the 32 ms share, 12 + 6 * 4.4 does not.
+        assert!(!after_midgame(22, Some(deeper)));
+        assert!(after_midgame(22, Some(stage(Selectivity::Percent85))));
+        assert!(after_midgame(22, Some(stage(Selectivity::Full))));
+    }
+
+    #[test]
+    fn the_last_iteration_has_nothing_to_forecast() {
+        let ms = Duration::from_millis;
+        let mut forecast = Forecast::default();
+        let budget = Budget {
+            soft: ms(1),
+            hard: ms(2),
+        };
+        assert!(!forecast.stop(ms(50), stage(Selectivity::Full), None, None, budget));
+        assert!(!forecast.stop(ms(90), stage(Selectivity::Percent99), None, None, budget));
+    }
+
+    #[test]
+    fn an_exact_solve_costs_more_than_another_selective_stage() {
+        let ms = Duration::from_millis;
+        let budget = Budget {
+            soft: ms(32),
+            hard: ms(64),
+        };
+        let decide = |next| {
+            let mut forecast = Forecast {
+                empties: 22,
+                elapsed: ms(12),
+                ..Forecast::default()
+            };
+            // The 99% stage took 8 ms, ending at 20 ms.
+            forecast.stop(
+                ms(20),
+                stage(Selectivity::Percent99),
+                Some(next),
+                None,
+                budget,
+            )
+        };
+        assert!(!decide(stage(Selectivity::Percent99)));
+        assert!(decide(stage(Selectivity::Full)));
+    }
+
+    #[test]
+    fn transition_ratios_grow_with_the_empties_above_their_floor() {
+        for ratio in [&ENTRY, &EXACT] {
+            assert!(ratio.at(10.0) >= ratio.floor);
+            assert!(ratio.at(30.0) > ratio.at(24.0));
+        }
+        assert!(EXACT.at(22.0) > STAGE);
     }
 
     #[test]
