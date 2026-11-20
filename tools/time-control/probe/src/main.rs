@@ -28,12 +28,15 @@ fn main() {
             let req = SearchRequest::timed_levels(60, limit).skip_pv_recovery();
             let mut prev = Duration::ZERO;
             let mut row = String::new();
+            let mut pending = String::from("-");
             let r = engine.search_with(*p, &req, |pr| {
-                let tag = match pr.kind { ResultKind::Depth{depth, ..} => format!("d{depth}"), ResultKind::Endgame{selectivity} => format!("e{}", selectivity.percent()) };
+                let name = |k: ResultKind| match k { ResultKind::Depth{depth, ..} => format!("d{depth}"), ResultKind::Endgame{selectivity} => format!("e{}", selectivity.percent()) };
+                let tag = name(pr.kind);
+                pending = pr.next.map_or("-".into(), name);
                 row.push_str(&format!(" {tag}:{:.4}:{}:{:?}", pr.elapsed.as_secs_f64(), pr.score, pr.best_move.map(|m| m.to_string())));
                 prev = pr.elapsed;
             }).unwrap();
-            println!("g{g} e{e} stop={:?} total={:.3}{row}", r.stop_reason, r.elapsed.as_secs_f64());
+            println!("g{g} e{e} stop={:?} total={:.3} next={pending}{row}", r.stop_reason, r.elapsed.as_secs_f64());
         }
     }
 }
