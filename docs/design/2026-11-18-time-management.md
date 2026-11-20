@@ -4,6 +4,8 @@ GTP の `--game-ms` / `time_left` と FlipSight の `remaining_ms` のように�
 
 実装：`deft-reversi-cli/src/game_clock.rs`（`Budget`、`Forecast`）。エンジン側は `SearchRequest::timed_levels` と `Progress`（`next` を含む）だけを使う。
 
+今の方式の動作を一手の流れから順に説明した文書：`2026-11-20-game-clock-explained.md`。
+
 ## 1. 変更前の問題（2026-11-18 時点）
 
 | 箇所 | 変更前の配分 |
