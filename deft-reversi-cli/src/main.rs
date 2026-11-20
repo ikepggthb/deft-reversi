@@ -3,6 +3,7 @@ mod book_view;
 mod display;
 mod flipsight;
 mod game;
+mod game_clock;
 mod gtp;
 mod perft;
 mod play;

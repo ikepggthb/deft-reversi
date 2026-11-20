@@ -50,9 +50,8 @@ pub use diagnostics::perft;
 pub use model::Model;
 pub use position::{Color, ParsePositionError, Position};
 pub use search::{
-    Engine, EngineError, EngineOptions, GameClock, Goal, MoveScore, MoveTime, Progress, ResultKind,
-    SEARCH_SEMANTICS_REVISION, SearchPlan, SearchRequest, SearchResult, SearchStats, Selectivity,
-    StopHandle, StopReason,
+    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind,
+    SEARCH_SEMANTICS_REVISION, SearchPlan, SearchRequest, SearchResult, SearchStats, Selectivity, StopHandle, StopReason,
 };
 pub use types::{Action, Moves, Square};
 pub use worker::{EngineWorker, SearchHandle};

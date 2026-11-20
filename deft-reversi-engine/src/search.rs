@@ -15,9 +15,6 @@ use std::{
 
 mod api;
 pub use api::*;
-mod clock;
-use clock::Pacer;
-pub use clock::{GameClock, MoveTime};
 mod session;
 use session::*;
 mod endgame;
@@ -278,7 +275,6 @@ impl Engine {
             selectivity,
             level,
             time_limit: request.time_limit,
-            target_time: request.target_time,
             timed_levels: request.timed_levels && !self.calibration.is_empty(),
             node_limit: request.node_limit,
             all_moves: request.all_moves,
@@ -382,23 +378,16 @@ impl Engine {
         let plan = self.plan(&job);
         let warm = self.warm_start(&job, mask, &plan);
         let (skip, mut prediction) = if let Some((skip, square, score)) = warm {
+            // If time expires in the first uncached iteration, the compatible
+            // cached move is a better fallback than the lowest legal square.
+            result.best_move = Some(Action::Place(square));
             root.restrict(mask, Some(square));
             context.stats.reused_iterations += skip as u64;
             (skip, score)
         } else {
             (0, self.model.evaluate(&board))
         };
-        let mut pacer = job
-            .target_time
-            .map(|target| Pacer::new(target, job.time_limit));
         for (index, &iteration) in plan.iter().enumerate().skip(skip) {
-            let iteration_start = start.elapsed();
-            if let Some(pacer) = &pacer
-                && !pacer.should_start(iteration, board.empty_count(), iteration_start)
-            {
-                runtime.control.set(StopReason::TimeLimit);
-                break;
-            }
             runtime.drain();
             runtime.set_stage(iteration.selectivity);
             let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -430,10 +419,6 @@ impl Engine {
             }
             prediction = line.score;
             last = Some(iteration);
-            if let Some(pacer) = &mut pacer {
-                let duration = start.elapsed().saturating_sub(iteration_start);
-                pacer.completed(iteration, duration, result.best_move, line.score);
-            }
             // Helpers merge their counters when they finish.
             runtime.drain();
             on_progress(&Progress {
@@ -643,8 +628,6 @@ struct Job {
     /// endgame preparation depth.
     level: Option<u8>,
     time_limit: Option<Duration>,
-    /// Starts no iteration expected to run far past this; see `Pacer`.
-    target_time: Option<Duration>,
     timed_levels: bool,
     node_limit: Option<u64>,
     all_moves: bool,
@@ -973,7 +956,7 @@ mod warm_start_tests {
         )
         .unwrap();
         let board = Board::new();
-        let best = board.legal_moves().next().unwrap();
+        let best = board.legal_moves().last().unwrap();
         engine.pv_table.store(
             board,
             crate::transposition::Entry {
@@ -988,6 +971,13 @@ mod warm_start_tests {
             },
         );
         let request = SearchRequest::new(Goal::Depth(8)).reuse_pv();
+        let stopped = engine
+            .search(board, &request.clone().time_limit(Duration::ZERO))
+            .unwrap();
+        assert_eq!(stopped.best_move, Some(Action::Place(best)));
+        assert_eq!(stopped.kind, None);
+        assert_eq!(stopped.score, None);
+
         let excluded = engine
             .search(
                 board,
