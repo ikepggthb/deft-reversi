@@ -1,5 +1,9 @@
 //! GTP interface for CLI-based matches.
-use crate::{EngineArgs, Result, game_clock::Budget, stop};
+use crate::{
+    EngineArgs, Result,
+    game_clock::{self, Budget},
+    stop,
+};
 use clap::Args;
 use deft_reversi_engine::{
     Action, Color, EngineError, Goal, Position, SearchRequest, SearchResult, StopReason,
@@ -262,8 +266,10 @@ fn generate(
             let left = remaining[clock(side)].saturating_sub(Duration::from_millis(10));
             let budget = Budget::new(next.empty_count(), left, left);
             limit = budget.hard;
-            if moves.len() == 1 || limit.is_zero() {
+            if moves.len() == 1 {
                 Ok(Action::Place(moves.next().unwrap()))
+            } else if limit.is_zero() {
+                searched_action(game_clock::reflex(engine, next))
             } else {
                 searched_action(budget.search(engine, next, &mut report))
             }

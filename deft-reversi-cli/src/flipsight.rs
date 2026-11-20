@@ -1,4 +1,7 @@
-use crate::{Engine, EngineArgs, Result, book_view, game_clock::Budget};
+use crate::{
+    Engine, EngineArgs, Result, book_view,
+    game_clock::{self, Budget},
+};
 use clap::Args;
 use deft_reversi_book::{BookPlayer, MovePolicy};
 use deft_reversi_engine::{Action, Color, Moves, Position, Square, StopReason};
@@ -183,10 +186,11 @@ fn choose(
     let remaining =
         Duration::from_millis(turn.remaining_ms).saturating_sub(received.elapsed() + REPLY_MARGIN);
     let budget = Budget::new(position.empty_count(), remaining, time_left());
-    if budget.hard.is_zero() {
-        return Ok(first);
-    }
-    let result = budget.search(&mut engine.engine, position, |_| {})?;
+    let result = if budget.hard.is_zero() {
+        game_clock::reflex(&mut engine.engine, position)?
+    } else {
+        budget.search(&mut engine.engine, position, |_| {})?
+    };
     match (result.stop_reason, result.best_move) {
         (StopReason::WorkerFailed, _) => Err("search worker failed".into()),
         (_, Some(Action::Place(square))) => Ok(square),

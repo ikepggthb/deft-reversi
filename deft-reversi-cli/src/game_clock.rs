@@ -1,7 +1,7 @@
 //! Time allocation for a whole game. Protocols own the clock and reply margin.
 use crate::stop;
 use deft_reversi_engine::{
-    Action, Engine, EngineError, Position, Progress, ResultKind, SearchRequest, SearchResult,
+    Action, Engine, EngineError, Goal, Position, Progress, ResultKind, SearchRequest, SearchResult,
     Selectivity,
 };
 use std::time::Duration;
@@ -64,6 +64,12 @@ impl Budget {
     }
 }
 
+/// A two-ply search for a clock too short to budget: it takes microseconds
+/// and avoids blunders that the lowest legal square would make.
+pub(crate) fn reflex(engine: &mut Engine, pos: Position) -> Result<SearchResult, EngineError> {
+    engine.search(pos, &SearchRequest::new(Goal::Depth(2)).skip_pv_recovery())
+}
+
 #[derive(Default)]
 struct Forecast {
     elapsed: Duration,
@@ -111,6 +117,68 @@ impl Forecast {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use deft_reversi_engine::{Color, EngineOptions, Model, PatternModel};
+
+    /// Final disc difference for `me` under best play from both sides.
+    fn exact(pos: Position, me: Color) -> i32 {
+        if pos.is_terminal() {
+            return pos.final_score(me);
+        }
+        if pos.must_pass() {
+            return exact(pos.play(Action::Pass).unwrap(), me);
+        }
+        let values = pos
+            .legal_moves()
+            .map(|sq| exact(pos.play(Action::Place(sq)).unwrap(), me));
+        if pos.side_to_move() == me {
+            values.max().unwrap()
+        } else {
+            values.min().unwrap()
+        }
+    }
+
+    #[test]
+    fn the_reflex_move_is_not_the_lowest_square_when_that_loses() {
+        let mut engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let mut checked = 0;
+        for game in 0..400_usize {
+            let mut pos = Position::initial();
+            let mut ply = 0;
+            while pos.empty_count() > 2 && !pos.is_terminal() {
+                if pos.must_pass() {
+                    pos = pos.play(Action::Pass).unwrap();
+                    continue;
+                }
+                let moves: Vec<_> = pos.legal_moves().collect();
+                ply += 1;
+                pos = pos
+                    .play(Action::Place(moves[(game * 7 + ply * ply) % moves.len()]))
+                    .unwrap();
+            }
+            if pos.is_terminal() || pos.must_pass() || pos.legal_moves().count() < 2 {
+                continue;
+            }
+            let me = pos.side_to_move();
+            let value = |sq| exact(pos.play(Action::Place(sq)).unwrap(), me);
+            let best = pos.legal_moves().map(value).max().unwrap();
+            let lowest = pos.legal_moves().next().unwrap();
+            if value(lowest) == best {
+                continue;
+            }
+            let Some(Action::Place(chosen)) = reflex(&mut engine, pos).unwrap().best_move else {
+                panic!("no move");
+            };
+            // Two plies from two empties reach the end, so even the zero
+            // model finds the best move.
+            assert_eq!(value(chosen), best, "{pos:?}");
+            checked += 1;
+        }
+        assert!(checked > 5, "only {checked} positions");
+    }
 
     #[test]
     fn a_long_think_preserves_round_trips_for_cheap_future_solves() {
