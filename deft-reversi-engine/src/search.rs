@@ -428,6 +428,7 @@ impl Engine {
                 pv: result.pv.clone(),
                 nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
                 elapsed: start.elapsed(),
+                next: plan.get(index + 1).map(|next| next.kind()),
             });
         }
         runtime.drain();
@@ -691,17 +692,20 @@ impl Iteration {
             probcut: true,
         }
     }
-    /// Makes `line`, the completed iteration's result, the search result.
-    fn record(self, result: &mut SearchResult, line: &Line) {
+    fn kind(self) -> ResultKind {
         let selectivity = self.selectivity;
-        result.kind = Some(if self.exact {
+        if self.exact {
             ResultKind::Endgame { selectivity }
         } else {
             ResultKind::Depth {
                 depth: self.depth,
                 selectivity,
             }
-        });
+        }
+    }
+    /// Makes `line`, the completed iteration's result, the search result.
+    fn record(self, result: &mut SearchResult, line: &Line) {
+        result.kind = Some(self.kind());
         result.score = Some(line.score);
         result.pv = line.moves();
         if let Some(action) = result.pv.first() {

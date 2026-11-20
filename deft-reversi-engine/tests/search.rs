@@ -143,11 +143,16 @@ fn timed_levels_searches_selective_stages_and_solves_exactly() {
     let fixed = engine.search(board, &exact()).unwrap();
     let budget = Duration::from_secs(5);
     let mut reported = Vec::new();
+    let mut announced = Vec::new();
     let timed = engine
         .search_with(board, &SearchRequest::timed_levels(60, budget), |progress| {
             reported.push(progress.kind);
+            announced.push(progress.next);
         })
         .unwrap();
+    // Each report announces the iteration reported next; the last none.
+    let following: Vec<_> = reported[1..].iter().copied().map(Some).chain([None]).collect();
+    assert_eq!(announced, following);
     assert_eq!(timed.stop_reason, StopReason::Completed);
     assert!(timed.is_solved());
     assert_eq!(timed.score, fixed.score);

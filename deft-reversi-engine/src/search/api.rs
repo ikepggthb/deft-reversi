@@ -483,6 +483,9 @@ pub struct Progress {
     /// Nodes so far, across all threads.
     pub nodes: u64,
     pub elapsed: Duration,
+    /// The iteration the search plans to run next; None after the last one.
+    /// A time limit, a node limit or a stop may still end the search first.
+    pub next: Option<ResultKind>,
 }
 
 #[derive(Debug)]
