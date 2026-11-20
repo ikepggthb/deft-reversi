@@ -2,7 +2,7 @@
 use crate::stop;
 use deft_reversi_engine::{
     Action, Engine, EngineError, Goal, Position, Progress, ResultKind, SearchRequest, SearchResult,
-    Selectivity,
+    Selectivity, StopReason,
 };
 use std::time::Duration;
 
@@ -61,12 +61,20 @@ impl Budget {
             empties: pos.empty_count(),
             ..Forecast::default()
         };
-        engine.search_with(pos, &request, |p| {
+        let mut forecast_stopped = false;
+        let mut result = engine.search_with(pos, &request, |p| {
             report(p);
             if forecast.stop(p.elapsed, p.kind, p.next, p.best_move, self) {
+                forecast_stopped = true;
                 handle.stop();
             }
-        })
+        })?;
+        // The forecast stops through the same handle as Ctrl-C. Report its
+        // stops as the time decisions they are, so logs can tell them apart.
+        if forecast_stopped && result.stop_reason == StopReason::Requested {
+            result.stop_reason = StopReason::TimeLimit;
+        }
+        Ok(result)
     }
 }
 
