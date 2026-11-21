@@ -407,7 +407,7 @@ impl RootView {
 
     /// Focus follows on the next render.
     pub(super) fn open_dialog(&mut self, dialog: Dialog, cx: &mut Context<Self>) {
-        if self.editor.is_some() {
+        if self.editor.is_some() || self.book_work.running.is_some() {
             return;
         }
         if matches!(dialog, Dialog::Games) {
@@ -425,6 +425,10 @@ impl RootView {
     }
 
     pub(super) fn close_dialog(&mut self, cx: &mut Context<Self>) {
+        // A growing book keeps its dialog open until it is stopped.
+        if self.book_work.running.is_some() {
+            return;
+        }
         self.dialog = None;
         cx.notify();
     }

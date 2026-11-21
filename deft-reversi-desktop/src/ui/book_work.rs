@@ -541,12 +541,14 @@ impl RootView {
                             .font_weight(FontWeight::MEDIUM)
                             .child(s.book_work),
                     )
-                    .child(widgets::link(
-                        "close-book-work",
-                        s.close,
-                        widgets::handler(|this, cx| this.close_dialog(cx)),
-                        cx,
-                    )),
+                    .children((!running).then(|| {
+                        widgets::link(
+                            "close-book-work",
+                            s.close,
+                            widgets::handler(|this, cx| this.close_dialog(cx)),
+                            cx,
+                        )
+                    })),
             )
             .child(widgets::scroll_area(
                 "book-work-body",
