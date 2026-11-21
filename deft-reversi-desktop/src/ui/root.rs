@@ -1,6 +1,6 @@
 //! The window: toolbar, the record on the left, the board in the middle and
 //! the AI on the right (§9.2 of the plan), and the dialogs over them.
-use super::{animation::FlipAnimation, editor::EditorState, theme, widgets};
+use super::{animation::FlipAnimation, book_work::BookWork, editor::EditorState, theme, widgets};
 use crate::{
     app::{Command, Controller, Effect, Sound, Status},
     domain::{
@@ -97,6 +97,7 @@ pub(super) enum Dialog {
     Games,
     EnterRecord,
     AiLog,
+    BookWork,
 }
 
 /// How long "Black passes" stays up unless clicked away.
@@ -115,6 +116,7 @@ pub struct RootView {
     engine: Option<EngineService>,
     /// What the engine thread said of the book; None while it reads one.
     pub(super) book_status: Option<BookStatus>,
+    pub(super) book_work: BookWork,
     pub(super) settings: Settings,
     pub(super) dialog: Option<Dialog>,
     /// None when the OS gives no folders; then nothing is saved.
@@ -150,6 +152,7 @@ pub struct RootView {
     pub(super) games_scroll: ScrollHandle,
     pub(super) log_scroll: ScrollHandle,
     pub(super) settings_scroll: ScrollHandle,
+    pub(super) book_scroll: ScrollHandle,
     pub(super) scroll_drag: Option<widgets::ScrollDrag>,
     audio: AudioService,
     /// The window size at the last frame, saved on quit.
@@ -233,6 +236,13 @@ impl RootView {
                         if let EngineEvent::Book(status) = &event {
                             this.book_status = Some(status.clone());
                         }
+                        match &event {
+                            EngineEvent::BookProgress(progress) => {
+                                this.on_book_progress(*progress)
+                            }
+                            EngineEvent::BookDone(done) => this.on_book_done(done.clone(), cx),
+                            _ => {}
+                        }
                         let effects = this.controller.on_engine(event);
                         this.dispatch(effects);
                         cx.notify();
@@ -276,6 +286,7 @@ impl RootView {
             games_scroll: ScrollHandle::new(),
             log_scroll: ScrollHandle::new(),
             settings_scroll: ScrollHandle::new(),
+            book_scroll: ScrollHandle::new(),
             scroll_drag: None,
             audio: AudioService::spawn(),
             viewport: None,
@@ -289,6 +300,7 @@ impl RootView {
             launched,
             first_frame: None,
             book_status: None,
+            book_work: BookWork::default(),
         };
         view.apply_book();
         view
@@ -481,6 +493,17 @@ impl RootView {
                 )
                 .when(self.controller.analyzing(), |el| {
                     el.bg(theme::selected()).text_color(theme::accent())
+                }),
+            )
+            .child(
+                widgets::link(
+                    "book-work",
+                    s.book_work,
+                    widgets::handler(|this, cx| this.open_book_work_dialog(cx)),
+                    cx,
+                )
+                .when(self.book_work.running.is_some(), |el| {
+                    el.text_color(theme::accent())
                 }),
             )
             .child(div().flex_1())
@@ -694,6 +717,7 @@ impl Render for RootView {
                 Dialog::Games => self.render_games(cx).into_any_element(),
                 Dialog::EnterRecord => self.render_record_input(cx).into_any_element(),
                 Dialog::AiLog => self.render_ai_log(cx).into_any_element(),
+                Dialog::BookWork => self.render_book_work(cx).into_any_element(),
             };
             div()
                 .absolute()

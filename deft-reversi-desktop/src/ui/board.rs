@@ -32,42 +32,50 @@ impl RootView {
         let ai_moving =
             self.controller.ai_to_move().is_some() && self.controller.status() == Status::Playing;
         // The board shows one level's values at a time: the last level read
-        // through, or the first one while it is read.
+        // through, or the first one while it is read. A move in the opening
+        // book shows the book's value instead.
         let analysis = (self.controller.analyzing() && !ai_moving).then(|| {
             let analyzer = self.controller.analyzer();
-            analyzer
+            let mut values: Vec<(Action, i32, Option<Reading>)> = analyzer
                 .get(position)
                 .map(|a| &a.report)
                 .filter(|r| !r.moves.is_empty())
                 .or_else(|| analyzer.live(position))
-                .map(|r| (r.moves.clone(), r.reading))
-                .unwrap_or_default()
+                .map(|r| {
+                    r.moves
+                        .iter()
+                        .map(|m| (m.action, m.score, r.reading))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for line in self.book_lines(position).unwrap_or_default() {
+                let Some(score) = line.value.and_then(|v| v.point()) else {
+                    continue;
+                };
+                values.retain(|&(action, ..)| action != line.action);
+                values.push((line.action, score, Some(Reading::Book)));
+            }
+            values
         });
         let best = analysis
             .as_ref()
-            .and_then(|(moves, _)| moves.iter().map(|m| m.score).max());
+            .and_then(|values| values.iter().map(|&(_, score, _)| score).max());
         let value_of = |square: Square| {
-            analysis.as_ref()?.0.iter().find_map(|m| match m.action {
-                Action::Place(s) if s == square => Some(m.score),
-                _ => None,
-            })
-        };
-        // How the values were read, in a few characters under each one.
-        let s = self.settings.lang.strings();
-        let mark =
             analysis
-                .as_ref()
-                .and_then(|(_, reading)| *reading)
-                .map(|reading| match reading {
-                    Reading::Depth { depth, .. } => s.depth_mark(depth),
-                    Reading::Endgame { percent: 100 } => s.exact_mark.into(),
-                    Reading::Endgame { percent } => format!("{percent}%"),
-                    Reading::Book => s.book.into(),
-                });
-        let exact = matches!(
-            analysis.as_ref().and_then(|(_, reading)| *reading),
-            Some(Reading::Endgame { percent: 100 })
-        );
+                .as_ref()?
+                .iter()
+                .find_map(|&(action, score, reading)| {
+                    (action == Action::Place(square)).then_some((score, reading))
+                })
+        };
+        // How each value was read, in a few characters under it.
+        let s = self.settings.lang.strings();
+        let mark_of = |reading: Reading| match reading {
+            Reading::Depth { depth, .. } => s.depth_mark(depth),
+            Reading::Endgame { percent: 100 } => s.exact_mark.into(),
+            Reading::Endgame { percent } => format!("{percent}%"),
+            Reading::Book => s.book.into(),
+        };
         let cursor = self
             .board_focus
             .is_focused(window)
@@ -155,37 +163,40 @@ impl RootView {
                         .hover(|style| style.bg(theme::board_hover()))
                         .map(|el| {
                             match value_of(square).filter(|_| self.settings.candidate_values) {
-                                Some(value) => el.child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .items_center()
-                                        .child(
-                                            div()
-                                                .text_size(cell * 0.3)
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(if Some(value) == best {
-                                                    theme::focus_ring()
-                                                } else {
-                                                    theme::candidate_text()
-                                                })
-                                                .child(signed(value)),
-                                        )
-                                        .children(mark.clone().map(|mark| {
-                                            div()
-                                                .text_size(cell * 0.16)
-                                                .line_height(cell * 0.18)
-                                                .when(exact, |el| {
-                                                    el.font_weight(FontWeight::MEDIUM)
-                                                })
-                                                .text_color(if exact {
-                                                    theme::candidate_text()
-                                                } else {
-                                                    theme::candidate_mark()
-                                                })
-                                                .child(mark)
-                                        })),
-                                ),
+                                Some((value, reading)) => {
+                                    let exact = reading == Some(Reading::Endgame { percent: 100 });
+                                    el.child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .text_size(cell * 0.3)
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(if Some(value) == best {
+                                                        theme::focus_ring()
+                                                    } else {
+                                                        theme::candidate_text()
+                                                    })
+                                                    .child(signed(value)),
+                                            )
+                                            .children(reading.map(mark_of).map(|mark| {
+                                                div()
+                                                    .text_size(cell * 0.16)
+                                                    .line_height(cell * 0.18)
+                                                    .when(exact, |el| {
+                                                        el.font_weight(FontWeight::MEDIUM)
+                                                    })
+                                                    .text_color(if exact {
+                                                        theme::candidate_text()
+                                                    } else {
+                                                        theme::candidate_mark()
+                                                    })
+                                                    .child(mark)
+                                            })),
+                                    )
+                                }
                                 None if self.settings.show_legal_moves || analysis.is_some() => el
                                     .child(
                                         div()

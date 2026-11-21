@@ -5,6 +5,7 @@ mod analysis_panel;
 mod animation;
 mod board;
 mod book;
+mod book_work;
 mod editor;
 mod files;
 mod new_game;

@@ -8,7 +8,11 @@ use super::{
     theme,
     widgets::{self, caption, card, heading},
 };
-use crate::{app::Command, services::engine::Report};
+use crate::{
+    app::Command,
+    services::engine::{Reading, Report},
+};
+use deft_reversi_book::Bound;
 use deft_reversi_engine::{Action, Color, Square};
 use gpui::{
     Bounds, ClickEvent, Context, Div, FontWeight, PathBuilder, Pixels, Rgba, SharedString, Window,
@@ -328,12 +332,71 @@ impl RootView {
                 .child(list.mt(px(4.)))
         });
 
+        // The book's moves, when the position is in it; values the AI would
+        // not play are faint.
+        let book = self
+            .book_lines(position)
+            .filter(|lines| !lines.is_empty())
+            .map(|lines| {
+                let rows = lines.into_iter().map(|line| {
+                    let value = line.value.map_or("–".into(), |v| match v.bound {
+                        Bound::Point => signed(v.score),
+                        Bound::Lower => format!("≥{}", signed(v.score)),
+                        Bound::Upper => format!("≤{}", signed(v.score)),
+                    });
+                    let reading = line
+                        .value
+                        .and_then(|v| v.reading)
+                        .map(|reading| match reading {
+                            Reading::Depth {
+                                depth,
+                                percent: 100,
+                            } => s.depth_mark(depth),
+                            Reading::Depth { depth, percent } => {
+                                format!("{} @ {percent}%", s.depth_mark(depth))
+                            }
+                            Reading::Endgame { percent: 100 } => s.exact_mark.into(),
+                            Reading::Endgame { percent } => format!("{percent}%"),
+                            Reading::Book => String::new(),
+                        })
+                        .unwrap_or_default();
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h(px(22.))
+                        .text_color(if line.usable {
+                            theme::text()
+                        } else {
+                            theme::text_muted()
+                        })
+                        .child(div().w(px(36.)).child(action_text(line.action)))
+                        .child(div().w(px(48.)).child(value))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_xs()
+                                .text_color(theme::text_secondary())
+                                .child(reading),
+                        )
+                });
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .pt(px(10.))
+                    .border_t_1()
+                    .border_color(theme::hairline())
+                    .child(heading(s.book))
+                    .child(div().mt(px(4.)).flex().flex_col().children(rows))
+            });
         card()
             .gap(px(12.))
             .child(title)
             .child(value_block)
             .children(line)
             .children(candidates)
+            .children(book)
     }
 
     /// The values over the record, under the board and as wide as it.

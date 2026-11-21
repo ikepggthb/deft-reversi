@@ -1,9 +1,11 @@
 //! The `engine-ctl` thread: it owns the engine, runs one search at a time,
 //! and reports to the UI over a channel the UI awaits. It also holds the
 //! opening book, which answers a move search before the engine does.
-use deft_reversi_book::{
-    AnalysisIdentity, Book, BookDecision, BookPlayer, ReadLimits, UsePolicy,
+use super::{
+    book::SharedBook,
+    book_gen::{self, BookDone, BookJob, BookProgress},
 };
+use deft_reversi_book::{AnalysisIdentity, Book, BookDecision, BookPlayer, ReadLimits};
 use deft_reversi_engine::{
     Action, Engine, EngineWorker, Goal, MoveScore, Position, Progress, ResultKind, SearchHandle,
     SearchRequest, SearchResult, Selectivity,
@@ -55,7 +57,10 @@ impl SearchSpec {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BookStatus {
     None,
-    Loaded { positions: usize },
+    Loaded {
+        positions: usize,
+        book: SharedBook,
+    },
     /// Made with another model, so none of its values are used.
     OtherModel,
     Failed(String),
@@ -87,6 +92,8 @@ pub enum EngineCommand {
     Reconfigure(Resources),
     /// Reads the book at the path, or drops the book.
     SetBook(Option<PathBuf>),
+    /// Grows a book with the engine; nothing else runs until it is done.
+    Generate(BookJob),
     Shutdown,
 }
 
@@ -95,8 +102,13 @@ pub enum EngineCommand {
 /// endgame at 100 is an exact solve.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reading {
-    Depth { depth: u8, percent: u8 },
-    Endgame { percent: u8 },
+    Depth {
+        depth: u8,
+        percent: u8,
+    },
+    Endgame {
+        percent: u8,
+    },
     /// The move came from the opening book, not a search.
     Book,
 }
@@ -166,6 +178,9 @@ pub enum EngineEvent {
     /// The engine keeps its previous resources.
     ReconfigureFailed(String),
     Book(BookStatus),
+    BookProgress(BookProgress),
+    /// The generation ended and the engine is free again.
+    BookDone(Result<BookDone, String>),
     Progress {
         id: SearchId,
         report: Report,
@@ -187,6 +202,11 @@ pub trait Backend {
     fn clear_tt(&mut self) -> Result<(), String>;
     fn reconfigure(&mut self, resources: Resources) -> Result<(), String>;
     fn set_book(&mut self, path: Option<&Path>) -> BookStatus;
+    fn generate(
+        &mut self,
+        job: BookJob,
+        events: async_channel::Sender<EngineEvent>,
+    ) -> Result<thread::JoinHandle<()>, String>;
 }
 
 pub trait Running {
@@ -265,10 +285,15 @@ fn run<B, F>(
     };
 
     let mut current: Option<Current<B::Running>> = None;
+    // A book being grown holds the engine; nothing else may use it.
+    let mut generating: Option<thread::JoinHandle<()>> = None;
     let mut queue = VecDeque::new();
     loop {
+        if generating.as_ref().is_some_and(|g| g.is_finished()) {
+            generating = None;
+        }
         // Idle: block on the next command. Searching: wake up to poll.
-        if current.is_none() {
+        if current.is_none() && generating.is_none() {
             match commands.recv() {
                 Ok(command) => queue.push_back(command),
                 Err(_) => return,
@@ -287,6 +312,24 @@ fn run<B, F>(
 
         while let Some(command) = queue.pop_front() {
             match command {
+                EngineCommand::Start(job) if generating.is_some() => send(EngineEvent::Failed {
+                    id: job.id,
+                    error: "busy".into(),
+                }),
+                EngineCommand::ClearTt if generating.is_some() => {}
+                EngineCommand::Reconfigure(_) if generating.is_some() => {
+                    send(EngineEvent::ReconfigureFailed("busy".into()))
+                }
+                EngineCommand::Generate(_) if generating.is_some() => {
+                    send(EngineEvent::BookDone(Err("busy".into())))
+                }
+                EngineCommand::Generate(job) => {
+                    drop_search(&mut current);
+                    match backend.generate(job, events.clone()) {
+                        Ok(thread) => generating = Some(thread),
+                        Err(error) => send(EngineEvent::BookDone(Err(error))),
+                    }
+                }
                 EngineCommand::Start(job) => {
                     // Only the newest request matters.
                     let superseded = queue.iter().any(|c| {
@@ -381,7 +424,7 @@ fn drop_search<R: Running>(current: &mut Option<Current<R>>) {
 /// The real engine. `make` builds an engine for given resources; it runs
 /// again when the resources change.
 pub struct EngineBackend {
-    worker: EngineWorker,
+    worker: Arc<EngineWorker>,
     make: Box<dyn FnMut(Resources) -> Result<Engine, String>>,
     /// What the model and its calibration make; a book made by another
     /// model has values that do not fit this one.
@@ -400,7 +443,7 @@ impl EngineBackend {
         let engine = make(resources)?;
         let identity = deft_reversi_book::analysis_identity(&engine).ok();
         Ok(Self {
-            worker: EngineWorker::new(engine),
+            worker: Arc::new(EngineWorker::new(engine)),
             make: Box::new(make),
             identity,
             book: None,
@@ -412,11 +455,7 @@ impl EngineBackend {
     fn book_move(&mut self, position: Position) -> Option<Report> {
         let book = self.book.clone()?;
         if self.player.is_none() {
-            // The same conditions as the command line's play.
-            let policy = UsePolicy {
-                min_selectivity: Selectivity::Percent83,
-                ..UsePolicy::default()
-            };
+            let policy = super::book::use_policy();
             let seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(1, |d| d.as_nanos() as u64);
@@ -433,11 +472,7 @@ impl EngineBackend {
         };
         Some(Report {
             best_move: Some(choice.action),
-            score: choice
-                .value
-                .result()
-                .point_value()
-                .map(i32::from),
+            score: choice.value.result().point_value().map(i32::from),
             reading: Some(Reading::Book),
             pv: vec![choice.action],
             moves: Vec::new(),
@@ -488,7 +523,7 @@ impl Backend for EngineBackend {
         // The old engine is freed first, so its table and the new one are
         // not held at the same time.
         let engine = (self.make)(resources)?;
-        self.worker = EngineWorker::new(engine);
+        self.worker = Arc::new(EngineWorker::new(engine));
         // The player is made again from the new engine.
         self.player = None;
         Ok(())
@@ -508,8 +543,23 @@ impl Backend for EngineBackend {
             return BookStatus::OtherModel;
         }
         let positions = book.stats().positions;
-        self.book = Some(Arc::new(book));
-        BookStatus::Loaded { positions }
+        let book = Arc::new(book);
+        self.book = Some(book.clone());
+        BookStatus::Loaded {
+            positions,
+            book: SharedBook(book),
+        }
+    }
+
+    fn generate(
+        &mut self,
+        job: BookJob,
+        events: async_channel::Sender<EngineEvent>,
+    ) -> Result<thread::JoinHandle<()>, String> {
+        // The book in play may come from the work file; it is read again
+        // when the generation has written it.
+        self.player = None;
+        book_gen::spawn(self.worker.clone(), job, events).map_err(|error| error.to_string())
     }
 }
 
@@ -604,6 +654,14 @@ mod tests {
 
         fn set_book(&mut self, _: Option<&Path>) -> BookStatus {
             BookStatus::None
+        }
+
+        fn generate(
+            &mut self,
+            _: BookJob,
+            _: async_channel::Sender<EngineEvent>,
+        ) -> Result<thread::JoinHandle<()>, String> {
+            Err("no book generation in tests".into())
         }
     }
 

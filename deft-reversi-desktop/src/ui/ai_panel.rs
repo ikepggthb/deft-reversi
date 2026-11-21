@@ -65,6 +65,9 @@ impl RootView {
                     lines.push(muted(format!("{}: {error}", s.ai_failed).into()).into_any_element())
                 }
                 EngineStatus::Ready => {}
+                EngineStatus::Generating => {
+                    lines.push(muted(s.book_generating.into()).into_any_element())
+                }
             }
         }
         for notice in c

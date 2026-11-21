@@ -1,7 +1,14 @@
 //! The opening book in the settings: choosing the file, and telling the
 //! engine thread and the controller (§24).
 use super::root::RootView;
-use crate::{app::Command, services::engine::EngineCommand};
+use crate::{
+    app::Command,
+    services::{
+        book::{self, BookLine},
+        engine::{BookStatus, EngineCommand},
+    },
+};
+use deft_reversi_engine::Position;
 use gpui::{Context, PathPromptOptions};
 use std::path::PathBuf;
 
@@ -44,5 +51,16 @@ impl RootView {
             }
         })
         .detach();
+    }
+}
+
+impl RootView {
+    /// What the loaded book has for `position`, whether or not the AI
+    /// plays from it.
+    pub(super) fn book_lines(&self, position: Position) -> Option<Vec<BookLine>> {
+        match &self.book_status {
+            Some(BookStatus::Loaded { book, .. }) => book::lines(&book.0, position),
+            _ => None,
+        }
     }
 }

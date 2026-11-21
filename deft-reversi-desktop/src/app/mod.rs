@@ -59,6 +59,8 @@ pub enum Command {
     SetAnalysisSettings(AnalysisSettings),
     /// Whether AI moves may come from the opening book.
     SetBook(bool),
+    /// The engine grows a book; it is free again on `EngineEvent::BookDone`.
+    GenerateBook,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +93,8 @@ pub enum Status {
 pub enum EngineStatus {
     Loading,
     Ready,
+    /// Growing a book; nothing else searches.
+    Generating,
     Unavailable(String),
 }
 
@@ -315,6 +319,15 @@ impl Controller {
             Command::StopAnalysis => self.analyzer.stop(&mut effects),
             Command::SetAnalysisSettings(settings) => self.analyzer.settings_changed(settings),
             Command::SetBook(book) => self.book = book,
+            // A book being grown takes the engine: the AI and the analysis wait.
+            Command::GenerateBook => {
+                if self.engine == EngineStatus::Ready {
+                    self.cancel(&mut effects);
+                    self.analyzer.cancel(&mut effects);
+                    self.status = Status::Paused;
+                    self.engine = EngineStatus::Generating;
+                }
+            }
         }
         self.autoplay(&mut effects);
         self.pump_analysis(&mut effects);
@@ -326,7 +339,12 @@ impl Controller {
         match event {
             EngineEvent::Ready { .. } => self.engine = EngineStatus::Ready,
             // The settings screen shows it.
-            EngineEvent::Book(_) => {}
+            EngineEvent::Book(_) | EngineEvent::BookProgress(_) => {}
+            EngineEvent::BookDone(_) => {
+                if self.engine == EngineStatus::Generating {
+                    self.engine = EngineStatus::Ready;
+                }
+            }
             EngineEvent::LoadFailed(error) => {
                 self.thinking = None;
                 self.analyzer.cancel(&mut Vec::new());
@@ -559,6 +577,23 @@ mod tests {
                 elapsed: Duration::ZERO,
             },
         })
+    }
+
+    #[test]
+    fn growing_a_book_holds_the_engine_until_done() {
+        let mut c = ready([Player::Human, Player::Ai(Strength::Level(8))]);
+        c.apply(Command::SetAnalysis(true));
+        c.apply(Command::GenerateBook);
+        assert_eq!(*c.engine(), EngineStatus::Generating);
+        assert_eq!(c.status(), Status::Paused);
+        // Neither a move nor the analysis may search meanwhile.
+        let effects = play(&mut c, "f5");
+        assert!(started(&effects).is_none());
+        assert!(started(&c.apply(Command::StepAi)).is_none());
+        // The person played, so the AI moves as soon as the engine is free.
+        let effects = c.on_engine(EngineEvent::BookDone(Err("stopped".into())));
+        assert_eq!(*c.engine(), EngineStatus::Ready);
+        assert!(started(&effects).is_some());
     }
 
     #[test]

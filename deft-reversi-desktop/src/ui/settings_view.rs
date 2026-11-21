@@ -241,7 +241,7 @@ impl RootView {
         let book_state: Option<SharedString> = match (&book.path, &self.book_status) {
             (None, _) => None,
             (Some(_), None) => Some(s.book_loading.into()),
-            (Some(_), Some(BookStatus::Loaded { positions })) => {
+            (Some(_), Some(BookStatus::Loaded { positions, .. })) => {
                 Some(s.book_loaded(*positions).into())
             }
             (Some(_), Some(BookStatus::OtherModel)) => Some(s.book_other_model.into()),

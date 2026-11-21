@@ -7,7 +7,8 @@ use crate::{
         BoardView, Preset, Settings,
         player::MOVE_TIMES,
         settings::{
-            AiChoice, Animation, BookSettings, ManualMode, NewGameForm, SideForm, TT_SIZES_MIB, ThemeChoice,
+            AiChoice, Animation, BookSettings, ManualMode, NewGameForm, SideForm, TT_SIZES_MIB,
+            ThemeChoice,
         },
     },
     i18n::Lang,
@@ -302,7 +303,11 @@ mod tests {
             },
             ..defaults
         };
-        atomic_file::write(&path, SettingsV1::from(settings.clone()).to_json().as_bytes()).unwrap();
+        atomic_file::write(
+            &path,
+            SettingsV1::from(settings.clone()).to_json().as_bytes(),
+        )
+        .unwrap();
         assert_eq!(load(&path), settings);
 
         // Unknown and missing fields; values out of range.
