@@ -39,6 +39,10 @@ pub struct SearchSpec {
     pub selectivity: Option<Selectivity>,
     /// A move search first asks the book, which plays its best move.
     pub book: bool,
+    /// Searches only these root moves; the analysis reads one at a time.
+    pub root_moves: Option<u64>,
+    /// Recovers the whole line even when the table cut it short.
+    pub recover_pv: bool,
 }
 
 impl SearchSpec {
@@ -49,6 +53,8 @@ impl SearchSpec {
             all_moves: false,
             selectivity: None,
             book: false,
+            root_moves: None,
+            recover_pv: false,
         }
     }
 }
@@ -507,6 +513,12 @@ impl Backend for EngineBackend {
         if let Some(selectivity) = spec.selectivity {
             request = request.selectivity(selectivity);
         }
+        if let Some(mask) = spec.root_moves {
+            request = request.root_moves(mask);
+        }
+        if spec.recover_pv {
+            request = request.recover_pv();
+        }
         self.worker
             .start(position, request)
             .map(Answer::Search)
@@ -933,3 +945,4 @@ mod engine_tests {
         }
     }
 }
+

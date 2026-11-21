@@ -116,7 +116,16 @@ impl RootView {
             lines.push(muted(s.too_few_discs.into()).into_any_element());
         }
         if c.analyzing() && c.analyzer().is_searching(position) {
-            let detail = c.analyzer().live(position).map(|r| report_text(s, r));
+            // The move being read, at what level, and how far it got.
+            let reading = c.analyzer().reading_move(position).map(|(level, action)| {
+                let level = level.map_or_else(|| s.exact_solve.to_string(), |l| format!("Lv {l}"));
+                format!("{level} · {}", super::analysis_panel::action_text(action))
+            });
+            let progress = c.analyzer().live(position).map(|r| report_text(s, r));
+            let detail = match (reading, progress) {
+                (Some(reading), Some(progress)) => Some(format!("{reading} · {progress}")),
+                (reading, progress) => reading.or(progress),
+            };
             lines.push(
                 div()
                     .flex()

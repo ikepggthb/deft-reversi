@@ -167,6 +167,8 @@ pub struct RootView {
     pub(super) settings_scroll: ScrollHandle,
     pub(super) book_scroll: ScrollHandle,
     pub(super) new_game_scroll: ScrollHandle,
+    /// The new game dialog's choice of book moves, from the settings.
+    pub(super) new_game_book: bool,
     pub(super) scroll_drag: Option<widgets::ScrollDrag>,
     audio: AudioService,
     /// The window size at the last frame, saved on quit.
@@ -318,6 +320,7 @@ impl RootView {
             settings_scroll: ScrollHandle::new(),
             book_scroll: ScrollHandle::new(),
             new_game_scroll: ScrollHandle::new(),
+            new_game_book: true,
             scroll_drag: None,
             audio: AudioService::spawn(),
             viewport: None,
@@ -450,6 +453,9 @@ impl RootView {
             self.games = None;
             self.delete_pending = None;
             self.send_storage(crate::services::storage::StorageCommand::ListGames);
+        }
+        if matches!(dialog, Dialog::NewGame) {
+            self.new_game_book = self.settings.book.enabled;
         }
         if matches!(dialog, Dialog::AiLog) {
             self.log_scroll.scroll_to_bottom();

@@ -11,10 +11,11 @@ use super::{
 use crate::domain::settings::GRAPH_HEIGHTS;
 use crate::{
     app::Command,
+    i18n::Strings,
     services::engine::{Reading, Report},
 };
 use deft_reversi_book::Bound;
-use deft_reversi_engine::{Action, Color, Square};
+use deft_reversi_engine::{Action, Color};
 use gpui::{
     Bounds, ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, PathBuilder, Pixels,
     Rgba, SharedString, Window,
@@ -144,6 +145,16 @@ pub(super) fn action_text(action: Action) -> String {
     action.to_string().to_lowercase()
 }
 
+/// How a value was read, in a few characters: "d24@83%", "END@95%",
+/// "END@100%" or "Book".
+pub(super) fn reading_mark(s: &Strings, reading: Reading) -> String {
+    match reading {
+        Reading::Depth { depth, percent } => format!("d{depth}@{percent}%"),
+        Reading::Endgame { percent } => format!("END@{percent}%"),
+        Reading::Book => s.book.into(),
+    }
+}
+
 /// "+6", "−6" or "0".
 pub(super) fn signed(value: i32) -> String {
     format!("{value:+}").replace('-', "−").replace("+0", "0")
@@ -176,19 +187,31 @@ impl RootView {
         let position = history.current();
         let side = position.side_to_move();
         let analyzer = c.analyzer();
-        let report: Option<&Report> = analyzer
-            .live(position)
-            .or_else(|| analyzer.get(position).map(|a| &a.report));
+        let report: Option<&Report> = analyzer.report(position);
+        let searching = analyzer.is_searching(position);
 
         let title = div()
             .flex()
             .flex_row()
             .items_center()
+            .gap(px(6.))
             .child(
                 div()
                     .flex_1()
                     .font_weight(FontWeight::MEDIUM)
                     .child(s.analysis_heading),
+            )
+            // Once a search is stopped, or to read it all again.
+            .when(
+                !searching && analyzer.get(position).is_some() && !position.must_pass(),
+                |el| {
+                    el.child(widgets::button(
+                        "reanalyze",
+                        s.reanalyze,
+                        widgets::handler(|this, cx| this.run(Command::Reanalyze, cx)),
+                        cx,
+                    ))
+                },
             )
             .when(!position.is_terminal() && !position.must_pass(), |el| {
                 el.child(widgets::button(
@@ -292,69 +315,59 @@ impl RootView {
                 })
         });
 
-        // Moves appear one by one as the search scores them; the rest wait
-        // below. A finished search shows its list until the next one has one.
-        let searching = analyzer.is_searching(position);
-        let moves = analyzer
-            .live(position)
-            .map(|r| &r.moves)
-            .filter(|m| !m.is_empty())
-            .or_else(|| analyzer.get(position).map(|a| &a.report.moves));
-        let candidates = moves.map(|moves| {
-            let list =
-                if moves.is_empty() {
-                    div().children((!searching).then(|| caption(s.moves_incomplete)))
-                } else {
-                    let best_score = moves[0].score;
-                    // Moves the running level has not reached show the lower
-                    // level's value, faintly, in that order.
-                    let earlier =
-                        |square: Square| {
-                            analyzer.get(position)?.report.moves.iter().find_map(|m| {
-                                (m.action == Action::Place(square)).then_some(m.score)
-                            })
-                        };
-                    let mut waiting: Vec<(Square, Option<i32>)> = position
-                        .legal_moves()
-                        .filter(|&square| !moves.iter().any(|m| m.action == Action::Place(square)))
-                        .map(|square| (square, earlier(square)))
-                        .collect();
-                    waiting.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
-                    div()
-                        .flex()
-                        .flex_col()
-                        .children(moves.iter().enumerate().map(|(i, m)| {
-                            let color: Rgba = if m.score == best_score {
-                                theme::warning()
-                            } else if i < 3 {
-                                theme::text()
-                            } else {
-                                theme::text_secondary()
-                            };
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .h(px(22.))
-                                .text_color(color)
-                                .child(div().w(px(36.)).child(action_text(m.action)))
-                                .child(div().w(px(40.)).child(signed(m.score)))
-                        }))
-                        .children(waiting.into_iter().map(|(square, score)| {
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .h(px(22.))
-                                .text_color(theme::text_muted())
-                                .child(div().w(px(36.)).child(action_text(Action::Place(square))))
-                                .child(div().w(px(40.)).child(match score {
-                                    Some(score) => signed(score),
-                                    None if searching => "…".into(),
-                                    None => "–".into(),
-                                }))
-                        }))
+        // Each move's value appears as soon as it is read, with how it was
+        // read; one still being read shows its last finished iteration.
+        // Values from the level before are faint until read again.
+        let shown = analyzer.moves(position);
+        let any_value = shown.iter().any(|m| m.value.is_some());
+        let candidates = (any_value || searching).then(|| {
+            let best_score = shown
+                .iter()
+                .filter(|m| m.fresh)
+                .filter_map(|m| m.value.as_ref())
+                .filter(|v| !v.provisional)
+                .map(|v| v.score)
+                .max();
+            let rows = shown.iter().enumerate().map(|(i, m)| {
+                let color: Rgba = match &m.value {
+                    Some(v) if m.fresh && !v.provisional && Some(v.score) == best_score => {
+                        theme::warning()
+                    }
+                    Some(v) if m.fresh && !v.provisional && i < 3 => theme::text(),
+                    Some(v) if m.fresh && !v.provisional => theme::text_secondary(),
+                    Some(_) if m.fresh => theme::text_secondary(),
+                    _ => theme::text_muted(),
                 };
+                let reading = m.value.as_ref().and_then(|v| {
+                    let mark = reading_mark(s, v.reading?);
+                    Some(if v.provisional { format!("{mark} …") } else { mark })
+                });
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .h(px(22.))
+                            .text_color(color)
+                            .child(div().w(px(36.)).child(action_text(m.action)))
+                            .child(div().w(px(44.)).child(match &m.value {
+                                Some(v) => signed(v.score),
+                                None if searching => "…".into(),
+                                None => "–".into(),
+                            }))
+                            .children(reading.map(|r| {
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .whitespace_nowrap()
+                                    .child(r)
+                            })),
+                    )
+            });
             div()
                 .flex()
                 .flex_col()
@@ -363,7 +376,7 @@ impl RootView {
                 .border_t_1()
                 .border_color(theme::hairline())
                 .child(heading(s.candidates))
-                .child(list.mt(px(4.)))
+                .child(div().mt(px(4.)).flex().flex_col().children(rows))
         });
 
         // The book's moves, when the position is in it; values the AI would

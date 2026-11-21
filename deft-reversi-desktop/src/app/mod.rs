@@ -59,6 +59,8 @@ pub enum Command {
     },
     /// Stops the analysis search, keeping what it found, and the batch.
     StopAnalysis,
+    /// Reads the shown position again from the lowest level.
+    Reanalyze,
     SetAnalysisSettings(AnalysisSettings),
     /// Whether AI moves may come from the opening book.
     SetBook(bool),
@@ -347,6 +349,12 @@ impl Controller {
                 }
             }
             Command::StopAnalysis => self.analyzer.stop(&mut effects),
+            Command::Reanalyze => {
+                if self.analyzing {
+                    let position = self.history.current();
+                    self.analyzer.reanalyze(position, &mut effects);
+                }
+            }
             Command::SetAnalysisSettings(settings) => self.analyzer.settings_changed(settings),
             Command::SetBook(book) => self.book = book,
             // A book being grown takes the engine: the AI and the analysis wait.
