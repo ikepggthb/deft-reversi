@@ -136,6 +136,8 @@ pub struct RootView {
     pub(super) editor: Option<EditorState>,
     /// The last move turning over, drawn on top of the position.
     pub(super) animation: Option<FlipAnimation>,
+    /// The AI's move, waiting for the animation of the move before it.
+    held_move: Option<EngineEvent>,
     /// The graph column under the pointer.
     pub(super) graph_hover: Option<usize>,
     /// Who passed and when, while it is shown over the board.
@@ -243,6 +245,12 @@ impl RootView {
                             EngineEvent::BookDone(done) => this.on_book_done(done.clone(), cx),
                             _ => {}
                         }
+                        // A move found while the last one still turns its
+                        // discs (a book move comes at once) waits for it.
+                        if this.animation.is_some() && this.controller.is_ai_move(&event) {
+                            this.held_move = Some(event);
+                            return;
+                        }
                         let effects = this.controller.on_engine(event);
                         this.dispatch(effects);
                         cx.notify();
@@ -276,6 +284,7 @@ impl RootView {
             delete_pending: None,
             editor: None,
             animation: None,
+            held_move: None,
             graph_hover: None,
             pass_notice: None,
             record_input: String::new(),
@@ -576,6 +585,14 @@ impl Render for RootView {
         if self.animation.as_ref().is_some_and(FlipAnimation::done) {
             self.animation = None;
             self.report_frames();
+        }
+        // The AI's move held back for the last animation is played now; a
+        // search cancelled meanwhile (Undo, a new game) is ignored by it.
+        if self.animation.is_none()
+            && let Some(event) = self.held_move.take()
+        {
+            let effects = self.controller.on_engine(event);
+            self.dispatch(effects);
         }
         if self.animation.is_some()
             && let Some(frames) = self.trace.as_mut()

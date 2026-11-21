@@ -198,6 +198,12 @@ impl Controller {
         self.thinking.as_ref()
     }
 
+    /// Whether the event brings the AI's move, which plays it.
+    pub fn is_ai_move(&self, event: &EngineEvent) -> bool {
+        matches!(event, EngineEvent::Finished { id, .. }
+            if self.thinking.as_ref().is_some_and(|t| t.id == *id))
+    }
+
     pub fn analyzing(&self) -> bool {
         self.analyzing
     }
@@ -577,6 +583,28 @@ mod tests {
                 elapsed: Duration::ZERO,
             },
         })
+    }
+
+    #[test]
+    fn only_the_answer_to_the_ai_search_is_its_move() {
+        let mut c = ready([Player::Human, Player::Ai(Strength::Level(8))]);
+        let id = started(&play(&mut c, "f5")).expect("the AI thinks");
+        let answer = |id| EngineEvent::Finished {
+            id,
+            report: Report {
+                best_move: None,
+                score: None,
+                reading: None,
+                pv: Vec::new(),
+                moves: Vec::new(),
+                nodes: 0,
+                elapsed: Duration::ZERO,
+            },
+        };
+        assert!(c.is_ai_move(&answer(id)));
+        // Once taken back, a late answer plays nothing.
+        c.apply(Command::Undo);
+        assert!(!c.is_ai_move(&answer(id)));
     }
 
     #[test]
