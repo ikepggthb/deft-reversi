@@ -159,7 +159,7 @@ pub(super) fn stepper(
         .child(button(0, "−", down, cx))
         .child(
             div()
-                .min_w(px(40.))
+                .min_w(px(64.))
                 .px(px(8.))
                 .flex()
                 .justify_center()
@@ -282,14 +282,19 @@ pub(super) fn scroll_area(
         .min_h_0()
         .flex()
         .flex_col()
+        // The content keeps its own height inside the scrolling box, so its
+        // rows are never squeezed into each other.
         .child(
-            content
+            div()
                 .id(id)
                 .track_scroll(handle)
                 .overflow_y_scroll()
                 .flex_1()
                 .min_h_0()
-                .pr(px(14.)),
+                .flex()
+                .flex_col()
+                .pr(px(14.))
+                .child(content.flex_none()),
         )
         .children(bar)
 }

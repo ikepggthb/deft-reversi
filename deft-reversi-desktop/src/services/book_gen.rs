@@ -6,7 +6,7 @@ use deft_reversi_book::{
     AnalysisSchedule, BookEditor, BookSide, GenerationConfig, GenerationLimits, GenerationRoot,
     GenerationStop, SchedulePolicy, analysis_identity,
 };
-use deft_reversi_engine::{Color, EngineWorker, Position, StopHandle};
+use deft_reversi_engine::{Action, Color, EngineWorker, Position, StopHandle};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex, PoisonError},
@@ -24,6 +24,12 @@ pub struct BookJob {
     pub work: PathBuf,
     /// Where the book grows from.
     pub root: Position,
+    /// The moves from the start to `root`, linked first so the book reaches
+    /// it; empty when it grows from the position as it is.
+    pub line: Vec<(Position, Action)>,
+    /// Repairs the book instead of growing it: the values are worked out
+    /// again from the links and what was read. Nothing is searched.
+    pub fix: bool,
     pub settings: BookSettings,
     /// It runs until stopped, or until nothing is left within the losses.
     pub stop: StopHandle,
@@ -42,6 +48,9 @@ pub struct BookSettings {
     pub white_loss: u8,
     /// The most the losses along one line may add up to.
     pub cumulative_loss: Option<u16>,
+    /// The most a move not yet linked may lose and still become a link;
+    /// None leaves it to the losses above.
+    pub leaf_loss: Option<u8>,
 }
 
 impl BookSettings {
@@ -62,6 +71,7 @@ impl BookSettings {
             black_loss: config.black_loss.unwrap_or(config.expansion_loss),
             white_loss: config.white_loss.unwrap_or(config.expansion_loss),
             cumulative_loss: config.cumulative_loss,
+            leaf_loss: config.leaf_loss,
         }
     }
 
@@ -73,6 +83,7 @@ impl BookSettings {
         config.black_loss = Some(self.black_loss);
         config.white_loss = Some(self.white_loss);
         config.cumulative_loss = self.cumulative_loss;
+        config.leaf_loss = self.leaf_loss;
         config.schedule = SchedulePolicy::Promising;
     }
 }
@@ -136,6 +147,9 @@ fn generate(
         *slot = Some(BookEditor::for_engine(engine).map_err(text)?);
     }
     let editor = slot.as_mut().expect("made above");
+    if job.fix {
+        return repair(editor, &job.work);
+    }
     let identity = analysis_identity(engine).map_err(|e| e.to_string())?;
     if editor.identity() != identity {
         return Err("model".into());
@@ -150,15 +164,20 @@ fn generate(
         .unwrap_or_else(GenerationConfig::default);
     job.settings.apply(&mut config);
     config.checkpoint_interval = Duration::from_secs(10);
+    // What already meets the level is kept.
     config.reuse_completed = true;
+    config.unregistered_only = false;
+    let roots = [GenerationRoot {
+        board: job.root.board(),
+        side,
+    }];
+    for &(position, action) in &job.line {
+        editor
+            .register_move(position.board(), action)
+            .map_err(text)?;
+    }
     editor
-        .configure_generation_roots(
-            &[GenerationRoot {
-                board: job.root.board(),
-                side,
-            }],
-            config,
-        )
+        .configure_generation_roots(&roots, config)
         .map_err(text)?;
     // No time limit: it would reach every search and change how it reads.
     // The run goes on until stopped or nothing is left within the losses.
@@ -191,6 +210,27 @@ fn generate(
     })
 }
 
+
+/// `book repair`: the values from the links, without a search; then the
+/// work file and the book for play are written again.
+fn repair(editor: &mut BookEditor, work: &std::path::Path) -> Result<BookDone, String> {
+    let text = |error: deft_reversi_book::BookError| error.to_string();
+    let started = std::time::Instant::now();
+    editor.repair().map_err(text)?;
+    editor.save(work).map_err(text)?;
+    let book = play_path(work);
+    editor.export().map_err(text)?.save(&book).map_err(text)?;
+    Ok(BookDone {
+        progress: BookProgress {
+            positions: editor.len(),
+            new_positions: 0,
+            nodes: 0,
+            elapsed: started.elapsed(),
+        },
+        reason: GenerationStop::Exhausted,
+        book,
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -225,14 +265,31 @@ mod tests {
                 black_loss: 0,
                 white_loss: 0,
                 cumulative_loss: None,
+                leaf_loss: None,
             },
+            line: Vec::new(),
+            fix: false,
+            stop: StopHandle::new(),
+        };
+        let editor = job.editor.clone();
+        let fix_job = BookJob {
+            editor: editor.clone(),
+            work: work.clone(),
+            root: job.root,
+            line: Vec::new(),
+            fix: true,
+            settings: job.settings.clone(),
             stop: StopHandle::new(),
         };
         let done = generate(&mut engine, job, &events).unwrap();
         assert!(done.progress.positions > 0);
-        let editor = BookEditor::load(&work, ReadLimits::default()).unwrap();
-        assert_eq!(BookSettings::of(Some(&editor)).level, 12);
+        let loaded = BookEditor::load(&work, ReadLimits::default()).unwrap();
+        assert_eq!(BookSettings::of(Some(&loaded)).level, 12);
         Book::load(&done.book, ReadLimits::default()).unwrap();
+        // A repair searches nothing and adds no position.
+        let fixed = generate(&mut engine, fix_job, &events).unwrap();
+        assert_eq!(fixed.progress.positions, done.progress.positions);
+        Book::load(&fixed.book, ReadLimits::default()).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

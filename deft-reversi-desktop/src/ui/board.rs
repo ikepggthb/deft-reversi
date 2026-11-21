@@ -22,6 +22,14 @@ impl RootView {
         let position = history.current();
         let legal = position.legal_moves();
         let last_move = history.last_move();
+        // Going back through the record, the next move of the record is ringed.
+        let next_move = history.actions()[history.cursor()..]
+            .iter()
+            .take(2)
+            .find_map(|action| match action {
+                Action::Place(square) => Some(*square),
+                Action::Pass => None,
+            });
         // While an AI plays this side the board takes no clicks; paused, the
         // user may play either side.
         let playable =
@@ -130,6 +138,18 @@ impl RootView {
                     .bg(theme::board());
                 if cursor == Some(square) {
                     el = el.border_2().border_color(theme::focus_ring());
+                }
+                if disc.is_none() && next_move == Some(square) {
+                    el = el.child(
+                        div()
+                            .absolute()
+                            .top(cell * 0.1)
+                            .left(cell * 0.1)
+                            .size(cell * 0.8)
+                            .rounded_full()
+                            .border_2()
+                            .border_color(theme::focus_ring()),
+                    );
                 }
                 if let Some(color) = disc {
                     el = el.child(
@@ -367,7 +387,8 @@ impl RootView {
             .gap(px(10.))
             .mt(px(12.))
             .pl(px(LABEL))
-            .w(px(LABEL) + cell * 8. + px(7. + 4.))
+            // As wide as the board, or wider and centred under it on a small one.
+            .min_w(px(LABEL) + cell * 8. + px(7. + 4.))
             .map(|el| {
                 if controls.is_some() {
                     el.justify_between()

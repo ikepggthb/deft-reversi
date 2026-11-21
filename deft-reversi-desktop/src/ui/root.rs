@@ -107,8 +107,11 @@ const LEFT_WIDTH: f32 = 170.;
 const RIGHT_WIDTH: f32 = 240.;
 const GAP: f32 = 28.;
 const TOOLBAR_HEIGHT: f32 = 36.;
-/// The value graph under the board, with its line of links.
-const GRAPH_HEIGHT: f32 = 166.;
+/// Dialogs hang from here, so one that grows does not move what is above.
+pub(super) const DIALOG_TOP: f32 = 40.;
+/// Above and below the board: the toolbar, the page padding, the
+/// coordinates and the navigation row.
+pub(super) const BOARD_CHROME: f32 = TOOLBAR_HEIGHT + 32. + 18. + 56.;
 
 pub struct RootView {
     pub(super) controller: Controller,
@@ -136,10 +139,16 @@ pub struct RootView {
     pub(super) editor: Option<EditorState>,
     /// The last move turning over, drawn on top of the position.
     pub(super) animation: Option<FlipAnimation>,
+    /// Whether that move was the AI's.
+    animation_by_ai: bool,
     /// The AI's move, waiting for the animation of the move before it.
     held_move: Option<EngineEvent>,
     /// The graph column under the pointer.
     pub(super) graph_hover: Option<usize>,
+    /// The graph's grip being dragged: where the pointer and the height
+    /// were when it began, and the height meanwhile.
+    pub(super) graph_drag: Option<(Pixels, u16)>,
+    pub(super) graph_live: Option<u16>,
     /// Who passed and when, while it is shown over the board.
     pub(super) pass_notice: Option<(Color, Instant)>,
     /// The record being typed in its dialog (whole moves), its caret (in
@@ -149,12 +158,15 @@ pub struct RootView {
     pub(super) record_caret: usize,
     pub(super) record_all: bool,
     pub(super) record_pending: Option<char>,
+    /// The record dialog chooses where a book grows from, not the game.
+    pub(super) record_for_book: bool,
     /// The record was just copied; the link says so for a moment.
     pub(super) record_copied: bool,
     pub(super) games_scroll: ScrollHandle,
     pub(super) log_scroll: ScrollHandle,
     pub(super) settings_scroll: ScrollHandle,
     pub(super) book_scroll: ScrollHandle,
+    pub(super) new_game_scroll: ScrollHandle,
     pub(super) scroll_drag: Option<widgets::ScrollDrag>,
     audio: AudioService,
     /// The window size at the last frame, saved on quit.
@@ -245,9 +257,14 @@ impl RootView {
                             EngineEvent::BookDone(done) => this.on_book_done(done.clone(), cx),
                             _ => {}
                         }
-                        // A move found while the last one still turns its
-                        // discs (a book move comes at once) waits for it.
-                        if this.animation.is_some() && this.controller.is_ai_move(&event) {
+                        // A move found while a person's move still turns its
+                        // discs (a book move comes at once) waits for it; one
+                        // after the AI's own move cuts that animation short,
+                        // so an AI game runs at the AI's pace.
+                        if this.animation.is_some()
+                            && !this.animation_by_ai
+                            && this.controller.is_ai_move(&event)
+                        {
                             this.held_move = Some(event);
                             return;
                         }
@@ -284,18 +301,23 @@ impl RootView {
             delete_pending: None,
             editor: None,
             animation: None,
+            animation_by_ai: false,
             held_move: None,
             graph_hover: None,
+            graph_drag: None,
+            graph_live: None,
             pass_notice: None,
             record_input: String::new(),
             record_caret: 0,
             record_all: false,
             record_pending: None,
+            record_for_book: false,
             record_copied: false,
             games_scroll: ScrollHandle::new(),
             log_scroll: ScrollHandle::new(),
             settings_scroll: ScrollHandle::new(),
             book_scroll: ScrollHandle::new(),
+            new_game_scroll: ScrollHandle::new(),
             scroll_drag: None,
             audio: AudioService::spawn(),
             viewport: None,
@@ -412,6 +434,11 @@ impl RootView {
             Action::Place(square) => FlipAnimation::new(history.position(i), square, scale),
             Action::Pass => None,
         });
+        let players = self.controller.players();
+        self.animation_by_ai = index.is_some_and(|i| {
+            let mover = history.position(i).side_to_move();
+            players[usize::from(mover == Color::White)].is_ai()
+        });
     }
 
     /// Focus follows on the next render.
@@ -438,6 +465,16 @@ impl RootView {
         if self.book_work.running.is_some() {
             return;
         }
+        // A record for the book goes back to the book builder.
+        if matches!(self.dialog, Some(Dialog::EnterRecord)) && self.record_for_book {
+            self.record_for_book = false;
+            if self.book_work.record.is_none() {
+                self.book_work.root = super::book_work::RootChoice::Current;
+            }
+            self.dialog = Some(Dialog::BookWork);
+            cx.notify();
+            return;
+        }
         self.dialog = None;
         cx.notify();
     }
@@ -453,13 +490,15 @@ impl RootView {
     }
 
     /// The side of one square, in whole pixels so the grid lines stay even.
-    fn cell_size(window: &Window, graph: bool) -> Pixels {
+    fn cell_size(window: &Window, graph: Option<f32>) -> Pixels {
         let viewport = window.viewport_size();
         // Page padding, the coordinate labels, the navigation row, and the
         // value graph in analysis mode.
         let width = f32::from(viewport.width) - LEFT_WIDTH - RIGHT_WIDTH - 2. * GAP - 40. - 18.;
-        let graph = if graph { GRAPH_HEIGHT } else { 0. };
-        let height = f32::from(viewport.height) - TOOLBAR_HEIGHT - 32. - 18. - 56. - graph;
+        let graph = graph.map_or(0., |plot| {
+            plot + super::analysis_panel::GRAPH_CHROME + super::analysis_panel::GRAPH_GRIP
+        });
+        let height = f32::from(viewport.height) - BOARD_CHROME - graph;
         // Eight squares, seven inner lines and the frame.
         let side = width.min(height) - 7. - 4.;
         px((side / 8.).floor().max(28.))
@@ -505,6 +544,20 @@ impl RootView {
                     cx,
                 )
                 .when(self.controller.analyzing(), |el| {
+                    el.bg(theme::selected()).text_color(theme::accent())
+                }),
+            )
+            .child(
+                widgets::link(
+                    "study",
+                    s.study,
+                    widgets::handler(|this, cx| {
+                        let on = !this.controller.studying();
+                        this.run(Command::SetStudy(on), cx)
+                    }),
+                    cx,
+                )
+                .when(self.controller.studying(), |el| {
                     el.bg(theme::selected()).text_color(theme::accent())
                 }),
             )
@@ -610,7 +663,8 @@ impl Render for RootView {
         }
         let size = window.viewport_size();
         self.viewport = Some((f32::from(size.width) as u32, f32::from(size.height) as u32));
-        let cell = Self::cell_size(window, self.controller.analyzing() && self.editor.is_none());
+        let graph = (self.controller.analyzing() && self.editor.is_none()).then(|| self.graph_height());
+        let cell = Self::cell_size(window, graph);
         let workspace = div()
             .key_context("Workspace")
             .track_focus(&self.focus)
@@ -642,6 +696,20 @@ impl Render for RootView {
                 window.focus(&this.board_focus, cx);
                 cx.notify();
             }))
+            // The graph's grip follows the pointer anywhere in the window.
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if this.graph_drag.is_some() {
+                    if event.dragging() {
+                        this.drag_graph(event.position.y, cx);
+                    } else {
+                        this.end_graph_drag(cx);
+                    }
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_graph_drag(cx)),
+            )
             .size_full()
             .flex()
             .flex_col()
@@ -725,7 +793,7 @@ impl Render for RootView {
                                 .when(self.controller.analyzing(), |el| {
                                     // Under the board, from its coordinates to its edge.
                                     let board = px(18.) + cell * 8. + px(7. + 4.);
-                                    el.child(self.render_graph(board, cx).mt(px(12.)))
+                                    el.child(self.render_graph(board, cx))
                                 }),
                         )
                         .child(self.render_ai(cx).w(px(RIGHT_WIDTH)))
@@ -747,8 +815,9 @@ impl Render for RootView {
                 .size_full()
                 .occlude()
                 .flex()
+                .flex_col()
                 .items_center()
-                .justify_center()
+                .pt(px(DIALOG_TOP))
                 .bg(gpui::black().opacity(0.45))
                 // A press outside the dialog closes it; one inside stops there.
                 .on_mouse_down(

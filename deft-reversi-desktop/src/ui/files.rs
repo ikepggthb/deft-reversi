@@ -32,7 +32,7 @@ impl RootView {
         RecordV1::new(
             c.game(),
             c.players(),
-            c.history(),
+            c.game_record(),
             EngineInfoV1 {
                 version: env!("CARGO_PKG_VERSION").into(),
                 model: engine_loader::MODEL_FILE.into(),

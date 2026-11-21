@@ -14,12 +14,24 @@ use crate::{
     },
 };
 use deft_reversi_book::{BookEditor, Bound, GenerationStop, ReadLimits};
-use deft_reversi_engine::{Action, Color, StopHandle};
+use crate::domain::History;
+use deft_reversi_engine::{Action, Color, Position, StopHandle};
 use gpui::{Context, Div, FontWeight, PathPromptOptions, SharedString, div, prelude::*, px};
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+
+/// Where a book grows from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RootChoice {
+    /// The position on the board.
+    Current,
+    /// The standard start.
+    Initial,
+    /// The end of a record typed in; its moves are linked on the way.
+    Record,
+}
 
 pub(super) struct BookWork {
     /// The `.dbook-work`; None until one is made or opened.
@@ -32,6 +44,13 @@ pub(super) struct BookWork {
     pub white_loss: u8,
     /// 0 is no limit.
     pub cumulative_loss: u16,
+    pub leaf_loss: Option<u8>,
+    /// Where the next run grows from.
+    pub root: RootChoice,
+    /// The record chosen for `RootChoice::Record`.
+    pub record: Option<History>,
+    /// Whether the running job mends the book rather than grows it.
+    pub fixing: bool,
     /// Stops the running generation, and when it began.
     pub running: Option<(StopHandle, Instant)>,
     pub progress: Option<BookProgress>,
@@ -48,6 +67,10 @@ impl Default for BookWork {
             black_loss: 0,
             white_loss: 0,
             cumulative_loss: 0,
+            leaf_loss: None,
+            root: RootChoice::Current,
+            record: None,
+            fixing: false,
             running: None,
             progress: None,
             message: None,
@@ -65,6 +88,7 @@ impl BookWork {
             black_loss: self.black_loss,
             white_loss: self.white_loss,
             cumulative_loss: (self.cumulative_loss > 0).then_some(self.cumulative_loss),
+            leaf_loss: self.leaf_loss,
         }
     }
 
@@ -75,6 +99,7 @@ impl BookWork {
         self.black_loss = settings.black_loss;
         self.white_loss = settings.white_loss;
         self.cumulative_loss = settings.cumulative_loss.unwrap_or(0);
+        self.leaf_loss = settings.leaf_loss;
     }
 }
 
@@ -140,21 +165,49 @@ impl RootView {
         .detach();
     }
 
-    pub(super) fn start_book(&mut self, cx: &mut Context<Self>) {
+    /// Where the next run grows from, and the moves linked on the way.
+    fn book_root(&self) -> Option<(Position, Vec<(Position, Action)>)> {
+        match self.book_work.root {
+            RootChoice::Current => Some((self.controller.history().current(), Vec::new())),
+            RootChoice::Initial => Some((Position::initial(), Vec::new())),
+            RootChoice::Record => {
+                let record = self.book_work.record.as_ref()?;
+                let line = record
+                    .actions()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &action)| (record.position(i), action))
+                    .collect();
+                Some((record.current(), line))
+            }
+        }
+    }
+
+    /// Grows the book, or with `fix` mends it.
+    pub(super) fn start_book(&mut self, fix: bool, cx: &mut Context<Self>) {
         let Some(path) = self.book_work.path.clone() else {
             return;
         };
         if self.book_work.running.is_some() || *self.controller.engine() != EngineStatus::Ready {
             return;
         }
+        let Some((root, line)) = self.book_root() else {
+            return;
+        };
+        if root.is_terminal() && !fix {
+            return;
+        }
         let stop = StopHandle::new();
         let job = BookJob {
             editor: self.book_work.editor.clone(),
             work: path,
-            root: self.controller.history().current(),
+            root,
+            line,
+            fix,
             settings: self.book_work.settings(),
             stop: stop.clone(),
         };
+        self.book_work.fixing = fix;
         self.book_work.running = Some((stop, Instant::now()));
         self.book_work.progress = None;
         self.book_work.message = None;
@@ -197,6 +250,7 @@ impl RootView {
             Ok(done) => {
                 self.book_work.progress = Some(done.progress);
                 let why = match done.reason {
+                    GenerationStop::Exhausted if self.book_work.fixing => s.book_fixed,
                     GenerationStop::Exhausted => s.book_exhausted,
                     GenerationStop::MemoryLimit => s.book_memory,
                     _ => s.book_stopped,
@@ -322,11 +376,83 @@ impl RootView {
                 ))
             });
         let discs = position.disc_count(Color::Black) + position.disc_count(Color::White);
-        let from = div().text_color(theme::text_secondary()).child(format!(
-            "{}（{}）",
-            s.book_from_current,
-            s.move_number(discs as usize - 3)
-        ));
+        let choose = |choice: RootChoice| -> Handler {
+            widgets::handler(move |this, cx| {
+                if this.book_work.running.is_some() {
+                    return;
+                }
+                this.book_work.root = choice;
+                // A record is typed in the first time it is chosen.
+                if choice == RootChoice::Record && this.book_work.record.is_none() {
+                    this.enter_book_record(cx);
+                }
+            })
+        };
+        let choices = widgets::segmented(
+            "book-root",
+            vec![
+                (
+                    format!(
+                        "{}（{}）",
+                        s.book_from_current,
+                        s.move_number(discs as usize - 3)
+                    )
+                    .into(),
+                    work.root == RootChoice::Current,
+                    choose(RootChoice::Current),
+                ),
+                (
+                    s.book_from_initial.into(),
+                    work.root == RootChoice::Initial,
+                    choose(RootChoice::Initial),
+                ),
+                (
+                    s.book_from_record.into(),
+                    work.root == RootChoice::Record,
+                    choose(RootChoice::Record),
+                ),
+            ],
+            cx,
+        );
+        // The record chosen: its moves, cut short, and a way to change it.
+        let record = (work.root == RootChoice::Record).then(|| {
+            let text = work
+                .record
+                .as_ref()
+                .map(|r| crate::domain::transcript::to_text(r.actions()));
+            let moves = work.record.as_ref().map_or(0, |r| r.actions().len());
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .text_xs()
+                .child(
+                    div()
+                        .max_w(px(300.))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(theme::text_secondary())
+                        .child(text.unwrap_or_default()),
+                )
+                .child(div().text_color(theme::text_muted()).child(s.moves(moves)))
+                .when(!running, |el| {
+                    el.child(widgets::link(
+                        "book-record",
+                        s.enter_record,
+                        widgets::handler(|this, cx| this.enter_book_record(cx)),
+                        cx,
+                    ))
+                })
+        });
+        let from = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .py(px(4.))
+            .child(div().flex().child(choices))
+            .children(record);
 
         let level = widgets::stepper(
             "book-level",
@@ -376,8 +502,31 @@ impl RootView {
             edit(|w| w.cumulative_loss = (w.cumulative_loss + 1).min(64)),
             cx,
         );
+        // Below the one-move losses; at them it changes nothing, so it reads
+        // as no limit.
+        let leaf = widgets::stepper(
+            "book-leaf",
+            work.leaf_loss
+                .map_or_else(|| s.book_no_limit.to_string(), |n| n.to_string()),
+            edit(|w| {
+                let most = w.black_loss.max(w.white_loss);
+                w.leaf_loss = Some(match w.leaf_loss {
+                    None => most.saturating_sub(1),
+                    Some(n) => n.saturating_sub(1),
+                });
+            }),
+            edit(|w| {
+                let most = w.black_loss.max(w.white_loss);
+                w.leaf_loss = w.leaf_loss.map(|n| n + 1).filter(|&n| n < most);
+            }),
+            cx,
+        );
 
-        let ready = work.path.is_some() && *self.controller.engine() == EngineStatus::Ready;
+        let engine_ready = *self.controller.engine() == EngineStatus::Ready;
+        let ready = work.path.is_some()
+            && engine_ready
+            && self.book_root().is_some_and(|(root, _)| !root.is_terminal());
+        let can_fix = engine_ready && editor.is_some_and(|e| !e.is_empty());
         let action = if running {
             widgets::button(
                 "book-stop",
@@ -389,11 +538,20 @@ impl RootView {
             widgets::primary(
                 "book-start",
                 s.book_start,
-                widgets::handler(|this, cx| this.start_book(cx)),
+                widgets::handler(|this, cx| this.start_book(false, cx)),
                 cx,
             )
             .when(!ready, |el| el.opacity(0.4))
         };
+        let fix = (!running).then(|| {
+            widgets::button(
+                "book-fix",
+                s.book_fix,
+                widgets::handler(|this, cx| this.start_book(true, cx)),
+                cx,
+            )
+            .when(!can_fix, |el| el.opacity(0.4))
+        });
         // Positions come at each save; the clock runs on its own.
         let elapsed = work
             .running
@@ -415,10 +573,15 @@ impl RootView {
             .items_center()
             .gap(px(12.))
             .child(action)
+            .children(fix)
             .children(running.then(|| {
                 div()
                     .text_color(theme::accent())
-                    .child(s.book_generating)
+                    .child(if work.fixing {
+                        s.book_fixing
+                    } else {
+                        s.book_generating
+                    })
             }))
             .children(progress.map(|p| div().text_color(theme::text_secondary()).child(p)));
 
@@ -487,6 +650,12 @@ impl RootView {
             .child(row(s.book_work_file, file, None))
             .child(row(s.book_from, from, None))
             .child(row(s.book_level, level, None))
+            .child(
+                div()
+                    .pl(px(130. + 12.))
+                    .pb(px(8.))
+                    .child(super::new_game::level_chart(s, work.level, 440.)),
+            )
             .child(row(s.book_max_plies, plies, Some(s.book_plies_note.into())))
             .child(row(s.book_loss, losses, Some(s.book_loss_note.into())))
             .child(row(
@@ -494,6 +663,7 @@ impl RootView {
                 cumulative,
                 Some(s.book_cumulative_note.into()),
             ))
+            .child(row(s.book_leaf, leaf, Some(s.book_leaf_note.into())))
             .child(div().mt(px(6.)).child(status))
             .children(work.message.clone().map(|m| {
                 div().text_sm().text_color(theme::text_secondary()).child(m)
@@ -503,6 +673,12 @@ impl RootView {
                     .text_xs()
                     .text_color(theme::text_muted())
                     .child(s.book_work_note),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(s.book_fix_note),
             )
             .child(
                 div()

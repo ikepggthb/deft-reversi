@@ -305,6 +305,12 @@ impl RootView {
             .child(row(s.sound, sound, None))
             .child(group(s.analysis))
             .child(row(s.analysis_level, level, None))
+            .child(
+                div()
+                    .pl(px(14. + 170. + 12.))
+                    .pb(px(8.))
+                    .child(super::new_game::level_chart(s, settings.analysis.level, 400.)),
+            )
             .child(row(s.loss_threshold, loss, Some(s.discs_or_more.into())))
             .child(group(s.appearance))
             .child(row(s.theme, theme_choice, None))

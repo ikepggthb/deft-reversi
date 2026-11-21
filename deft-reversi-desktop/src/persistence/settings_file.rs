@@ -7,7 +7,8 @@ use crate::{
         BoardView, Preset, Settings,
         player::MOVE_TIMES,
         settings::{
-            AiChoice, Animation, BookSettings, ManualMode, NewGameForm, SideForm, TT_SIZES_MIB,
+            AiChoice, Animation, BookSettings, GRAPH_HEIGHTS, ManualMode, NewGameForm, SideForm,
+            TT_SIZES_MIB,
             ThemeChoice,
         },
     },
@@ -48,6 +49,7 @@ pub struct SettingsV1 {
     /// The opening book file and its use by the AI.
     pub book_path: Option<String>,
     pub book_enabled: bool,
+    pub graph_height: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +180,7 @@ impl From<Settings> for SettingsV1 {
             board_mirrored: s.board_view.mirrored,
             book_path: s.book.path.as_ref().map(|p| p.display().to_string()),
             book_enabled: s.book.enabled,
+            graph_height: s.graph_height,
         }
     }
 }
@@ -246,6 +249,11 @@ impl SettingsV1 {
             book: BookSettings {
                 path: self.book_path.as_ref().map(PathBuf::from),
                 enabled: self.book_enabled,
+            },
+            graph_height: if GRAPH_HEIGHTS.contains(&self.graph_height) {
+                self.graph_height
+            } else {
+                default.graph_height
             },
         }
     }

@@ -48,6 +48,9 @@ pub enum Command {
     Load(Box<LoadedGame>),
     /// Analysis mode pauses the game and searches the shown position.
     SetAnalysis(bool),
+    /// Study mode keeps the record aside: moves played meanwhile make a
+    /// line of their own, and leaving it brings the record back.
+    SetStudy(bool),
     AnalyzeExact,
     /// Searches the positions of the record not yet read at the level,
     /// from the end; with `redo`, every one that is not solved exactly.
@@ -138,6 +141,8 @@ pub struct Controller {
     ai_log: Vec<AiMove>,
     /// See `Command::SetBook`.
     book: bool,
+    /// The record, kept while study mode plays other lines in `history`.
+    main: Option<History>,
 }
 
 impl Default for Controller {
@@ -157,6 +162,7 @@ impl Default for Controller {
             notice: None,
             ai_log: Vec::new(),
             book: false,
+            main: None,
         }
     }
 }
@@ -171,6 +177,21 @@ fn index(color: Color) -> usize {
 impl Controller {
     pub fn history(&self) -> &History {
         &self.history
+    }
+
+    /// The game's own record: in study mode the one kept aside, otherwise
+    /// the one shown. This is what is saved.
+    pub fn game_record(&self) -> &History {
+        self.main.as_ref().unwrap_or(&self.history)
+    }
+
+    /// The record kept aside while studying.
+    pub fn main_line(&self) -> Option<&History> {
+        self.main.as_ref()
+    }
+
+    pub fn studying(&self) -> bool {
+        self.main.is_some()
     }
 
     pub fn game(&self) -> &GameInfo {
@@ -244,6 +265,7 @@ impl Controller {
         match command {
             Command::NewGame(new_game) => {
                 self.cancel(&mut effects);
+                self.main = None;
                 // Analysis mode stays on for the new game.
                 self.analyzer.cancel(&mut effects);
                 self.ai_log.clear();
@@ -288,6 +310,7 @@ impl Controller {
             }
             Command::Load(loaded) => {
                 self.cancel(&mut effects);
+                self.main = None;
                 let LoadedGame {
                     game,
                     players,
@@ -304,6 +327,7 @@ impl Controller {
             }
             // The game goes on in analysis mode: an AI move takes the engine,
             // and the analysis searches while a person is to move.
+            Command::SetStudy(on) => self.set_study(on, &mut effects),
             Command::SetAnalysis(on) => {
                 if !on {
                     self.analyzer.cancel(&mut effects);
@@ -411,7 +435,8 @@ impl Controller {
         }
         self.cancel(effects);
         self.record(Action::Place(square), Grouping::NewGroup, effects);
-        if human_turn {
+        // A study line is played by hand on both sides.
+        if human_turn && !self.studying() {
             self.status = Status::Playing;
         }
     }
@@ -460,6 +485,25 @@ impl Controller {
         } else {
             Sound::Place
         }));
+    }
+
+    /// Into study mode the game pauses where it is shown; out of it the
+    /// record comes back, at the position it showed.
+    fn set_study(&mut self, on: bool, effects: &mut Vec<Effect>) {
+        if on == self.studying() {
+            return;
+        }
+        self.cancel(effects);
+        if on {
+            self.main = Some(self.history.clone());
+            self.status = Status::Paused;
+        } else if let Some(main) = self.main.take() {
+            self.history = main;
+            self.revision += 1;
+            if self.has_ai() {
+                self.status = Status::Paused;
+            }
+        }
     }
 
     /// Moving through the record stops the AI; play resumes on request.
@@ -605,6 +649,41 @@ mod tests {
         // Once taken back, a late answer plays nothing.
         c.apply(Command::Undo);
         assert!(!c.is_ai_move(&answer(id)));
+    }
+
+    #[test]
+    fn study_mode_plays_other_lines_and_keeps_the_record() {
+        let mut c = ready([Player::Human, Player::Human]);
+        for name in ["f5", "d6", "c3"] {
+            play(&mut c, name);
+        }
+        c.apply(Command::SetStudy(true));
+        assert!(c.studying());
+        c.apply(Command::GoTo(1));
+        play(&mut c, "f6");
+        play(&mut c, "e6");
+        // The line studied is shown; the record is what is saved.
+        assert_eq!(c.history().actions().len(), 3);
+        assert_eq!(c.history().actions()[1], Action::Place("f6".parse().unwrap()));
+        assert_eq!(c.game_record().actions()[1], Action::Place("d6".parse().unwrap()));
+        // Leaving brings the record back where it was shown.
+        c.apply(Command::SetStudy(false));
+        assert!(!c.studying());
+        assert_eq!(c.history().actions()[1], Action::Place("d6".parse().unwrap()));
+        assert_eq!(c.history().cursor(), 3);
+    }
+
+    #[test]
+    fn a_study_line_waits_for_the_user_on_both_sides() {
+        let mut c = ready([Player::Human, Player::Ai(Strength::Level(8))]);
+        let id = started(&play(&mut c, "f5")).expect("the AI thinks");
+        finish(&mut c, id);
+        c.apply(Command::SetStudy(true));
+        c.apply(Command::GoTo(0));
+        // Neither side searches by itself in the study line.
+        assert!(started(&play(&mut c, "d3")).is_none());
+        assert_eq!(c.status(), Status::Paused);
+        assert!(started(&play(&mut c, "c3")).is_none());
     }
 
     #[test]

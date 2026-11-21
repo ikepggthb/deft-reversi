@@ -103,8 +103,39 @@ impl RootView {
             cx,
         )
         .text_xs();
+        // In study mode the record shown is the line studied.
+        let banner = self.controller.studying().then(|| {
+            div()
+                .mb(px(12.))
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(6.))
+                .bg(theme::selected())
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::accent())
+                        .child(s.studying),
+                )
+                .child(div().flex().child(widgets::link(
+                    "back-to-main",
+                    s.back_to_main,
+                    widgets::handler(|this, cx| this.run(Command::SetStudy(false), cx)),
+                    cx,
+                )))
+        });
+        // The move about to be played is marked, and the board shows where;
+        // at the end of the record, the last move played.
+        let marked = if cursor < history.actions().len() {
+            Some(cursor)
+        } else {
+            cursor.checked_sub(1)
+        };
         let entries = history.actions().iter().enumerate().map(|(i, action)| {
-            let current = i + 1 == cursor;
+            let current = marked == Some(i);
             let (number, name): (SharedString, SharedString) = match action {
                 Action::Place(square) => (
                     move_number(history.position(i)).to_string().into(),
@@ -127,7 +158,7 @@ impl RootView {
                 .when(current, |el| el.bg(theme::selected()))
                 .hover(|style| style.bg(theme::hover()))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.run(Command::GoTo(i + 1), cx)
+                    this.run(Command::GoTo(i), cx)
                 }))
                 .child(
                     div()
@@ -181,6 +212,7 @@ impl RootView {
                     .text_color(theme::text_secondary())
                     .child(state),
             )
+            .children(banner)
             .children(opening.map(|name| {
                 div()
                     .mb(px(12.))

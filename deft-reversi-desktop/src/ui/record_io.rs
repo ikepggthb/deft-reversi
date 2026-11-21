@@ -53,8 +53,19 @@ impl RootView {
         cx.notify();
     }
 
+    /// Opens the record dialog for where a book grows from.
+    pub(super) fn enter_book_record(&mut self, cx: &mut Context<Self>) {
+        self.enter_record(false, cx);
+        self.record_for_book = true;
+        if let Some(record) = &self.book_work.record {
+            let text = transcript::to_text(record.actions());
+            self.record_insert(&text);
+        }
+    }
+
     /// Opens the record dialog, with the clipboard's text when pasting.
     pub(super) fn enter_record(&mut self, paste: bool, cx: &mut Context<Self>) {
+        self.record_for_book = false;
         self.record_input.clear();
         self.record_caret = 0;
         self.record_all = false;
@@ -176,6 +187,17 @@ impl RootView {
             return;
         };
         if history.actions().is_empty() {
+            return;
+        }
+        if self.record_for_book {
+            if history.current().is_terminal() {
+                return;
+            }
+            self.record_for_book = false;
+            self.book_work.record = Some(history);
+            self.book_work.root = super::book_work::RootChoice::Record;
+            self.dialog = Some(Dialog::BookWork);
+            cx.notify();
             return;
         }
         self.dialog = None;

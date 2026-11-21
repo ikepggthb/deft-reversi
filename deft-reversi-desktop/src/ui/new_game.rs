@@ -116,8 +116,41 @@ impl RootView {
             })
             .map(|color| self.render_manual(color, cx))
             .collect::<Vec<_>>();
+        // The title and the buttons stay; the rest scrolls on a short window.
+        let body = div()
+            .flex()
+            .flex_col()
+            .pb(px(4.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(20.))
+                    .pt(px(14.))
+                    .child(self.render_side(Color::Black, cx))
+                    .child(self.render_side(Color::White, cx)),
+            )
+            .children(manual)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(16.))
+                    .pt(px(16.))
+                    .child(
+                        div()
+                            .text_color(theme::text_secondary())
+                            .child(s.start_position),
+                    )
+                    .child(widgets::segmented("start-position", start_items, cx)),
+            );
+        let height = self
+            .viewport
+            .map_or(900., |(_, h)| h as f32 - super::root::DIALOG_TOP - 20.);
         div()
-            .w(px(580.))
+            .w(px(594.))
+            .max_h(px(height))
             .flex()
             .flex_col()
             .bg(theme::surface())
@@ -134,29 +167,18 @@ impl RootView {
             )
             .child(
                 div()
+                    .flex_1()
+                    .min_h_0()
                     .flex()
-                    .flex_row()
-                    .gap(px(20.))
-                    .px(px(20.))
-                    .pt(px(14.))
-                    .child(self.render_side(Color::Black, cx))
-                    .child(self.render_side(Color::White, cx)),
-            )
-            .children(manual)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(16.))
-                    .px(px(20.))
-                    .pt(px(16.))
-                    .child(
-                        div()
-                            .text_color(theme::text_secondary())
-                            .child(s.start_position),
-                    )
-                    .child(widgets::segmented("start-position", start_items, cx)),
+                    .flex_col()
+                    .pl(px(20.))
+                    .pr(px(6.))
+                    .child(widgets::scroll_area(
+                        "new-game-body",
+                        &self.new_game_scroll,
+                        body,
+                        cx,
+                    )),
             )
             .child(
                 div()
@@ -384,7 +406,6 @@ impl RootView {
             }
         };
         div()
-            .mx(px(20.))
             .mt(px(12.))
             .p(px(12.))
             .rounded(px(6.))
@@ -410,17 +431,25 @@ impl RootView {
 
     /// The level's plan over the empties, as a strip and a table.
     fn render_phases(&self, level: u8) -> Div {
-        let s = self.settings.lang.strings();
+        level_chart(self.settings.lang.strings(), level, STRIP_WIDTH)
+    }
+}
+
+const PHASE_ROW: f32 = 18.;
+
+/// How a level reads over the empties: a strip `width` wide and a table.
+pub(super) fn level_chart(s: &Strings, level: u8, width: f32) -> Div {
+    {
         let phases = phases(level);
         let strip = div()
             .flex()
             .flex_row()
             .h(px(10.))
-            .w(px(STRIP_WIDTH))
+            .w(px(width))
             .rounded(px(3.))
             .overflow_hidden()
             .children(phases.iter().map(|phase| {
-                let width = STRIP_WIDTH * f32::from(phase.from - phase.to + 1) / 60.;
+                let width = width * f32::from(phase.from - phase.to + 1) / 60.;
                 div()
                     .w(px(width))
                     .h_full()
@@ -454,6 +483,7 @@ impl RootView {
                 .flex()
                 .flex_row()
                 .items_center()
+                .h(px(PHASE_ROW))
                 .text_xs()
                 .child(
                     div()
@@ -481,14 +511,20 @@ impl RootView {
                 div()
                     .flex()
                     .flex_row()
-                    .w(px(STRIP_WIDTH))
+                    .w(px(width))
                     .text_xs()
                     .text_color(theme::text_muted())
                     .child(div().flex_1().child(format!("{} 60", s.empties)))
                     .child("1"),
             )
             .child(strip)
-            .child(div().mt(px(6.)).flex().flex_col().children(rows))
+            .child(
+                div()
+                    .mt(px(6.))
+                    .flex()
+                    .flex_col()
+                    .children(rows),
+            )
     }
 }
 

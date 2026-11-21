@@ -23,7 +23,12 @@ pub struct Settings {
     pub new_game: NewGameForm,
     pub board_view: BoardView,
     pub book: BookSettings,
+    /// The plot of the value graph, in logical pixels; dragged to size.
+    pub graph_height: u16,
 }
+
+/// How tall the value graph may be dragged.
+pub const GRAPH_HEIGHTS: std::ops::RangeInclusive<u16> = 60..=400;
 
 /// The opening book the AI plays from (§24).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -106,6 +111,7 @@ impl Default for Settings {
                 enabled: true,
                 ..BookSettings::default()
             },
+            graph_height: 80,
         }
     }
 }
