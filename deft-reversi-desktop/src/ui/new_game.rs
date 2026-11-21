@@ -80,6 +80,10 @@ impl RootView {
         } else {
             Position::initial()
         };
+        // The book choice of the dialog holds from this game on.
+        if self.settings.book.enabled != self.new_game_book {
+            self.set_book_use(self.new_game_book, cx);
+        }
         self.close_dialog(cx);
         self.run(
             Command::NewGame(NewGame {
@@ -117,6 +121,33 @@ impl RootView {
             .map(|color| self.render_manual(color, cx))
             .collect::<Vec<_>>();
         // The title and the buttons stay; the rest scrolls on a short window.
+        // Whether the AI plays the book's moves; only with a book chosen.
+        let book_row = self.settings.book.path.is_some().then(|| {
+            let book = self.new_game_book;
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(16.))
+                .pt(px(12.))
+                .child(div().text_color(theme::text_secondary()).child(s.book_use))
+                .child(widgets::segmented(
+                    "new-game-book",
+                    vec![
+                        (
+                            s.on.into(),
+                            book,
+                            widgets::handler(|this, _| this.new_game_book = true),
+                        ),
+                        (
+                            s.off.into(),
+                            !book,
+                            widgets::handler(|this, _| this.new_game_book = false),
+                        ),
+                    ],
+                    cx,
+                ))
+        });
         let body = div()
             .flex()
             .flex_col()
@@ -144,7 +175,8 @@ impl RootView {
                             .child(s.start_position),
                     )
                     .child(widgets::segmented("start-position", start_items, cx)),
-            );
+            )
+            .children(book_row);
         let height = self
             .viewport
             .map_or(900., |(_, h)| h as f32 - super::root::DIALOG_TOP - 20.);

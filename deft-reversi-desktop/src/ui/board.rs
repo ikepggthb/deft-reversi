@@ -39,23 +39,17 @@ impl RootView {
         // Not while the AI is about to move: the values would be a hint.
         let ai_moving =
             self.controller.ai_to_move().is_some() && self.controller.status() == Status::Playing;
-        // The board shows one level's values at a time: the last level read
-        // through, or the first one while it is read. A move in the opening
-        // book shows the book's value instead.
+        // Each move shows its newest value, with how that value was read: a
+        // move read again shows the new value as soon as it has one. A move
+        // in the opening book shows the book's value instead.
         let analysis = (self.controller.analyzing() && !ai_moving).then(|| {
             let analyzer = self.controller.analyzer();
             let mut values: Vec<(Action, i32, Option<Reading>)> = analyzer
-                .get(position)
-                .map(|a| &a.report)
-                .filter(|r| !r.moves.is_empty())
-                .or_else(|| analyzer.live(position))
-                .map(|r| {
-                    r.moves
-                        .iter()
-                        .map(|m| (m.action, m.score, r.reading))
-                        .collect()
-                })
-                .unwrap_or_default();
+                .moves(position)
+                .into_iter()
+                .filter_map(|m| m.value)
+                .map(|v| (v.action, v.score, v.reading))
+                .collect();
             for line in self.book_lines(position).unwrap_or_default() {
                 let Some(score) = line.value.and_then(|v| v.point()) else {
                     continue;
@@ -78,12 +72,7 @@ impl RootView {
         };
         // How each value was read, in a few characters under it.
         let s = self.settings.lang.strings();
-        let mark_of = |reading: Reading| match reading {
-            Reading::Depth { depth, .. } => s.depth_mark(depth),
-            Reading::Endgame { percent: 100 } => s.exact_mark.into(),
-            Reading::Endgame { percent } => format!("{percent}%"),
-            Reading::Book => s.book.into(),
-        };
+        let mark_of = |reading: Reading| super::analysis_panel::reading_mark(s, reading);
         let cursor = self
             .board_focus
             .is_focused(window)

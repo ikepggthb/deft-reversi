@@ -459,6 +459,32 @@ fn selective_endgame_recovers_a_warm_pv_without_changing_the_result() {
 }
 
 #[test]
+fn selective_midgame_recovers_a_warm_pv_without_changing_the_result() {
+    for seed in [3, 9, 21] {
+        let board = position(seed, 40);
+        let request = depth(8).selectivity(Selectivity::Percent85);
+        let run = |request_with_pv: &SearchRequest| {
+            let mut engine = engine(1);
+            engine.search(board, &request).unwrap();
+            engine.search(board, request_with_pv).unwrap()
+        };
+        let warm = run(&request);
+        let recovered = run(&request.clone().recover_pv());
+        assert_eq!(recovered.best_move, warm.best_move, "seed {seed}");
+        assert_eq!(recovered.score, warm.score, "seed {seed}");
+        assert_eq!(recovered.kind, warm.kind, "seed {seed}");
+        assert_eq!(recovered.pv.first(), warm.pv.first(), "seed {seed}");
+        // The warm table cut the line short; recovery reads it to the depth.
+        assert!(warm.pv.len() < 8, "seed {seed}");
+        assert_eq!(recovered.pv.len(), 8, "seed {seed}");
+        let mut line = board;
+        for &action in &recovered.pv {
+            line = line.play(action).unwrap();
+        }
+    }
+}
+
+#[test]
 fn stopping_after_selective_preparation_does_not_report_exact() {
     // Exact preparation stops endgame ProbCut below thirteen empties; a rule at
     // thirteen makes it search the same tree as the selective request.

@@ -241,6 +241,7 @@ pub struct SearchRequest {
     pub(super) minimum_score: Option<i32>,
     pub(super) reuse_pv: bool,
     pub(super) recover_endgame_pv: bool,
+    pub(super) recover_pv: bool,
     pub(super) skip_pv_recovery: bool,
     pub(super) stop: StopHandle,
 }
@@ -260,6 +261,7 @@ impl SearchRequest {
             minimum_score: None,
             reuse_pv: false,
             recover_endgame_pv: false,
+            recover_pv: false,
             skip_pv_recovery: false,
             stop: StopHandle::new(),
         }
@@ -309,6 +311,14 @@ impl SearchRequest {
     /// Recovery shares the search limits and may leave a partial line.
     pub fn recover_endgame_pv(mut self) -> Self {
         self.recover_endgame_pv = true;
+        self
+    }
+    /// Try to extend any selective PV, midgame or endgame, at the completed
+    /// search stage, when the search left it short (transposition-table
+    /// cutoffs do). The best move and score are unchanged; recovery shares
+    /// the search limits and may leave a partial line.
+    pub fn recover_pv(mut self) -> Self {
+        self.recover_pv = true;
         self
     }
     /// Return the line found during search without a separate PV recovery
