@@ -61,6 +61,11 @@ pub struct Analysis {
     pub level: Option<u8>,
     /// Every move read, best first, each with its own reading.
     pub moves: Vec<MoveValue>,
+    /// The last level every move was read at, apart from the position's
+    /// value: 0 when none was, `MOVES_EXACT` after the exact solve. A
+    /// record search gives the value alone, so the moves still rise from
+    /// the lowest level.
+    moves_level: u8,
     /// Stopped by the user: not searched further.
     settled: bool,
 }
@@ -71,6 +76,9 @@ impl Analysis {
         matches!(self.report.reading, Some(Reading::Endgame { percent: 100 }))
     }
 }
+
+/// `Analysis::moves_level` once the exact solve has read every move.
+const MOVES_EXACT: u8 = u8::MAX;
 
 /// The shown position is searched at rising levels up to the setting, so a
 /// value comes at once and then improves: 1, 4, 8, 12, … every four levels.
@@ -215,19 +223,14 @@ impl Analyzer {
             return None;
         }
         // The exact solve is as far as it goes; it scores the moves itself.
-        let level = analysis.level?;
-        if analysis.moves.is_empty() {
-            // A record search, even an exact one, has no move values yet.
-            return Some(if level < target {
-                next_level(level, target)
-            } else {
-                target
-            });
-        }
-        if analysis.is_exact() || level >= target {
+        analysis.level?;
+        // The moves rise level by level, whatever level the position's value
+        // came from: a record search gives the value alone.
+        let read = analysis.moves_level;
+        if read >= target || (analysis.is_exact() && read > 0) {
             return None;
         }
-        Some(next_level(level, target))
+        Some(next_level(read, target))
     }
 
     /// Positions done and in all, while the whole record is analysed.
@@ -524,14 +527,33 @@ impl Analyzer {
         }
         sort_best_first(&mut moves);
         let analysis = match (complete, previous) {
-            (true, previous) => Analysis {
-                report: running.best.unwrap_or_else(|| {
-                    previous.map(|p| p.report).unwrap_or_else(empty_report)
-                }),
-                level: running.level,
-                moves,
-                settled: running.stopping || running.job == Job::Exact,
-            },
+            (true, previous) => {
+                // The position keeps a value read deeper than this level,
+                // such as the record search's.
+                let deeper = previous.as_ref().filter(|p| {
+                    running.job != Job::Exact
+                        && (p.is_exact()
+                            || p.level.is_none_or(|l| running.level.is_some_and(|r| r < l)))
+                });
+                let (report, level) = match deeper {
+                    Some(p) => (p.report.clone(), p.level),
+                    None => (
+                        running.best.clone().unwrap_or_else(|| {
+                            previous
+                                .as_ref()
+                                .map_or_else(empty_report, |p| p.report.clone())
+                        }),
+                        running.level,
+                    ),
+                };
+                Analysis {
+                    report,
+                    level,
+                    moves,
+                    moves_level: running.level.unwrap_or(MOVES_EXACT),
+                    settled: running.stopping || running.job == Job::Exact,
+                }
+            }
             (false, Some(previous)) => Analysis {
                 moves,
                 settled: running.stopping || previous.settled,
@@ -542,6 +564,7 @@ impl Analyzer {
                     report: best,
                     level: running.level,
                     moves,
+                    moves_level: 0,
                     settled: true,
                 },
                 None => return,
@@ -620,13 +643,11 @@ impl Analyzer {
                 None => return,
             },
             Some(previous) if previous.level.is_none() || previous.is_exact() => previous,
-            // The new value replaces the old; the move values stay only
-            // when they are of the same level.
+            // The new value replaces the old; the moves keep their values,
+            // each with its own reading.
             previous => Analysis {
-                moves: previous
-                    .filter(|p| p.level == running.level)
-                    .map(|p| p.moves)
-                    .unwrap_or_default(),
+                moves_level: previous.as_ref().map_or(0, |p| p.moves_level),
+                moves: previous.map(|p| p.moves).unwrap_or_default(),
                 report: Report {
                     moves: Vec::new(),
                     ..report
@@ -873,7 +894,43 @@ mod tests {
             panic!("the moves are searched");
         };
         assert!(spec.root_moves.is_some());
-        assert_eq!(spec.goal, Goal::Level(20));
+        assert_eq!(spec.goal, Goal::Level(1));
+    }
+
+    #[test]
+    fn after_the_record_search_the_moves_still_rise_level_by_level() {
+        let history = History::new(Position::initial());
+        let start = history.current();
+        let mut a = Analyzer::default();
+        let mut ids = 1;
+        a.start_batch(&history, false);
+        let mut effects = Vec::new();
+        a.pump(start, &mut ids, &mut effects);
+        a.on_finished(started(&effects)[0].0, report(7));
+        // Every move at each level before the next, as with no record search.
+        let mut levels = Vec::new();
+        loop {
+            let mut effects = Vec::new();
+            a.pump(start, &mut ids, &mut effects);
+            let Some(&(id, _, spec)) = started(&effects).first() else {
+                break;
+            };
+            let Goal::Level(level) = spec.goal else {
+                panic!("a level search");
+            };
+            if levels.last() != Some(&level) {
+                levels.push(level);
+            }
+            a.on_finished(id, report(i32::from(level)));
+            // The record search read deeper, so its value stands until the
+            // moves reach its level.
+            let analysis = a.get(start).unwrap();
+            if level < 20 {
+                assert_eq!((analysis.level, analysis.report.score), (Some(20), Some(7)));
+            }
+        }
+        assert_eq!(levels, [1, 4, 8, 12, 16, 20]);
+        assert_eq!(a.get(start).unwrap().report.score, Some(20));
     }
 
     #[test]
