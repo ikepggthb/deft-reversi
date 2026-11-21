@@ -20,6 +20,7 @@ use session::*;
 mod endgame;
 use endgame::{EndgameCache, new_cache_epoch};
 mod level;
+pub use level::level_reading;
 mod ordering;
 mod pv;
 mod root;
@@ -425,6 +426,7 @@ impl Engine {
                 pv: result.pv.clone(),
                 nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
                 elapsed: start.elapsed(),
+                moves: Vec::new(),
             });
         }
         runtime.drain();
@@ -465,7 +467,23 @@ impl Engine {
             && !context.aborted()
             && let Some(last) = last
             && last.depth > 0
-            && let Ok(moves) = root.move_scores(&mut context, last.spec(), score_mask, job.move_pvs)
+            && let Ok(moves) = root.move_scores(
+                &mut context,
+                last.spec(),
+                score_mask,
+                job.move_pvs,
+                &mut |context, moves| {
+                    on_progress(&Progress {
+                        kind: result.kind.unwrap(),
+                        score: result.score.unwrap_or_default(),
+                        best_move: result.best_move,
+                        pv: result.pv.clone(),
+                        nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
+                        elapsed: start.elapsed(),
+                        moves: moves.to_vec(),
+                    })
+                },
+            )
             && !context.aborted()
         {
             for (score, pv) in moves {

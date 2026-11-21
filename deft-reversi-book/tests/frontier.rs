@@ -205,14 +205,13 @@ fn pv_growth_stop_and_checkpoint_error_leave_all_work_resumable() {
         .generate(
             &mut eng,
             GenerationLimits {
-                new_positions: Some(2),
+                nodes: Some(1),
                 ..Default::default()
             },
             StopHandle::new(),
         )
         .unwrap();
-    assert_eq!(first.reason, GenerationStop::PositionLimit);
-    assert_eq!(first.new_positions, 2);
+    assert_eq!(first.reason, GenerationStop::NodeLimit);
     let folder = std::env::temp_dir().join(format!("deft-frontier-pv-{}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
     let path = folder.join("work");

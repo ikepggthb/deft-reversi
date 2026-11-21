@@ -1,0 +1,29 @@
+[package]
+name = "deft_reversi_desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "deft-reversi"
+path = "src/main.rs"
+
+[dependencies]
+deft_reversi_engine = { path = "../deft-reversi-engine" }
+deft_reversi_book = { path = "../deft-reversi-book" }
+# GPUI is pre-1.0: both crates come from the same Zed release tag.
+gpui = { git = "https://github.com/zed-industries/zed.git", tag = "v0.233.10", default-features = false }
+gpui_platform = { git = "https://github.com/zed-industries/zed.git", tag = "v0.233.10", features = ["wayland", "x11"] }
+async-channel = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# OS data and config folders.
+dirs = "6"
+# Saved times are shown in the local time zone.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Sound effects are made in code, so only playback is needed.
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
+
+[dev-dependencies]
+# Tests build a small engine from the zero model with known ProbCut rules.
+deft_reversi_engine = { path = "../deft-reversi-engine", features = ["tuning"] }
