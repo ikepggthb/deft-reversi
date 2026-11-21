@@ -160,13 +160,9 @@ fn generate(
             config,
         )
         .map_err(text)?;
-    // A budget is required. A time limit would also reach every search and
-    // change how it reads, so the run is bounded only by the stop button.
-    let limits = GenerationLimits {
-        time: None,
-        nodes: None,
-        new_positions: Some(u64::MAX),
-    };
+    // No time limit: it would reach every search and change how it reads.
+    // The run goes on until stopped or nothing is left within the losses.
+    let limits = GenerationLimits::default();
     let work = job.work.clone();
     let result = editor.generate_with_checkpoint(engine, limits, job.stop, |editor, report| {
         editor.save(&work)?;
@@ -193,4 +189,50 @@ fn generate(
         reason: report.reason,
         book,
     })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deft_reversi_book::{Book, ReadLimits};
+    use deft_reversi_engine::{Engine, EngineOptions, Model, PatternModel};
+
+    /// A book grown here opens again, in the builder and for play.
+    #[test]
+    fn a_grown_book_loads_again() {
+        let mut engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("deft-book-gen-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let work = dir.join("grown.dbook-work");
+        let (events, _rx) = async_channel::unbounded();
+        let job = BookJob {
+            editor: SharedEditor::default(),
+            work: work.clone(),
+            // Every move ends the game, so no search needs a calibrated model.
+            root: {
+                let occupied = u64::MAX << 24;
+                let white = 1u64 << 27;
+                Position::from_colors(occupied ^ white, white, Color::Black).unwrap()
+            },
+            settings: BookSettings {
+                level: 12,
+                max_plies: 0,
+                black_loss: 0,
+                white_loss: 0,
+                cumulative_loss: None,
+            },
+            stop: StopHandle::new(),
+        };
+        let done = generate(&mut engine, job, &events).unwrap();
+        assert!(done.progress.positions > 0);
+        let editor = BookEditor::load(&work, ReadLimits::default()).unwrap();
+        assert_eq!(BookSettings::of(Some(&editor)).level, 12);
+        Book::load(&done.book, ReadLimits::default()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
