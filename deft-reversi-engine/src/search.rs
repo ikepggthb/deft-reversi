@@ -268,6 +268,7 @@ impl Engine {
             minimum_score: request.minimum_score,
             reuse_pv: request.reuse_pv,
             recover_endgame_pv: request.recover_endgame_pv,
+            recover_pv: request.recover_pv,
             skip_pv_recovery: request.skip_pv_recovery,
             root_moves: request.root_moves,
             preferred_move: request.preferred_move,
@@ -441,8 +442,12 @@ impl Engine {
             && let Some(score) = result.score
         {
             let full = last.selectivity == Selectivity::Full;
-            let selective_recovery =
-                job.recover_endgame_pv && last.exact && result.pv_final_score(board) != Some(score);
+            let selective_recovery = if last.exact {
+                (job.recover_endgame_pv || job.recover_pv)
+                    && result.pv_final_score(board) != Some(score)
+            } else {
+                job.recover_pv && result.pv.len() < usize::from(last.depth)
+            };
             if (full || selective_recovery)
                 && let Ok(pv) =
                     context.extract_pv(board, score, last.depth, last.exact, result.best_move)
@@ -635,6 +640,7 @@ struct Job {
     minimum_score: Option<i32>,
     reuse_pv: bool,
     recover_endgame_pv: bool,
+    recover_pv: bool,
     skip_pv_recovery: bool,
     board: Board,
     mode: SearchMode,
