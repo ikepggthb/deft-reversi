@@ -118,57 +118,11 @@ fn mix_into(out: &mut Vec<Float>, at: f32, sound: &[Float]) {
     }
 }
 
-/// A burst of noise around `center` Hz that dies away within `decay`:
-/// the dry snap of a hard edge meeting the board. The noise is the same
-/// every time, so the sound is too.
-fn snap(center: f32, q: f32, length: f32, decay: f32) -> Vec<Float> {
-    let mut seed: u32 = 0x9e37_79b9;
-    let mut noise = move || {
-        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        (seed >> 8) as f32 / (1u32 << 23) as f32 - 1.
-    };
-    // A band-pass biquad, so the snap has a pitch of its own.
-    let w = TAU * center / RATE as f32;
-    let alpha = w.sin() / (2. * q);
-    let a0 = 1. + alpha;
-    let (b0, b2) = (alpha / a0, -alpha / a0);
-    let (a1, a2) = (-2. * w.cos() / a0, (1. - alpha) / a0);
-    let (mut x1, mut x2, mut y1, mut y2) = (0., 0., 0., 0.);
-    (0..seconds(length))
-        .map(|i| {
-            let t = i as f32 / RATE as f32;
-            let rise = (t / 0.0005).min(1.);
-            let x = noise() * rise * (-t / decay).exp();
-            let y = b0 * x + b2 * x2 - a1 * y1 - a2 * y2;
-            (x2, x1, y2, y1) = (x1, x, y1, y);
-            y
-        })
-        .collect()
-}
-
-/// Scales a sound so its loudest sample is `peak`.
-fn normalized(mut sound: Vec<Float>, peak: f32) -> Vec<Float> {
-    let loudest = sound.iter().fold(0f32, |m, s| m.max(s.abs()));
-    if loudest > 0. {
-        for s in &mut sound {
-            *s *= peak / loudest;
-        }
-    }
-    sound
-}
-
-/// "Pata": a flat disc slapped down. A dry snap with a short hollow body,
-/// and a softer tap a moment later as the disc settles.
+/// A short knock, like a disc on wood.
 fn place() -> Vec<Float> {
-    let mut out = snap(2400., 1.2, 0.05, 0.006);
-    mix_into(&mut out, 0., &tone(320., 0.05, 0.010, 0.35));
-    mix_into(&mut out, 0., &tone(1100., 0.02, 0.003, 0.15));
-    let settle: Vec<Float> = snap(3000., 1.5, 0.03, 0.004)
-        .into_iter()
-        .map(|s| s * 0.35)
-        .collect();
-    mix_into(&mut out, 0.022, &settle);
-    normalized(out, 0.8)
+    let mut out = tone(180., 0.09, 0.018, 0.55);
+    mix_into(&mut out, 0., &tone(540., 0.04, 0.006, 0.25));
+    out
 }
 
 /// Two soft falling notes.
