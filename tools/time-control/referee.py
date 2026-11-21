@@ -20,6 +20,19 @@ Environment:
                their worker's CPUs and never search at the same time.
   LOG_DIR      GTP only: each engine's DEFT_GTP_LOG lines go to
                LOG_DIR/<new|old>-<worker>.log, prefixed with the opening id.
+  CLOCK_LOG_DIR  each engine writes its clock log (DEFT_CLOCK_LOG) to
+               CLOCK_LOG_DIR/<new|old>-<worker>.jsonl; OUT.logs.tsv gives
+               each finished game's byte range in both files.
+  EXTEND       LO-HI:SECONDS, extension mode for data (needs CLOCK_LOG_DIR):
+               every game starts fresh engines, and `new` runs with
+               DEFT_CLOCK_EXTEND=E:SECONDS, E drawn from LO..HI by opening
+               and colour. The game ends right after new's extended turn
+               (flag x, not scored), as the extra time and table entries
+               would change the rest of it.
+  STOP_FILE    when this file exists, workers take no new games and the
+               run ends after the games in progress (default OUT.tsv.stop).
+               Rows are written only for finished games, so a killed run
+               loses only its games in progress; rerunning resumes.
 
 Each opening is played with both colours. The referee keeps the clocks:
 GTP gets `time_left` before every `genmove`; FlipSight gets remaining_ms and
@@ -28,7 +41,9 @@ budget_ms = min(1000, remaining_ms), and each game starts fresh processes
 in FlipSight, after budget_ms) loses the game by time: 64 discs.
 
 OUT.tsv: opening, new_black, diff (new's discs minus old's), flag (new | old
-| -), new_used, old_used, moves. Existing rows are kept and skipped.
+| x | -), new_used, old_used, moves. Existing rows are kept and skipped.
+A time loss by either side (flag new or old) is a failure to report even
+in data runs.
 """
 import json, math, os, random, statistics, subprocess, sys, threading, time
 from pathlib import Path
@@ -81,15 +96,49 @@ def openings():
     return out
 
 
+def engine_env(clock_log, extend=None):
+    env = dict(os.environ)
+    env.pop("DEFT_CLOCK_EXTEND", None)
+    if clock_log:
+        env["DEFT_CLOCK_LOG"] = clock_log
+    if extend:
+        env["DEFT_CLOCK_EXTEND"] = extend
+    return env
+
+
+def size(path):
+    return os.path.getsize(path) if path and os.path.exists(path) else 0
+
+
+def extended(path, start):
+    """Whether the last turn record written after `start` ran extended."""
+    if not path or not os.path.exists(path):
+        return False
+    with open(path, "rb") as f:
+        f.seek(start)
+        last = None
+        for line in f:
+            if line.startswith(b'{"record":"turn"'):
+                last = line
+    return bool(last) and json.loads(last).get("extended", False)
+
+
+def extension_empties(opening, new_black):
+    lo, hi = EXTEND[0]
+    return random.Random(f"{opening}-{int(new_black)}").randint(lo, hi)
+
+
 class Gtp:
-    def __init__(self, binary, seconds, cpus, log):
-        self.log = log
+    def __init__(self, binary, seconds, cpus, log, clock_log=None, extend=None):
+        self.log, self.clock_log = log, clock_log
+        env = engine_env(clock_log, extend)
+        if log:
+            env["DEFT_GTP_LOG"] = "1"
         self.proc = subprocess.Popen(
             ["taskset", "-c", cpus, binary, "gtp", "--model", MODEL, "--game-ms",
              str(round(seconds * 1000)), "--threads", THREADS, "--tt-mib", "64"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
-            stderr=subprocess.PIPE if log else subprocess.DEVNULL,
-            env={**os.environ, "DEFT_GTP_LOG": "1"} if log else None)
+            stderr=subprocess.PIPE if log else subprocess.DEVNULL, env=env)
         self.tag = "-"
         if log:
             threading.Thread(target=self.copy_log, daemon=True).start()
@@ -127,12 +176,13 @@ class Gtp:
 
 
 class Flipsight:
-    def __init__(self, binary, cpus):
+    def __init__(self, binary, cpus, clock_log=None, extend=None):
+        self.clock_log = clock_log
         self.proc = subprocess.Popen(
             ["taskset", "-c", cpus, binary, "flipsight", "--model", MODEL,
              "--threads", THREADS, "--tt-mib", "64"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            text=True, bufsize=1)
+            text=True, bufsize=1, env=engine_env(clock_log, extend))
 
     def ask(self, turn):
         self.proc.stdin.write(json.dumps(turn) + "\n")
@@ -147,17 +197,25 @@ class Flipsight:
         self.proc.wait(timeout=10)
 
 
-def play(proto, bins, seconds, line, new_black, cpus, logs, opening):
-    """One game. Returns (diff for new, flag, new used s, old used s, record)."""
+def play(proto, bins, seconds, line, new_black, cpus, logs, opening, clock_logs, extend):
+    """One game. Returns (diff for new, flag, new used s, old used s, record,
+    {side: (clock log, start, end)})."""
     colour = {"new": "b" if new_black else "w", "old": "w" if new_black else "b"}
+    fresh = proto == "flipsight" or extend is not None
+    ext = {"new": extend, "old": None}
     if proto == "gtp":
-        eng = {k: GTP_ENGINES[cpus][k] for k in ("new", "old")}
+        if fresh:
+            eng = {k: Gtp(bins[k], seconds, cpus, logs and logs[k], clock_logs[k], ext[k])
+                   for k in ("new", "old")}
+        else:
+            eng = {k: GTP_ENGINES[cpus][k] for k in ("new", "old")}
         for k, e in eng.items():
             e.tag = str(opening)
             e.send("clear_board")
             e.send(f"time_settings {seconds:g} 0 0")
     else:
-        eng = {k: Flipsight(bins[k], cpus) for k in ("new", "old")}
+        eng = {k: Flipsight(bins[k], cpus, clock_logs[k], ext[k]) for k in ("new", "old")}
+    start = {k: size(clock_logs[k]) for k in eng}
     left = {"new": seconds, "old": seconds}
     p, o, black = START[0], START[1], True
     record, flag = [], None
@@ -212,6 +270,9 @@ def play(proto, bins, seconds, line, new_black, cpus, logs, opening):
                 used = time.monotonic() - t
                 late = used * 1000 > budget
             left[who] -= used
+            if extend and who == "new" and extended(clock_logs["new"], start["new"]):
+                flag = "x"
+                break
             if late:
                 flag = who
                 break
@@ -222,16 +283,20 @@ def play(proto, bins, seconds, line, new_black, cpus, logs, opening):
             record.append(name(sq))
             advance(sq)
     finally:
-        if proto == "flipsight":
+        if fresh:
             for e in eng.values():
                 e.close()
-    if flag:
+    spans = {k: (clock_logs[k], start[k], size(clock_logs[k])) for k in eng}
+    if flag == "x":
+        diff = 0
+    elif flag:
         diff = -64 if flag == "new" else 64
     else:
         bp, wp = (p, o) if black else (o, p)
         b, w = bin(bp).count("1"), bin(wp).count("1")
         diff = (b - w) if new_black else (w - b)
-    return diff, flag or "-", seconds - left["new"], seconds - left["old"], "".join(record)
+    return (diff, flag or "-", seconds - left["new"], seconds - left["old"], "".join(record),
+            spans)
 
 
 GTP_ENGINES = {}
@@ -252,25 +317,48 @@ def run(proto, new_bin, old_bin, seconds, ids, out):
     lock = threading.Lock()
     bins = {"new": new_bin, "old": old_bin}
     log_dir = os.environ.get("LOG_DIR")
+    clock_dir = os.environ.get("CLOCK_LOG_DIR")
+    if EXTEND and not clock_dir:
+        sys.exit("EXTEND needs CLOCK_LOG_DIR")
+    if clock_dir:
+        Path(clock_dir).mkdir(parents=True, exist_ok=True)
+    spans_out = out.with_suffix(".logs.tsv")
+    if clock_dir and not spans_out.exists():
+        spans_out.write_text("opening\tnew_black\textend_empties\tnew_log\tnew_start\tnew_end"
+                             "\told_log\told_start\told_end\n")
+    stop = Path(os.environ.get("STOP_FILE", str(out) + ".stop"))
 
     def worker(index, cpus):
         logs = None
-        if proto == "gtp":
-            if log_dir:
-                Path(log_dir).mkdir(parents=True, exist_ok=True)
+        if log_dir:
+            Path(log_dir).mkdir(parents=True, exist_ok=True)
+            logs = {k: f"{log_dir}/{k}-{index}.log" for k in ("new", "old")}
+        clock_logs = {k: clock_dir and f"{clock_dir}/{k}-{index}.jsonl" for k in ("new", "old")}
+        if proto == "gtp" and not EXTEND:
             GTP_ENGINES[cpus] = {
-                k: Gtp(bins[k], seconds, cpus, log_dir and f"{log_dir}/{k}-{index}.log")
+                k: Gtp(bins[k], seconds, cpus, logs and logs[k], clock_logs[k])
                 for k in ("new", "old")}
         try:
             while True:
                 with lock:
-                    if not todo:
+                    if not todo or stop.exists():
                         return
                     i, nb = todo.pop(0)
-                diff, flag, nu, ou, rec = play(proto, bins, seconds, lines[i], nb, cpus, logs, i)
+                e = extension_empties(i, nb) if EXTEND else None
+                extend = f"{e}:{EXTEND[1]:g}" if EXTEND else None
+                diff, flag, nu, ou, rec, spans = play(
+                    proto, bins, seconds, lines[i], nb, cpus, logs, i, clock_logs, extend)
                 with lock:
                     with open(out, "a") as w:
                         w.write(f"{i}\t{int(nb)}\t{diff}\t{flag}\t{nu:.3f}\t{ou:.3f}\t{rec}\n")
+                    if clock_dir:
+                        with open(spans_out, "a") as w:
+                            w.write(f"{i}\t{int(nb)}\t{e if e is not None else '-'}\t"
+                                    + "\t".join(f"{os.path.basename(spans[k][0])}\t{spans[k][1]}\t{spans[k][2]}"
+                                                 for k in ("new", "old")) + "\n")
+                    if flag in ("new", "old"):
+                        print(f"TIME LOSS: opening {i} new_black {int(nb)} flag {flag}",
+                              file=sys.stderr, flush=True)
         finally:
             for e in GTP_ENGINES.get(cpus, {}).values():
                 e.close()
@@ -290,6 +378,11 @@ def t_quantile(df):
 
 def summary(path):
     rows = [l.split("\t") for l in Path(path).read_text().splitlines()[1:]]
+    aborted = sum(r[3] == "x" for r in rows)
+    rows = [r for r in rows if r[3] != "x"]
+    if not rows:
+        print(f"{path}\tgames 0\taborted (extension) {aborted}")
+        return
     pairs = {}
     for r in rows:
         pairs.setdefault(int(r[0]), []).append(int(r[2]))
@@ -303,12 +396,18 @@ def summary(path):
     used = lambda c: statistics.fmean(float(r[c]) for r in rows)
     print(f"{path}\tgames {len(rows)}\tpairs {n}\tdiff {mean:+.2f} [{mean - half:+.2f}, {mean + half:+.2f}]"
           f"\tW/D/L {w}/{dr}/{len(rows) - w - dr}\tflags new {flags['new']} old {flags['old']}"
-          f"\tused new {used(4):.3f} old {used(5):.3f}")
+          f"\tused new {used(4):.3f} old {used(5):.3f}"
+          + (f"\taborted (extension) {aborted}" if aborted else ""))
 
 
 if __name__ == "__main__":
     MODEL = os.environ.get("DEFT_MODEL", str(paths()["model"]))
     THREADS = os.environ.get("THREADS", "1")
+    EXTEND = None
+    if os.environ.get("EXTEND"):
+        span, secs = os.environ["EXTEND"].split(":")
+        lo, hi = (int(x) for x in span.split("-"))
+        EXTEND = ((lo, hi), float(secs))
     if sys.argv[1] == "summary":
         for p in sys.argv[2:]:
             summary(p)
