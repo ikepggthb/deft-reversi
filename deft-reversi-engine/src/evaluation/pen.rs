@@ -4,7 +4,8 @@
 //! Every pattern state has, besides its linear weight, an embedding of
 //! `PEN_DIM` i8 values. The four orientations of a pattern are summed, so
 //! the network sees `PATTERN_COUNT * PEN_DIM` values, clipped to 0..=127,
-//! and the two mobilities. One hidden layer of `PEN_HIDDEN` clipped units
+//! and `PEN_GLOBALS` whole-board inputs: both mobilities, both sides' stable
+//! discs and the mover's discs. One hidden layer of `PEN_HIDDEN` clipped units
 //! gives the output in 1/128 discs, which is added to the linear sum before
 //! the final rounding.
 //!
@@ -12,7 +13,9 @@
 //! `b1`, `w2`, `b2` the float layers and every activation in 0..=1 as a
 //! float:
 //! - `a = clamp(round(127 E) summed over orientations, 0, 127)` ≈ 127 a
-//! - mobility inputs `min(4 m, 127)` for each side's move count `m`
+//! - mobility inputs `min(4 m, 127)` for each side's move count `m`; stable
+//!   disc inputs `min(2 s, 127)` for each side's stable discs `s`; the disc
+//!   input `min(2 d, 127)` for the mover's discs `d` (`global_inputs`)
 //! - `h = clamp((Σ a W1q + b1q + 32) >> 6, 0, 127)` with `W1q = round(64 W1)`
 //!   and `b1q = round(127 · 64 · b1)`, ≈ 127 h
 //! - output `(Σ h w2q) >> 7` with `w2q = round(128 · 128 / 127 · w2)`, plus
@@ -20,17 +23,25 @@
 //!
 //! The trainer mirrors this in floats; see `deft-reversi-train/src/pen.rs`.
 use super::{EvalState, PATTERN_COUNT, PATTERN_TABLE_SIZES, TOTAL_PATTERN_WEIGHTS};
+use crate::Board;
 use std::io::{self, Read, Write};
 
 /// Embedding values per pattern state.
 pub const PEN_DIM: usize = 8;
 /// Hidden units.
 pub const PEN_HIDDEN: usize = 32;
-/// Network inputs: the summed embeddings, then both mobilities.
-pub const PEN_INPUTS: usize = PATTERN_COUNT * PEN_DIM + 2;
-/// Inputs padded to whole groups of four.
+/// Whole-board inputs after the summed embeddings: the mover's and the
+/// opponent's moves, the mover's and the opponent's stable discs, and the
+/// mover's discs.
+pub const PEN_GLOBALS: usize = 5;
+/// Network inputs: the summed embeddings, then the whole-board inputs.
+pub const PEN_INPUTS: usize = PATTERN_COUNT * PEN_DIM + PEN_GLOBALS;
+/// Inputs of a `PEN1` network (DPR2 version 3): the embeddings and the two
+/// mobilities only. It reads as a network with zero weights on the others.
+pub(crate) const PEN1_INPUTS: usize = PATTERN_COUNT * PEN_DIM + 2;
 /// The largest magnitude of a hidden or output bias.
 const PEN_BIAS_LIMIT: u32 = 1 << 24;
+/// Inputs padded to whole groups of four.
 const PEN_INPUTS_PADDED: usize = PEN_INPUTS.next_multiple_of(4);
 const GROUPS: usize = PEN_INPUTS_PADDED / 4;
 
@@ -46,6 +57,35 @@ pub struct PenPhase {
     hidden_bias: [i32; PEN_HIDDEN],
     output: [i32; PEN_HIDDEN],
     output_bias: i32,
+    /// Whether a weight reads the stable or disc inputs. Without, the
+    /// network is a `PEN1` one and evaluation skips the stability count.
+    board_inputs: bool,
+}
+
+/// The mover's moves as a network input.
+#[inline]
+fn mobility_input(moves: u32) -> u8 {
+    (moves * 4).min(127) as u8
+}
+
+/// A disc count as a network input.
+#[inline]
+fn count_input(discs: u32) -> u8 {
+    (discs * 2).min(127) as u8
+}
+
+/// The whole-board inputs of `board`, in 0..=127, in the order of
+/// `PEN_GLOBALS`. The trainer reads them from here.
+#[cfg_attr(not(feature = "tuning"), allow(dead_code))]
+pub fn global_inputs(board: &Board) -> [u8; PEN_GLOBALS] {
+    let (stable, opponent_stable) = crate::board::stability::stable_counts(*board);
+    [
+        mobility_input(board.get_moves().count_ones()),
+        mobility_input(board.get_opponent_moves().count_ones()),
+        count_input(stable),
+        count_input(opponent_stable),
+        count_input(board.player_bits().count_ones()),
+    ]
 }
 
 impl PenPhase {
@@ -73,6 +113,9 @@ impl PenPhase {
         {
             return Err("PEN bias out of range");
         }
+        let board_inputs = hidden
+            .iter()
+            .any(|row| row[PEN1_INPUTS..].iter().any(|&w| w != 0));
         let mut padded = Box::new([[0i8; 4 * PEN_HIDDEN]; GROUPS]);
         for (j, row) in hidden.iter().enumerate() {
             for (k, &w) in row.iter().enumerate() {
@@ -85,12 +128,24 @@ impl PenPhase {
             hidden_bias,
             output,
             output_bias,
+            board_inputs,
         })
+    }
+
+    /// Whether the network reads more than a `PEN1` network can hold.
+    pub(crate) fn needs_pen2(&self) -> bool {
+        self.board_inputs
     }
 
     /// The network's output in 1/128 discs.
     #[inline]
-    pub(crate) fn evaluate(&self, state: &EvalState, moves: u32, opponent_moves: u32) -> i32 {
+    pub(crate) fn evaluate(
+        &self,
+        board: &Board,
+        state: &EvalState,
+        moves: u32,
+        opponent_moves: u32,
+    ) -> i32 {
         let mut input = [0u8; PEN_INPUTS_PADDED];
         let mut offset = 0;
         for (p, size) in PATTERN_TABLE_SIZES.iter().enumerate() {
@@ -106,8 +161,15 @@ impl PenPhase {
             }
             offset += size;
         }
-        input[PATTERN_COUNT * PEN_DIM] = (moves * 4).min(127) as u8;
-        input[PATTERN_COUNT * PEN_DIM + 1] = (opponent_moves * 4).min(127) as u8;
+        let globals = PATTERN_COUNT * PEN_DIM;
+        input[globals] = mobility_input(moves);
+        input[globals + 1] = mobility_input(opponent_moves);
+        if self.board_inputs {
+            let (stable, opponent_stable) = crate::board::stability::stable_counts(*board);
+            input[globals + 2] = count_input(stable);
+            input[globals + 3] = count_input(opponent_stable);
+            input[globals + 4] = count_input(board.player_bits().count_ones());
+        }
         let sums = hidden_sums(&input, &self.hidden);
         let mut out = 0i32;
         for ((sum, bias), w) in sums.iter().zip(&self.hidden_bias).zip(&self.output) {
@@ -120,13 +182,17 @@ impl PenPhase {
         std::array::from_fn(|k| self.hidden[k / 4][4 * j + k % 4])
     }
 
-    pub(crate) fn write(&self, out: &mut impl Write) -> io::Result<()> {
+    /// Writes the network with `inputs` weights per hidden unit:
+    /// `PEN_INPUTS` (`PEN2`), or `PEN1_INPUTS` (`PEN1`) when `needs_pen2` is
+    /// false.
+    pub(crate) fn write(&self, out: &mut impl Write, inputs: usize) -> io::Result<()> {
+        assert!(inputs == PEN_INPUTS || (inputs == PEN1_INPUTS && !self.board_inputs));
         let mut bytes = Vec::with_capacity(TOTAL_PATTERN_WEIGHTS * PEN_DIM + 8192);
         for e in self.embeddings.iter() {
             bytes.extend(e.iter().map(|&v| v as u8));
         }
         for j in 0..PEN_HIDDEN {
-            bytes.extend(self.hidden_row(j).iter().map(|&v| v as u8));
+            bytes.extend(self.hidden_row(j)[..inputs].iter().map(|&v| v as u8));
         }
         for v in self
             .hidden_bias
@@ -139,7 +205,9 @@ impl PenPhase {
         out.write_all(&bytes)
     }
 
-    pub(crate) fn read(input: &mut impl Read) -> io::Result<Self> {
+    /// Reads a network written with `inputs` weights per hidden unit; see
+    /// `write`.
+    pub(crate) fn read(input: &mut impl Read, inputs: usize) -> io::Result<Self> {
         let mut bytes = vec![0u8; TOTAL_PATTERN_WEIGHTS * PEN_DIM];
         input.read_exact(&mut bytes)?;
         let embeddings = bytes
@@ -151,7 +219,7 @@ impl PenPhase {
         let mut hidden = [[0i8; PEN_INPUTS]; PEN_HIDDEN];
         for row in &mut hidden {
             let mut b = [0u8; PEN_INPUTS];
-            input.read_exact(&mut b)?;
+            input.read_exact(&mut b[..inputs])?;
             *row = b.map(|v| v as i8);
         }
         let mut i32s = [0i32; 2 * PEN_HIDDEN + 1];

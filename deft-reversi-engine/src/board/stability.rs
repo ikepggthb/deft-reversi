@@ -26,6 +26,15 @@ fn stability_upper(board: Board, alpha: i32) -> Option<i32> {
     let count = stable(board.opponent_bits(), board.player_bits(), &full, needed).count_ones();
     (count >= needed).then_some(64 - 2 * count as i32)
 }
+/// The mover's and the opponent's stable discs, as the search's
+/// stability bound finds them.
+pub(crate) fn stable_counts(board: Board) -> (u32, u32) {
+    let full = full_axes(board.player_bits() | board.opponent_bits());
+    (
+        stable(board.player_bits(), board.opponent_bits(), &full, 65).count_ones(),
+        stable(board.opponent_bits(), board.player_bits(), &full, 65).count_ones(),
+    )
+}
 #[cfg(test)]
 pub(crate) fn score_bounds(board: Board) -> (i32, i32) {
     let full = full_axes(board.player_bits() | board.opponent_bits());

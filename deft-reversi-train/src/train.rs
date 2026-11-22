@@ -47,6 +47,10 @@ pub struct TrainArgs {
     shrink: f32,
     #[arg(long, default_value_t = 1)]
     seed: u64,
+    /// Keep a pattern state and its mirror image apart (as before): by
+    /// default they share one weight, and one embedding with `--pen`.
+    #[arg(long)]
+    no_mirror: bool,
     /// Add a pattern embedding network (PEN) to the linear weights.
     #[arg(long)]
     pen: bool,
@@ -63,6 +67,11 @@ pub struct TrainArgs {
     /// Samples per Adam step of the PEN dense layers.
     #[arg(long, default_value_t = 256)]
     pen_batch: u32,
+    /// Decoupled weight decay of the PEN dense weights. Off by default: on
+    /// four phases, 0.01 and 0.1 raised the test error by 0.005 and 0.05
+    /// discs once the offsets were recentred.
+    #[arg(long, default_value_t = 0.0)]
+    pen_decay: f32,
     /// Phases trained at once. Each holds its data in memory: 24 bytes a
     /// position, up to about 1.2 GB for the largest phase of the full set.
     #[arg(short, long)]
@@ -127,7 +136,7 @@ struct Checkpoint {
     epochs: u32,
     weights: Weights,
 }
-const CHECKPOINT_VERSION: u32 = 3;
+const CHECKPOINT_VERSION: u32 = 4;
 
 #[derive(Serialize)]
 struct EpochLog {
@@ -145,11 +154,13 @@ pub fn run(args: TrainArgs) -> Result<()> {
             lr: args.lr,
             l2: args.l2,
             huber_delta: args.huber_delta,
+            mirror: !args.no_mirror,
         },
         pen: args.pen.then_some(PenSettings {
             lr: args.pen_lr,
             dense_lr: args.pen_dense_lr,
             batch: args.pen_batch,
+            decay: args.pen_decay,
         }),
         limit: args.limit,
         seed: args.seed,
@@ -272,6 +283,7 @@ fn train_phase(
             let w = Box::new(PenWeights::new(
                 &records,
                 args.seed ^ u64::from(stones) << 40,
+                identity.settings.mirror,
             ));
             let w = if args.pen_no_linear {
                 Weights::PenOnly(w)
@@ -280,7 +292,10 @@ fn train_phase(
             };
             (w, 0)
         }
-        None => (Weights::Linear(PhaseWeights::new(&records)), 0),
+        None => (
+            Weights::Linear(PhaseWeights::new(&records, identity.settings.mirror)),
+            0,
+        ),
     };
     // Replay the finished epochs' shuffles so a resumed run sees the same
     // orders as an uninterrupted one.
@@ -426,11 +441,13 @@ mod tests {
             huber_delta: 4.0,
             shrink: 32.0,
             seed: 1,
+            no_mirror: false,
             pen: false,
             pen_no_linear: false,
             pen_lr: 0.01,
             pen_dense_lr: 0.001,
             pen_batch: 256,
+            pen_decay: 0.01,
             threads: Some(2),
         };
         run(args(1)).unwrap();
@@ -457,6 +474,23 @@ mod tests {
         let replaced = crate::test_records(&mut random, 20, 250);
         rd::write(&rd::path(&data, 20, "train"), &replaced);
         assert!(run(args(3)).is_err());
+
+        // So does a PEN run, with a partial last batch and decay.
+        let pen = |epochs, work: &str| TrainArgs {
+            work: dir.join(work),
+            out: dir.join(format!("{work}.dpr2")),
+            pen: true,
+            pen_batch: 7,
+            pen_decay: 0.01,
+            ..args(epochs)
+        };
+        run(pen(1, "pen")).unwrap();
+        run(pen(2, "pen")).unwrap();
+        run(pen(2, "pen-straight")).unwrap();
+        assert_eq!(
+            fs::read(dir.join("pen.dpr2")).unwrap(),
+            fs::read(dir.join("pen-straight.dpr2")).unwrap()
+        );
 
         // A phase without positions leaves no checkpoint behind.
         rd::write(&rd::path(&data, 22, "train"), &[]);

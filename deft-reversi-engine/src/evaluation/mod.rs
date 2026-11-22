@@ -7,7 +7,7 @@ use pattern::definition::{
     FEATURE_COORD, PATTERN_TABLE_SIZES, SQUARE_TO_FEATURES, TOTAL_PATTERN_WEIGHTS,
 };
 #[allow(unused_imports)]
-pub use pen::{PEN_DIM, PEN_HIDDEN, PEN_INPUTS, PenPhase};
+pub use pen::{PEN_DIM, PEN_GLOBALS, PEN_HIDDEN, PEN_INPUTS, PenPhase, global_inputs};
 use std::{
     io::{self, Read, Write},
     sync::Arc,
@@ -59,6 +59,52 @@ fn phase_of(board: &Board) -> usize {
 }
 fn mobility_index(moves: u64, board: &Board) -> usize {
     64 + moves.count_ones() as usize - board.get_opponent_moves().count_ones() as usize
+}
+
+/// The sizes of the pattern tables, in the order `Features` indexes them.
+#[cfg_attr(not(feature = "tuning"), allow(dead_code))]
+pub fn pattern_table_sizes() -> [usize; PATTERN_COUNT] {
+    PATTERN_TABLE_SIZES
+}
+
+/// For every pattern weight, the weight that reads the mirror image of its
+/// squares. The four orientations of a pattern share one table, so the
+/// model is the same for a position and its rotations; it is the same for
+/// its mirror image when every weight equals its mirror's. A pattern whose
+/// squares no reflection maps onto one of its orientations maps to itself.
+#[cfg_attr(not(feature = "tuning"), allow(dead_code))]
+pub fn mirror_weights() -> Vec<u32> {
+    let mut mirror: Vec<u32> = (0..TOTAL_PATTERN_WEIGHTS as u32).collect();
+    let flip = |c: u8| c / 8 * 8 + (7 - c % 8);
+    let mut offset = 0;
+    for (pattern, size) in FEATURE_COORD.iter().zip(PATTERN_TABLE_SIZES) {
+        let n = usize::from(pattern.n_squares);
+        let coords = |r: usize| &pattern.feature_coord[r][..n];
+        // `to[i]` is the digit of the mirror's state that square `i` of
+        // orientation `k` lands on: orientation `r` reads the mirror image
+        // of the squares orientation `k` reads.
+        let to = (0..4)
+            .flat_map(|k| (0..4).map(move |r| (k, r)))
+            .find_map(|(k, r)| {
+                coords(k)
+                    .iter()
+                    .map(|&c| coords(r).iter().position(|&d| d == flip(c)))
+                    .collect::<Option<Vec<usize>>>()
+            });
+        if let Some(to) = to {
+            for state in 0..size {
+                let mut image = 0;
+                let mut rest = state;
+                for i in (0..n).rev() {
+                    image += rest % 3 * pattern::definition::POW3[n - 1 - to[i]];
+                    rest /= 3;
+                }
+                mirror[offset + state] = (offset + image) as u32;
+            }
+        }
+        offset += size;
+    }
+    mirror
 }
 
 /// Runtime model: tables in pattern order, weights shared across rotations.
@@ -191,6 +237,7 @@ impl PatternModel {
         );
         if let Some(pen) = &self.pen {
             raw += pen[phase_of(board)].evaluate(
+                board,
                 state,
                 moves.count_ones(),
                 opponent_moves.count_ones(),
@@ -198,14 +245,26 @@ impl PatternModel {
         }
         (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
     }
-    /// The whole evaluation without a calibration: DPR2 version 3 with the
-    /// pattern embedding networks, else version 1. `Model::write_to` also
-    /// writes the calibration; see `model.rs` for the layout.
+    /// The DPR2 version of the weights: 4 with networks that read the
+    /// stable and disc inputs (`PEN2`), 3 with other networks (`PEN1`), and
+    /// 1 without networks. `Model::write_to` writes a calibration after
+    /// them, which turns version 1 into version 2.
+    pub(crate) fn version(&self) -> u32 {
+        match &self.pen {
+            Some(pen) if pen.iter().any(PenPhase::needs_pen2) => 4,
+            Some(_) => 3,
+            None => 1,
+        }
+    }
+    /// The whole evaluation without a calibration: DPR2 version 4 or 3 with
+    /// the pattern embedding networks, else version 1. `Model::write_to`
+    /// also writes the calibration; see `model.rs` for the layout.
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
-        if self.has_pen() {
-            out.write_all(b"DPR2\x03\x00\x00\x00")?;
+        let version = self.version();
+        if version >= 3 {
+            out.write_all(b"DPR2")?;
+            out.write_all(&version.to_le_bytes())?;
             self.write_phases(&mut out)?;
-            out.write_all(b"PEN1")?;
             self.write_pen(&mut out)
         } else {
             out.write_all(b"DPR2\x01\x00\x00\x00")?;
@@ -249,16 +308,38 @@ impl PatternModel {
         }
         Ok(())
     }
-    /// The 60 phases' networks; see `pen.rs`.
+    /// The tag of the networks' format (`PEN1` in version 3, `PEN2` in
+    /// version 4) and the 60 phases' networks; see `pen.rs`.
     pub(crate) fn write_pen(&self, mut out: impl Write) -> io::Result<()> {
+        let (tag, inputs) = if self.version() == 4 {
+            (b"PEN2", PEN_INPUTS)
+        } else {
+            (b"PEN1", pen::PEN1_INPUTS)
+        };
+        out.write_all(tag)?;
         for phase in self.pen.iter().flat_map(|p| p.iter()) {
-            phase.write(&mut out)?;
+            phase.write(&mut out, inputs)?;
         }
         Ok(())
     }
-    pub(crate) fn read_pen(mut self, mut input: impl Read) -> io::Result<Self> {
+    /// Reads the networks after their tag, `PEN1` in DPR2 version 3 and
+    /// `PEN2` in version 4.
+    pub(crate) fn read_pen(mut self, mut input: impl Read, version: u32) -> io::Result<Self> {
+        let (expected, inputs) = if version == 4 {
+            (b"PEN2", PEN_INPUTS)
+        } else {
+            (b"PEN1", pen::PEN1_INPUTS)
+        };
+        let mut tag = [0; 4];
+        input.read_exact(&mut tag)?;
+        if &tag != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "missing pattern embedding network",
+            ));
+        }
         let pen = (0..PHASE_COUNT)
-            .map(|_| PenPhase::read(&mut input))
+            .map(|_| PenPhase::read(&mut input, inputs))
             .collect::<io::Result<Vec<_>>>()?;
         self.pen = Some(pen.into());
         Ok(self)
@@ -399,6 +480,51 @@ mod tests {
                 state = state.played(bit, flips);
                 board = board.after_known_move(bit, flips);
             }
+        }
+    }
+    #[test]
+    fn mirror_weights_read_the_mirror_image() {
+        let mirror = mirror_weights();
+        let moved = (0..mirror.len())
+            .filter(|&i| mirror[i] as usize != i)
+            .count();
+        assert!(moved > mirror.len() / 2, "{moved}");
+        for (i, &m) in mirror.iter().enumerate() {
+            assert_eq!(mirror[m as usize] as usize, i);
+        }
+        // Only the long diagonal's orientations already read its mirror
+        // image square by square; every other table pairs states.
+        let mut offset = 0;
+        for (p, size) in PATTERN_TABLE_SIZES.into_iter().enumerate() {
+            let moved = (offset..offset + size).any(|i| mirror[i] as usize != i);
+            assert_eq!(moved, p != PATTERN_COUNT - 1, "pattern {p}");
+            offset += size;
+        }
+        let flip = |bits: u64| {
+            (0..64)
+                .filter(|sq| bits >> sq & 1 != 0)
+                .fold(0u64, |acc, sq| acc | 1 << (sq / 8 * 8 + 7 - sq % 8))
+        };
+        let mut random = 5u64;
+        let mut board = Board::new();
+        while !board.is_terminal() {
+            let image =
+                Board::from_bits(flip(board.player_bits()), flip(board.opponent_bits())).unwrap();
+            let mut a: Vec<u32> = Features::of(&board).patterns.to_vec();
+            let mut b: Vec<u32> = Features::of(&image)
+                .patterns
+                .iter()
+                .map(|&i| mirror[i as usize])
+                .collect();
+            a.sort_unstable();
+            b.sort_unstable();
+            assert_eq!(a, b);
+            let moves = board.get_moves();
+            board = if moves == 0 {
+                board.board_after_pass()
+            } else {
+                board.board_after_move(crate::test_util::random_move(moves, &mut random))
+            };
         }
     }
     #[test]

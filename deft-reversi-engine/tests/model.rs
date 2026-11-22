@@ -127,3 +127,86 @@ fn evaluation_model_output_includes_the_networks() {
     let board = Board::new();
     assert_eq!(read.pattern().evaluate(&board), pen(0).evaluate(&board));
 }
+
+/// A network whose hidden weights are 1 on the embedding and mobility
+/// inputs and `board` on the stable and disc inputs.
+fn pen_with_board_weight(board: i8) -> PenPhase {
+    let mut hidden = [[1i8; PEN_INPUTS]; PEN_HIDDEN];
+    for row in &mut hidden {
+        row[PEN_INPUTS - 3..].fill(board);
+    }
+    let embeddings = (0..PATTERN_WEIGHT_COUNT)
+        .map(|i| std::array::from_fn(|d| ((i * 7 + d * 13) % 41) as i8 - 8))
+        .collect();
+    PenPhase::new(
+        embeddings,
+        &hidden,
+        [-2000; PEN_HIDDEN],
+        [300; PEN_HIDDEN],
+        5,
+    )
+    .unwrap()
+}
+
+#[test]
+fn pen1_and_pen2_networks_round_trip_in_their_versions() {
+    let boards = {
+        let mut boards = vec![Board::new()];
+        let mut board = Board::new();
+        while !board.is_terminal() {
+            let moves = board.legal_moves();
+            board = match moves.into_iter().last() {
+                Some(square) => board.play(square.into()).unwrap(),
+                None => board.play(Action::Pass).unwrap(),
+            };
+            boards.push(board);
+        }
+        boards
+    };
+    for (weight, version) in [(0i8, 3u8), (3, 4)] {
+        let pattern = PatternModel::zero()
+            .with_pen(vec![pen_with_board_weight(weight); PHASE_COUNT])
+            .unwrap();
+        let mut bytes = Vec::new();
+        Model::from_pattern(pattern.clone())
+            .write_to(&mut bytes)
+            .unwrap();
+        assert_eq!(&bytes[..8], &[b'D', b'P', b'R', b'2', version, 0, 0, 0]);
+        let tag: &[u8] = if version == 3 { b"PEN1" } else { b"PEN2" };
+        assert!(bytes.windows(4).any(|w| w == tag));
+        let read = Model::from_bytes(&bytes).unwrap();
+        let mut again = Vec::new();
+        read.write_to(&mut again).unwrap();
+        assert_eq!(again, bytes);
+        for board in &boards {
+            assert_eq!(read.pattern().evaluate(board), pattern.evaluate(board));
+        }
+        // A wrong tag for the version is refused.
+        let at = bytes.windows(4).position(|w| w == tag).unwrap();
+        let mut wrong = bytes.clone();
+        wrong[at..at + 4].copy_from_slice(if version == 3 { b"PEN2" } else { b"PEN1" });
+        assert!(Model::from_bytes(&wrong).is_err());
+    }
+    // The stable and disc inputs change the evaluation somewhere.
+    let with = PatternModel::zero()
+        .with_pen(vec![pen_with_board_weight(3); PHASE_COUNT])
+        .unwrap();
+    let without = PatternModel::zero()
+        .with_pen(vec![pen_with_board_weight(0); PHASE_COUNT])
+        .unwrap();
+    assert!(
+        boards
+            .iter()
+            .any(|b| with.evaluate(b) != without.evaluate(b))
+    );
+}
+
+#[test]
+fn global_inputs_count_moves_stable_discs_and_discs() {
+    let board = Board::new();
+    // Four moves each, no stable discs, two discs.
+    assert_eq!(global_inputs(&board), [16, 16, 0, 0, 4]);
+    // A full board: every disc is stable, nobody can move.
+    let full = Board::from_bits(u64::MAX >> 24, !(u64::MAX >> 24)).unwrap();
+    assert_eq!(global_inputs(&full), [0, 0, 80, 48, 80]);
+}
