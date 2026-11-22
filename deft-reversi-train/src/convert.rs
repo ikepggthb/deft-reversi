@@ -57,6 +57,10 @@ pub struct ConvertArgs {
     /// Output dataset directory.
     #[arg(long)]
     out: PathBuf,
+    /// Files converted at once (default: every core). The output is the same
+    /// for any number.
+    #[arg(short, long)]
+    threads: Option<usize>,
     /// Share of positions in `train`.
     #[arg(long, default_value_t = 0.98)]
     train: f64,
@@ -269,43 +273,39 @@ pub fn run(args: ConvertArgs) -> Result<()> {
         files: (0..=64).map(|_| [None, None, None]).collect(),
         values: (0..=64).map(|_| Values::default()).collect(),
     };
-    let (mut lines, mut skipped) = (0u64, 0u64);
-    let write = |writers: &mut Writers, r: &rd::Record| -> std::io::Result<()> {
-        if !args.stones.contains(64 - r.board.empty_count()) {
-            return Ok(());
-        }
-        let hash = canonical_hash(r.board.player_bits(), r.board.opponent_bits());
-        writers.write(split_of(&hash, args.train, args.valid), r)
-    };
+    // Every file in order, with its number of random moves.
+    let mut jobs: Vec<(usize, PathBuf)> = Vec::new();
     for (random, dir) in &dirs {
         let mut files: Vec<PathBuf> = fs::read_dir(dir)?
             .map(|e| e.map(|e| e.path()))
             .collect::<std::io::Result<_>>()?;
         files.retain(|p| p.extension().is_some_and(|e| e == "txt"));
         files.sort();
-        for file in &files {
-            for line in BufReader::new(File::open(file)?).lines() {
-                let line = line?;
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                lines += 1;
-                if args.transcripts.is_some() {
-                    let Some(game) = game_records(line, random + args.after_random) else {
-                        skipped += 1;
-                        continue;
-                    };
-                    for r in &game {
-                        write(&mut writers, r)?;
-                    }
-                } else {
-                    let Some(r) = board_record(line) else {
-                        skipped += 1;
-                        continue;
-                    };
-                    write(&mut writers, &r)?;
-                }
+        jobs.extend(files.into_iter().map(|f| (*random, f)));
+    }
+    let threads = args
+        .threads
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .max(1);
+    // Files are read and their records split in parallel, a batch at a
+    // time; the records are written in file order, so the output does not
+    // depend on the threads.
+    let (mut lines, mut skipped) = (0u64, 0u64);
+    for batch in jobs.chunks(threads * 2) {
+        let results: Vec<std::sync::Mutex<Option<std::io::Result<FileRecords>>>> =
+            batch.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        let indices: Vec<usize> = (0..batch.len()).collect();
+        crate::for_each_parallel(&indices, threads, |&i| {
+            let (random, file) = &batch[i];
+            *results[i].lock().unwrap() = Some(file_records(&args, *random, file));
+            Ok(())
+        })?;
+        for result in results {
+            let r = result.into_inner().unwrap().unwrap()?;
+            lines += r.lines;
+            skipped += r.skipped;
+            for (split, record) in &r.records {
+                writers.write(*split, record)?;
             }
         }
         let total: u64 = writers
@@ -315,7 +315,7 @@ pub fn run(args: ConvertArgs) -> Result<()> {
             .sum();
         println!(
             "{}: {lines} lines, {skipped} skipped, {total} positions",
-            dir.display()
+            batch.last().unwrap().1.display()
         );
     }
     for slot in writers.files.iter_mut().flatten().flatten() {
@@ -324,6 +324,55 @@ pub fn run(args: ConvertArgs) -> Result<()> {
     write_metadata(&args, &writers.values, lines, skipped, &started)?;
     println!("wrote {}", args.out.display());
     Ok(())
+}
+
+/// The records of one input file with their splits, in line order.
+struct FileRecords {
+    lines: u64,
+    skipped: u64,
+    records: Vec<(usize, rd::Record)>,
+}
+
+fn file_records(
+    args: &ConvertArgs,
+    random: usize,
+    file: &std::path::Path,
+) -> std::io::Result<FileRecords> {
+    let mut out = FileRecords {
+        lines: 0,
+        skipped: 0,
+        records: Vec::new(),
+    };
+    let mut keep = |r: rd::Record| {
+        if args.stones.contains(64 - r.board.empty_count()) {
+            let hash = canonical_hash(r.board.player_bits(), r.board.opponent_bits());
+            out.records
+                .push((split_of(&hash, args.train, args.valid), r));
+        }
+    };
+    let (mut lines, mut skipped) = (0, 0);
+    for line in BufReader::new(File::open(file)?).lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        lines += 1;
+        if args.transcripts.is_some() {
+            match game_records(line, random + args.after_random) {
+                Some(game) => game.into_iter().for_each(&mut keep),
+                None => skipped += 1,
+            }
+        } else {
+            match board_record(line) {
+                Some(r) => keep(r),
+                None => skipped += 1,
+            }
+        }
+    }
+    out.lines = lines;
+    out.skipped = skipped;
+    Ok(out)
 }
 
 /// The local time in RFC 3339, as rdg writes it.
@@ -533,8 +582,8 @@ mod tests {
             } else {
                 -end.final_score()
             };
-            let counted = end.player_bits().count_ones() as i32
-                - end.opponent_bits().count_ones() as i32;
+            let counted =
+                end.player_bits().count_ones() as i32 - end.opponent_bits().count_ones() as i32;
             assert!(expected.unsigned_abs() > counted.unsigned_abs());
             let first = game_records(&text, 0).unwrap()[0];
             assert_eq!(i32::from(first.value), expected);
@@ -554,6 +603,52 @@ mod tests {
         assert!(board_record(&line.replace(' ', "")).is_none());
         assert!(board_record(&line.replace(" 4", " 65")).is_none());
         assert!(board_record(&line.replacen('-', "?", 1)).is_none());
+    }
+
+    #[test]
+    fn any_number_of_threads_writes_the_same_dataset() {
+        let dir = crate::test_dir("convert");
+        let mut random = StdRng::seed_from_u64(21);
+        for n in [8, 9] {
+            let games = dir.join(format!("transcripts/{n}"));
+            fs::create_dir_all(&games).unwrap();
+            for f in 0..5 {
+                let text: Vec<String> = (0..20).map(|_| random_game(&mut random).0).collect();
+                fs::write(games.join(format!("{f:07}.txt")), text.join("\n")).unwrap();
+            }
+        }
+        let convert = |threads, out: &str| {
+            run(ConvertArgs {
+                transcripts: Some(dir.join("transcripts")),
+                boards: None,
+                after_random: 3,
+                stones: "20..=50".parse().unwrap(),
+                out: dir.join(out),
+                threads: Some(threads),
+                train: 0.6,
+                valid: 0.2,
+            })
+            .unwrap()
+        };
+        convert(1, "one");
+        convert(4, "four");
+        let mut compared = 0;
+        for stones in 20..=50u8 {
+            for split in SPLITS {
+                let (a, b) = (
+                    rd::path(&dir.join("one"), stones, split),
+                    rd::path(&dir.join("four"), stones, split),
+                );
+                assert_eq!(a.exists(), b.exists());
+                if a.exists() {
+                    assert_eq!(fs::read(a).unwrap(), fs::read(b).unwrap());
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared > 30);
+        assert!(!rd::path(&dir.join("one"), 19, "train").exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
