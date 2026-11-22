@@ -38,12 +38,19 @@ pub struct Features {
 }
 impl Features {
     pub fn of(board: &Board) -> Self {
-        let state = EvalState::from_board(*board);
+        // As `EvalState::from_board` reads `current`, without the opponent's
+        // view and without branches: the trainer calls this for every sample.
+        let (player, opponent) = (board.player_bits(), board.opponent_bits());
         let mut patterns = [0; FEATURE_COUNT];
         let mut offset = 0;
-        for (p, size) in PATTERN_TABLE_SIZES.iter().enumerate() {
+        for (p, (pattern, size)) in FEATURE_COORD.iter().zip(PATTERN_TABLE_SIZES).enumerate() {
             for r in 0..4 {
-                patterns[p * 4 + r] = (offset + state.current[p * 4 + r] as usize) as u32;
+                let mut index = 0u32;
+                for &sq in &pattern.feature_coord[r][..pattern.n_squares as usize] {
+                    let digit = 2 * (player >> sq & 1) + (opponent >> sq & 1);
+                    index = index * 3 + digit as u32;
+                }
+                patterns[p * 4 + r] = offset as u32 + index;
             }
             offset += size;
         }

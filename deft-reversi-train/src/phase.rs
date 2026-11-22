@@ -208,11 +208,9 @@ impl PhaseWeights {
     pub fn update(&mut self, f: &Features, grad: f32, s: &Settings) {
         // Symmetric discs can make two orientations read the same weight;
         // its gradient is then the sum, applied in one step.
-        let mut indices = f.patterns;
-        indices.sort_unstable();
-        for run in indices.chunk_by(|a, b| a == b) {
-            self.patterns[run[0] as usize].update(grad * run.len() as f32, s);
-        }
+        crate::pen::for_each_read(&f.patterns, |i, _, times| {
+            self.patterns[i as usize].update(grad * times as f32, s);
+        });
         self.mobility[f.mobility].update(grad, s);
         self.bias.update(grad, s);
     }

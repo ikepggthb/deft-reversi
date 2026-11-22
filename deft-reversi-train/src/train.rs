@@ -144,7 +144,7 @@ struct Checkpoint {
     epochs: u32,
     weights: Weights,
 }
-const CHECKPOINT_VERSION: u32 = 4;
+const CHECKPOINT_VERSION: u32 = 5;
 
 #[derive(Serialize)]
 struct EpochLog {

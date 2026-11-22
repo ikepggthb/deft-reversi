@@ -95,19 +95,29 @@ impl Adam {
     }
 }
 
-/// The dense parameters in one vector: hidden weights (unit-major), hidden
-/// biases, output weights, output bias.
+/// The dense parameters in one vector: hidden weights (input-major: the
+/// weights of input `k` for every unit are `W1 + k * PEN_HIDDEN ..`, so one
+/// input updates all units with one vector operation), hidden biases,
+/// output weights, output bias.
 const W1: usize = 0;
 const B1: usize = W1 + PEN_HIDDEN * PEN_INPUTS;
 const W2: usize = B1 + PEN_HIDDEN;
 const B2: usize = W2 + PEN_HIDDEN;
 const DENSE: usize = B2 + 1;
 
+/// A pattern state's embedding with its AdaGrad state, in one cache line:
+/// a sample touches 44 states at random, and one miss each is the cost.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[repr(C, align(64))]
+struct Embedding {
+    value: [f32; PEN_DIM],
+    squares: [f32; PEN_DIM],
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PenWeights {
     pub linear: PhaseWeights,
-    embeddings: Vec<f32>,
-    embedding_squares: Vec<f32>,
+    embeddings: Vec<Embedding>,
     /// Samples that used each pattern state.
     seen: Vec<u32>,
     dense: Vec<f32>,
@@ -125,6 +135,83 @@ struct Pass {
     output: f32,
 }
 
+/// 1 for a clipped activation's input inside its range, else `LEAK`;
+/// without a branch, as the inputs fall either way at random.
+#[inline]
+fn inside_slope(x: f32) -> f32 {
+    let inside = (x > 0.0) & (x < 1.0);
+    LEAK + (1.0 - LEAK) * f32::from(u8::from(inside))
+}
+
+/// Calls `f(state, pattern, times)` once for every distinct state among
+/// the 44 reads, with how many orientations read it. A state belongs to
+/// one pattern's table, so only the four orientations of a pattern can
+/// repeat one.
+#[inline]
+pub fn for_each_read(patterns: &[u32; FEATURE_COUNT], mut f: impl FnMut(u32, usize, u32)) {
+    for (p, four) in patterns.as_chunks::<4>().0.iter().enumerate() {
+        for i in 0..4 {
+            if four[..i].contains(&four[i]) {
+                continue;
+            }
+            let times = four[i..].iter().filter(|&&s| s == four[i]).count() as u32;
+            f(four[i], p, times);
+        }
+    }
+}
+
+// The dense layer's loops, each in a function of its own: inlined into the
+// large forward and backward passes, the compiler left them scalar (about
+// 4x slower).
+
+/// `bias + Σ_k inputs[k] · weights[k]`, every unit at once, input by input:
+/// independent sums in vector registers (one sum per unit would chain every
+/// add). `weights` is input-major.
+#[inline(never)]
+fn hidden_sums(
+    weights: &[f32],
+    bias: [f32; PEN_HIDDEN],
+    inputs: &[f32; PEN_INPUTS],
+) -> [f32; PEN_HIDDEN] {
+    let mut sums = bias;
+    for (k, &x) in inputs.iter().enumerate() {
+        let column = &weights[k * PEN_HIDDEN..][..PEN_HIDDEN];
+        for (s, w) in sums.iter_mut().zip(column) {
+            *s += w * x;
+        }
+    }
+    sums
+}
+
+/// `grads[k][j] += inputs[k] · d[j]`, the hidden weights' gradient.
+#[inline(never)]
+fn add_outer(grads: &mut [f32], inputs: &[f32; PEN_INPUTS], d: &[f32; PEN_HIDDEN]) {
+    for (k, &x) in inputs.iter().enumerate() {
+        let column = &mut grads[k * PEN_HIDDEN..][..PEN_HIDDEN];
+        for (g, d) in column.iter_mut().zip(d) {
+            *g += d * x;
+        }
+    }
+}
+
+/// The gradient of each summed embedding: the dot product of the units'
+/// gradients with the input's weights, in eight lanes.
+#[inline(never)]
+fn input_gradients(weights: &[f32], d: &[f32; PEN_HIDDEN]) -> [f32; PATTERN_COUNT * PEN_DIM] {
+    let mut out = [0.0; PATTERN_COUNT * PEN_DIM];
+    for (k, o) in out.iter_mut().enumerate() {
+        let column = &weights[k * PEN_HIDDEN..][..PEN_HIDDEN];
+        let mut lanes = [0.0f32; 8];
+        for (w, d) in column.as_chunks::<8>().0.iter().zip(d.as_chunks::<8>().0) {
+            for t in 0..8 {
+                lanes[t] += w[t] * d[t];
+            }
+        }
+        *o = lanes.iter().sum();
+    }
+    out
+}
+
 impl PenWeights {
     pub fn new(records: &[Record], seed: u64, mirror: bool) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
@@ -138,8 +225,13 @@ impl PenWeights {
         dense[B1..W2].fill(0.5);
         Self {
             linear: PhaseWeights::new(records, mirror),
-            embeddings: vec![EMBEDDING_INIT; PATTERN_WEIGHT_COUNT * PEN_DIM],
-            embedding_squares: vec![0.0; PATTERN_WEIGHT_COUNT * PEN_DIM],
+            embeddings: vec![
+                Embedding {
+                    value: [EMBEDDING_INIT; PEN_DIM],
+                    squares: [0.0; PEN_DIM],
+                };
+                PATTERN_WEIGHT_COUNT
+            ],
             seen: vec![0; PATTERN_WEIGHT_COUNT],
             dense,
             adam: Adam::new(DENSE),
@@ -152,7 +244,7 @@ impl PenWeights {
         let mut sums = [0.0; PATTERN_COUNT * PEN_DIM];
         for (i, &state) in features.patterns.iter().enumerate() {
             let p = i / 4;
-            let e = &self.embeddings[state as usize * PEN_DIM..][..PEN_DIM];
+            let e = &self.embeddings[state as usize].value;
             for (s, v) in sums[p * PEN_DIM..][..PEN_DIM].iter_mut().zip(e) {
                 *s += v;
             }
@@ -165,17 +257,17 @@ impl PenWeights {
         for (x, &g) in inputs[GLOBAL_INPUT..].iter_mut().zip(&globals) {
             *x = f32::from(g) / 127.0;
         }
-        let mut pre = [0.0; PEN_HIDDEN];
+        // Every unit at once, input by input: independent sums the compiler
+        // keeps in vector registers (one sum per unit would chain every add).
+        let pre = hidden_sums(
+            &self.dense[W1..B1],
+            self.dense[B1..W2].try_into().unwrap(),
+            &inputs,
+        );
         let mut hidden = [0.0; PEN_HIDDEN];
         let mut output = self.dense[B2];
         for j in 0..PEN_HIDDEN {
-            let w = &self.dense[W1 + j * PEN_INPUTS..][..PEN_INPUTS];
-            let mut sum = self.dense[B1 + j];
-            for k in 0..PEN_INPUTS {
-                sum += w[k] * inputs[k];
-            }
-            pre[j] = sum;
-            hidden[j] = sum.clamp(0.0, 1.0);
+            hidden[j] = pre[j].clamp(0.0, 1.0);
             output += self.dense[W2 + j] * hidden[j];
         }
         Pass {
@@ -217,6 +309,7 @@ impl PenWeights {
                 self.linear.update(&pass.features, grad, s);
             }
             self.backward(&pass, grad, &mut grads, pen);
+
             in_batch += 1;
             if in_batch == pen.batch {
                 self.dense_step(&mut grads, in_batch, pen);
@@ -242,56 +335,35 @@ impl PenWeights {
         let mut d_pre = [0.0; PEN_HIDDEN];
         for j in 0..PEN_HIDDEN {
             grads[W2 + j] += grad * pass.hidden[j];
-            let slope = if pass.pre[j] > 0.0 && pass.pre[j] < 1.0 {
-                1.0
-            } else {
-                LEAK
-            };
+            let slope = inside_slope(pass.pre[j]);
             d_pre[j] = grad * self.dense[W2 + j] * slope;
         }
-        let mut d_inputs = [0.0; PATTERN_COUNT * PEN_DIM];
-        for j in 0..PEN_HIDDEN {
-            let d = d_pre[j];
-            if d == 0.0 {
-                continue;
-            }
-            grads[B1 + j] += d;
-            let row = W1 + j * PEN_INPUTS;
-            for k in 0..PEN_INPUTS {
-                grads[row + k] += d * pass.inputs[k];
-            }
-            for (di, w) in d_inputs.iter_mut().zip(&self.dense[row..]) {
-                *di += d * w;
-            }
+        for (g, d) in grads[B1..W2].iter_mut().zip(&d_pre) {
+            *g += d;
         }
-        for (k, d) in d_inputs.iter_mut().enumerate() {
-            if !(pass.sums[k] > 0.0 && pass.sums[k] < 1.0) {
-                *d *= LEAK;
-            }
+        add_outer(&mut grads[W1..B1], &pass.inputs, &d_pre);
+        let mut d_inputs = input_gradients(&self.dense[W1..B1], &d_pre);
+        for (d, &sum) in d_inputs.iter_mut().zip(&pass.sums) {
+            *d *= inside_slope(sum);
         }
         // An embedding read more than once (symmetric discs, or a state and
         // its mirror image sharing one) takes one step with the summed
         // gradient, as the linear weights do. Every orientation of a
         // pattern has the same gradient, and a state belongs to one table.
-        let mut reads: [(u32, usize); FEATURE_COUNT] =
-            std::array::from_fn(|i| (pass.features.patterns[i], i / 4));
-        reads.sort_unstable();
-        for run in reads.chunk_by(|a, b| a.0 == b.0) {
-            let (state, p) = run[0];
-            let times = run.len() as f32;
-            let base = state as usize * PEN_DIM;
+        for_each_read(&pass.features.patterns, |state, p, times| {
+            let times = times as f32;
+            // All dimensions at once; a zero gradient leaves its dimension
+            // as it is, as skipping it would.
+            let e = &mut self.embeddings[state as usize];
+            let g = &d_inputs[p * PEN_DIM..][..PEN_DIM];
             for d in 0..PEN_DIM {
-                let g = d_inputs[p * PEN_DIM + d] * times;
-                if g == 0.0 {
-                    continue;
-                }
-                let sq = &mut self.embedding_squares[base + d];
-                *sq += g * g;
-                let e = &mut self.embeddings[base + d];
-                *e = (*e - pen.lr * g / (sq.sqrt() + 1e-8)).clamp(-1.0, 1.0);
+                let g = g[d] * times;
+                e.squares[d] += g * g;
+                e.value[d] =
+                    (e.value[d] - pen.lr * g / (e.squares[d].sqrt() + 1e-8)).clamp(-1.0, 1.0);
             }
-            self.seen[state as usize] += run.len() as u32;
-        }
+            self.seen[state as usize] += times as u32;
+        });
     }
 
     fn dense_step(&mut self, grads: &mut [f32], n: u32, pen: &PenSettings) {
@@ -333,10 +405,7 @@ impl PenWeights {
                 for state in offset..offset + size {
                     let seen = f64::from(self.seen[state]);
                     n += seen;
-                    for (s, &e) in sum
-                        .iter_mut()
-                        .zip(&self.embeddings[state * PEN_DIM..][..PEN_DIM])
-                    {
+                    for (s, &e) in sum.iter_mut().zip(&self.embeddings[state].value) {
                         *s += seen * f64::from(e);
                     }
                 }
@@ -378,7 +447,7 @@ impl PenWeights {
                     0.0
                 };
                 std::array::from_fn(|d| {
-                    let e = self.embeddings[state * PEN_DIM + d];
+                    let e = self.embeddings[state].value[d];
                     let e = mean[d] + (e - mean[d]) * keep;
                     (e * 127.0).round().clamp(-127.0, 127.0) as i8
                 })
@@ -386,7 +455,7 @@ impl PenWeights {
             .collect();
         let hidden: [[i8; PEN_INPUTS]; PEN_HIDDEN] = std::array::from_fn(|j| {
             std::array::from_fn(|k| {
-                (self.dense[W1 + j * PEN_INPUTS + k] * 64.0)
+                (self.dense[W1 + k * PEN_HIDDEN + j] * 64.0)
                     .round()
                     .clamp(-127.0, 127.0) as i8
             })
