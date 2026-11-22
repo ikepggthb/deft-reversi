@@ -535,7 +535,7 @@ mod tests {
             .unwrap();
         let mut bytes = Vec::new();
         Model::from_pattern(model).write_to(&mut bytes).unwrap();
-        // The network reads the stable and disc inputs, so the file is a PEN2 one.
+        // The network reads the disc input, so the file is a PEN2 one.
         assert_eq!(&bytes[..8], b"DPR2\x04\x00\x00\x00");
         let model = Model::from_bytes(&bytes).unwrap();
         let mut total = 0.0;

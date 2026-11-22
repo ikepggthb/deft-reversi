@@ -15,8 +15,8 @@
 //! - version 3: the phases, `PEN1` and the 60 phases' pattern embedding
 //!   networks (see `evaluation/pen.rs`), then optionally the calibration as
 //!   in version 2
-//! - version 4: as version 3 with `PEN2`, networks with the stable and disc
-//!   inputs (`PEN_INPUTS` weights per hidden unit instead of `PEN1`'s)
+//! - version 4: as version 3 with `PEN2`, networks with the disc input
+//!   (`PEN_INPUTS` weights per hidden unit instead of `PEN1`'s)
 use crate::{
     evaluation::PatternModel,
     search::{ProbCutRule, ProbCutSigmas, validate_calibration},

@@ -253,7 +253,7 @@ impl PatternModel {
         (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
     }
     /// The DPR2 version of the weights: 4 with networks that read the
-    /// stable and disc inputs (`PEN2`), 3 with other networks (`PEN1`), and
+    /// disc input (`PEN2`), 3 with other networks (`PEN1`), and
     /// 1 without networks. `Model::write_to` writes a calibration after
     /// them, which turns version 1 into version 2.
     pub(crate) fn version(&self) -> u32 {

@@ -129,11 +129,11 @@ fn evaluation_model_output_includes_the_networks() {
 }
 
 /// A network whose hidden weights are 1 on the embedding and mobility
-/// inputs and `board` on the stable and disc inputs.
+/// inputs and `board` on the disc input.
 fn pen_with_board_weight(board: i8) -> PenPhase {
     let mut hidden = [[1i8; PEN_INPUTS]; PEN_HIDDEN];
     for row in &mut hidden {
-        row[PEN_INPUTS - 3..].fill(board);
+        row[PEN_INPUTS - 1..].fill(board);
     }
     let embeddings = (0..PATTERN_WEIGHT_COUNT)
         .map(|i| std::array::from_fn(|d| ((i * 7 + d * 13) % 41) as i8 - 8))
@@ -187,7 +187,7 @@ fn pen1_and_pen2_networks_round_trip_in_their_versions() {
         wrong[at..at + 4].copy_from_slice(if version == 3 { b"PEN2" } else { b"PEN1" });
         assert!(Model::from_bytes(&wrong).is_err());
     }
-    // The stable and disc inputs change the evaluation somewhere.
+    // The disc input changes the evaluation somewhere.
     let with = PatternModel::zero()
         .with_pen(vec![pen_with_board_weight(3); PHASE_COUNT])
         .unwrap();
@@ -202,11 +202,11 @@ fn pen1_and_pen2_networks_round_trip_in_their_versions() {
 }
 
 #[test]
-fn global_inputs_count_moves_stable_discs_and_discs() {
+fn global_inputs_count_moves_and_discs() {
     let board = Board::new();
-    // Four moves each, no stable discs, two discs.
-    assert_eq!(global_inputs(&board), [16, 16, 0, 0, 4]);
-    // A full board: every disc is stable, nobody can move.
+    // Four moves each, two discs.
+    assert_eq!(global_inputs(&board), [16, 16, 4]);
+    // A full board: nobody can move.
     let full = Board::from_bits(u64::MAX >> 24, !(u64::MAX >> 24)).unwrap();
-    assert_eq!(global_inputs(&full), [0, 0, 80, 48, 80]);
+    assert_eq!(global_inputs(&full), [0, 0, 80]);
 }

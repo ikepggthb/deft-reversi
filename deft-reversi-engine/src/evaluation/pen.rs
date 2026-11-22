@@ -4,8 +4,8 @@
 //! Every pattern state has, besides its linear weight, an embedding of
 //! `PEN_DIM` i8 values. The four orientations of a pattern are summed, so
 //! the network sees `PATTERN_COUNT * PEN_DIM` values, clipped to 0..=127,
-//! and `PEN_GLOBALS` whole-board inputs: both mobilities, both sides' stable
-//! discs and the mover's discs. One hidden layer of `PEN_HIDDEN` clipped units
+//! and `PEN_GLOBALS` whole-board inputs: both mobilities and the mover's
+//! discs. One hidden layer of `PEN_HIDDEN` clipped units
 //! gives the output in 1/128 discs, which is added to the linear sum before
 //! the final rounding.
 //!
@@ -13,9 +13,8 @@
 //! `b1`, `w2`, `b2` the float layers and every activation in 0..=1 as a
 //! float:
 //! - `a = clamp(round(127 E) summed over orientations, 0, 127)` ≈ 127 a
-//! - mobility inputs `min(4 m, 127)` for each side's move count `m`; stable
-//!   disc inputs `min(2 s, 127)` for each side's stable discs `s`; the disc
-//!   input `min(2 d, 127)` for the mover's discs `d` (`global_inputs`)
+//! - mobility inputs `min(4 m, 127)` for each side's move count `m`; the
+//!   disc input `min(2 d, 127)` for the mover's discs `d` (`global_inputs`)
 //! - `h = clamp((Σ a W1q + b1q + 32) >> 6, 0, 127)` with `W1q = round(64 W1)`
 //!   and `b1q = round(127 · 64 · b1)`, ≈ 127 h
 //! - output `(Σ h w2q) >> 7` with `w2q = round(128 · 128 / 127 · w2)`, plus
@@ -31,9 +30,8 @@ pub const PEN_DIM: usize = 8;
 /// Hidden units.
 pub const PEN_HIDDEN: usize = 32;
 /// Whole-board inputs after the summed embeddings: the mover's and the
-/// opponent's moves, the mover's and the opponent's stable discs, and the
-/// mover's discs.
-pub const PEN_GLOBALS: usize = 5;
+/// opponent's moves, and the mover's discs.
+pub const PEN_GLOBALS: usize = 3;
 /// Network inputs: the summed embeddings, then the whole-board inputs.
 pub const PEN_INPUTS: usize = PATTERN_COUNT * PEN_DIM + PEN_GLOBALS;
 /// Inputs of a `PEN1` network (DPR2 version 3): the embeddings and the two
@@ -57,8 +55,8 @@ pub struct PenPhase {
     hidden_bias: [i32; PEN_HIDDEN],
     output: [i32; PEN_HIDDEN],
     output_bias: i32,
-    /// Whether a weight reads the stable or disc inputs. Without, the
-    /// network is a `PEN1` one and evaluation skips the stability count.
+    /// Whether a weight reads the disc input. Without, the network is a
+    /// `PEN1` one.
     board_inputs: bool,
 }
 
@@ -78,12 +76,9 @@ fn count_input(discs: u32) -> u8 {
 /// `PEN_GLOBALS`. The trainer reads them from here.
 #[cfg_attr(not(feature = "tuning"), allow(dead_code))]
 pub fn global_inputs(board: &Board) -> [u8; PEN_GLOBALS] {
-    let (stable, opponent_stable) = crate::board::stability::stable_counts(*board);
     [
         mobility_input(board.get_moves().count_ones()),
         mobility_input(board.get_opponent_moves().count_ones()),
-        count_input(stable),
-        count_input(opponent_stable),
         count_input(board.player_bits().count_ones()),
     ]
 }
@@ -164,12 +159,7 @@ impl PenPhase {
         let globals = PATTERN_COUNT * PEN_DIM;
         input[globals] = mobility_input(moves);
         input[globals + 1] = mobility_input(opponent_moves);
-        if self.board_inputs {
-            let (stable, opponent_stable) = crate::board::stability::stable_counts(*board);
-            input[globals + 2] = count_input(stable);
-            input[globals + 3] = count_input(opponent_stable);
-            input[globals + 4] = count_input(board.player_bits().count_ones());
-        }
+        input[globals + 2] = count_input(board.player_bits().count_ones());
         let sums = hidden_sums(&input, &self.hidden);
         let mut out = 0i32;
         for ((sum, bias), w) in sums.iter().zip(&self.hidden_bias).zip(&self.output) {
