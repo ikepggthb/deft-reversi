@@ -1,12 +1,17 @@
 //! The position editor (§9.1): the AI column gives way, the left column
 //! holds the tools, and the board takes painted discs. The game waits
 //! untouched until the edit is started or cancelled.
-use super::{analysis_panel::disc, root::RootView, theme, widgets};
+use super::{
+    analysis_panel::disc,
+    board::{LABEL, labeled_board},
+    root::RootView,
+    theme, widgets,
+};
 use crate::{
     app::{Command, NewGame},
     domain::editor::{Caveat, EditorDraft, Pen},
 };
-use deft_reversi_engine::{Color, Square};
+use deft_reversi_engine::Color;
 use gpui::{
     ClipboardItem, Context, Div, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
     SharedString, div, prelude::*, px,
@@ -21,8 +26,6 @@ pub(super) struct EditorState {
     was_analyzing: bool,
     notice: Option<SharedString>,
 }
-
-const LABEL: f32 = 18.;
 
 impl RootView {
     pub(super) fn open_editor(&mut self, cx: &mut Context<Self>) {
@@ -248,34 +251,8 @@ impl RootView {
         let position = editor.draft.position();
         // The side to move's moves, so a forced pass shows before starting.
         let legal = position.legal_moves();
-        let label = |text: String| {
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_xs()
-                .text_color(theme::text_muted())
-                .child(text)
-        };
         // Turned as the game's board is, with the labels following.
         let view = self.settings.board_view;
-        let line_label = |a: Square, b: Square| {
-            if a.x() == b.x() {
-                ((b'a' + a.x()) as char).to_string()
-            } else {
-                (a.y() + 1).to_string()
-            }
-        };
-        let files = div()
-            .flex()
-            .flex_row()
-            .pl(px(LABEL + 2.))
-            .gap(px(1.))
-            .children((0..8u8).map(|x| {
-                label(line_label(view.square_at(x, 0), view.square_at(x, 1)))
-                    .w(cell)
-                    .h(px(LABEL))
-            }));
         let rows = (0..8u8).map(|y| {
             let squares = (0..8u8).map(|x| {
                 let square = view.square_at(x, y);
@@ -340,16 +317,6 @@ impl RootView {
             });
             div().flex().flex_row().gap(px(1.)).children(squares)
         });
-        let ranks = div()
-            .flex()
-            .flex_col()
-            .pt(px(2.))
-            .gap(px(1.))
-            .children((0..8u8).map(|y| {
-                label(line_label(view.square_at(0, y), view.square_at(1, y)))
-                    .w(px(LABEL))
-                    .h(cell)
-            }));
         let frame = div()
             .flex()
             .flex_col()
@@ -366,54 +333,49 @@ impl RootView {
             )
             .children(rows);
         let text = editor.draft.text();
-        div()
-            .flex()
-            .flex_col()
-            .child(files)
-            .child(div().flex().flex_row().child(ranks).child(frame))
-            .child(
-                div()
-                    .mt(px(10.))
-                    .ml(px(LABEL))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .px(px(8.))
-                            .py(px(4.))
-                            .rounded(px(4.))
-                            .bg(theme::surface())
-                            .text_xs()
-                            .font_family("Consolas")
-                            .text_color(theme::text_secondary())
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(text.clone()),
-                    )
-                    .child(widgets::link(
-                        "edit-copy",
-                        s.copy,
-                        widgets::handler(move |_, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
-                        }),
-                        cx,
-                    ))
-                    .child(widgets::link(
-                        "edit-paste",
-                        s.paste,
-                        widgets::handler(|this, cx| {
-                            let pasted = cx.read_from_clipboard().and_then(|item| item.text());
-                            let s = this.settings.lang.strings();
-                            match pasted.as_deref().and_then(EditorDraft::parse) {
-                                Some(draft) => this.edit(|e| e.draft = draft),
-                                None => this.edit(|e| e.notice = Some(s.paste_failed.into())),
-                            }
-                        }),
-                        cx,
-                    )),
-            )
+        labeled_board(view, cell, frame).child(
+            div()
+                .mt(px(10.))
+                .ml(px(LABEL))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .flex_1()
+                        .px(px(8.))
+                        .py(px(4.))
+                        .rounded(px(4.))
+                        .bg(theme::surface())
+                        .text_xs()
+                        .font_family("Consolas")
+                        .text_color(theme::text_secondary())
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(text.clone()),
+                )
+                .child(widgets::link(
+                    "edit-copy",
+                    s.copy,
+                    widgets::handler(move |_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+                    }),
+                    cx,
+                ))
+                .child(widgets::link(
+                    "edit-paste",
+                    s.paste,
+                    widgets::handler(|this, cx| {
+                        let pasted = cx.read_from_clipboard().and_then(|item| item.text());
+                        let s = this.settings.lang.strings();
+                        match pasted.as_deref().and_then(EditorDraft::parse) {
+                            Some(draft) => this.edit(|e| e.draft = draft),
+                            None => this.edit(|e| e.notice = Some(s.paste_failed.into())),
+                        }
+                    }),
+                    cx,
+                )),
+        )
     }
 }

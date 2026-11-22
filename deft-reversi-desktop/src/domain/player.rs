@@ -1,7 +1,8 @@
 //! Who plays each colour, and how strongly the AI plays (§7.1 of the plan).
-use crate::services::engine::SearchSpec;
-use deft_reversi_engine::Goal;
-use std::time::Duration;
+use std::{ops::RangeInclusive, time::Duration};
+
+/// Valid engine search levels.
+pub const LEVEL_RANGE: RangeInclusive<u8> = 1..=60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Player {
@@ -76,7 +77,7 @@ impl Default for Strength {
 
 /// A move-time search reads as deep as this level allows until the time is
 /// up; its midgame depth keeps growing over any choosable time.
-const TIMED_LEVEL: u8 = 40;
+pub const TIMED_LEVEL: u8 = 40;
 
 pub const MOVE_TIMES: [Duration; 5] = [
     Duration::from_secs(1),
@@ -85,16 +86,3 @@ pub const MOVE_TIMES: [Duration; 5] = [
     Duration::from_secs(10),
     Duration::from_secs(30),
 ];
-
-impl Strength {
-    pub fn spec(self) -> SearchSpec {
-        match self {
-            Self::Preset(preset) => SearchSpec::new(Goal::Level(preset.level())),
-            Self::Level(level) => SearchSpec::new(Goal::Level(level.clamp(1, 60))),
-            Self::TimePerMove(limit) => SearchSpec {
-                time_limit: Some(limit),
-                ..SearchSpec::new(Goal::Level(TIMED_LEVEL))
-            },
-        }
-    }
-}

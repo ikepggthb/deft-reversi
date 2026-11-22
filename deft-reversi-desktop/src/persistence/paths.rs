@@ -20,7 +20,7 @@ impl Paths {
 
     /// None when the OS gives no folders, in which case nothing is saved.
     pub fn from_env() -> Option<Self> {
-        if let Some(root) = std::env::var_os("DEFT_REVERSI_HOME") {
+        if let Some(root) = std::env::var_os("DEFT_REVERSI_HOME").filter(|v| !v.is_empty()) {
             return Some(Self::under(root.into()));
         }
         let config = dirs::config_dir()?.join("deft-reversi");
@@ -33,6 +33,7 @@ impl Paths {
     }
 
     pub fn game(&self, id: &str) -> PathBuf {
+        debug_assert!(crate::domain::GameInfo::valid_id(id));
         self.games.join(format!("{id}.dreversi"))
     }
 }

@@ -72,6 +72,14 @@ pub struct LoadedGame {
     pub history: History,
 }
 
+/// A validated record together with the metadata needed for the game list.
+#[derive(Clone, Debug)]
+pub struct ParsedRecord {
+    pub loaded: LoadedGame,
+    pub updated_at: String,
+    pub outcome: Option<(u32, u32)>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
     TooLarge,
@@ -93,6 +101,8 @@ impl std::fmt::Display for LoadError {
         }
     }
 }
+
+impl std::error::Error for LoadError {}
 
 impl From<Player> for PlayerV1 {
     fn from(player: Player) -> Self {
@@ -191,6 +201,12 @@ impl RecordV1 {
 
     /// Checks everything before any state changes.
     pub fn parse(text: &str) -> Result<LoadedGame, LoadError> {
+        Self::parse_with_meta(text).map(|parsed| parsed.loaded)
+    }
+
+    /// Parses and validates a record, also returning `updated_at` and `outcome`
+    /// so callers such as the game list do not parse the JSON twice.
+    pub fn parse_with_meta(text: &str) -> Result<ParsedRecord, LoadError> {
         if text.len() as u64 > MAX_BYTES {
             return Err(LoadError::TooLarge);
         }
@@ -206,15 +222,18 @@ impl RecordV1 {
         if header.format != FORMAT {
             return Err(LoadError::NotARecord);
         }
-        if header.schema_version != SCHEMA_VERSION {
+        if header.schema_version > SCHEMA_VERSION {
             return Err(LoadError::NewerVersion(header.schema_version));
+        }
+        if header.schema_version < SCHEMA_VERSION {
+            return Err(LoadError::Invalid("unsupported schema version"));
         }
         let record: Self =
             serde_json::from_str(text).map_err(|e| LoadError::NotJson(e.to_string()))?;
         record.load()
     }
 
-    fn load(&self) -> Result<LoadedGame, LoadError> {
+    fn load(self) -> Result<ParsedRecord, LoadError> {
         if !GameInfo::valid_id(&self.game_id) {
             return Err(LoadError::Invalid("a bad game id"));
         }
@@ -231,18 +250,24 @@ impl RecordV1 {
             .map(|a| a.parse::<Action>())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| LoadError::Invalid("a bad action"))?;
-        let history = History::restore(initial, actions, self.action_groups.clone(), self.cursor)
+        let history = History::restore(initial, actions, self.action_groups, self.cursor)
             .map_err(LoadError::Invalid)?;
-        Ok(LoadedGame {
+        let loaded = LoadedGame {
             game: GameInfo {
-                id: self.game_id.clone(),
-                created_at: self.created_at.clone(),
+                id: self.game_id,
+                created_at: self.created_at,
             },
             players: [
                 Player::try_from(&self.players.black)?,
                 Player::try_from(&self.players.white)?,
             ],
             history,
+        };
+        let outcome = self.outcome.map(|o| (o.black, o.white));
+        Ok(ParsedRecord {
+            loaded,
+            updated_at: self.updated_at,
+            outcome,
         })
     }
 }
@@ -345,6 +370,10 @@ mod tests {
             }),
             LoadError::NewerVersion(2)
         );
+        assert!(matches!(
+            with(|v| v["schema_version"] = 0.into()),
+            LoadError::Invalid(_)
+        ));
         assert!(matches!(
             with(|v| v["actions"] = serde_json::json!(["a1"])),
             LoadError::Invalid(_)

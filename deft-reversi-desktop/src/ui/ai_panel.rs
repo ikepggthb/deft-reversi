@@ -1,35 +1,17 @@
 //! The right column: the analysis in analysis mode, and at the bottom a
 //! line on what the engine is doing with the controls for it.
-use super::{root::RootView, theme, widgets};
+use super::{
+    format::{action_text, nodes_text, reading_text},
+    root::RootView,
+    theme, widgets,
+};
 use crate::{
     app::{Command, EngineStatus},
     domain::editor,
     i18n::Strings,
-    services::engine::{Reading, Report},
+    services::engine::Report,
 };
 use gpui::{Context, Div, SharedString, div, prelude::*, px};
-
-pub(super) fn reading_text(s: &Strings, reading: Reading) -> String {
-    match reading {
-        Reading::Depth {
-            depth,
-            percent: 100,
-        } => s.depth(depth),
-        Reading::Depth { depth, percent } => format!("{} @ {percent}%", s.depth(depth)),
-        Reading::Endgame { percent: 100 } => s.exact.into(),
-        Reading::Endgame { percent } => format!("{} @ {percent}%", s.selective_endgame),
-        Reading::Book => s.book.into(),
-    }
-}
-
-pub(super) fn nodes_text(nodes: u64) -> String {
-    match nodes {
-        n if n >= 1_000_000_000 => format!("{:.1} G", n as f64 / 1e9),
-        n if n >= 1_000_000 => format!("{:.1} M", n as f64 / 1e6),
-        n if n >= 1_000 => format!("{:.0} K", n as f64 / 1e3),
-        n => n.to_string(),
-    }
-}
 
 fn report_text(s: &Strings, report: &Report) -> String {
     let mut parts = Vec::new();
@@ -54,20 +36,46 @@ impl RootView {
         let c = &self.controller;
         let muted =
             |text: SharedString| div().text_xs().text_color(theme::text_muted()).child(text);
+        let activity = |label: SharedString,
+                        detail: Option<String>,
+                        link_id: &'static str,
+                        link_label: &'static str,
+                        command: Command,
+                        cx: &mut Context<Self>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(div().size(px(6.)).rounded_full().bg(theme::thinking_dot()))
+                        .child(label)
+                        .child(div().flex_1())
+                        .child(widgets::link(
+                            link_id,
+                            link_label,
+                            widgets::handler(move |this, cx| this.run(command.clone(), cx)),
+                            cx,
+                        )),
+                )
+                .children(detail.map(|d| muted(d.into())))
+        };
 
-        let mut lines: Vec<gpui::AnyElement> = Vec::new();
+        let mut lines: Vec<Div> = Vec::new();
         if !self.has_engine() {
-            lines.push(muted(s.model_missing.into()).into_any_element());
+            lines.push(muted(s.model_missing.into()));
         } else {
             match c.engine() {
-                EngineStatus::Loading => lines.push(muted(s.ai_loading.into()).into_any_element()),
+                EngineStatus::Loading => lines.push(muted(s.ai_loading.into())),
                 EngineStatus::Unavailable(error) => {
-                    lines.push(muted(format!("{}: {error}", s.ai_failed).into()).into_any_element())
+                    lines.push(muted(format!("{}: {error}", s.ai_failed).into()))
                 }
                 EngineStatus::Ready => {}
-                EngineStatus::Generating => {
-                    lines.push(muted(s.book_generating.into()).into_any_element())
-                }
+                EngineStatus::Generating => lines.push(muted(s.book_generating.into())),
             }
         }
         for notice in c
@@ -76,80 +84,42 @@ impl RootView {
             .into_iter()
             .chain(self.notice.as_ref().map(|n| n.to_string()))
         {
-            lines.push(
-                div()
-                    .text_xs()
-                    .text_color(theme::danger())
-                    .child(notice)
-                    .into_any_element(),
-            );
+            lines.push(div().text_xs().text_color(theme::danger()).child(notice));
         }
         if let Some(thinking) = c.thinking() {
             let detail = thinking.report.as_ref().map(|r| report_text(s, r));
-            lines.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(div().size(px(6.)).rounded_full().bg(theme::thinking_dot()))
-                            .child(format!("{} {}", s.color(thinking.color), s.thinking))
-                            .child(div().flex_1())
-                            .child(widgets::link(
-                                "move-now",
-                                s.move_now,
-                                widgets::handler(|this, cx| this.run(Command::MoveNow, cx)),
-                                cx,
-                            )),
-                    )
-                    .children(detail.map(|d| muted(d.into())))
-                    .into_any_element(),
-            );
+            lines.push(activity(
+                format!("{} {}", s.color(thinking.color), s.thinking).into(),
+                detail,
+                "move-now",
+                s.move_now,
+                Command::MoveNow,
+                cx,
+            ));
         }
         let position = c.history().current();
         if (c.has_ai() || c.analyzing()) && !editor::searchable(position) {
-            lines.push(muted(s.too_few_discs.into()).into_any_element());
+            lines.push(muted(s.too_few_discs.into()));
         }
         if c.analyzing() && c.analyzer().is_searching(position) {
             // The move being read, at what level, and how far it got.
             let reading = c.analyzer().reading_move(position).map(|(level, action)| {
                 let level = level.map_or_else(|| s.exact_solve.to_string(), |l| format!("Lv {l}"));
-                format!("{level} · {}", super::analysis_panel::action_text(action))
+                format!("{level} · {}", action_text(action))
             });
             let progress = c.analyzer().live(position).map(|r| report_text(s, r));
             let detail = match (reading, progress) {
                 (Some(reading), Some(progress)) => Some(format!("{reading} · {progress}")),
                 (reading, progress) => reading.or(progress),
             };
-            lines.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(div().size(px(6.)).rounded_full().bg(theme::thinking_dot()))
-                            .child(s.analyzing)
-                            .child(div().flex_1())
-                            .child(widgets::link(
-                                "stop-analysis",
-                                s.stop,
-                                widgets::handler(|this, cx| this.run(Command::StopAnalysis, cx)),
-                                cx,
-                            )),
-                    )
-                    .children(detail.map(|d| muted(d.into())))
-                    .into_any_element(),
-            );
+            lines.push(activity(
+                s.analyzing.into(),
+                detail,
+                "stop-analysis",
+                s.stop,
+                Command::StopAnalysis,
+                cx,
+            ));
         }
         div()
             .flex()

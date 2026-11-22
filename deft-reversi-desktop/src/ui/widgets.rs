@@ -12,6 +12,42 @@ pub(super) fn handler(f: impl Fn(&mut RootView, &mut Context<RootView>) + 'stati
     Rc::new(f)
 }
 
+fn on_click(el: Stateful<Div>, f: Handler, cx: &mut Context<RootView>) -> Stateful<Div> {
+    el.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+        f(this, cx);
+        cx.notify();
+    }))
+}
+
+/// A two-choice segmented control backed by a boolean.
+pub(super) fn toggle(
+    id: &'static str,
+    on_label: &'static str,
+    off_label: &'static str,
+    value: bool,
+    on_change: impl Fn(&mut RootView, bool, &mut Context<RootView>) + 'static,
+    cx: &mut Context<RootView>,
+) -> Div {
+    let on_change = Rc::new(on_change);
+    let set_on = on_change.clone();
+    segmented(
+        id,
+        vec![
+            (
+                on_label.into(),
+                value,
+                handler(move |this, cx| set_on(this, true, cx)),
+            ),
+            (
+                off_label.into(),
+                !value,
+                handler(move |this, cx| on_change(this, false, cx)),
+            ),
+        ],
+        cx,
+    )
+}
+
 /// A framed row of choices with the chosen one filled.
 pub(super) fn segmented(
     id: &'static str,
@@ -26,20 +62,20 @@ pub(super) fn segmented(
         .rounded(px(5.))
         .overflow_hidden()
         .children(items.into_iter().enumerate().map(|(i, (label, on, f))| {
-            let item = div()
-                .id((id, i))
-                .flex_1()
-                .flex()
-                .justify_center()
-                .px(px(10.))
-                .py(px(4.))
-                .whitespace_nowrap()
-                .cursor_pointer()
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    f(this, cx);
-                    cx.notify();
-                }))
-                .child(label);
+            let item = on_click(
+                div()
+                    .id((id, i))
+                    .flex_1()
+                    .flex()
+                    .justify_center()
+                    .px(px(10.))
+                    .py(px(4.))
+                    .whitespace_nowrap()
+                    .cursor_pointer(),
+                f,
+                cx,
+            )
+            .child(label);
             if on {
                 item.bg(theme::selected())
                     .text_color(theme::accent())
@@ -58,19 +94,19 @@ pub(super) fn link(
     f: Handler,
     cx: &mut Context<RootView>,
 ) -> Stateful<Div> {
-    div()
-        .id(id)
-        .px(px(6.))
-        .py(px(2.))
-        .rounded(px(4.))
-        .text_color(theme::text_secondary())
-        .cursor_pointer()
-        .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            f(this, cx);
-            cx.notify();
-        }))
-        .child(label.into())
+    on_click(
+        div()
+            .id(id)
+            .px(px(6.))
+            .py(px(2.))
+            .rounded(px(4.))
+            .text_color(theme::text_secondary())
+            .cursor_pointer()
+            .hover(|style| style.bg(theme::hover()).text_color(theme::text())),
+        f,
+        cx,
+    )
+    .child(label.into())
 }
 
 /// A framed button, the same size as `primary`.
@@ -80,23 +116,23 @@ pub(super) fn button(
     f: Handler,
     cx: &mut Context<RootView>,
 ) -> Stateful<Div> {
-    div()
-        .id(id)
-        .flex_none()
-        .px(px(12.))
-        .py(px(3.))
-        .border_1()
-        .border_color(theme::border())
-        .rounded(px(5.))
-        .whitespace_nowrap()
-        .text_color(theme::text())
-        .cursor_pointer()
-        .hover(|style| style.bg(theme::hover()))
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            f(this, cx);
-            cx.notify();
-        }))
-        .child(label.into())
+    on_click(
+        div()
+            .id(id)
+            .flex_none()
+            .px(px(12.))
+            .py(px(3.))
+            .border_1()
+            .border_color(theme::border())
+            .rounded(px(5.))
+            .whitespace_nowrap()
+            .text_color(theme::text())
+            .cursor_pointer()
+            .hover(|style| style.bg(theme::hover())),
+        f,
+        cx,
+    )
+    .child(label.into())
 }
 
 /// The one filled button of a dialog.
@@ -106,24 +142,24 @@ pub(super) fn primary(
     f: Handler,
     cx: &mut Context<RootView>,
 ) -> Stateful<Div> {
-    div()
-        .id(id)
-        .flex_none()
-        .px(px(14.))
-        .py(px(3.))
-        .border_1()
-        .border_color(theme::text())
-        .rounded(px(5.))
-        .whitespace_nowrap()
-        .bg(theme::text())
-        .text_color(theme::background())
-        .font_weight(FontWeight::MEDIUM)
-        .cursor_pointer()
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            f(this, cx);
-            cx.notify();
-        }))
-        .child(label.into())
+    on_click(
+        div()
+            .id(id)
+            .flex_none()
+            .px(px(14.))
+            .py(px(3.))
+            .border_1()
+            .border_color(theme::text())
+            .rounded(px(5.))
+            .whitespace_nowrap()
+            .bg(theme::text())
+            .text_color(theme::background())
+            .font_weight(FontWeight::MEDIUM)
+            .cursor_pointer(),
+        f,
+        cx,
+    )
+    .child(label.into())
 }
 
 /// A number with − and + on either side.
@@ -135,18 +171,18 @@ pub(super) fn stepper(
     cx: &mut Context<RootView>,
 ) -> Div {
     let button = |i: usize, glyph: &'static str, f: Handler, cx: &mut Context<RootView>| {
-        div()
-            .id((id, i))
-            .px(px(9.))
-            .py(px(3.))
-            .text_color(theme::text_secondary())
-            .cursor_pointer()
-            .hover(|style| style.bg(theme::hover()))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                f(this, cx);
-                cx.notify();
-            }))
-            .child(glyph)
+        on_click(
+            div()
+                .id((id, i))
+                .px(px(9.))
+                .py(px(3.))
+                .text_color(theme::text_secondary())
+                .cursor_pointer()
+                .hover(|style| style.bg(theme::hover())),
+            f,
+            cx,
+        )
+        .child(glyph)
     };
     div()
         .flex()
@@ -196,6 +232,61 @@ pub(super) fn caption(text: impl Into<SharedString>) -> Div {
         .text_xs()
         .text_color(theme::text_muted())
         .child(text.into())
+}
+
+/// A labelled row inside a settings or builder dialog.
+pub(super) fn form_row(
+    label_width: f32,
+    label: &'static str,
+    control: Div,
+    note: Option<SharedString>,
+) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(12.))
+        .min_h(px(34.))
+        .child(div().w(px(label_width)).flex_none().child(label))
+        .child(control.flex_none())
+        .children(note.map(|n| caption(n).whitespace_nowrap()))
+}
+
+/// The common outer frame of a modal dialog.
+pub(super) fn dialog_box(width: f32) -> Div {
+    div()
+        .w(px(width))
+        .flex()
+        .flex_col()
+        .px(px(20.))
+        .py(px(16.))
+        .bg(theme::surface())
+        .border_1()
+        .border_color(theme::border())
+        .rounded(px(10.))
+}
+
+/// The title bar of a modal dialog, with an optional close link on the right.
+pub(super) fn dialog_header(
+    title: &'static str,
+    close: Option<(&'static str, &'static str)>,
+    cx: &mut Context<RootView>,
+) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .mb(px(10.))
+        .child(
+            div()
+                .flex_1()
+                .text_base()
+                .font_weight(FontWeight::MEDIUM)
+                .child(title),
+        )
+        .children(
+            close.map(|(id, label)| link(id, label, handler(|this, cx| this.close_dialog(cx)), cx)),
+        )
 }
 
 /// The scroll bar being dragged: where the pointer and the list were when

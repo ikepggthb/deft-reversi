@@ -1,7 +1,7 @@
 //! The `storage` thread: autosave with a debounce, settings, export, load,
 //! and the list of saved games. Writes run one at a time, in order.
 use crate::{
-    domain::Player,
+    domain::{GameInfo, Player},
     persistence::{
         atomic_file,
         paths::Paths,
@@ -11,7 +11,7 @@ use crate::{
 };
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::mpsc::{self, RecvTimeoutError},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -31,7 +31,10 @@ pub enum StorageCommand {
         path: PathBuf,
         record: RecordV1,
     },
+    /// Opens an existing autosave under its original identity.
     Load(PathBuf),
+    /// Opens a file as a new autosaved copy of the recorded game.
+    Import(PathBuf),
     ListGames,
     DeleteGame(String),
 }
@@ -136,7 +139,12 @@ fn run(
             },
             Some(p) => {
                 let due = (p.last + QUIET).min(p.first + MAX_DELAY);
-                match commands.recv_timeout(due.saturating_duration_since(Instant::now())) {
+                let now = Instant::now();
+                if now >= due {
+                    write_game(&paths, pending.take(), &send);
+                    continue;
+                }
+                match commands.recv_timeout(due.saturating_duration_since(now)) {
                     Ok(command) => command,
                     Err(RecvTimeoutError::Timeout) => {
                         write_game(&paths, pending.take(), &send);
@@ -178,11 +186,17 @@ fn run(
                     .map(|()| path)
                     .map_err(|e| e.to_string()),
             )),
-            StorageCommand::Load(path) => send(StorageEvent::Loaded(
-                atomic_file::read(&path, record::MAX_BYTES)
-                    .map_err(|e| e.to_string())
-                    .and_then(|text| RecordV1::parse(&text).map_err(|e| e.to_string())),
-            )),
+            StorageCommand::Load(path) => {
+                write_game(&paths, pending.take(), &send);
+                send(StorageEvent::Loaded(load_record(&path)));
+            }
+            StorageCommand::Import(path) => {
+                let game = load_record(&path).map(|mut game| {
+                    game.game.id = GameInfo::new().id;
+                    game
+                });
+                send(StorageEvent::Loaded(game));
+            }
             StorageCommand::ListGames => {
                 // The list shows what is on disk, including the latest save.
                 write_game(&paths, pending.take(), &send);
@@ -191,6 +205,9 @@ fn run(
             StorageCommand::DeleteGame(id) => {
                 if pending.as_ref().is_some_and(|p| p.record.game_id == id) {
                     pending = None;
+                } else {
+                    // Flush another game's pending save so the returned list is current.
+                    write_game(&paths, pending.take(), &send);
                 }
                 let path = paths.game(&id);
                 let _ = fs::remove_file(atomic_file::backup_path(&path));
@@ -201,6 +218,11 @@ fn run(
             }
         }
     }
+}
+
+fn load_record(path: &Path) -> Result<LoadedGame, String> {
+    let text = atomic_file::read(path, record::MAX_BYTES).map_err(|error| error.to_string())?;
+    RecordV1::parse(&text).map_err(|error| error.to_string())
 }
 
 fn write_game(paths: &Paths, pending: Option<Pending>, send: &impl Fn(StorageEvent)) {
@@ -219,8 +241,8 @@ fn write_game(paths: &Paths, pending: Option<Pending>, send: &impl Fn(StorageEve
     );
 }
 
-/// Record files in the games folder; broken ones are left out.
-fn game_files(paths: &Paths) -> Vec<(PathBuf, std::time::SystemTime)> {
+/// Record file paths in the games folder.
+fn game_paths(paths: &Paths) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(&paths.games) else {
         return Vec::new();
     };
@@ -228,6 +250,13 @@ fn game_files(paths: &Paths) -> Vec<(PathBuf, std::time::SystemTime)> {
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "dreversi"))
+        .collect()
+}
+
+/// Record files in the games folder with their modified times.
+fn game_files(paths: &Paths) -> Vec<(PathBuf, std::time::SystemTime)> {
+    game_paths(paths)
+        .into_iter()
         .filter_map(|p| {
             let modified = fs::metadata(&p).and_then(|m| m.modified()).ok()?;
             Some((p, modified))
@@ -240,39 +269,44 @@ fn newest_game(paths: &Paths) -> Option<LoadedGame> {
     let mut files = game_files(paths);
     files.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
     files.into_iter().find_map(|(path, _)| {
-        atomic_file::read_with_backup(&path, record::MAX_BYTES, RecordV1::parse)
-            .inspect_err(|e| eprintln!("[storage] {}: {e}", path.display()))
-            .ok()
+        atomic_file::read_with_backup(&path, record::MAX_BYTES, |text| {
+            match RecordV1::parse(text) {
+                Ok(loaded) => atomic_file::ParseOutcome::Ok(loaded),
+                Err(error @ record::LoadError::NewerVersion(_)) => {
+                    atomic_file::ParseOutcome::Unsupported(error)
+                }
+                Err(error) => atomic_file::ParseOutcome::Corrupt(error),
+            }
+        })
+        .inspect_err(|e| eprintln!("[storage] {}: {e}", path.display()))
+        .ok()
     })
 }
 
 fn list_games(paths: &Paths) -> Vec<GameSummary> {
-    let mut games: Vec<(String, GameSummary)> = game_files(paths)
+    let mut games: Vec<GameSummary> = game_paths(paths)
         .into_iter()
-        .filter_map(|(path, _)| {
+        .filter_map(|path| {
             let text = atomic_file::read(&path, record::MAX_BYTES).ok()?;
-            let loaded = RecordV1::parse(&text).ok()?;
-            let file: RecordV1 = serde_json::from_str(&text).ok()?;
+            let parsed = RecordV1::parse_with_meta(&text).ok()?;
+            let loaded = parsed.loaded;
             let last = loaded.history.position(loaded.history.actions().len());
             let initial = loaded.history.position(0);
             let discs = |p: deft_reversi_engine::Position| {
                 p.disc_count(deft_reversi_engine::Color::Black)
                     + p.disc_count(deft_reversi_engine::Color::White)
             };
-            Some((
-                file.updated_at.clone(),
-                GameSummary {
-                    id: loaded.game.id,
-                    updated_at: file.updated_at,
-                    players: loaded.players,
-                    moves: (discs(last) - discs(initial)) as usize,
-                    outcome: file.outcome.map(|o| (o.black, o.white)),
-                },
-            ))
+            Some(GameSummary {
+                id: loaded.game.id,
+                updated_at: parsed.updated_at,
+                players: loaded.players,
+                moves: (discs(last) - discs(initial)) as usize,
+                outcome: parsed.outcome,
+            })
         })
         .collect();
-    games.sort_by(|a, b| b.0.cmp(&a.0));
-    games.into_iter().map(|(_, g)| g).collect()
+    games.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    games
 }
 
 #[cfg(test)]
@@ -359,6 +393,56 @@ mod tests {
     }
 
     #[test]
+    fn importing_an_old_export_preserves_the_autosave_and_its_backup() {
+        let dir = temp_dir("storage-import");
+        let paths = Paths::under(dir.clone());
+        let (mut storage, events) = StorageService::spawn(paths.clone());
+        assert!(matches!(next(&events), StorageEvent::Restored(None)));
+        let game = GameInfo::new();
+        let old = record(&game, &["f5"]);
+        let export = dir.join("old.dreversi");
+        storage.send(StorageCommand::Export {
+            path: export.clone(),
+            record: old,
+        });
+        assert!(matches!(next(&events), StorageEvent::Exported(Ok(_))));
+
+        let saved = paths.game(&game.id);
+        for moves in [&["f5", "d6"][..], &["f5", "d6", "c3"]] {
+            storage.send(StorageCommand::SaveGame(record(&game, moves)));
+            storage.send(StorageCommand::Load(saved.clone()));
+            assert!(matches!(next(&events), StorageEvent::Saved));
+            let StorageEvent::Loaded(Ok(loaded)) = next(&events) else {
+                panic!("expected the saved game");
+            };
+            assert_eq!(loaded.game.id, game.id);
+            assert_eq!(loaded.history.actions().len(), moves.len());
+        }
+
+        let backup = atomic_file::backup_path(&saved);
+        let expected = fs::read(&saved).unwrap();
+        let expected_backup = fs::read(&backup).unwrap();
+        let mut copy_ids = Vec::new();
+        for _ in 0..2 {
+            storage.send(StorageCommand::Import(export.clone()));
+            let StorageEvent::Loaded(Ok(copy)) = next(&events) else {
+                panic!("expected an imported game");
+            };
+            assert_ne!(copy.game.id, game.id);
+            assert!(!copy_ids.contains(&copy.game.id));
+            assert_eq!(copy.game.created_at, game.created_at);
+            assert_eq!(copy.history.actions().len(), 1);
+            storage.send(StorageCommand::SaveGame(record(&copy.game, &["f5"])));
+            copy_ids.push(copy.game.id);
+        }
+        storage.shutdown();
+        assert_eq!(fs::read(&saved).unwrap(), expected);
+        assert_eq!(fs::read(&backup).unwrap(), expected_backup);
+        assert!(copy_ids.iter().all(|id| paths.game(id).is_file()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn shutdown_writes_the_pending_save_and_failures_are_reported() {
         let dir = temp_dir("storage-shutdown");
         let paths = Paths::under(dir.clone());
@@ -383,7 +467,7 @@ mod tests {
         // Loading a broken file reports the error.
         let broken = dir.join("broken.dreversi");
         fs::write(&broken, "{").unwrap();
-        storage.send(StorageCommand::Load(broken));
+        storage.send(StorageCommand::Import(broken));
         assert!(matches!(next(&events), StorageEvent::Loaded(Err(_))));
         let _ = fs::remove_dir_all(dir);
     }

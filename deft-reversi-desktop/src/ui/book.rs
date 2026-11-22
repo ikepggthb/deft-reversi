@@ -24,6 +24,7 @@ impl RootView {
     }
 
     pub(super) fn set_book_path(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+        self.book_selection_gen = self.book_selection_gen.wrapping_add(1);
         self.settings.book.path = path;
         self.apply_book();
         cx.notify();

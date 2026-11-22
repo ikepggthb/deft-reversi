@@ -248,11 +248,10 @@ impl Controller {
         self.players.iter().any(|p| p.is_ai())
     }
 
-    /// The AI's strength when an AI is to move in the shown position. An
-    /// edited position with too few discs has no AI move (§9.1).
+    /// The AI's strength when it can place a disc in the shown position.
     pub fn ai_to_move(&self) -> Option<Strength> {
         let position = self.history.current();
-        if position.is_terminal() || !editor::searchable(position) {
+        if position.legal_moves().is_empty() || !editor::searchable(position) {
             return None;
         }
         match self.players[index(position.side_to_move())] {
@@ -285,7 +284,12 @@ impl Controller {
             Command::First => self.navigate(|h| h.go_to(0), &mut effects),
             Command::Last => self.navigate(|h| h.go_to(usize::MAX), &mut effects),
             Command::GoTo(index) => self.navigate(|h| h.go_to(index), &mut effects),
-            Command::Resume => self.status = Status::Playing,
+            Command::Resume => {
+                if self.history.advance_pass() {
+                    self.revision += 1;
+                }
+                self.status = Status::Playing;
+            }
             Command::Pause => {
                 self.cancel(&mut effects);
                 self.status = Status::Paused;
@@ -312,6 +316,7 @@ impl Controller {
             }
             Command::Load(loaded) => {
                 self.cancel(&mut effects);
+                self.analyzer.cancel(&mut effects);
                 self.main = None;
                 let LoadedGame {
                     game,
@@ -377,7 +382,7 @@ impl Controller {
         match event {
             EngineEvent::Ready { .. } => self.engine = EngineStatus::Ready,
             // The settings screen shows it.
-            EngineEvent::Book(_) | EngineEvent::BookProgress(_) => {}
+            EngineEvent::Model(_) | EngineEvent::Book(_) | EngineEvent::BookProgress(_) => {}
             EngineEvent::BookDone(_) => {
                 if self.engine == EngineStatus::Generating {
                     self.engine = EngineStatus::Ready;
@@ -463,7 +468,7 @@ impl Controller {
         // Discs on the board count the moves, also from an edited start.
         let discs = position.disc_count(Color::Black) + position.disc_count(Color::White);
         self.ai_log.push(AiMove {
-            number: discs as usize - 3,
+            number: discs.saturating_sub(3) as usize,
             color: thinking.color,
             strength: thinking.strength,
             action: best_move.expect("checked legal"),
@@ -573,7 +578,7 @@ impl Controller {
                 position,
                 spec: SearchSpec {
                     book: self.book,
-                    ..strength.spec()
+                    ..SearchSpec::from(strength)
                 },
             },
         });
@@ -701,6 +706,23 @@ mod tests {
         assert!(started(&play(&mut c, "d3")).is_none());
         assert_eq!(c.status(), Status::Paused);
         assert!(started(&play(&mut c, "c3")).is_none());
+    }
+
+    #[test]
+    fn the_user_can_resume_or_step_the_ai_in_a_study_line() {
+        for (command, status) in [
+            (Command::Resume, Status::Playing),
+            (Command::StepAi, Status::Paused),
+        ] {
+            let mut c = ready([Player::Human, AI]);
+            c.apply(Command::SetStudy(true));
+            assert!(started(&play(&mut c, "d3")).is_none());
+            let id = started(&c.apply(command)).expect("the AI thinks on request");
+            finish(&mut c, id);
+            assert_eq!(c.status(), status);
+            assert_eq!(c.history().actions().len(), 2);
+            assert!(c.game_record().actions().is_empty());
+        }
     }
 
     #[test]
@@ -906,6 +928,69 @@ mod tests {
         finish(&mut c, id);
         assert_eq!(c.history().actions().len(), 1);
         assert!(started(&c.apply(Command::Resume)).is_some());
+    }
+
+    #[test]
+    fn opening_another_game_cancels_the_old_record_search() {
+        let mut c = ready([Player::Human; 2]);
+        play(&mut c, "f5");
+        c.apply(Command::SetAnalysis(true));
+        c.apply(Command::AnalyzeRecord { redo: false });
+        let old = started(&c.apply(Command::First)).unwrap();
+        assert_eq!(c.analyzer().batch_progress(), Some((1, 2)));
+
+        let history = History::new(Position::initial());
+        let effects = c.apply(Command::Load(Box::new(LoadedGame {
+            game: GameInfo::new(),
+            players: [Player::Human; 2],
+            history,
+        })));
+        let [
+            Effect::CancelSearch,
+            Effect::ClearTt,
+            Effect::StartSearch { job },
+        ] = &effects[..]
+        else {
+            panic!("expected a new search after clearing the old one: {effects:?}");
+        };
+        assert_eq!(job.position, c.history().current());
+        assert!(job.spec.root_moves.is_some());
+        assert_eq!(c.analyzer().batch_progress(), None);
+        assert!(finish(&mut c, old).is_empty());
+        assert!(c.analyzer().is_searching(job.position));
+    }
+
+    #[test]
+    fn resume_follows_the_recorded_pass_before_starting_the_next_turn() {
+        let bit = |name: &str| name.parse::<Square>().unwrap().bit();
+        let start =
+            Position::from_colors(bit("a1") | bit("d1"), bit("b1") | bit("a2"), Color::White)
+                .unwrap();
+        for players in [[AI, Player::Human], [Player::Human, AI]] {
+            let mut history = History::new(start);
+            history
+                .play(Action::Place("c1".parse().unwrap()), Grouping::NewGroup)
+                .unwrap();
+            let actions = history.actions().to_vec();
+            let mut c = ready(players);
+            c.apply(Command::Load(Box::new(LoadedGame {
+                game: GameInfo::new(),
+                players,
+                history,
+            })));
+            c.apply(Command::First);
+            let revision = c.revision();
+            let effects = c.apply(Command::Resume);
+            assert_eq!(c.history().cursor(), 1);
+            assert_eq!(c.history().actions(), actions);
+            assert_eq!(c.revision(), revision + 1);
+            assert_eq!(c.history().current().side_to_move(), Color::Black);
+            assert_eq!(started(&effects).is_some(), players[0].is_ai());
+            if !players[0].is_ai() {
+                play(&mut c, "c1");
+                assert_eq!(c.history().cursor(), 3);
+            }
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! side to move, the best move and line, and every move's value; under the
 //! board, the values over the record.
 use super::{
-    ai_panel::reading_text,
+    format::{action_text, reading_mark, reading_text, signed},
     record::move_number,
     root::RootView,
     theme,
@@ -11,7 +11,6 @@ use super::{
 use crate::domain::settings::GRAPH_HEIGHTS;
 use crate::{
     app::Command,
-    i18n::Strings,
     services::engine::{Reading, Report},
 };
 use deft_reversi_book::Bound;
@@ -139,25 +138,6 @@ fn paint_graph(
     for &(k, v, color) in marked {
         dot(window, k, v, px(4.), color);
     }
-}
-
-pub(super) fn action_text(action: Action) -> String {
-    action.to_string().to_lowercase()
-}
-
-/// How a value was read, in a few characters: "d24@83%", "END@95%",
-/// "END@100%" or "Book".
-pub(super) fn reading_mark(s: &Strings, reading: Reading) -> String {
-    match reading {
-        Reading::Depth { depth, percent } => format!("d{depth}@{percent}%"),
-        Reading::Endgame { percent } => format!("END@{percent}%"),
-        Reading::Book => s.book.into(),
-    }
-}
-
-/// "+6", "−6" or "0".
-pub(super) fn signed(value: i32) -> String {
-    format!("{value:+}").replace('-', "−").replace("+0", "0")
 }
 
 /// A disc on the page, lit from the top left like a stone. The light side
@@ -334,7 +314,6 @@ impl RootView {
                         theme::warning()
                     }
                     Some(v) if m.fresh && !v.provisional && i < 3 => theme::text(),
-                    Some(v) if m.fresh && !v.provisional => theme::text_secondary(),
                     Some(_) if m.fresh => theme::text_secondary(),
                     _ => theme::text_muted(),
                 };
@@ -346,28 +325,26 @@ impl RootView {
                         mark
                     })
                 });
-                div().flex().flex_col().child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .h(px(22.))
-                        .text_color(color)
-                        .child(div().w(px(36.)).child(action_text(m.action)))
-                        .child(div().w(px(44.)).child(match &m.value {
-                            Some(v) => signed(v.score),
-                            None if searching => "…".into(),
-                            None => "–".into(),
-                        }))
-                        .children(reading.map(|r| {
-                            div()
-                                .flex_1()
-                                .text_xs()
-                                .text_color(theme::text_muted())
-                                .whitespace_nowrap()
-                                .child(r)
-                        })),
-                )
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .h(px(22.))
+                    .text_color(color)
+                    .child(div().w(px(36.)).child(action_text(m.action)))
+                    .child(div().w(px(44.)).child(match &m.value {
+                        Some(v) => signed(v.score),
+                        None if searching => "…".into(),
+                        None => "–".into(),
+                    }))
+                    .children(reading.map(|r| {
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .whitespace_nowrap()
+                            .child(r)
+                    }))
             });
             div()
                 .flex()
@@ -640,7 +617,7 @@ impl RootView {
             .analysis_at(history, k)
             .filter(|_| !history.position(k).is_terminal())
             .and_then(|a| {
-                let reading = reading_text(s, a.report.reading?);
+                let reading = reading_text(s, a.report.as_ref()?.reading?);
                 Some(match a.level {
                     Some(level) => format!("Lv {level} · {reading}"),
                     None => reading,

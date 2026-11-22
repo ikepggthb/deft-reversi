@@ -54,18 +54,20 @@ fn to_f5(first: Square) -> Option<fn(Square) -> Square> {
 /// The name of the longest listed opening that the game's moves follow from
 /// the start. Only games from the standard start have one.
 pub fn name(actions: &[Action]) -> Option<&'static str> {
+    let Action::Place(first) = *actions.first()? else {
+        return None;
+    };
+    let turn = to_f5(first)?;
     let moves: Vec<Square> = actions
         .iter()
         .map_while(|a| match a {
-            Action::Place(s) => Some(*s),
+            Action::Place(s) => Some(turn(*s)),
             Action::Pass => None,
         })
         .collect();
-    let turn = to_f5(*moves.first()?)?;
-    let moves: Vec<Square> = moves.into_iter().map(turn).collect();
     openings()
         .iter()
-        .filter(|o| o.moves.len() <= moves.len() && moves[..o.moves.len()] == o.moves[..])
+        .filter(|o| moves.starts_with(&o.moves))
         .max_by_key(|o| o.moves.len())
         .map(|o| o.name)
 }

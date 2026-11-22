@@ -188,6 +188,15 @@ impl History {
         index > 0 && self.actions[index - 1] == Action::Pass
     }
 
+    /// Follows an already recorded forced pass without changing the record.
+    pub fn advance_pass(&mut self) -> bool {
+        if self.actions.get(self.cursor) != Some(&Action::Pass) {
+            return false;
+        }
+        self.cursor += 1;
+        true
+    }
+
     pub fn go_to(&mut self, index: usize) -> bool {
         let index = index.min(self.actions.len());
         let moved = index != self.cursor;

@@ -2,7 +2,7 @@
 //! the result, and the record.
 use super::{
     analysis_panel::disc,
-    new_game::strength_label,
+    format::strength_label,
     root::RootView,
     theme,
     widgets::{self, card, heading},
@@ -18,7 +18,7 @@ use gpui::{ClickEvent, Context, Div, FontWeight, SharedString, div, prelude::*, 
 /// discs, so it also works from an edited start.
 pub(super) fn move_number(position: Position) -> usize {
     let discs = position.disc_count(Color::Black) + position.disc_count(Color::White);
-    discs as usize - 3
+    discs.saturating_sub(3) as usize
 }
 
 impl RootView {
@@ -94,7 +94,7 @@ impl RootView {
         let analyzing = self.controller.analyzing();
         let copy_link = widgets::link(
             "copy-record",
-            if self.record_copied {
+            if self.record_copied.is_some() {
                 s.record_copied
             } else {
                 s.copy
@@ -251,5 +251,18 @@ impl RootView {
                             .children(entries),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deft_reversi_engine::Square;
+
+    #[test]
+    fn move_number_does_not_underflow_with_two_discs() {
+        let bit = |name: &str| name.parse::<Square>().unwrap().bit();
+        let position = Position::from_colors(bit("a1"), bit("a2"), Color::Black).unwrap();
+        assert_eq!(move_number(position), 0);
     }
 }
