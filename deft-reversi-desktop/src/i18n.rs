@@ -441,7 +441,11 @@ static JA: Strings = Strings {
     book_loaded: |positions| format!("{positions}局面"),
     book_plies: |n| format!("{n}手"),
     book_progress: |positions, added, secs| {
-        format!("{positions}局面（+{added}）· {}:{:02}", secs / 60, secs % 60)
+        format!(
+            "{positions}局面（+{added}）· {}:{:02}",
+            secs / 60,
+            secs % 60
+        )
     },
     book_error: |error| format!("生成できませんでした: {error}"),
     record_error: |n| format!("{n}手目が打てません"),
@@ -647,7 +651,11 @@ Right-click to erase",
     book_loaded: |positions| format!("{positions} positions"),
     book_plies: |n| format!("{n} moves"),
     book_progress: |positions, added, secs| {
-        format!("{positions} positions (+{added}) · {}:{:02}", secs / 60, secs % 60)
+        format!(
+            "{positions} positions (+{added}) · {}:{:02}",
+            secs / 60,
+            secs % 60
+        )
     },
     book_error: |error| format!("Could not grow the book: {error}"),
     record_error: |n| format!("Move {n} cannot be played"),

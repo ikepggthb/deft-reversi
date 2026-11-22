@@ -391,11 +391,7 @@ struct CandidateBatch {
 impl CandidateBatch {
     /// The calling thread passes `on_move`, which sees every move finished
     /// so far, by any thread, each time it finishes one of its own.
-    fn run(
-        &self,
-        context: &mut Context,
-        mut on_move: Option<OnMove<'_>>,
-    ) -> Result<(), Aborted> {
+    fn run(&self, context: &mut Context, mut on_move: Option<OnMove<'_>>) -> Result<(), Aborted> {
         while !context.aborted() {
             let index = self.next.fetch_add(1, Ordering::Relaxed);
             let Some(&candidate) = self.candidates.get(index) else {
@@ -406,9 +402,9 @@ impl CandidateBatch {
             let done = {
                 let mut results = parallel::lock(&self.results);
                 results[index] = Some(result);
-                on_move.is_some().then(|| {
-                    best_first(results.iter().flatten().map(|(entry, _)| *entry))
-                })
+                on_move
+                    .is_some()
+                    .then(|| best_first(results.iter().flatten().map(|(entry, _)| *entry)))
             };
             if let (Some(on_move), Some(done)) = (on_move.as_mut(), done) {
                 on_move(context, &done);
@@ -460,7 +456,9 @@ fn score_parallel(
         }
         context.stats.worker_dispatches += 1;
     }
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| batch.run(context, Some(on_move))));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        batch.run(context, Some(on_move))
+    }));
     if outcome.is_err() {
         runtime.control.fail();
     }

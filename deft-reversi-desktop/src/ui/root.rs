@@ -253,9 +253,7 @@ impl RootView {
                             this.book_status = Some(status.clone());
                         }
                         match &event {
-                            EngineEvent::BookProgress(progress) => {
-                                this.on_book_progress(*progress)
-                            }
+                            EngineEvent::BookProgress(progress) => this.on_book_progress(*progress),
                             EngineEvent::BookDone(done) => this.on_book_done(done.clone(), cx),
                             _ => {}
                         }
@@ -669,7 +667,8 @@ impl Render for RootView {
         }
         let size = window.viewport_size();
         self.viewport = Some((f32::from(size.width) as u32, f32::from(size.height) as u32));
-        let graph = (self.controller.analyzing() && self.editor.is_none()).then(|| self.graph_height());
+        let graph =
+            (self.controller.analyzing() && self.editor.is_none()).then(|| self.graph_height());
         let cell = Self::cell_size(window, graph);
         let workspace = div()
             .key_context("Workspace")

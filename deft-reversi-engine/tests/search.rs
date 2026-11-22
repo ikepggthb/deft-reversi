@@ -128,7 +128,13 @@ fn timed_levels_return_last_completed_stage_on_timeout() {
         })
         .unwrap();
     let last = last.expect("the first stage should complete");
-    assert_eq!(last.kind, ResultKind::Depth { depth: 5, selectivity: Selectivity::Percent83 });
+    assert_eq!(
+        last.kind,
+        ResultKind::Depth {
+            depth: 5,
+            selectivity: Selectivity::Percent83
+        }
+    );
     assert_eq!(result.stop_reason, StopReason::TimeLimit);
     assert_eq!(result.kind, Some(last.kind));
     assert_eq!(result.score, Some(last.score));
@@ -144,19 +150,28 @@ fn timed_levels_searches_selective_stages_and_solves_exactly() {
     let budget = Duration::from_secs(5);
     let mut reported = Vec::new();
     let timed = engine
-        .search_with(board, &SearchRequest::timed_levels(60, budget), |progress| {
-            reported.push(progress.kind);
-        })
+        .search_with(
+            board,
+            &SearchRequest::timed_levels(60, budget),
+            |progress| {
+                reported.push(progress.kind);
+            },
+        )
         .unwrap();
     assert_eq!(timed.stop_reason, StopReason::Completed);
     assert!(timed.is_solved());
     assert_eq!(timed.score, fixed.score);
     assert!(timed.stats.tt_hits > 0);
-    let expected: Vec<_> = [2, 4].into_iter()
-        .map(|depth| ResultKind::Depth { depth, selectivity: Selectivity::Percent83 })
-        .chain([Selectivity::Percent85, Selectivity::Full].map(|selectivity| {
-            ResultKind::Endgame { selectivity }
-        }))
+    let expected: Vec<_> = [2, 4]
+        .into_iter()
+        .map(|depth| ResultKind::Depth {
+            depth,
+            selectivity: Selectivity::Percent83,
+        })
+        .chain(
+            [Selectivity::Percent85, Selectivity::Full]
+                .map(|selectivity| ResultKind::Endgame { selectivity }),
+        )
         .collect();
     assert_eq!(reported, expected);
 }
@@ -561,15 +576,26 @@ fn all_moves_scores_every_move_exactly() {
     let mut reviewer = engine(1);
     let all = reviewer.search(board, &exact().all_moves()).unwrap();
     for played in board.legal_moves() {
-        let result = reviewer.search(board, &exact().review_move(played)).unwrap();
+        let result = reviewer
+            .search(board, &exact().review_move(played))
+            .unwrap();
         assert_eq!(result.score, all.score);
         assert_eq!(result.moves[0].score, all.score.unwrap());
         assert_eq!(
             result.moves.len(),
-            if result.best_move == Some(Action::Place(played)) { 1 } else { 2 }
+            if result.best_move == Some(Action::Place(played)) {
+                1
+            } else {
+                2
+            }
         );
         assert!(result.moves.iter().all(|score| all.moves.contains(score)));
-        assert!(result.moves.iter().any(|m| m.action == Action::Place(played)));
+        assert!(
+            result
+                .moves
+                .iter()
+                .any(|m| m.action == Action::Place(played))
+        );
     }
     // A stopped search leaves the list empty rather than partial.
     let result = engine(1)
@@ -590,7 +616,10 @@ fn candidate_lines_are_legal_and_match_full_window_scores() {
         assert_eq!(pv.first(), Some(&scored.action));
         let child = board.play(scored.action).unwrap();
         assert_eq!(scored.score, -reference(child));
-        let final_board = pv.iter().try_fold(board, |board, &action| board.play(action)).unwrap();
+        let final_board = pv
+            .iter()
+            .try_fold(board, |board, &action| board.play(action))
+            .unwrap();
         if final_board.is_terminal() {
             let score = final_board.final_score();
             assert_eq!(scored.score, if pv.len() % 2 == 0 { score } else { -score });

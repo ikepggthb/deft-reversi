@@ -18,8 +18,8 @@ use deft_reversi_book::Bound;
 use deft_reversi_engine::{Action, Color};
 use gpui::{
     Bounds, ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, PathBuilder, Pixels,
-    Rgba, SharedString, Window,
-    canvas, div, fill, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
+    Rgba, SharedString, Window, canvas, div, fill, linear_color_stop, linear_gradient, point,
+    prelude::*, px, rgb, size,
 };
 
 /// The scale on the graph's left.
@@ -340,33 +340,34 @@ impl RootView {
                 };
                 let reading = m.value.as_ref().and_then(|v| {
                     let mark = reading_mark(s, v.reading?);
-                    Some(if v.provisional { format!("{mark} …") } else { mark })
+                    Some(if v.provisional {
+                        format!("{mark} …")
+                    } else {
+                        mark
+                    })
                 });
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .h(px(22.))
-                            .text_color(color)
-                            .child(div().w(px(36.)).child(action_text(m.action)))
-                            .child(div().w(px(44.)).child(match &m.value {
-                                Some(v) => signed(v.score),
-                                None if searching => "…".into(),
-                                None => "–".into(),
-                            }))
-                            .children(reading.map(|r| {
-                                div()
-                                    .flex_1()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .whitespace_nowrap()
-                                    .child(r)
-                            })),
-                    )
+                div().flex().flex_col().child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h(px(22.))
+                        .text_color(color)
+                        .child(div().w(px(36.)).child(action_text(m.action)))
+                        .child(div().w(px(44.)).child(match &m.value {
+                            Some(v) => signed(v.score),
+                            None if searching => "…".into(),
+                            None => "–".into(),
+                        }))
+                        .children(reading.map(|r| {
+                            div()
+                                .flex_1()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .whitespace_nowrap()
+                                .child(r)
+                        })),
+                )
             });
             div()
                 .flex()
@@ -449,7 +450,9 @@ impl RootView {
     /// The plot's height: as it is being dragged, or as it was left.
     pub(super) fn graph_height(&self) -> f32 {
         let height = f32::from(self.graph_live.unwrap_or(self.settings.graph_height));
-        height.min(self.graph_most()).max(f32::from(*GRAPH_HEIGHTS.start()))
+        height
+            .min(self.graph_most())
+            .max(f32::from(*GRAPH_HEIGHTS.start()))
     }
 
     /// The tallest the graph may be in this window: the board keeps squares
@@ -659,8 +662,18 @@ impl RootView {
             .text_xs()
             .whitespace_nowrap()
             .overflow_hidden()
-            .child(div().flex_none().text_color(theme::text_secondary()).child(which))
-            .child(div().flex_none().text_color(theme::text()).child(value_text))
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(theme::text_secondary())
+                    .child(which),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(theme::text())
+                    .child(value_text),
+            )
             .child(div().flex_1())
             .children(how);
 

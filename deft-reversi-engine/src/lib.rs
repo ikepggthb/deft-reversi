@@ -81,5 +81,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GIT_REVISION: &str = env!("DEFT_GIT_REVISION");
 
 /// Engine version and source revision.
-pub const BUILD_VERSION: &str =
-    concat!(env!("CARGO_PKG_VERSION"), " (git ", env!("DEFT_GIT_REVISION"), ")");
+pub const BUILD_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (git ",
+    env!("DEFT_GIT_REVISION"),
+    ")"
+);

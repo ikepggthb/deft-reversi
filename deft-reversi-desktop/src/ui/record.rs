@@ -157,9 +157,9 @@ impl RootView {
                 .cursor_pointer()
                 .when(current, |el| el.bg(theme::selected()))
                 .hover(|style| style.bg(theme::hover()))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.run(Command::GoTo(i), cx)
-                }))
+                .on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.run(Command::GoTo(i), cx)),
+                )
                 .child(
                     div()
                         .w(px(18.))

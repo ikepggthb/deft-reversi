@@ -182,7 +182,8 @@ impl Analyzer {
             .legal_moves()
             .map(|square| {
                 let action = Action::Place(square);
-                let find = |values: &[MoveValue]| values.iter().find(|v| v.action == action).cloned();
+                let find =
+                    |values: &[MoveValue]| values.iter().find(|v| v.action == action).cloned();
                 match running.and_then(|r| find(&r.values)) {
                     Some(value) => ShownMove {
                         action,
@@ -611,7 +612,7 @@ impl Analyzer {
                     action,
                     score,
                     reading: report.reading,
-                        provisional: false,
+                    provisional: false,
                 });
                 sort_best_first(&mut running.values);
                 if running
@@ -785,14 +786,16 @@ mod tests {
             assert!(effects.is_empty());
             assert_eq!(a.searching_level(start), Some(Some(level)));
             // f5 is the best move; each value shows as soon as it is read.
-            let score = if action == place("f5") { i32::from(level) } else { -1 };
+            let score = if action == place("f5") {
+                i32::from(level)
+            } else {
+                -1
+            };
             assert!(a.on_finished(id, report(score)));
             let shown = a.moves(start);
-            assert!(
-                shown
-                    .iter()
-                    .any(|m| m.action == action && m.fresh && m.value.as_ref().unwrap().score == score)
-            );
+            assert!(shown.iter().any(|m| m.action == action
+                && m.fresh
+                && m.value.as_ref().unwrap().score == score));
             searches += 1;
         }
         assert_eq!(levels, [1, 4, 8, 12, 16, 20]);
@@ -860,14 +863,27 @@ mod tests {
         effects.clear();
         a.stop(&mut effects);
         assert_eq!(effects, [Effect::MoveNow]);
-        a.on_finished(id, Report { score: None, ..empty_report() });
+        a.on_finished(
+            id,
+            Report {
+                score: None,
+                ..empty_report()
+            },
+        );
         let analysis = a.get(start).unwrap();
         // The position keeps level 1's value; the move read at level 4 says so.
         assert_eq!((analysis.level, analysis.report.score), (Some(1), Some(1)));
         assert_eq!(analysis.moves.len(), 4);
         let value = analysis.moves.iter().find(|v| v.action == first).unwrap();
         assert_eq!((value.score, value.reading), (9, Some(high)));
-        assert!(analysis.moves.iter().filter(|v| v.reading == Some(low)).count() == 3);
+        assert!(
+            analysis
+                .moves
+                .iter()
+                .filter(|v| v.reading == Some(low))
+                .count()
+                == 3
+        );
         // Stopped: nothing more until asked again.
         effects.clear();
         a.pump(start, &mut ids, &mut effects);

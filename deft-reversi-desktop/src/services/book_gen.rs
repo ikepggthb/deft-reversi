@@ -210,7 +210,6 @@ fn generate(
     })
 }
 
-
 /// `book repair`: the values from the links, without a search; then the
 /// work file and the book for play are written again.
 fn repair(editor: &mut BookEditor, work: &std::path::Path) -> Result<BookDone, String> {

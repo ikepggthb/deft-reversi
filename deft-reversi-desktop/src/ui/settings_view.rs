@@ -295,51 +295,49 @@ impl RootView {
             cx,
         );
 
-        let body = div()
-            .flex()
-            .flex_col()
-            .child(group(s.board_group))
-            .child(row(s.legal_moves, legal, None))
-            .child(row(s.candidate_values, candidate_values, None))
-            .child(row(s.flip_animation, animation, None))
-            .child(row(s.sound, sound, None))
-            .child(group(s.analysis))
-            .child(row(s.analysis_level, level, None))
-            .child(
-                div()
-                    .pl(px(14. + 170. + 12.))
-                    .pb(px(8.))
-                    .child(super::new_game::level_chart(s, settings.analysis.level, 400.)),
-            )
-            .child(row(s.loss_threshold, loss, Some(s.discs_or_more.into())))
-            .child(group(s.appearance))
-            .child(row(s.theme, theme_choice, None))
-            .child(row(s.language, language, None))
-            .child(group(s.book_group))
-            .child(row(s.book_file, book_file, book_state))
-            .child(row(s.book_use, book_use, None))
-            .child(
-                div()
-                    .pl(px(14.))
-                    .py(px(4.))
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(s.book_note),
-            )
-            .child(group(s.engine_group))
-            .child(row(s.threads, threads, Some(s.logical_cpus(cpus).into())))
-            .child(row(s.hash_table, tt, Some("MiB".into())))
-            .child(
-                div()
-                    .mt(px(14.))
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(format!(
-                        "{} · deft-reversi {}",
-                        crate::engine_loader::MODEL_FILE.trim_end_matches(".dpr2"),
-                        env!("CARGO_PKG_VERSION")
-                    )),
-            );
+        let body =
+            div()
+                .flex()
+                .flex_col()
+                .child(group(s.board_group))
+                .child(row(s.legal_moves, legal, None))
+                .child(row(s.candidate_values, candidate_values, None))
+                .child(row(s.flip_animation, animation, None))
+                .child(row(s.sound, sound, None))
+                .child(group(s.analysis))
+                .child(row(s.analysis_level, level, None))
+                .child(div().pl(px(14. + 170. + 12.)).pb(px(8.)).child(
+                    super::new_game::level_chart(s, settings.analysis.level, 400.),
+                ))
+                .child(row(s.loss_threshold, loss, Some(s.discs_or_more.into())))
+                .child(group(s.appearance))
+                .child(row(s.theme, theme_choice, None))
+                .child(row(s.language, language, None))
+                .child(group(s.book_group))
+                .child(row(s.book_file, book_file, book_state))
+                .child(row(s.book_use, book_use, None))
+                .child(
+                    div()
+                        .pl(px(14.))
+                        .py(px(4.))
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(s.book_note),
+                )
+                .child(group(s.engine_group))
+                .child(row(s.threads, threads, Some(s.logical_cpus(cpus).into())))
+                .child(row(s.hash_table, tt, Some("MiB".into())))
+                .child(
+                    div()
+                        .mt(px(14.))
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(format!(
+                            "{} · deft-reversi {}",
+                            crate::engine_loader::MODEL_FILE.trim_end_matches(".dpr2"),
+                            env!("CARGO_PKG_VERSION")
+                        )),
+                );
 
         // The title stays; the rest scrolls when the window is short.
         div()

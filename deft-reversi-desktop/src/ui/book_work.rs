@@ -6,6 +6,7 @@ use super::{
     theme,
     widgets::{self, Handler, caption, heading},
 };
+use crate::domain::History;
 use crate::{
     app::{Command, EngineStatus},
     services::{
@@ -14,7 +15,6 @@ use crate::{
     },
 };
 use deft_reversi_book::{BookEditor, Bound, GenerationStop, ReadLimits};
-use crate::domain::History;
 use deft_reversi_engine::{Action, Color, Position, StopHandle};
 use gpui::{Context, Div, FontWeight, PathPromptOptions, SharedString, div, prelude::*, px};
 use std::{
@@ -314,12 +314,7 @@ impl RootView {
                 .min_h(px(32.))
                 .child(div().w(px(130.)).flex_none().child(label))
                 .child(control)
-                .children(note.map(|n| {
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(n)
-                }))
+                .children(note.map(|n| div().text_xs().text_color(theme::text_muted()).child(n)))
         };
         // Settings change only between runs.
         let edit = |f: fn(&mut BookWork)| -> Handler {
@@ -468,9 +463,10 @@ impl RootView {
             edit(|w| w.max_plies = (w.max_plies + 1).min(60)),
             cx,
         );
-        let mut loss = |id: &'static str, value: u8, down: fn(&mut BookWork), up: fn(&mut BookWork)| {
-            widgets::stepper(id, value.to_string(), edit(down), edit(up), cx)
-        };
+        let mut loss =
+            |id: &'static str, value: u8, down: fn(&mut BookWork), up: fn(&mut BookWork)| {
+                widgets::stepper(id, value.to_string(), edit(down), edit(up), cx)
+            };
         let losses = div()
             .flex()
             .flex_row()
@@ -525,7 +521,9 @@ impl RootView {
         let engine_ready = *self.controller.engine() == EngineStatus::Ready;
         let ready = work.path.is_some()
             && engine_ready
-            && self.book_root().is_some_and(|(root, _)| !root.is_terminal());
+            && self
+                .book_root()
+                .is_some_and(|(root, _)| !root.is_terminal());
         let can_fix = engine_ready && editor.is_some_and(|e| !e.is_empty());
         let action = if running {
             widgets::button(
@@ -575,13 +573,11 @@ impl RootView {
             .child(action)
             .children(fix)
             .children(running.then(|| {
-                div()
-                    .text_color(theme::accent())
-                    .child(if work.fixing {
-                        s.book_fixing
-                    } else {
-                        s.book_generating
-                    })
+                div().text_color(theme::accent()).child(if work.fixing {
+                    s.book_fixing
+                } else {
+                    s.book_generating
+                })
             }))
             .children(progress.map(|p| div().text_color(theme::text_secondary()).child(p)));
 
@@ -611,34 +607,37 @@ impl RootView {
                 if rows.is_empty() {
                     caption(s.book_not_in)
                 } else {
-                    div().flex().flex_col().children(rows.into_iter().enumerate().map(
-                        |(i, (action, value, linked))| {
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .h(px(24.))
-                                .child(div().w(px(40.)).child(action_text(action)))
-                                .child(
-                                    div()
-                                        .w(px(60.))
-                                        .text_color(if linked {
-                                            theme::text()
-                                        } else {
-                                            theme::text_muted()
-                                        })
-                                        .child(value.unwrap_or_else(|| "–".into())),
-                                )
-                                .child(widgets::link(
-                                    ("book-link", i),
-                                    if linked { s.book_unlink } else { s.book_link },
-                                    widgets::handler(move |this, cx| {
-                                        this.set_link(action, !linked, cx)
-                                    }),
-                                    cx,
-                                ))
-                        },
-                    ))
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(rows.into_iter().enumerate().map(
+                            |(i, (action, value, linked))| {
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .h(px(24.))
+                                    .child(div().w(px(40.)).child(action_text(action)))
+                                    .child(
+                                        div()
+                                            .w(px(60.))
+                                            .text_color(if linked {
+                                                theme::text()
+                                            } else {
+                                                theme::text_muted()
+                                            })
+                                            .child(value.unwrap_or_else(|| "–".into())),
+                                    )
+                                    .child(widgets::link(
+                                        ("book-link", i),
+                                        if linked { s.book_unlink } else { s.book_link },
+                                        widgets::handler(move |this, cx| {
+                                            this.set_link(action, !linked, cx)
+                                        }),
+                                        cx,
+                                    ))
+                            },
+                        ))
                 }
             }
         };
@@ -665,9 +664,11 @@ impl RootView {
             ))
             .child(row(s.book_leaf, leaf, Some(s.book_leaf_note.into())))
             .child(div().mt(px(6.)).child(status))
-            .children(work.message.clone().map(|m| {
-                div().text_sm().text_color(theme::text_secondary()).child(m)
-            }))
+            .children(
+                work.message
+                    .clone()
+                    .map(|m| div().text_sm().text_color(theme::text_secondary()).child(m)),
+            )
             .child(
                 div()
                     .text_xs()

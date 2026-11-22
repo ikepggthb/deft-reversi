@@ -672,12 +672,21 @@ mod tests {
         play(&mut c, "e6");
         // The line studied is shown; the record is what is saved.
         assert_eq!(c.history().actions().len(), 3);
-        assert_eq!(c.history().actions()[1], Action::Place("f6".parse().unwrap()));
-        assert_eq!(c.game_record().actions()[1], Action::Place("d6".parse().unwrap()));
+        assert_eq!(
+            c.history().actions()[1],
+            Action::Place("f6".parse().unwrap())
+        );
+        assert_eq!(
+            c.game_record().actions()[1],
+            Action::Place("d6".parse().unwrap())
+        );
         // Leaving brings the record back where it was shown.
         c.apply(Command::SetStudy(false));
         assert!(!c.studying());
-        assert_eq!(c.history().actions()[1], Action::Place("d6".parse().unwrap()));
+        assert_eq!(
+            c.history().actions()[1],
+            Action::Place("d6".parse().unwrap())
+        );
         assert_eq!(c.history().cursor(), 3);
     }
 

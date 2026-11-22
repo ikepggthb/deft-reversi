@@ -8,8 +8,7 @@ use crate::{
         player::MOVE_TIMES,
         settings::{
             AiChoice, Animation, BookSettings, GRAPH_HEIGHTS, ManualMode, NewGameForm, SideForm,
-            TT_SIZES_MIB,
-            ThemeChoice,
+            TT_SIZES_MIB, ThemeChoice,
         },
     },
     i18n::Lang,

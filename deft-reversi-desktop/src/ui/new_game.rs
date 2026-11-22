@@ -550,13 +550,7 @@ pub(super) fn level_chart(s: &Strings, level: u8, width: f32) -> Div {
                     .child("1"),
             )
             .child(strip)
-            .child(
-                div()
-                    .mt(px(6.))
-                    .flex()
-                    .flex_col()
-                    .children(rows),
-            )
+            .child(div().mt(px(6.)).flex().flex_col().children(rows))
     }
 }
 
