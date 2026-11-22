@@ -45,6 +45,9 @@ pub struct TrainArgs {
     /// See `export --shrink`.
     #[arg(long, default_value_t = 32.0)]
     shrink: f32,
+    /// See `export --no-shrink-stones`.
+    #[arg(long)]
+    no_shrink_stones: Option<StoneRange>,
     #[arg(long, default_value_t = 1)]
     seed: u64,
     /// Keep a pattern state and its mirror image apart (as before): by
@@ -88,6 +91,11 @@ pub struct ExportArgs {
     /// is multiplied by n / (n + shrink).
     #[arg(long, default_value_t = 32.0)]
     shrink: f32,
+    /// Disc counts exported without shrinking: phases whose data holds
+    /// every position of their disc count (Egaroucid's enumerated openings),
+    /// where a rarely used weight is no less reliable than another.
+    #[arg(long)]
+    no_shrink_stones: Option<StoneRange>,
 }
 
 /// What a checkpoint must match to resume.
@@ -197,6 +205,7 @@ pub fn run(args: TrainArgs) -> Result<()> {
         work: args.work.clone(),
         out: args.out.clone(),
         shrink: args.shrink,
+        no_shrink_stones: args.no_shrink_stones,
     })
 }
 
@@ -346,10 +355,15 @@ pub fn export(args: &ExportArgs) -> Result<()> {
     for stones in 4..=63u8 {
         if let Some(c) = read_checkpoint(&checkpoint_path(&args.work, stones))? {
             let p = usize::from(stones) - 4;
+            let shrink = if args.no_shrink_stones.is_some_and(|r| r.contains(stones)) {
+                0.0
+            } else {
+                args.shrink
+            };
             match c.weights {
-                Weights::Linear(w) => trained[p] = Some(w.export(args.shrink)),
+                Weights::Linear(w) => trained[p] = Some(w.export(shrink)),
                 Weights::Pen(w) | Weights::PenOnly(w) => {
-                    let (linear, network) = w.export(args.shrink);
+                    let (linear, network) = w.export(shrink);
                     trained[p] = Some(linear);
                     networks[p] = Some(network);
                 }
@@ -440,6 +454,7 @@ mod tests {
             l2: 1e-4,
             huber_delta: 4.0,
             shrink: 32.0,
+            no_shrink_stones: None,
             seed: 1,
             no_mirror: false,
             pen: false,
@@ -474,6 +489,24 @@ mod tests {
         let replaced = crate::test_records(&mut random, 20, 250);
         rd::write(&rd::path(&data, 20, "train"), &replaced);
         assert!(run(args(3)).is_err());
+
+        // Phases in --no-shrink-stones export as with --shrink 0.
+        let export_to = |out: &str, shrink, no_shrink_stones| {
+            export(&ExportArgs {
+                work: dir.join("work"),
+                out: dir.join(out),
+                shrink,
+                no_shrink_stones,
+            })
+            .unwrap();
+            fs::read(dir.join(out)).unwrap()
+        };
+        let plain = export_to("k0.dpr2", 0.0, None);
+        assert_ne!(export_to("k1000.dpr2", 1000.0, None), plain);
+        assert_eq!(
+            export_to("k1000-none.dpr2", 1000.0, Some("20..=21".parse().unwrap())),
+            plain
+        );
 
         // So does a PEN run, with a partial last batch and decay.
         let pen = |epochs, work: &str| TrainArgs {

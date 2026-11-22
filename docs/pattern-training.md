@@ -100,6 +100,7 @@ $T mpc -m runs/NAME/model.dpr2 --data $D --out runs/NAME/mpc --positions 1000 -t
 | `--l2` | 1e-4 | 重みに比例して勾配に足す量 |
 | `--huber-delta` | 4 | これを超える誤差（石）は線形に数える |
 | `--shrink` | 32 | 書き出し時、n 回使われた重みを n / (n + shrink) 倍する（表の平均へ。合法手数差は隣の重みへ） |
+| `--no-shrink-stones` | なし | この石数の段階は縮めずに書き出す（その石数の全局面を学習する序盤用） |
 | `--no-mirror` | なし | 鏡像どうしで重みを共有しない |
 | `--pen-decay` | 0 | `--pen` の MLP の重みの減衰（AdamW）。0.01・0.1 は誤差がわずかに増えた |
 | `--seed` | 1 | `--limit` の選択とシャッフルの乱数 |
