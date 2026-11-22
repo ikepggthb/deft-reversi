@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shrink の目的と v3 評価関数の 3 つの問題・修正解説</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --text: #1e293b;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --accent: #2563eb;
+    --accent-soft: #eff6ff;
+    --bad: #dc2626;
+    --bad-soft: #fef2f2;
+    --bad-border: #fecaca;
+    --good: #059669;
+    --good-soft: #ecfdf5;
+    --good-border: #a7f3d0;
+    --warn: #d97706;
+    --warn-soft: #fffbeb;
+    --code-bg: #f1f5f9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", system-ui, -apple-system, sans-serif;
+    line-height: 1.75;
+  }
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  header {
+    background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+    color: #fff;
+    padding: 32px 36px;
+    border-radius: 16px;
+    margin-bottom: 28px;
+    box-shadow: 0 10px 25px rgba(37, 99, 235, 0.16);
+  }
+  header h1 {
+    margin: 0 0 10px;
+    font-size: 1.75rem;
+    line-height: 1.35;
+  }
+  header p {
+    margin: 0;
+    color: #dbeafe;
+    font-size: 0.98rem;
+  }
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 24px;
+    margin-bottom: 28px;
+  }
+  .toc-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+  }
+  .toc ol {
+    margin: 0;
+    padding-left: 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 6px 24px;
+  }
+  .toc a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .toc a:hover { text-decoration: underline; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  }
+  h2 {
+    margin: 0 0 16px;
+    font-size: 1.35rem;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    vertical-align: middle;
+  }
+  .badge-blue { background: var(--accent-soft); color: var(--accent); }
+  .badge-red { background: var(--bad-soft); color: var(--bad); }
+  .badge-green { background: var(--good-soft); color: var(--good); }
+  h3 {
+    margin: 22px 0 10px;
+    font-size: 1.08rem;
+    color: #0f172a;
+  }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    color: #0f172a;
+  }
+  .callout {
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    border-left: 4px solid;
+  }
+  .callout-blue { background: var(--accent-soft); border-color: var(--accent); }
+  .callout-red { background: var(--bad-soft); border-color: var(--bad); }
+  .callout-green { background: var(--good-soft); border-color: var(--good); }
+  .callout-warn { background: var(--warn-soft); border-color: var(--warn); }
+  .callout strong { display: block; margin-bottom: 4px; }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  @media (max-width: 720px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    section { padding: 20px; }
+    header { padding: 24px 20px; }
+  }
+  .box {
+    border-radius: 10px;
+    padding: 16px 18px;
+    border: 1px solid var(--border);
+  }
+  .box-bad { background: var(--bad-soft); border-color: var(--bad-border); }
+  .box-good { background: var(--good-soft); border-color: var(--good-border); }
+  .box h4 {
+    margin: 0 0 8px;
+    font-size: 0.98rem;
+  }
+  .box-bad h4 { color: var(--bad); }
+  .box-good h4 { color: var(--good); }
+  .diagram {
+    margin: 18px 0;
+    padding: 16px;
+    background: #fcfdff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    text-align: center;
+    overflow-x: auto;
+  }
+  .diagram svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+  }
+  .caption {
+    margin-top: 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .formula {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 12px 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.94rem;
+    text-align: center;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.92rem;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f1f5f9;
+    font-weight: 700;
+  }
+  .ref {
+    font-size: 0.84rem;
+    color: var(--muted);
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1><code>shrink</code> を入れた理由と、v3 評価関数の 3 つの問題・修正解説</h1>
+  <p>旧学習器（<code>8cc381a</code> / v3 モデル）で起きていた重みの壊れ方と、現行学習器（<code>e17e889</code> / v4 対応）での解消方法を図解でまとめます。</p>
+</header>
+
+<nav class="toc">
+  <div class="toc-title">目次</div>
+  <ol>
+    <li><a href="#sec-shrink">なぜ <code>shrink</code> をつけたのか？</a></li>
+    <li><a href="#sec-recenter">対策①：線形と PEN の ±25 石綱引き → 中心化（<code>recenter</code>）</a></li>
+    <li><a href="#sec-mirror">対策②：鏡像非対称 → 学習時からの重み・埋め込み共有</a></li>
+    <li><a href="#sec-mobility">対策③：合法手数差の両端 0 落ち → 隣接アンカー補間・外挿</a></li>
+    <li><a href="#sec-summary">まとめ比較（Before / After）と奇数-偶数差への効果</a></li>
+  </ol>
+</nav>
+
+<!-- ==================== Section 1: shrink ==================== -->
+<section id="sec-shrink">
+  <h2><span class="badge badge-blue">基礎</span> 1. なぜ <code>shrink</code> をつけたのか？</h2>
+
+  <p>パターン評価には、1 フェーズあたり <strong>298,161 個</strong> のパターン状態（10 マスのパターンは <code>3¹⁰ = 59,049</code> 通り）があります。全データで学習しても、その中には <strong>1〜数回しか出てこない珍しい形</strong> が大量に含まれます。</p>
+
+  <p>もし珍しい形がたまたま「+40 石の大勝ち局」に 1 回だけ出た場合、重みはその 1 回の結果（ノイズ）をそのまま覚えてしまい、未知の局面で極端な点数を出してしまいます（過学習）。</p>
+
+  <div class="formula">
+    書き出し時の重み = 縮小先 + (学習した重み − 縮小先) × <strong style="color:#2563eb;">n / (n + k)</strong>
+    &nbsp;&nbsp;（n = 出現回数, k = shrink 既定 32）
+  </div>
+
+  <div class="diagram">
+    <svg viewBox="0 0 760 270" width="760" height="270" xmlns="http://www.w3.org/2000/svg">
+      <!-- Left: Curve -->
+      <rect x="10" y="10" width="430" height="250" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+      <text x="225" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">出現回数 n と信用度 n / (n + 32)</text>
+
+      <!-- Axes -->
+      <line x1="65" y1="215" x2="415" y2="215" stroke="#94a3b8" stroke-width="1.5"/>
+      <line x1="65" y1="55" x2="65" y2="215" stroke="#94a3b8" stroke-width="1.5"/>
+      <!-- Grid lines -->
+      <line x1="65" y1="135" x2="415" y2="135" stroke="#e2e8f0" stroke-dasharray="4 4"/>
+      <line x1="65" y1="55" x2="415" y2="55" stroke="#e2e8f0" stroke-dasharray="4 4"/>
+      <!-- Y labels -->
+      <text x="56" y="219" text-anchor="end" font-size="11" fill="#64748b">0%</text>
+      <text x="56" y="139" text-anchor="end" font-size="11" fill="#64748b">50%</text>
+      <text x="56" y="59" text-anchor="end" font-size="11" fill="#64748b">100%</text>
+      <!-- X labels (log-like spacing: 0, 1, 10, 32, 100, 1000) -->
+      <text x="65" y="233" text-anchor="middle" font-size="11" fill="#64748b">0</text>
+      <text x="115" y="233" text-anchor="middle" font-size="11" fill="#64748b">1</text>
+      <text x="175" y="233" text-anchor="middle" font-size="11" fill="#64748b">10</text>
+      <text x="240" y="233" text-anchor="middle" font-size="11" fill="#2563eb" font-weight="700">32</text>
+      <text x="315" y="233" text-anchor="middle" font-size="11" fill="#64748b">100</text>
+      <text x="395" y="233" text-anchor="middle" font-size="11" fill="#64748b">1000+</text>
+      <text x="240" y="251" text-anchor="middle" font-size="11" fill="#475569">学習データでの出現回数 n</text>
+
+      <!-- Curve path -->
+      <path d="M 65 215 Q 90 212 115 210 Q 145 196 175 177 Q 208 156 240 135 Q 278 106 315 94 Q 355 72 395 60" fill="none" stroke="#2563eb" stroke-width="3"/>
+      <!-- Points -->
+      <circle cx="115" cy="210" r="4.5" fill="#dc2626"/>
+      <text x="122" y="202" font-size="11" fill="#dc2626" font-weight="700">n=1: 3%</text>
+      <circle cx="240" cy="135" r="4.5" fill="#2563eb"/>
+      <text x="248" y="148" font-size="11" fill="#2563eb" font-weight="700">n=32: 50%</text>
+      <circle cx="395" cy="60" r="4.5" fill="#059669"/>
+      <text x="385" y="79" text-anchor="end" font-size="11" fill="#059669" font-weight="700">n=1000: 97%</text>
+
+      <!-- Right: Concrete example -->
+      <rect x="460" y="10" width="290" height="250" rx="10" fill="#f8fafc" stroke="#e2e8f0"/>
+      <text x="605" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">具体例（k = 32）</text>
+
+      <rect x="478" y="50" width="254" height="58" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="490" y="70" font-size="12" font-weight="700" fill="#dc2626">n = 1 回だけ出た形（たまたま +10石）</text>
+      <text x="490" y="92" font-size="12" fill="#334155">1/33 だけ信用 → 平均から +0.3石 に抑える</text>
+
+      <rect x="478" y="120" width="254" height="58" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="490" y="140" font-size="12" font-weight="700" fill="#2563eb">n = 32 回出た形</text>
+      <text x="490" y="162" font-size="12" fill="#334155">半分（50%）信用 → 慎重に採用</text>
+
+      <rect x="478" y="190" width="254" height="58" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
+      <text x="490" y="210" font-size="12" font-weight="700" fill="#059669">n = 10,000 回出た形</text>
+      <text x="490" y="232" font-size="12" fill="#334155">99.7% 信用 → 学習値をそのまま使う</text>
+    </svg>
+    <div class="caption">図1：<code>shrink</code> は「見た回数が少ない重みほど、安全な基準値（縮小先）へ寄せる」仕組み。</div>
+  </div>
+
+  <div class="callout callout-warn">
+    <strong>ここが落とし穴だった！</strong>
+    <code>shrink</code> 自体は「希少パターンの過学習を防ぐ」ための正しい仕組みです。<br>
+    しかし旧学習器では <strong>「どこに向かって縮めるか（縮小先）」がズレていた</strong> ため、次の対策①と対策③のバグを引き起こしました。
+  </div>
+</section>
+
+<!-- ==================== Section 2: Drift & Recenter ==================== -->
+<section id="sec-recenter">
+  <h2><span class="badge badge-green">対策①</span> 2. 線形と PEN の ±25 石綱引き → 中心化（<code>recenter</code>）</h2>
+
+  <p>評価値は <code>バイアス + 線形パターン(44個) + 合法手数差 + PEN出力</code> の合計です。すべての局面で同じ個数の重みを足すため、<strong>線形テーブル全体に +25 石、PEN 全体に −25 石を足しても合計の予測値は変わりません</strong>。AdaGrad と Adam を同時に回すうち、実際に石数 41〜56 で <strong>±25〜31 石もの綱引き</strong> が起きていました。</p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 760 320" width="760" height="320" xmlns="http://www.w3.org/2000/svg">
+      <!-- BEFORE -->
+      <rect x="10" y="10" width="355" height="300" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="187" y="36" text-anchor="middle" font-size="14" font-weight="700" fill="#dc2626">Before（旧学習器 8cc381a / v3）</text>
+
+      <!-- Zero line -->
+      <line x1="187" y1="56" x2="187" y2="210" stroke="#94a3b8" stroke-dasharray="4 4"/>
+      <text x="187" y="52" text-anchor="middle" font-size="11" fill="#64748b">0石</text>
+
+      <!-- Usual position -->
+      <text x="26" y="75" font-size="12" font-weight="700" fill="#1e293b">よくある局面（石数56の実測例）</text>
+      <rect x="187" y="84" width="135" height="24" rx="4" fill="#ef4444"/>
+      <text x="254" y="100" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">線形 +31.0石</text>
+      <rect x="56" y="112" width="131" height="24" rx="4" fill="#3b82f6"/>
+      <text x="121" y="128" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">PEN −30.2石</text>
+      <text x="330" y="114" font-size="11" fill="#334155">合計</text>
+      <text x="330" y="128" font-size="12" font-weight="700" fill="#0f172a">+0.8</text>
+
+      <!-- Rare pattern -->
+      <text x="26" y="164" font-size="12" font-weight="700" fill="#dc2626">探索中に希少パターンを踏むと…</text>
+      <rect x="187" y="173" width="90" height="24" rx="4" fill="#fca5a5" stroke="#dc2626" stroke-dasharray="3 2"/>
+      <text x="232" y="189" text-anchor="middle" font-size="11" font-weight="700" fill="#991b1b">線形 +21石 (0へ縮む!)</text>
+      <rect x="56" y="201" width="131" height="24" rx="4" fill="#3b82f6"/>
+      <text x="121" y="217" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">PEN −30.2石</text>
+
+      <rect x="26" y="238" width="323" height="58" rx="8" fill="#ffffff" stroke="#fecaca"/>
+      <text x="187" y="259" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">打ち消しが崩壊 → 評価値がガクッと跳ねる！</text>
+      <text x="187" y="280" text-anchor="middle" font-size="11" fill="#475569">線形は 0 へ、PEN 埋め込みは初期値 0.125 へ縮むため</text>
+
+      <!-- Arrow -->
+      <path d="M 372 160 L 392 160" stroke="#475569" stroke-width="2.5" marker-end="url(#arr)"/>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+        </marker>
+      </defs>
+
+      <!-- AFTER -->
+      <rect x="400" y="10" width="350" height="300" rx="10" fill="#ecfdf5" stroke="#a7f3d0"/>
+      <text x="575" y="36" text-anchor="middle" font-size="14" font-weight="700" fill="#059669">After（新学習器 e17e889）</text>
+
+      <!-- Step boxes -->
+      <rect x="418" y="54" width="314" height="56" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+      <text x="430" y="74" font-size="12" font-weight="700" fill="#059669">① 毎エポック末に PEN 平均出力を bias へ移動</text>
+      <text x="430" y="95" font-size="11" fill="#334155">PEN の平均出力 ≈ 0石 に戻る（予測値は不変）</text>
+
+      <rect x="418" y="122" width="314" height="56" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+      <text x="430" y="142" font-size="12" font-weight="700" fill="#059669">② 各パターン表・手数差表の平均を bias へ移動</text>
+      <text x="430" y="163" font-size="11" fill="#334155">全テーブルの重み付き平均 = 0石 に揃う（予測値は不変）</text>
+
+      <rect x="418" y="190" width="314" height="56" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+      <text x="430" y="210" font-size="12" font-weight="700" fill="#059669">③ PEN 埋め込みは「表の平均埋め込み」へ shrink</text>
+      <text x="430" y="231" font-size="11" fill="#334155">初期値 0.125 ではなく、学習後の平均状態へ寄せる</text>
+
+      <rect x="418" y="256" width="314" height="40" rx="8" fill="#059669"/>
+      <text x="575" y="281" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">希少パターンを踏んでも「平均」に寄るだけで跳ねない！</text>
+    </svg>
+    <div class="caption">図2：予測値を一切変えずに各テーブルの平均を <code>bias</code>（定数項）へ移すことで、<code>shrink</code> 先が常に「平均的な状態」になる。</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="box box-bad">
+      <h4>旧学習器の問題</h4>
+      <ul>
+        <li>線形表の平均が 0 から大きくズレたまま <code>0</code> へ縮小していた。</li>
+        <li>PEN の平均出力が ±25〜31 石までドリフトしていた。</li>
+        <li>PEN 埋め込みを誰も残っていない初期値 <code>0.125</code> へ縮小していた。</li>
+      </ul>
+    </div>
+    <div class="box box-good">
+      <h4>新学習器の修正内容</h4>
+      <ul>
+        <li><code>PhaseWeights::recenter()</code>：各表の使用回数重み付き平均を <code>bias</code> へ移動（4 回転分なので <code>4×平均</code> を足す）。</li>
+        <li><code>PenWeights::train()</code>：PEN のエポック平均出力を <code>B2</code> から <code>linear.bias</code> へ移動（<code>bias</code> 自体は shrink しない）。</li>
+        <li><code>PenWeights::mean_embeddings()</code>：希少な埋め込みを各表の平均埋め込みへ縮小。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="ref">実装箇所：<code>deft-reversi-train/src/phase.rs</code>（<code>recenter</code>）、<code>deft-reversi-train/src/pen.rs</code>（<code>train</code>, <code>mean_embeddings</code>, <code>export</code>）</div>
+</section>
+
+<!-- ==================== Section 3: Mirror ==================== -->
+<section id="sec-mirror">
+  <h2><span class="badge badge-green">対策②</span> 3. 鏡像非対称 → 学習時からの重み・埋め込み共有</h2>
+
+  <p>リバーシの盤面は「4 方向の回転（0° / 90° / 180° / 270°）」と「左右反転（鏡像）」を組み合わせた <strong>8 通りがまったく同じ価値</strong> を持ちます。エンジンは 4 回転で同じ表を引くため回転対称は保たれていましたが、旧学習器は <strong>左右反転を別々の重みとして学習</strong> していたため、同じ局面でも反転するだけで平均 1 石・最大 5 石ズレていました。</p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 760 250" width="760" height="250" xmlns="http://www.w3.org/2000/svg">
+      <!-- Before -->
+      <rect x="10" y="10" width="340" height="230" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="180" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#dc2626">Before（別々に学習）</text>
+
+      <!-- Board A -->
+      <rect x="42" y="52" width="84" height="84" rx="6" fill="#15803d" stroke="#166534" stroke-width="2"/>
+      <circle cx="63" cy="73" r="10" fill="#0f172a"/>
+      <circle cx="84" cy="73" r="10" fill="#ffffff"/>
+      <circle cx="63" cy="94" r="10" fill="#ffffff"/>
+      <text x="84" y="152" text-anchor="middle" font-size="11" fill="#334155">元の形 (state i)</text>
+
+      <!-- Mirror line -->
+      <line x1="180" y1="52" x2="180" y2="140" stroke="#94a3b8" stroke-dasharray="4 3" stroke-width="1.5"/>
+      <text x="180" y="154" text-anchor="middle" font-size="10" fill="#64748b">左右反転</text>
+
+      <!-- Board B -->
+      <rect x="234" y="52" width="84" height="84" rx="6" fill="#15803d" stroke="#166534" stroke-width="2"/>
+      <circle cx="297" cy="73" r="10" fill="#0f172a"/>
+      <circle cx="276" cy="73" r="10" fill="#ffffff"/>
+      <circle cx="297" cy="94" r="10" fill="#ffffff"/>
+      <text x="276" y="152" text-anchor="middle" font-size="11" fill="#334155">鏡像 (state m)</text>
+
+      <!-- Separate weights -->
+      <rect x="36" y="172" width="110" height="46" rx="6" fill="#ffffff" stroke="#fecaca"/>
+      <text x="91" y="191" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">weight[i]</text>
+      <text x="91" y="208" text-anchor="middle" font-size="11" fill="#334155">+2.4 石</text>
+
+      <rect x="214" y="172" width="110" height="46" rx="6" fill="#ffffff" stroke="#fecaca"/>
+      <text x="269" y="191" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">weight[m]</text>
+      <text x="269" y="208" text-anchor="middle" font-size="11" fill="#334155">+0.8 石 (ズレ!)</text>
+      <text x="180" y="200" text-anchor="middle" font-size="14" font-weight="700" fill="#dc2626">≠</text>
+
+      <!-- Arrow -->
+      <path d="M 360 125 L 394 125" stroke="#475569" stroke-width="2.5" marker-end="url(#arr)"/>
+
+      <!-- After -->
+      <rect x="405" y="10" width="345" height="230" rx="10" fill="#ecfdf5" stroke="#a7f3d0"/>
+      <text x="577" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#059669">After（代表スロット min(i, m) を共有）</text>
+
+      <!-- Board A2 -->
+      <rect x="438" y="52" width="76" height="76" rx="6" fill="#15803d" stroke="#166534" stroke-width="2"/>
+      <circle cx="457" cy="71" r="9" fill="#0f172a"/>
+      <circle cx="476" cy="71" r="9" fill="#ffffff"/>
+      <circle cx="457" cy="90" r="9" fill="#ffffff"/>
+      <text x="476" y="142" text-anchor="middle" font-size="11" fill="#334155">state i</text>
+
+      <!-- Board B2 -->
+      <rect x="640" y="52" width="76" height="76" rx="6" fill="#15803d" stroke="#166534" stroke-width="2"/>
+      <circle cx="697" cy="71" r="9" fill="#0f172a"/>
+      <circle cx="678" cy="71" r="9" fill="#ffffff"/>
+      <circle cx="697" cy="90" r="9" fill="#ffffff"/>
+      <text x="678" y="142" text-anchor="middle" font-size="11" fill="#334155">state m</text>
+
+      <!-- Arrows merging to single shared slot -->
+      <path d="M 476 148 L 540 172" stroke="#059669" stroke-width="2"/>
+      <path d="M 678 148 L 614 172" stroke="#059669" stroke-width="2"/>
+
+      <rect x="452" y="172" width="250" height="54" rx="8" fill="#059669"/>
+      <text x="577" y="194" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">1 つの重み &amp; 埋め込みを共有</text>
+      <text x="577" y="214" text-anchor="middle" font-size="11" fill="#d1fae5">書き出し時に i と m の両方に同じ値をコピー</text>
+    </svg>
+    <div class="caption">図3：学習中は <code>min(i, mirror[i])</code> に統合して更新し、書き出し時に両方へ同じ値を展開する（エンジン側は変更不要）。</div>
+  </div>
+
+  <ul>
+    <li><strong>完全対称化</strong>：8 通りの対称形すべてで評価値が完全に一致します（鏡像差：平均 1.03 石 → <strong>0.00 石</strong>）。</li>
+    <li><strong>実質データ量が約 2 倍</strong>：同じ重みを左右反転の両方から学習するため、出現回数 <code>n</code> も約 2 倍になり、<code>shrink</code> による減衰も減って精度が上がります。</li>
+    <li><strong>二重更新の防止</strong>：1 つの局面内で同じ共有スロットが複数回読まれた場合は、勾配を合計してから 1 回だけ AdaGrad 更新します（PEN 埋め込みも同様に対応）。</li>
+  </ul>
+  <div class="ref">実装箇所：<code>deft-reversi-engine/src/evaluation/mod.rs</code>（<code>mirror_weights</code>）、<code>deft-reversi-train/src/phase.rs</code>（<code>shared_weights</code>, <code>export</code>）、<code>deft-reversi-train/src/pen.rs</code>（<code>backward</code>, <code>export</code>）</div>
+</section>
+
+<!-- ==================== Section 4: Mobility ==================== -->
+<section id="sec-mobility">
+  <h2><span class="badge badge-green">対策③</span> 4. 合法手数差の両端 0 落ち → 隣接アンカー補間・外挿</h2>
+
+  <p>合法手数差（<code>自分の合法手数 − 相手の合法手数</code>）は、差が大きいほど自分の有利（または不利）を表す単調なテーブルです。ところが旧学習器では、出現回数の少ない両端（差 ±15〜±20 以上）も一律 <code>0</code> へ <code>shrink</code> していたため、<strong>大有利なはずの局面で突然 0 点に落ちる「崖」</strong> ができていました。</p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 760 280" width="760" height="280" xmlns="http://www.w3.org/2000/svg">
+      <rect x="10" y="10" width="740" height="260" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+      <text x="380" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">合法手数差テーブルの比較（イメージ：石数 20 付近の実測傾向）</text>
+
+      <!-- Axes -->
+      <line x1="70" y1="145" x2="700" y2="145" stroke="#94a3b8" stroke-width="1.5"/>
+      <line x1="385" y1="55" x2="385" y2="235" stroke="#94a3b8" stroke-width="1.5"/>
+      <!-- Labels -->
+      <text x="698" y="162" text-anchor="end" font-size="11" fill="#475569">手数差 (自分 − 相手)</text>
+      <text x="378" y="64" text-anchor="end" font-size="11" fill="#475569">+15石</text>
+      <text x="378" y="140" text-anchor="end" font-size="11" fill="#475569">0石</text>
+      <text x="378" y="232" text-anchor="end" font-size="11" fill="#475569">−15石</text>
+
+      <!-- X ticks: -25(110), -15(220), 0(385), +15(550), +25(660) -->
+      <text x="110" y="162" text-anchor="middle" font-size="11" fill="#64748b">−25</text>
+      <text x="220" y="162" text-anchor="middle" font-size="11" fill="#64748b">−15</text>
+      <text x="550" y="162" text-anchor="middle" font-size="11" fill="#64748b">+15</text>
+      <text x="660" y="162" text-anchor="middle" font-size="11" fill="#64748b">+25</text>
+
+      <!-- Anchor boundary lines -->
+      <line x1="220" y1="55" x2="220" y2="235" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+      <line x1="550" y1="55" x2="550" y2="235" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+      <text x="220" y="248" text-anchor="middle" font-size="10" fill="#059669">最外アンカー (n ≥ 32)</text>
+      <text x="550" y="248" text-anchor="middle" font-size="10" fill="#059669">最外アンカー (n ≥ 32)</text>
+
+      <!-- Old curve (red dashed): drops to 0 at extremes! -->
+      <path d="M 85 145 L 165 145 L 220 218 L 385 145 L 550 68 L 605 145 L 685 145"
+            fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 4"/>
+      <text x="615" y="132" font-size="11" font-weight="700" fill="#dc2626">旧: 0 に急落する崖！</text>
+      <text x="105" y="132" font-size="11" font-weight="700" fill="#dc2626">旧: 0 に急落！</text>
+
+      <!-- New curve (green solid): flat extension beyond anchors -->
+      <path d="M 85 218 L 220 218 L 385 145 L 550 68 L 685 68"
+            fill="none" stroke="#059669" stroke-width="3"/>
+      <circle cx="220" cy="218" r="5" fill="#059669"/>
+      <circle cx="550" cy="68" r="5" fill="#059669"/>
+      <text x="618" y="60" font-size="11" font-weight="700" fill="#059669">新: 外側の値を維持</text>
+      <text x="150" y="210" font-size="11" font-weight="700" fill="#059669">新: 外側の値を維持</text>
+    </svg>
+    <div class="caption">図4：<code>mobility_targets()</code> により、出現回数の少ない端のビンは「0」ではなく「最も外側の信頼できるアンカーの値」に向かって縮小する。</div>
+  </div>
+
+  <ul>
+    <li><strong>アンカーの選定</strong>：出現回数が <code>shrink</code>（既定 32 回）以上のビンを「信頼できるアンカー」とする。</li>
+    <li><strong>外側の領域</strong>：最も外側のアンカーの値をそのまま縮小先にする（崖が消える）。</li>
+    <li><strong>アンカー間の希少ビン</strong>：両隣のアンカーを結ぶ直線（線形補間）を縮小先にする。</li>
+  </ul>
+  <div class="ref">実装箇所：<code>deft-reversi-train/src/phase.rs</code>（<code>mobility_targets</code>, <code>export</code>）</div>
+</section>
+
+<!-- ==================== Section 5: Summary ==================== -->
+<section id="sec-summary">
+  <h2><span class="badge badge-blue">まとめ</span> 5. Before / After 比較と奇数-偶数差への効果</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 20%;">項目</th>
+        <th style="width: 38%;">Before（旧学習器 <code>8cc381a</code> / v3）</th>
+        <th style="width: 42%;">After（新学習器 <code>e17e889</code> / v4 対応）</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>線形 vs PEN の基準ズレ</strong></td>
+        <td>±20〜31 石で綱引き。希少パターンで <code>0</code> や <code>0.125</code> へ shrink すると相殺が崩れて跳ねる。</td>
+        <td>毎エポック末に <code>recenter</code> で各表の平均と PEN 平均出力を <code>bias</code> へ移動。埋め込みは表の平均へ shrink。</td>
+      </tr>
+      <tr>
+        <td><strong>鏡像（左右反転）</strong></td>
+        <td>別々に学習。左右反転だけで平均 1.03 石・最大 5.04 石ブレる。</td>
+        <td>代表スロット <code>min(i, mirror[i])</code> を学習時から共有。8 対称すべてで差 <strong>0.00 石</strong>。</td>
+      </tr>
+      <tr>
+        <td><strong>合法手数差の両端</strong></td>
+        <td>出現回数の少ない端が <code>0</code> に急落（10 石以上の不連続な崖）。</td>
+        <td>信頼できる隣接アンカーから線形補間・水平外挿した値へ shrink し、崖を解消。</td>
+      </tr>
+      <tr>
+        <td><strong>奇数-偶数差への影響</strong></td>
+        <td>上の 3 つが生む外れ値を Minimax の max/min が拾い、線形モデルより差が広がっていた。</td>
+        <td>外れ値由来の余計な広がりは解消される（※評価誤差そのものによる約 1.8〜2.0 石の Minimax 偏りは原理上残る）。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-green">
+    <strong>4 フェーズでの先行テスト結果（コミット <code>e17e889</code> 記録より）</strong>
+    石数 30 / 46 / 50 / 51（400 万局面・4 エポック）の検証で、テスト MAE が <strong>0.07〜0.08 石改善</strong>、鏡像差が <strong>1.3 石（最大 17 石）→ 0 石</strong>、PEN の平均出力のズレが <strong>最大 ±12 石 → ±0.8 石以内</strong> まで抑えられました。
+  </div>
+</section>
+
+</div>
+</body>
+</html>
