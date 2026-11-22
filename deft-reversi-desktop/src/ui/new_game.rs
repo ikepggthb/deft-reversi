@@ -4,7 +4,7 @@ use super::{root::RootView, theme, widgets};
 use crate::{
     app::{Command, NewGame},
     domain::{
-        Preset, Strength,
+        Preset,
         player::MOVE_TIMES,
         settings::{AiChoice, ManualMode},
     },
@@ -12,16 +12,6 @@ use crate::{
 };
 use deft_reversi_engine::{Color, Position, ResultKind, Selectivity, level_reading};
 use gpui::{ClickEvent, Context, Div, FontWeight, Rgba, SharedString, div, prelude::*, px};
-
-/// How a strength reads in a short label: a preset's name, a level, or a
-/// time per move.
-pub(super) fn strength_label(s: &Strings, strength: Strength) -> SharedString {
-    match strength {
-        Strength::Preset(preset) => s.preset(preset).into(),
-        Strength::Level(level) => format!("Lv {level}").into(),
-        Strength::TimePerMove(limit) => s.seconds(limit.as_secs()).into(),
-    }
-}
 
 fn side_index(color: Color) -> usize {
     match color {
@@ -131,20 +121,12 @@ impl RootView {
                 .gap(px(16.))
                 .pt(px(12.))
                 .child(div().text_color(theme::text_secondary()).child(s.book_use))
-                .child(widgets::segmented(
+                .child(widgets::toggle(
                     "new-game-book",
-                    vec![
-                        (
-                            s.on.into(),
-                            book,
-                            widgets::handler(|this, _| this.new_game_book = true),
-                        ),
-                        (
-                            s.off.into(),
-                            !book,
-                            widgets::handler(|this, _| this.new_game_book = false),
-                        ),
-                    ],
+                    s.on,
+                    s.off,
+                    book,
+                    |this, on, _| this.new_game_book = on,
                     cx,
                 ))
         });
@@ -207,7 +189,7 @@ impl RootView {
                     .pr(px(6.))
                     .child(widgets::scroll_area(
                         "new-game-body",
-                        &self.new_game_scroll,
+                        &self.dialog_scroll,
                         body,
                         cx,
                     )),
@@ -471,93 +453,85 @@ const PHASE_ROW: f32 = 18.;
 
 /// How a level reads over the empties: a strip `width` wide and a table.
 pub(super) fn level_chart(s: &Strings, level: u8, width: f32) -> Div {
-    {
-        let phases = phases(level);
-        let strip = div()
+    let phases = phases(level);
+    let strip = div()
+        .flex()
+        .flex_row()
+        .h(px(10.))
+        .w(px(width))
+        .rounded(px(3.))
+        .overflow_hidden()
+        .children(phases.iter().map(|phase| {
+            let width = width * f32::from(phase.from - phase.to + 1) / 60.;
+            div()
+                .w(px(width))
+                .h_full()
+                .bg(reading_color(phase.reading))
+                .opacity(reading_opacity(phase.reading))
+        }));
+    let rows = phases.iter().map(|phase| {
+        let range = if phase.from == phase.to {
+            phase.from.to_string()
+        } else {
+            format!("{}–{}", phase.from, phase.to)
+        };
+        let (what, percent): (SharedString, SharedString) = match phase.reading {
+            ResultKind::Depth { depth, selectivity } => (
+                s.depth(depth).into(),
+                if selectivity == Selectivity::Full {
+                    s.no_pruning.into()
+                } else {
+                    format!("{}%", selectivity.percent()).into()
+                },
+            ),
+            ResultKind::Endgame {
+                selectivity: Selectivity::Full,
+            } => (s.exact.into(), "".into()),
+            ResultKind::Endgame { selectivity } => (
+                s.selective_endgame.into(),
+                format!("{}%", selectivity.percent()).into(),
+            ),
+        };
+        div()
             .flex()
             .flex_row()
-            .h(px(10.))
-            .w(px(width))
-            .rounded(px(3.))
-            .overflow_hidden()
-            .children(phases.iter().map(|phase| {
-                let width = width * f32::from(phase.from - phase.to + 1) / 60.;
+            .items_center()
+            .h(px(PHASE_ROW))
+            .text_xs()
+            .child(
                 div()
-                    .w(px(width))
-                    .h_full()
+                    .w(px(64.))
+                    .text_color(theme::text_muted())
+                    .child(range),
+            )
+            .child(
+                div()
+                    .size(px(8.))
+                    .mr(px(6.))
+                    .rounded(px(2.))
                     .bg(reading_color(phase.reading))
-                    .opacity(reading_opacity(phase.reading))
-            }));
-        let rows = phases.iter().map(|phase| {
-            let range = if phase.from == phase.to {
-                phase.from.to_string()
-            } else {
-                format!("{}–{}", phase.from, phase.to)
-            };
-            let (what, percent): (SharedString, SharedString) = match phase.reading {
-                ResultKind::Depth { depth, selectivity } => (
-                    s.depth(depth).into(),
-                    if selectivity == Selectivity::Full {
-                        s.no_pruning.into()
-                    } else {
-                        format!("{}%", selectivity.percent()).into()
-                    },
-                ),
-                ResultKind::Endgame {
-                    selectivity: Selectivity::Full,
-                } => (s.exact.into(), "".into()),
-                ResultKind::Endgame { selectivity } => (
-                    s.selective_endgame.into(),
-                    format!("{}%", selectivity.percent()).into(),
-                ),
-            };
+                    .opacity(reading_opacity(phase.reading)),
+            )
+            .child(div().w(px(150.)).child(what))
+            .child(div().text_color(theme::text_secondary()).child(percent))
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .mt(px(10.))
+        .child(
             div()
                 .flex()
                 .flex_row()
-                .items_center()
-                .h(px(PHASE_ROW))
+                .w(px(width))
                 .text_xs()
-                .child(
-                    div()
-                        .w(px(64.))
-                        .text_color(theme::text_muted())
-                        .child(range),
-                )
-                .child(
-                    div()
-                        .size(px(8.))
-                        .mr(px(6.))
-                        .rounded(px(2.))
-                        .bg(reading_color(phase.reading))
-                        .opacity(reading_opacity(phase.reading)),
-                )
-                .child(div().w(px(150.)).child(what))
-                .child(div().text_color(theme::text_secondary()).child(percent))
-        });
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(2.))
-            .mt(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .w(px(width))
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(div().flex_1().child(format!("{} 60", s.empties)))
-                    .child("1"),
-            )
-            .child(strip)
-            .child(
-                div()
-                    .mt(px(6.))
-                    .flex()
-                    .flex_col()
-                    .children(rows),
-            )
-    }
+                .text_color(theme::text_muted())
+                .child(div().flex_1().child(format!("{} 60", s.empties)))
+                .child("1"),
+        )
+        .child(strip)
+        .child(div().mt(px(6.)).flex().flex_col().children(rows))
 }
 
 #[cfg(test)]

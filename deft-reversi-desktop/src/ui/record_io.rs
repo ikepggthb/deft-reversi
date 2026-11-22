@@ -38,14 +38,17 @@ impl RootView {
         self.menu_open = false;
         let text = transcript::to_text(self.controller.history().actions());
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.record_copied = true;
+        let token = self.record_copied.map_or(1, |n| n.wrapping_add(1));
+        self.record_copied = Some(token);
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(1500))
                 .await;
             this.update(cx, |this, cx| {
-                this.record_copied = false;
-                cx.notify();
+                if this.record_copied == Some(token) {
+                    this.record_copied = None;
+                    cx.notify();
+                }
             })
             .ok();
         })
@@ -147,9 +150,11 @@ impl RootView {
             "delete" => self.record_delete(true),
             "a" if ctrl => self.record_all = moves > 0,
             "c" | "x" if ctrl => {
-                cx.write_to_clipboard(ClipboardItem::new_string(self.record_input.clone()));
-                if key.key == "x" {
-                    self.record_clear();
+                if self.record_all && !self.record_input.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(self.record_input.clone()));
+                    if key.key == "x" {
+                        self.record_clear();
+                    }
                 }
             }
             "v" if ctrl => {
@@ -276,19 +281,12 @@ impl RootView {
                 .text_color(theme::danger())
                 .child(s.record_error(*number)),
         };
-        let ready =
-            self.record_pending.is_none() && parsed.as_ref().is_ok_and(|h| !h.actions().is_empty());
-        div()
-            .w(px(560.))
-            .flex()
-            .flex_col()
+        let ready = self.record_pending.is_none()
+            && parsed.as_ref().is_ok_and(|h| {
+                !h.actions().is_empty() && (!self.record_for_book || !h.current().is_terminal())
+            });
+        widgets::dialog_box(560.)
             .gap(px(12.))
-            .px(px(20.))
-            .py(px(16.))
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::border())
-            .rounded(px(10.))
             .child(
                 div()
                     .text_base()
@@ -315,7 +313,7 @@ impl RootView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                            let end = this.record_input.len();
+                            let end = this.record_moves();
                             this.record_click(end, cx)
                         }),
                     )

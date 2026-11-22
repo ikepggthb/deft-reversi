@@ -1,8 +1,32 @@
 //! What the settings screen changes, and the new game dialog's last choices.
 use super::{Player, Preset, Strength, player::MOVE_TIMES};
-use crate::{app::AnalysisSettings, engine_loader, i18n::Lang, services::engine::Resources};
+use crate::{engine_loader, i18n::Lang};
 use deft_reversi_engine::Square;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Resources {
+    pub threads: usize,
+    pub tt_mib: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnalysisSettings {
+    /// For the shown position, which also scores every move, and for each
+    /// position of the whole record.
+    pub level: u8,
+    /// A move that loses this many discs or more is marked in the record.
+    pub loss_threshold: i32,
+}
+
+impl Default for AnalysisSettings {
+    fn default() -> Self {
+        Self {
+            level: 20,
+            loss_threshold: 3,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
@@ -51,11 +75,22 @@ impl BookSettings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BoardView {
     /// Quarter turns clockwise, 0..4.
-    pub turns: u8,
+    turns: u8,
     pub mirrored: bool,
 }
 
 impl BoardView {
+    pub fn new(turns: u8, mirrored: bool) -> Self {
+        Self {
+            turns: turns % 4,
+            mirrored,
+        }
+    }
+
+    pub fn turns(self) -> u8 {
+        self.turns
+    }
+
     pub fn turned(self) -> Self {
         Self {
             turns: (self.turns + 1) % 4,
@@ -72,6 +107,7 @@ impl BoardView {
 
     /// The square shown in column `x` and row `y` (0..8, from the top left).
     pub fn square_at(self, x: u8, y: u8) -> Square {
+        debug_assert!(x < 8 && y < 8);
         let (mut x, mut y) = (x, y);
         // A clockwise turn shows board (x, y) at (7 - y, x); undo the turns.
         for _ in 0..self.turns % 4 {
@@ -85,10 +121,14 @@ impl BoardView {
 
     /// Where `square` is shown: its column and row.
     pub fn place_of(self, square: Square) -> (u8, u8) {
-        (0..64)
-            .map(|i| (i % 8, i / 8))
-            .find(|&(x, y)| self.square_at(x, y) == square)
-            .expect("every square is shown once")
+        let (mut x, mut y) = (square.x(), square.y());
+        if self.mirrored {
+            x = 7 - x;
+        }
+        for _ in 0..self.turns % 4 {
+            (x, y) = (7 - y, x);
+        }
+        (x, y)
     }
 }
 
@@ -170,11 +210,15 @@ impl SideForm {
         }
     }
 
+    pub fn time_duration(&self) -> Duration {
+        MOVE_TIMES[self.time.min(MOVE_TIMES.len() - 1)]
+    }
+
     pub fn strength(&self) -> Strength {
         match (self.choice, self.mode) {
             (AiChoice::Preset(preset), _) => Strength::Preset(preset),
             (AiChoice::Manual, ManualMode::Level) => Strength::Level(self.level),
-            (AiChoice::Manual, ManualMode::Time) => Strength::TimePerMove(MOVE_TIMES[self.time]),
+            (AiChoice::Manual, ManualMode::Time) => Strength::TimePerMove(self.time_duration()),
         }
     }
 

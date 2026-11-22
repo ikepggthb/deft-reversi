@@ -8,30 +8,13 @@
 //! while it is read the value of each finished iteration shows, with how
 //! it was read.
 use super::Effect;
+pub use crate::domain::settings::AnalysisSettings;
 use crate::{
     domain::{History, editor},
     services::engine::{Reading, Report, SearchId, SearchJob, SearchSpec},
 };
 use deft_reversi_engine::{Action, Color, Goal, Position, Selectivity};
 use std::collections::HashMap;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AnalysisSettings {
-    /// For the shown position, which also scores every move, and for each
-    /// position of the whole record.
-    pub level: u8,
-    /// A move that loses this many discs or more is marked in the record.
-    pub loss_threshold: i32,
-}
-
-impl Default for AnalysisSettings {
-    fn default() -> Self {
-        Self {
-            level: 20,
-            loss_threshold: 3,
-        }
-    }
-}
 
 /// One move's value for the side to move, and how that value was read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,19 +36,27 @@ pub struct ShownMove {
     pub fresh: bool,
 }
 
+/// How deeply every legal move of a position has been read together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MovesDepth {
+    #[default]
+    None,
+    Level(u8),
+    Exact,
+}
+
 #[derive(Clone, Debug)]
 pub struct Analysis {
-    /// The position's value, best move and line, for the side to move.
-    pub report: Report,
-    /// The level searched; `None` for the exact solve.
+    /// The value and line from a search that covered every legal move.
+    pub report: Option<Report>,
+    /// The level of the position's report, when there is a level.
     pub level: Option<u8>,
     /// Every move read, best first, each with its own reading.
     pub moves: Vec<MoveValue>,
-    /// The last level every move was read at, apart from the position's
-    /// value: 0 when none was, `MOVES_EXACT` after the exact solve. A
+    /// How deeply every move was read, apart from the position's value. A
     /// record search gives the value alone, so the moves still rise from
     /// the lowest level.
-    moves_level: u8,
+    moves_depth: MovesDepth,
     /// Stopped by the user: not searched further.
     settled: bool,
 }
@@ -73,12 +64,11 @@ pub struct Analysis {
 impl Analysis {
     /// The values are exact: solved to the end with no pruning.
     pub fn is_exact(&self) -> bool {
-        matches!(self.report.reading, Some(Reading::Endgame { percent: 100 }))
+        self.report
+            .as_ref()
+            .is_some_and(|report| report.reading == Some(Reading::Endgame { percent: 100 }))
     }
 }
-
-/// `Analysis::moves_level` once the exact solve has read every move.
-const MOVES_EXACT: u8 = u8::MAX;
 
 /// The shown position is searched at rising levels up to the setting, so a
 /// value comes at once and then improves: 1, 4, 8, 12, … every four levels.
@@ -169,7 +159,7 @@ impl Analyzer {
     pub fn report(&self, position: Position) -> Option<&Report> {
         self.cache
             .get(&position)
-            .map(|a| &a.report)
+            .and_then(|a| a.report.as_ref())
             .or_else(|| self.running_for(position)?.best.as_ref())
     }
 
@@ -182,7 +172,8 @@ impl Analyzer {
             .legal_moves()
             .map(|square| {
                 let action = Action::Place(square);
-                let find = |values: &[MoveValue]| values.iter().find(|v| v.action == action).cloned();
+                let find =
+                    |values: &[MoveValue]| values.iter().find(|v| v.action == action).cloned();
                 match running.and_then(|r| find(&r.values)) {
                     Some(value) => ShownMove {
                         action,
@@ -222,14 +213,18 @@ impl Analyzer {
         if analysis.settled {
             return None;
         }
-        // The exact solve is as far as it goes; it scores the moves itself.
-        analysis.level?;
         // The moves rise level by level, whatever level the position's value
         // came from: a record search gives the value alone.
-        let read = analysis.moves_level;
-        if read >= target || (analysis.is_exact() && read > 0) {
-            return None;
-        }
+        let read = match analysis.moves_depth {
+            MovesDepth::Exact => return None,
+            MovesDepth::Level(level) => {
+                if level >= target || analysis.is_exact() {
+                    return None;
+                }
+                level
+            }
+            MovesDepth::None => 0,
+        };
         Some(next_level(read, target))
     }
 
@@ -261,7 +256,7 @@ impl Analyzer {
         if position.must_pass() {
             position = position.play(Action::Pass).ok()?;
         }
-        let score = self.cache.get(&position)?.report.score?;
+        let score = self.cache.get(&position)?.report.as_ref()?.score?;
         Some(match position.side_to_move() {
             Color::Black => score,
             Color::White => -score,
@@ -349,10 +344,8 @@ impl Analyzer {
     /// Whether a record search of `position` has nothing to add: it is
     /// solved exactly, or with `redo` unset, read at the level already.
     fn batch_done(&self, position: Position, redo: bool) -> bool {
-        self.cache.get(&position).is_some_and(|a| match a.level {
-            None => true,
-            _ if a.is_exact() => true,
-            Some(level) => !redo && level >= self.settings.level,
+        self.cache.get(&position).is_some_and(|a| {
+            a.is_exact() || (!redo && a.level.is_some_and(|level| level >= self.settings.level))
         })
     }
 
@@ -395,11 +388,7 @@ impl Analyzer {
         if let Some((queue, _)) = &mut self.batch {
             while let Some(position) = queue.pop() {
                 // Solved exactly since it was queued, say by the shown search.
-                if self
-                    .cache
-                    .get(&position)
-                    .is_some_and(|a| a.level.is_none() || a.is_exact())
-                {
+                if self.cache.get(&position).is_some_and(Analysis::is_exact) {
                     continue;
                 }
                 let level = self.settings.level;
@@ -439,15 +428,18 @@ impl Analyzer {
         next_id: &mut u64,
         effects: &mut Vec<Effect>,
     ) {
+        let legal = position.legal_moves();
         let older = self.cache.get(&position).map_or(&[][..], |a| &a.moves[..]);
-        let mut order: Vec<Action> = older.iter().map(|v| v.action).collect();
-        let rest: Vec<Action> = position
-            .legal_moves()
+        let mut order: Vec<Action> = older
+            .iter()
+            .map(|v| v.action)
+            .filter(|a| matches!(a, Action::Place(s) if legal.contains(*s)))
+            .collect();
+        let rest: Vec<Action> = legal
             .map(Action::Place)
             .filter(|a| !order.contains(a))
             .collect();
         order.extend(rest);
-        order.retain(|a| matches!(a, Action::Place(s) if position.legal_moves().contains(*s)));
         order.reverse();
         self.running = Some(Running {
             id: None,
@@ -514,7 +506,16 @@ impl Analyzer {
     fn finish_moves(&mut self, running: Running) {
         let previous = self.cache.remove(&running.position);
         let legal = running.position.legal_moves().count();
-        let complete = running.values.len() == legal;
+        // Stopping the last move can leave a score from an earlier iteration.
+        let complete = running.values.len() == legal
+            && running.best.as_ref().is_some_and(|best| {
+                running
+                    .values
+                    .iter()
+                    .all(|value| value.reading == best.reading)
+                    && (running.job != Job::Exact
+                        || best.reading == Some(Reading::Endgame { percent: 100 }))
+            });
         let mut moves = running.values.clone();
         if let Some(previous) = &previous {
             moves.extend(
@@ -532,25 +533,17 @@ impl Analyzer {
                 // such as the record search's.
                 let deeper = previous.as_ref().filter(|p| {
                     running.job != Job::Exact
-                        && (p.is_exact()
-                            || p.level.is_none_or(|l| running.level.is_some_and(|r| r < l)))
+                        && (p.is_exact() || p.level.zip(running.level).is_some_and(|(p, r)| p > r))
                 });
                 let (report, level) = match deeper {
                     Some(p) => (p.report.clone(), p.level),
-                    None => (
-                        running.best.clone().unwrap_or_else(|| {
-                            previous
-                                .as_ref()
-                                .map_or_else(empty_report, |p| p.report.clone())
-                        }),
-                        running.level,
-                    ),
+                    None => (running.best, running.level),
                 };
                 Analysis {
                     report,
                     level,
                     moves,
-                    moves_level: running.level.unwrap_or(MOVES_EXACT),
+                    moves_depth: running.level.map_or(MovesDepth::Exact, MovesDepth::Level),
                     settled: running.stopping || running.job == Job::Exact,
                 }
             }
@@ -559,16 +552,18 @@ impl Analyzer {
                 settled: running.stopping || previous.settled,
                 ..previous
             },
-            (false, None) => match running.best {
-                Some(best) => Analysis {
-                    report: best,
-                    level: running.level,
+            (false, None) => {
+                if moves.is_empty() {
+                    return;
+                }
+                Analysis {
+                    report: None,
+                    level: None,
                     moves,
-                    moves_level: 0,
+                    moves_depth: MovesDepth::None,
                     settled: true,
-                },
-                None => return,
-            },
+                }
+            }
         };
         self.cache.insert(running.position, analysis);
     }
@@ -611,7 +606,7 @@ impl Analyzer {
                     action,
                     score,
                     reading: report.reading,
-                        provisional: false,
+                    provisional: false,
                 });
                 sort_best_first(&mut running.values);
                 if running
@@ -642,16 +637,18 @@ impl Analyzer {
                 Some(previous) => previous,
                 None => return,
             },
-            Some(previous) if previous.level.is_none() || previous.is_exact() => previous,
+            Some(previous) if previous.is_exact() => previous,
             // The new value replaces the old; the moves keep their values,
             // each with its own reading.
             previous => Analysis {
-                moves_level: previous.as_ref().map_or(0, |p| p.moves_level),
+                moves_depth: previous
+                    .as_ref()
+                    .map_or(MovesDepth::None, |p| p.moves_depth),
                 moves: previous.map(|p| p.moves).unwrap_or_default(),
-                report: Report {
+                report: Some(Report {
                     moves: Vec::new(),
                     ..report
-                },
+                }),
                 level: running.level,
                 settled: false,
             },
@@ -668,6 +665,7 @@ impl Analyzer {
     }
 }
 
+#[cfg(test)]
 fn empty_report() -> Report {
     Report {
         best_move: None,
@@ -685,7 +683,6 @@ mod tests {
     use super::*;
     use crate::domain::Grouping;
     use deft_reversi_engine::Square;
-    use std::time::Duration;
 
     fn place(name: &str) -> Action {
         Action::Place(name.parse::<Square>().unwrap())
@@ -785,21 +782,24 @@ mod tests {
             assert!(effects.is_empty());
             assert_eq!(a.searching_level(start), Some(Some(level)));
             // f5 is the best move; each value shows as soon as it is read.
-            let score = if action == place("f5") { i32::from(level) } else { -1 };
+            let score = if action == place("f5") {
+                i32::from(level)
+            } else {
+                -1
+            };
             assert!(a.on_finished(id, report(score)));
             let shown = a.moves(start);
-            assert!(
-                shown
-                    .iter()
-                    .any(|m| m.action == action && m.fresh && m.value.as_ref().unwrap().score == score)
-            );
+            assert!(shown.iter().any(|m| m.action == action
+                && m.fresh
+                && m.value.as_ref().unwrap().score == score));
             searches += 1;
         }
         assert_eq!(levels, [1, 4, 8, 12, 16, 20]);
         assert_eq!(searches, 6 * 4);
         let analysis = a.get(start).unwrap();
-        assert_eq!(analysis.report.score, Some(20));
-        assert_eq!(analysis.report.best_move, Some(place("f5")));
+        let report = analysis.report.as_ref().unwrap();
+        assert_eq!(report.score, Some(20));
+        assert_eq!(report.best_move, Some(place("f5")));
         assert_eq!(analysis.moves.len(), 4);
         assert_eq!(analysis.moves[0].action, place("f5"));
     }
@@ -860,14 +860,28 @@ mod tests {
         effects.clear();
         a.stop(&mut effects);
         assert_eq!(effects, [Effect::MoveNow]);
-        a.on_finished(id, Report { score: None, ..empty_report() });
+        a.on_finished(
+            id,
+            Report {
+                score: None,
+                ..empty_report()
+            },
+        );
         let analysis = a.get(start).unwrap();
         // The position keeps level 1's value; the move read at level 4 says so.
-        assert_eq!((analysis.level, analysis.report.score), (Some(1), Some(1)));
+        assert_eq!(analysis.level, Some(1));
+        assert_eq!(analysis.report.as_ref().unwrap().score, Some(1));
         assert_eq!(analysis.moves.len(), 4);
         let value = analysis.moves.iter().find(|v| v.action == first).unwrap();
         assert_eq!((value.score, value.reading), (9, Some(high)));
-        assert!(analysis.moves.iter().filter(|v| v.reading == Some(low)).count() == 3);
+        assert!(
+            analysis
+                .moves
+                .iter()
+                .filter(|v| v.reading == Some(low))
+                .count()
+                == 3
+        );
         // Stopped: nothing more until asked again.
         effects.clear();
         a.pump(start, &mut ids, &mut effects);
@@ -875,6 +889,62 @@ mod tests {
         a.reanalyze(start, &mut effects);
         a.pump(start, &mut ids, &mut effects);
         assert_eq!(started(&effects)[0].2.goal, Goal::Level(1));
+    }
+
+    #[test]
+    fn stopping_the_first_exact_search_keeps_moves_and_allows_a_record_search() {
+        let history = History::new(Position::initial());
+        let start = history.current();
+        let mut a = Analyzer::default();
+        let mut ids = 1;
+        let mut effects = Vec::new();
+        let exact = Reading::Endgame { percent: 100 };
+        a.exact(start, &mut ids, &mut effects);
+        let (id, _, spec) = started(&effects)[0];
+        a.on_finished(id, read(-8, exact));
+        effects.clear();
+        a.pump(start, &mut ids, &mut effects);
+        let (next, _, _) = started(&effects)[0];
+        a.stop(&mut Vec::new());
+        a.on_finished(next, empty_report());
+
+        let analysis = a.get(start).unwrap();
+        assert!(!analysis.is_exact());
+        assert_eq!(analysis.moves.len(), 1);
+        assert_eq!(analysis.moves[0].action, move_of(spec));
+        assert_eq!(analysis.moves[0].reading, Some(exact));
+        assert!(a.report(start).is_none());
+        assert_eq!(a.black_value(&history, 0), None);
+
+        effects.clear();
+        a.start_batch(&history, true);
+        a.pump(start, &mut ids, &mut effects);
+        let (id, _, spec) = started(&effects)[0];
+        assert_eq!(spec.root_moves, None);
+        a.on_finished(id, report(6));
+        assert_eq!(a.black_value(&history, 0), Some(6));
+        assert_eq!(a.get(start).unwrap().moves.len(), 1);
+    }
+
+    #[test]
+    fn an_earlier_iteration_on_the_last_move_does_not_complete_the_level() {
+        let start = Position::initial();
+        let mut a = Analyzer::default();
+        let mut ids = 1;
+        let exact = Reading::Endgame { percent: 100 };
+        for index in 0..start.legal_moves().count() {
+            let mut effects = Vec::new();
+            a.pump(start, &mut ids, &mut effects);
+            let (id, _, _) = started(&effects)[0];
+            if index + 1 == start.legal_moves().count() {
+                a.stop(&mut Vec::new());
+                a.on_finished(id, read(-1, Reading::Endgame { percent: 95 }));
+            } else {
+                a.on_finished(id, read(2, exact));
+            }
+        }
+        assert!(a.report(start).is_none());
+        assert!(!a.get(start).unwrap().is_exact());
     }
 
     #[test]
@@ -926,11 +996,12 @@ mod tests {
             // moves reach its level.
             let analysis = a.get(start).unwrap();
             if level < 20 {
-                assert_eq!((analysis.level, analysis.report.score), (Some(20), Some(7)));
+                assert_eq!(analysis.level, Some(20));
+                assert_eq!(analysis.report.as_ref().unwrap().score, Some(7));
             }
         }
         assert_eq!(levels, [1, 4, 8, 12, 16, 20]);
-        assert_eq!(a.get(start).unwrap().report.score, Some(20));
+        assert_eq!(a.report(start).unwrap().score, Some(20));
     }
 
     #[test]
@@ -1054,6 +1125,5 @@ mod tests {
         assert!(analysis.is_exact());
         assert_eq!(analysis.level, None);
         assert!(analysis.moves.iter().all(|v| v.reading == Some(exact)));
-        let _ = Duration::ZERO;
     }
 }

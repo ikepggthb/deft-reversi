@@ -1275,14 +1275,7 @@ mod path_tests {
             elapsed: Duration::ZERO,
             profile: GenerationProfile::default(),
         };
-        expand(
-            &mut editor,
-            &mut state,
-            c,
-            None,
-            &mut report,
-        )
-        .unwrap();
+        expand(&mut editor, &mut state, c, None, &mut report).unwrap();
         assert_eq!(
             editor
                 .move_values(board, first)

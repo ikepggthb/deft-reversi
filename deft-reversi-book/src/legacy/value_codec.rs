@@ -104,7 +104,10 @@ pub(crate) fn requestedw(w: &mut dyn Write, v: RequestedAnalysis) -> Result<()> 
             byte(w, 1)?;
             byte(w, n)
         }
-        RequestedAnalysis::RootLevel(n) => { byte(w, 4)?; byte(w, n) }
+        RequestedAnalysis::RootLevel(n) => {
+            byte(w, 4)?;
+            byte(w, n)
+        }
         RequestedAnalysis::ParentDepth { depth, selectivity } => {
             byte(w, 2)?;
             byte(w, depth)?;
@@ -136,10 +139,22 @@ pub(crate) fn summaryw(w: &mut dyn Write, q: QualitySummary) -> Result<()> {
         q.families,
         q.horizon,
         q.mid_depth,
-        if q.mid_sel == 255 { 255 } else { selectivity_code(Selectivity::ALL[q.mid_sel as usize]) },
-        if q.end_sel == 255 { 255 } else { selectivity_code(Selectivity::ALL[q.end_sel as usize]) },
+        if q.mid_sel == 255 {
+            255
+        } else {
+            selectivity_code(Selectivity::ALL[q.mid_sel as usize])
+        },
+        if q.end_sel == 255 {
+            255
+        } else {
+            selectivity_code(Selectivity::ALL[q.end_sel as usize])
+        },
         q.legacy_depth,
-        if q.legacy_sel == 255 { 255 } else { selectivity_code(Selectivity::ALL[q.legacy_sel as usize]) },
+        if q.legacy_sel == 255 {
+            255
+        } else {
+            selectivity_code(Selectivity::ALL[q.legacy_sel as usize])
+        },
     ] {
         byte(w, v)?;
     }
@@ -160,7 +175,11 @@ pub(crate) fn summaryr(r: &mut impl Read) -> Result<QualitySummary> {
 }
 pub(crate) fn read_optional_selectivity(r: &mut impl Read) -> Result<u8> {
     let code = read_byte(r)?;
-    if code == 255 { Ok(255) } else { Ok(selectivity(code)? as u8) }
+    if code == 255 {
+        Ok(255)
+    } else {
+        Ok(selectivity(code)? as u8)
+    }
 }
 pub(crate) fn write(w: &mut dyn Write, value: &Assessment) -> Result<()> {
     match value.claim() {

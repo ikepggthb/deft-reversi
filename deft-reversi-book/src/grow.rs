@@ -704,14 +704,7 @@ pub(super) fn generate(
             let line_only = state.has_line(editor);
             if !line_only && let Some((d, c)) = state.expansions.pop_first() {
                 if state.distances.get(&c) == Some(&d) {
-                    expand_and_schedule(
-                        editor,
-                        &mut state,
-                        (c, d),
-                        engine,
-                        &mut report,
-                        0,
-                    )?;
+                    expand_and_schedule(editor, &mut state, (c, d), engine, &mut report, 0)?;
                     if report.reason != GenerationStop::Exhausted {
                         state.expansions.insert((d, c));
                         break;
@@ -778,14 +771,7 @@ pub(super) fn generate(
                     jobs.push(work);
                 } else {
                     let burst = state.active_burst;
-                    expand_and_schedule(
-                        editor,
-                        &mut state,
-                        (c, d),
-                        engine,
-                        &mut report,
-                        burst,
-                    )?;
+                    expand_and_schedule(editor, &mut state, (c, d), engine, &mut report, burst)?;
                     let mainline_pending = state.has_line(editor);
                     let done = !mainline_pending
                         || prepare(engine, editor, &state, c, d, s, true)?.is_none();

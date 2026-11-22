@@ -1,7 +1,7 @@
 //! Saving and opening: autosave, settings, the file menu, open and export
 //! through the OS dialogs, and the list of saved games.
 use super::{
-    new_game::strength_label,
+    format::strength_label,
     root::{Dialog, RootView},
     theme, widgets,
 };
@@ -15,10 +15,7 @@ use crate::{
     },
     services::storage::{StorageCommand, StorageEvent},
 };
-use gpui::{
-    AnyElement, ClickEvent, Context, FontWeight, PathPromptOptions, SharedString, div, prelude::*,
-    px,
-};
+use gpui::{AnyElement, ClickEvent, Context, PathPromptOptions, SharedString, div, prelude::*, px};
 
 impl RootView {
     pub(super) fn send_storage(&self, command: StorageCommand) {
@@ -106,7 +103,7 @@ impl RootView {
             this.update(cx, |this, cx| match picked {
                 Ok(Ok(Some(paths))) => {
                     if let Some(path) = paths.into_iter().next() {
-                        this.send_storage(StorageCommand::Load(path));
+                        this.send_storage(StorageCommand::Import(path));
                     }
                 }
                 Ok(Err(error)) => {
@@ -198,7 +195,7 @@ impl RootView {
                 div()
                     .id("file-menu")
                     .absolute()
-                    .top(px(34.))
+                    .top(px(super::root::TOOLBAR_HEIGHT))
                     .left(px(10.))
                     .w(px(220.))
                     .p(px(4.))
@@ -353,40 +350,18 @@ impl RootView {
                 })
                 .collect(),
         };
-        div()
-            .w(px(640.))
-            .max_h(px(520.))
-            .flex()
-            .flex_col()
-            .px(px(20.))
-            .py(px(16.))
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::border())
-            .rounded(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .mb(px(8.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_base()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(s.games),
-                    )
-                    .child(widgets::link(
-                        "close-games",
-                        s.close,
-                        widgets::handler(|this, cx| this.close_dialog(cx)),
-                        cx,
-                    )),
-            )
+        widgets::dialog_box(640.)
+            .max_h(px(self
+                .viewport
+                .map_or(520., |(_, h)| (h as f32 - 60.).min(520.))))
+            .child(widgets::dialog_header(
+                s.games,
+                Some(("close-games", s.close)),
+                cx,
+            ))
             .child(widgets::scroll_area(
                 "games-list",
-                &self.games_scroll,
+                &self.dialog_scroll,
                 div().flex().flex_col().children(rows),
                 cx,
             ))

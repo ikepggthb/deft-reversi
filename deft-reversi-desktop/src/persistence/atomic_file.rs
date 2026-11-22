@@ -3,7 +3,7 @@
 use std::{
     ffi::OsString,
     fs::{self, File},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     thread,
     time::Duration,
@@ -60,38 +60,86 @@ fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
 
 /// Reads at most `limit` bytes; a larger file is an error.
 pub fn read(path: &Path, limit: u64) -> io::Result<String> {
-    if fs::metadata(path)?.len() > limit {
-        return Err(io::Error::other("the file is too large"));
+    let file = File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the file is too large",
+        ));
     }
-    fs::read_to_string(path)
+    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-/// Reads and parses `path`, then its backup. When both fail, the broken
-/// file is kept as `.corrupt` so it is not overwritten, and the first error
-/// is returned.
+/// How a file's contents parsed. `Unsupported` marks a valid file from a newer
+/// version: it must neither fall back to an older backup nor be renamed to
+/// `.corrupt`.
+pub enum ParseOutcome<T, E> {
+    Ok(T),
+    Corrupt(E),
+    Unsupported(E),
+}
+
+impl<T, E> From<Result<T, E>> for ParseOutcome<T, E> {
+    fn from(result: Result<T, E>) -> Self {
+        match result {
+            Ok(value) => Self::Ok(value),
+            Err(error) => Self::Corrupt(error),
+        }
+    }
+}
+
+/// Reads and parses `path`, then its backup. When both fail and the main file
+/// was actually corrupt (not merely unreadable due to a transient I/O error or
+/// an unsupported newer version), it is kept as `.corrupt` so it is not
+/// overwritten, and the first error is returned.
 pub fn read_with_backup<T, E>(
     path: &Path,
     limit: u64,
-    parse: impl Fn(&str) -> Result<T, E>,
+    parse: impl Fn(&str) -> ParseOutcome<T, E>,
 ) -> Result<T, String>
 where
     E: std::fmt::Display,
 {
-    let attempt = |path: &Path| -> Result<T, String> {
-        let text = read(path, limit).map_err(|e| e.to_string())?;
-        parse(&text).map_err(|e| e.to_string())
+    enum Failure {
+        Io(String),
+        Corrupt(String),
+        Unsupported(String),
+    }
+    let attempt = |path: &Path| -> Result<T, Failure> {
+        let text = read(path, limit).map_err(|e| {
+            if e.kind() == io::ErrorKind::InvalidData {
+                Failure::Corrupt(e.to_string())
+            } else {
+                Failure::Io(e.to_string())
+            }
+        })?;
+        match parse(&text) {
+            ParseOutcome::Ok(value) => Ok(value),
+            ParseOutcome::Corrupt(e) => Err(Failure::Corrupt(e.to_string())),
+            ParseOutcome::Unsupported(e) => Err(Failure::Unsupported(e.to_string())),
+        }
     };
     match attempt(path) {
         Ok(value) => Ok(value),
-        Err(error) => match attempt(&backup_path(path)) {
-            Ok(value) => Ok(value),
-            Err(_) => {
-                if path.exists() {
-                    let _ = fs::rename(path, with_suffix(path, ".corrupt"));
+        Err(Failure::Unsupported(error)) => Err(error),
+        Err(first) => {
+            let (error, corrupt) = match first {
+                Failure::Corrupt(error) => (error, true),
+                Failure::Io(error) => (error, false),
+                Failure::Unsupported(_) => unreachable!(),
+            };
+            match attempt(&backup_path(path)) {
+                Ok(value) => Ok(value),
+                Err(_) => {
+                    if corrupt && path.exists() {
+                        let _ = fs::rename(path, with_suffix(path, ".corrupt"));
+                    }
+                    Err(error)
                 }
-                Err(error)
             }
-        },
+        }
     }
 }
 
@@ -117,7 +165,7 @@ pub(crate) mod tests {
         assert_eq!(fs::read_to_string(backup_path(&path)).unwrap(), "1");
         assert!(!with_suffix(&path, ".tmp").exists());
 
-        let parse = |s: &str| s.parse::<u8>().map_err(|e| e.to_string());
+        let parse = |s: &str| ParseOutcome::from(s.parse::<u8>().map_err(|e| e.to_string()));
         // A torn write of the current file falls back to the backup.
         fs::write(&path, "x").unwrap();
         assert_eq!(read_with_backup(&path, 10, parse), Ok(1));
@@ -129,6 +177,28 @@ pub(crate) mod tests {
         // Too large is an error, not a long read.
         fs::write(&path, "12345").unwrap();
         assert!(read(&path, 4).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unsupported_version_is_left_untouched_and_does_not_fall_back() {
+        let dir = temp_dir("atomic-unsupported");
+        let path = dir.join("game.dreversi");
+        write(&path, b"1").unwrap();
+        write(&path, b"v2").unwrap();
+        let parse = |s: &str| match s {
+            "v2" => ParseOutcome::Unsupported("newer version"),
+            other => ParseOutcome::from(other.parse::<u8>().map_err(|_| "corrupt")),
+        };
+        // Neither falls back to the older backup nor renames to .corrupt.
+        assert!(read_with_backup(&path, 10, parse).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "v2");
+        assert!(!with_suffix(&path, ".corrupt").exists());
+        // Same without a backup file.
+        let _ = fs::remove_file(backup_path(&path));
+        assert!(read_with_backup(&path, 10, parse).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "v2");
+        assert!(!with_suffix(&path, ".corrupt").exists());
         let _ = fs::remove_dir_all(dir);
     }
 }

@@ -162,7 +162,8 @@ fn cli_generation_resume_export_extend_and_retarget() {
     let trained = BookEditor::load(&record_work, ReadLimits::default()).unwrap();
     let snapshot = trained.export().unwrap();
     let mut board = Board::new();
-    for chunk in record.as_bytes().chunks_exact(2) {
+    let (moves, _) = record.as_bytes().as_chunks::<2>();
+    for chunk in moves {
         let action = std::str::from_utf8(chunk).unwrap().parse().unwrap();
         assert!(
             snapshot

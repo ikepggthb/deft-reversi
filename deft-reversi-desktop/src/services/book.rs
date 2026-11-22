@@ -88,7 +88,7 @@ pub fn lines(book: &Book, position: Position) -> Option<Vec<BookLine>> {
         })
         .collect();
     // Moves with a value first, the best of them first.
-    lines.sort_by_key(|line| std::cmp::Reverse(line.value.map_or(i32::MIN, |v| v.score)));
+    lines.sort_by_key(|line| std::cmp::Reverse(line.value.map(|v| v.score)));
     Some(lines)
 }
 

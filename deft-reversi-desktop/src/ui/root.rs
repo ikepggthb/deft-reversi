@@ -10,7 +10,7 @@ use crate::{
     persistence::paths::Paths,
     services::{
         audio::AudioService,
-        engine::{BookStatus, EngineCommand, EngineEvent, EngineService},
+        engine::{BookStatus, EngineCommand, EngineEvent, EngineService, ModelInfo},
         storage::{GameSummary, StorageEvent, StorageService},
     },
 };
@@ -106,7 +106,7 @@ const PASS_NOTICE: Duration = Duration::from_millis(600);
 const LEFT_WIDTH: f32 = 170.;
 const RIGHT_WIDTH: f32 = 240.;
 const GAP: f32 = 28.;
-const TOOLBAR_HEIGHT: f32 = 36.;
+pub(super) const TOOLBAR_HEIGHT: f32 = 36.;
 /// Dialogs hang from here, so one that grows does not move what is above.
 pub(super) const DIALOG_TOP: f32 = 40.;
 /// Above and below the board: the toolbar, the page padding, the
@@ -119,6 +119,10 @@ pub struct RootView {
     engine: Option<EngineService>,
     /// What the engine thread said of the book; None while it reads one.
     pub(super) book_status: Option<BookStatus>,
+    /// The evaluation model, once the engine has read it.
+    pub(super) model_info: Option<ModelInfo>,
+    /// Incremented whenever the active play book selection changes.
+    pub(super) book_selection_gen: u64,
     pub(super) book_work: BookWork,
     pub(super) settings: Settings,
     pub(super) dialog: Option<Dialog>,
@@ -160,13 +164,10 @@ pub struct RootView {
     pub(super) record_pending: Option<char>,
     /// The record dialog chooses where a book grows from, not the game.
     pub(super) record_for_book: bool,
-    /// The record was just copied; the link says so for a moment.
-    pub(super) record_copied: bool,
-    pub(super) games_scroll: ScrollHandle,
-    pub(super) log_scroll: ScrollHandle,
-    pub(super) settings_scroll: ScrollHandle,
-    pub(super) book_scroll: ScrollHandle,
-    pub(super) new_game_scroll: ScrollHandle,
+    /// The record was just copied; the token keeps overlapping timers apart.
+    pub(super) record_copied: Option<u64>,
+    /// Shared by whichever modal dialog is open; reset on each open.
+    pub(super) dialog_scroll: ScrollHandle,
     /// The new game dialog's choice of book moves, from the settings.
     pub(super) new_game_book: bool,
     pub(super) scroll_drag: Option<widgets::ScrollDrag>,
@@ -176,7 +177,7 @@ pub struct RootView {
     /// `DEFT_DESKTOP_TRACE=1`: frame times while discs turn and search
     /// results go to stderr, for the measurements of §11.
     trace: Option<Vec<Instant>>,
-    _quit: Option<Subscription>,
+    _quit: Subscription,
     _appearance: Subscription,
     focus: FocusHandle,
     dialog_focus: FocusHandle,
@@ -195,8 +196,8 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (storage, paths, quit) = match storage {
-            None => (None, None, None),
+        let (storage, paths) = match storage {
+            None => (None, None),
             Some((service, paths, events)) => {
                 cx.spawn(async move |this, cx| {
                     while let Ok(event) = events.recv().await {
@@ -209,20 +210,24 @@ impl RootView {
                     }
                 })
                 .detach();
-                // The last save is written before the process ends.
-                let quit = cx.on_app_quit(|this: &mut Self, _| {
-                    if this.viewport.is_some() {
-                        this.settings.window_size = this.viewport;
-                    }
-                    this.persist();
-                    if let Some(storage) = this.storage.as_mut() {
-                        storage.shutdown();
-                    }
-                    async {}
-                });
-                (Some(service), Some(paths), Some(quit))
+                (Some(service), Some(paths))
             }
         };
+        // The last save and any running book generation finish before the
+        // process ends.
+        let quit = cx.on_app_quit(|this: &mut Self, _| {
+            if this.viewport.is_some() {
+                this.settings.window_size = this.viewport;
+            }
+            this.persist();
+            if let Some(storage) = this.storage.as_mut() {
+                storage.shutdown();
+            }
+            if let Some(engine) = this.engine.as_mut() {
+                engine.shutdown();
+            }
+            async {}
+        });
         let engine = engine.map(|(service, events)| {
             cx.spawn(async move |this, cx| {
                 while let Ok(event) = events.recv().await {
@@ -252,10 +257,11 @@ impl RootView {
                         if let EngineEvent::Book(status) = &event {
                             this.book_status = Some(status.clone());
                         }
+                        if let EngineEvent::Model(info) = &event {
+                            this.model_info = Some(info.clone());
+                        }
                         match &event {
-                            EngineEvent::BookProgress(progress) => {
-                                this.on_book_progress(*progress)
-                            }
+                            EngineEvent::BookProgress(progress) => this.on_book_progress(*progress),
                             EngineEvent::BookDone(done) => this.on_book_done(done.clone(), cx),
                             _ => {}
                         }
@@ -271,7 +277,7 @@ impl RootView {
                             return;
                         }
                         let effects = this.controller.on_engine(event);
-                        this.dispatch(effects);
+                        this.dispatch(effects, cx);
                         cx.notify();
                     });
                     if delivered.is_err() {
@@ -314,12 +320,8 @@ impl RootView {
             record_all: false,
             record_pending: None,
             record_for_book: false,
-            record_copied: false,
-            games_scroll: ScrollHandle::new(),
-            log_scroll: ScrollHandle::new(),
-            settings_scroll: ScrollHandle::new(),
-            book_scroll: ScrollHandle::new(),
-            new_game_scroll: ScrollHandle::new(),
+            record_copied: None,
+            dialog_scroll: ScrollHandle::new(),
             new_game_book: true,
             scroll_drag: None,
             audio: AudioService::spawn(),
@@ -334,6 +336,8 @@ impl RootView {
             launched,
             first_frame: None,
             book_status: None,
+            model_info: None,
+            book_selection_gen: 0,
             book_work: BookWork::default(),
         };
         view.apply_book();
@@ -354,11 +358,11 @@ impl RootView {
         self.animation = None;
         self.pass_notice = None;
         let effects = self.controller.apply(command);
-        self.dispatch(effects);
+        self.dispatch(effects, cx);
         cx.notify();
     }
 
-    fn dispatch(&mut self, effects: Vec<Effect>) {
+    fn dispatch(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
         for effect in effects {
             let command = match effect {
                 Effect::StartSearch { job } => EngineCommand::Start(job),
@@ -379,7 +383,19 @@ impl RootView {
                         && let Some(index) = history.cursor().checked_sub(1)
                     {
                         let passer = history.position(index).side_to_move();
-                        self.pass_notice = Some((passer, Instant::now()));
+                        let shown = Instant::now();
+                        self.pass_notice = Some((passer, shown));
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(PASS_NOTICE).await;
+                            this.update(cx, |this, cx| {
+                                if this.pass_notice == Some((passer, shown)) {
+                                    this.pass_notice = None;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                        })
+                        .detach();
                     }
                     continue;
                 }
@@ -457,8 +473,9 @@ impl RootView {
         if matches!(dialog, Dialog::NewGame) {
             self.new_game_book = self.settings.book.enabled;
         }
+        self.dialog_scroll = ScrollHandle::new();
         if matches!(dialog, Dialog::AiLog) {
-            self.log_scroll.scroll_to_bottom();
+            self.dialog_scroll.scroll_to_bottom();
         }
         self.scroll_drag = None;
         self.menu_open = false;
@@ -651,7 +668,7 @@ impl Render for RootView {
             && let Some(event) = self.held_move.take()
         {
             let effects = self.controller.on_engine(event);
-            self.dispatch(effects);
+            self.dispatch(effects, cx);
         }
         if self.animation.is_some()
             && let Some(frames) = self.trace.as_mut()
@@ -664,12 +681,13 @@ impl Render for RootView {
         {
             self.pass_notice = None;
         }
-        if self.animation.is_some() || self.pass_notice.is_some() {
+        if self.animation.is_some() {
             window.request_animation_frame();
         }
         let size = window.viewport_size();
         self.viewport = Some((f32::from(size.width) as u32, f32::from(size.height) as u32));
-        let graph = (self.controller.analyzing() && self.editor.is_none()).then(|| self.graph_height());
+        let graph =
+            (self.controller.analyzing() && self.editor.is_none()).then(|| self.graph_height());
         let cell = Self::cell_size(window, graph);
         let workspace = div()
             .key_context("Workspace")
@@ -830,19 +848,6 @@ impl Render for RootView {
                     MouseButton::Left,
                     cx.listener(|this, _: &MouseDownEvent, _, cx| this.close_dialog(cx)),
                 )
-                // The backdrop covers the window, so a held scroll bar follows
-                // the pointer anywhere.
-                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                    if event.dragging() {
-                        this.drag_scroll(event.position.y, cx);
-                    } else {
-                        this.scroll_drag = None;
-                    }
-                }))
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseUpEvent, _, _| this.scroll_drag = None),
-                )
                 .child(
                     div()
                         .key_context("Dialog")
@@ -873,6 +878,17 @@ impl Render for RootView {
             .bg(theme::background())
             .text_color(theme::text())
             .text_sm()
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if event.dragging() {
+                    this.drag_scroll(event.position.y, cx);
+                } else {
+                    this.scroll_drag = None;
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, _| this.scroll_drag = None),
+            )
             .child(workspace)
             .children(
                 self.pass_notice

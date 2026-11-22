@@ -1,11 +1,12 @@
 //! The book builder (§24, B3): a work file, growing it from the position
 //! shown until stopped, and linking or unlinking the moves of that position.
 use super::{
-    analysis_panel::{action_text, signed},
+    format::{action_text, signed},
     root::{Dialog, RootView},
     theme,
     widgets::{self, Handler, caption, heading},
 };
+use crate::domain::History;
 use crate::{
     app::{Command, EngineStatus},
     services::{
@@ -14,9 +15,8 @@ use crate::{
     },
 };
 use deft_reversi_book::{BookEditor, Bound, GenerationStop, ReadLimits};
-use crate::domain::History;
 use deft_reversi_engine::{Action, Color, Position, StopHandle};
-use gpui::{Context, Div, FontWeight, PathPromptOptions, SharedString, div, prelude::*, px};
+use gpui::{Context, Div, PathPromptOptions, SharedString, div, prelude::*, px};
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -51,6 +51,8 @@ pub(super) struct BookWork {
     pub record: Option<History>,
     /// Whether the running job mends the book rather than grows it.
     pub fixing: bool,
+    /// True while a link/unlink edit is being saved in the background.
+    pub saving: bool,
     /// Stops the running generation, and when it began.
     pub running: Option<(StopHandle, Instant)>,
     pub progress: Option<BookProgress>,
@@ -71,6 +73,7 @@ impl Default for BookWork {
             root: RootChoice::Current,
             record: None,
             fixing: false,
+            saving: false,
             running: None,
             progress: None,
             message: None,
@@ -188,15 +191,32 @@ impl RootView {
         let Some(path) = self.book_work.path.clone() else {
             return;
         };
-        if self.book_work.running.is_some() || *self.controller.engine() != EngineStatus::Ready {
+        if self.book_work.running.is_some()
+            || self.book_work.saving
+            || *self.controller.engine() != EngineStatus::Ready
+        {
             return;
         }
-        let Some((root, line)) = self.book_root() else {
-            return;
+        let (root, line) = if fix {
+            let can_fix = self
+                .book_work
+                .editor
+                .try_lock()
+                .ok()
+                .is_some_and(|slot| slot.as_ref().is_some_and(|e| !e.is_empty()));
+            if !can_fix {
+                return;
+            }
+            (Position::initial(), Vec::new())
+        } else {
+            let Some((root, line)) = self.book_root() else {
+                return;
+            };
+            if root.is_terminal() {
+                return;
+            }
+            (root, line)
         };
-        if root.is_terminal() && !fix {
-            return;
-        }
         let stop = StopHandle::new();
         let job = BookJob {
             editor: self.book_work.editor.clone(),
@@ -266,34 +286,71 @@ impl RootView {
     }
 
     /// Links or unlinks a move of the position shown, then saves the work
-    /// and the play book.
+    /// and the play book in the background.
     fn set_link(&mut self, action: Action, link: bool, cx: &mut Context<Self>) {
+        if self.book_work.running.is_some() || self.book_work.saving {
+            return;
+        }
         let Some(path) = self.book_work.path.clone() else {
             return;
         };
         let board = self.controller.history().current().board();
-        let outcome = {
-            let Ok(mut slot) = self.book_work.editor.try_lock() else {
-                return;
-            };
-            let Some(editor) = slot.as_mut() else {
-                return;
-            };
-            let changed = if link {
-                editor.register_move(board, action)
-            } else {
-                editor.unregister_move(board, action)
-            };
-            changed
-                .and_then(|()| editor.save(&path))
-                .and_then(|()| editor.export()?.save(book_gen::play_path(&path)))
-        };
-        let s = self.settings.lang.strings();
-        match outcome {
-            Ok(()) => self.set_book_path(Some(book_gen::play_path(&path)), cx),
-            Err(error) => self.book_work.message = Some(s.book_error(&error.to_string()).into()),
-        }
+        let editor = self.book_work.editor.clone();
+        let editor_bg = editor.clone();
+        let book_gen = self.book_selection_gen;
+        self.book_work.saving = true;
+        self.book_work.message = None;
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_spawn(async move {
+                    let mut slot = editor_bg
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let Some(editor) = slot.as_mut() else {
+                        return Ok(None);
+                    };
+                    if link {
+                        editor.register_move(board, action)?;
+                    } else {
+                        editor.unregister_move(board, action)?;
+                    }
+                    editor.save(&path)?;
+                    let play = book_gen::play_path(&path);
+                    editor.export()?.save(&play)?;
+                    Ok::<_, deft_reversi_book::BookError>(Some(play))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let same_work = std::sync::Arc::ptr_eq(&this.book_work.editor, &editor);
+                if same_work {
+                    this.book_work.saving = false;
+                }
+                let s = this.settings.lang.strings();
+                match outcome {
+                    Ok(Some(play)) => {
+                        if same_work && this.book_selection_gen == book_gen {
+                            this.set_book_path(Some(play), cx);
+                        } else if same_work {
+                            cx.notify();
+                        }
+                    }
+                    Ok(None) => {
+                        if same_work {
+                            cx.notify();
+                        }
+                    }
+                    Err(error) => {
+                        if same_work {
+                            this.book_work.message = Some(s.book_error(&error.to_string()).into());
+                            cx.notify();
+                        }
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(super) fn render_book_work(&self, cx: &mut Context<Self>) -> Div {
@@ -306,20 +363,7 @@ impl RootView {
         let editor = slot.as_ref().and_then(|slot| slot.as_ref());
 
         let row = |label: &'static str, control: Div, note: Option<SharedString>| {
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(12.))
-                .min_h(px(32.))
-                .child(div().w(px(130.)).flex_none().child(label))
-                .child(control)
-                .children(note.map(|n| {
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(n)
-                }))
+            widgets::form_row(130., label, control, note)
         };
         // Settings change only between runs.
         let edit = |f: fn(&mut BookWork)| -> Handler {
@@ -375,7 +419,7 @@ impl RootView {
                     cx,
                 ))
             });
-        let discs = position.disc_count(Color::Black) + position.disc_count(Color::White);
+        let move_no = super::record::move_number(position);
         let choose = |choice: RootChoice| -> Handler {
             widgets::handler(move |this, cx| {
                 if this.book_work.running.is_some() {
@@ -392,12 +436,7 @@ impl RootView {
             "book-root",
             vec![
                 (
-                    format!(
-                        "{}（{}）",
-                        s.book_from_current,
-                        s.move_number(discs as usize - 3)
-                    )
-                    .into(),
+                    format!("{}（{}）", s.book_from_current, s.move_number(move_no)).into(),
                     work.root == RootChoice::Current,
                     choose(RootChoice::Current),
                 ),
@@ -468,9 +507,10 @@ impl RootView {
             edit(|w| w.max_plies = (w.max_plies + 1).min(60)),
             cx,
         );
-        let mut loss = |id: &'static str, value: u8, down: fn(&mut BookWork), up: fn(&mut BookWork)| {
-            widgets::stepper(id, value.to_string(), edit(down), edit(up), cx)
-        };
+        let mut loss =
+            |id: &'static str, value: u8, down: fn(&mut BookWork), up: fn(&mut BookWork)| {
+                widgets::stepper(id, value.to_string(), edit(down), edit(up), cx)
+            };
         let losses = div()
             .flex()
             .flex_row()
@@ -525,7 +565,9 @@ impl RootView {
         let engine_ready = *self.controller.engine() == EngineStatus::Ready;
         let ready = work.path.is_some()
             && engine_ready
-            && self.book_root().is_some_and(|(root, _)| !root.is_terminal());
+            && self
+                .book_root()
+                .is_some_and(|(root, _)| !root.is_terminal());
         let can_fix = engine_ready && editor.is_some_and(|e| !e.is_empty());
         let action = if running {
             widgets::button(
@@ -575,19 +617,18 @@ impl RootView {
             .child(action)
             .children(fix)
             .children(running.then(|| {
-                div()
-                    .text_color(theme::accent())
-                    .child(if work.fixing {
-                        s.book_fixing
-                    } else {
-                        s.book_generating
-                    })
+                div().text_color(theme::accent()).child(if work.fixing {
+                    s.book_fixing
+                } else {
+                    s.book_generating
+                })
             }))
             .children(progress.map(|p| div().text_color(theme::text_secondary()).child(p)));
 
         // The moves of the position shown, with what the work knows of them.
         let moves: Div = match editor {
             _ if running => caption(s.book_generating),
+            _ if work.saving => caption(s.book_loading),
             None => caption(s.book_not_in),
             Some(editor) => {
                 let board = position.board();
@@ -611,34 +652,37 @@ impl RootView {
                 if rows.is_empty() {
                     caption(s.book_not_in)
                 } else {
-                    div().flex().flex_col().children(rows.into_iter().enumerate().map(
-                        |(i, (action, value, linked))| {
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .h(px(24.))
-                                .child(div().w(px(40.)).child(action_text(action)))
-                                .child(
-                                    div()
-                                        .w(px(60.))
-                                        .text_color(if linked {
-                                            theme::text()
-                                        } else {
-                                            theme::text_muted()
-                                        })
-                                        .child(value.unwrap_or_else(|| "–".into())),
-                                )
-                                .child(widgets::link(
-                                    ("book-link", i),
-                                    if linked { s.book_unlink } else { s.book_link },
-                                    widgets::handler(move |this, cx| {
-                                        this.set_link(action, !linked, cx)
-                                    }),
-                                    cx,
-                                ))
-                        },
-                    ))
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(rows.into_iter().enumerate().map(
+                            |(i, (action, value, linked))| {
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .h(px(24.))
+                                    .child(div().w(px(40.)).child(action_text(action)))
+                                    .child(
+                                        div()
+                                            .w(px(60.))
+                                            .text_color(if linked {
+                                                theme::text()
+                                            } else {
+                                                theme::text_muted()
+                                            })
+                                            .child(value.unwrap_or_else(|| "–".into())),
+                                    )
+                                    .child(widgets::link(
+                                        ("book-link", i),
+                                        if linked { s.book_unlink } else { s.book_link },
+                                        widgets::handler(move |this, cx| {
+                                            this.set_link(action, !linked, cx)
+                                        }),
+                                        cx,
+                                    ))
+                            },
+                        ))
                 }
             }
         };
@@ -665,9 +709,11 @@ impl RootView {
             ))
             .child(row(s.book_leaf, leaf, Some(s.book_leaf_note.into())))
             .child(div().mt(px(6.)).child(status))
-            .children(work.message.clone().map(|m| {
-                div().text_sm().text_color(theme::text_secondary()).child(m)
-            }))
+            .children(
+                work.message
+                    .clone()
+                    .map(|m| div().text_sm().text_color(theme::text_secondary()).child(m)),
+            )
             .child(
                 div()
                     .text_xs()
@@ -693,42 +739,16 @@ impl RootView {
                     .child(moves),
             );
 
-        div()
-            .w(px(680.))
+        widgets::dialog_box(680.)
             .max_h(px(self.viewport.map_or(900., |(_, h)| h as f32 - 60.)))
-            .flex()
-            .flex_col()
-            .px(px(20.))
-            .py(px(16.))
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::border())
-            .rounded(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .mb(px(8.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_base()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(s.book_work),
-                    )
-                    .children((!running).then(|| {
-                        widgets::link(
-                            "close-book-work",
-                            s.close,
-                            widgets::handler(|this, cx| this.close_dialog(cx)),
-                            cx,
-                        )
-                    })),
-            )
+            .child(widgets::dialog_header(
+                s.book_work,
+                (!running).then_some(("close-book-work", s.close)),
+                cx,
+            ))
             .child(widgets::scroll_area(
                 "book-work-body",
-                &self.book_scroll,
+                &self.dialog_scroll,
                 body,
                 cx,
             ))

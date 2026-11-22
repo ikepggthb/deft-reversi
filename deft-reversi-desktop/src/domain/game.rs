@@ -14,14 +14,15 @@ pub struct GameInfo {
 
 impl GameInfo {
     pub fn new() -> Self {
-        let millis = SystemTime::now()
+        let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+            .unwrap_or_default();
+        let millis = now.as_millis() as u64;
         // Two games started in the same millisecond still differ.
         let salt = RandomState::new().hash_one(millis) as u16;
         Self {
             id: format!("{millis:012x}{salt:04x}"),
-            created_at: now_rfc3339(),
+            created_at: rfc3339(now.as_secs()),
         }
     }
 
