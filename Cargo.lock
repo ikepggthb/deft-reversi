@@ -1211,7 +1211,7 @@ dependencies = [
 
 [[package]]
 name = "deft_reversi_desktop"
-version = "0.1.0"
+version = "1.0.0-dev.1"
 dependencies = [
  "async-channel",
  "chrono",

@@ -1,6 +1,6 @@
 [package]
 name = "deft_reversi_book"
-version.workspace = true
+version = "1.0.0-dev.1"
 edition = "2024"
 readme = "README.md"
 

@@ -28,7 +28,7 @@ cargo run --locked --release -p deft-reversi-cli -- solve POSITIONS.obf --model 
 
 ## バージョン
 
-今回の開発系列は Deft Reversi 2.0 です。Engine は自身の `Cargo.toml` で `2.0.0-dev.1`、CLI・Book・学習ツールはルートの `[workspace.package].version` で `1.0.0-dev.1` を指定します。`-dev.N` は正式リリース前の開発ビルドを表します。開発版の区切りで `N` を進め、個々のビルドはGitコミットでも識別します。
+今回の開発系列は Deft Reversi 2.0 です。Engine は自身の `Cargo.toml` で `2.0.0-dev.1`、CLI・Book・学習ツール・デスクトップ版もそれぞれの `Cargo.toml` で `1.0.0-dev.1` を指定します。版はワークスペースで共有せず、クレートごとに管理します。`-dev.N` は正式リリース前の開発ビルドを表します。開発版の区切りで `N` を進め、個々のビルドはGitコミットでも識別します。
 
 バージョンを変更したら `cargo check --workspace` でロックファイルを更新し、`cargo test --locked --workspace` で確認します。正式版をリリースするときにプレリリース接尾辞を外します。
 
