@@ -51,6 +51,13 @@ pub struct ConvertArgs {
     /// the random ones.
     #[arg(long, default_value_t = 0, requires = "transcripts")]
     after_random: usize,
+    /// Leave out fewer moves where data is scarce: at a position with `s`
+    /// discs, `--after-random` is at most `s - RAMP` (and at least 0). The
+    /// positions of `s` discs come from games with up to `s - 12 - K` random
+    /// moves, about a million positions each in Egaroucid's v0002, so a ramp
+    /// of 21 keeps about ten million positions from 21 discs on.
+    #[arg(long, requires = "transcripts")]
+    after_random_ramp: Option<u8>,
     /// Keep the positions with this many discs only.
     #[arg(long, default_value = "4..=63")]
     stones: crate::StoneRange,
@@ -69,13 +76,27 @@ pub struct ConvertArgs {
     valid: f64,
 }
 
+impl ConvertArgs {
+    /// The moves left out after the random ones at a position of `stones`
+    /// discs.
+    fn after_random_at(&self, stones: u8) -> usize {
+        match self.after_random_ramp {
+            Some(ramp) => self
+                .after_random
+                .min(usize::from(stones.saturating_sub(ramp))),
+            None => self.after_random,
+        }
+    }
+}
+
 const SPLITS: [&str; 3] = ["train", "valid", "test"];
 const RECORD_SPEC: &str = "u64 own_bits little-endian, u64 opponent_bits little-endian, i16 value little-endian; side-to-move perspective; bit0=a1, bit63=h8";
 
-/// The positions a game contributes, from the one before move `skip` (0
-/// based, passes not counted) on, and the label of each: the final disc
-/// difference from its side to move, empty squares to the winner.
-pub fn game_records(moves: &str, skip: usize) -> Option<Vec<rd::Record>> {
+/// The positions a game contributes and the label of each: the final disc
+/// difference from its side to move, empty squares to the winner. A
+/// position before move `i` (0 based, passes not counted) with `s` discs is
+/// kept when `i >= skip(s)`.
+pub fn game_records(moves: &str, skip: impl Fn(u8) -> usize) -> Option<Vec<rd::Record>> {
     let bytes = moves.as_bytes();
     if !bytes.len().is_multiple_of(2) {
         return None;
@@ -90,7 +111,7 @@ pub fn game_records(moves: &str, skip: usize) -> Option<Vec<rd::Record>> {
             board = board.play(Action::Pass).ok()?;
             black_to_move = !black_to_move;
         }
-        if i >= skip {
+        if i >= skip(64 - board.empty_count()) {
             positions.push((board, black_to_move));
         }
         board = board.play(Action::Place(square)).ok()?;
@@ -359,7 +380,8 @@ fn file_records(
         }
         lines += 1;
         if args.transcripts.is_some() {
-            match game_records(line, random + args.after_random) {
+            let skip = |stones: u8| random + args.after_random_at(stones);
+            match game_records(line, skip) {
                 Some(game) => game.into_iter().for_each(&mut keep),
                 None => skipped += 1,
             }
@@ -403,6 +425,7 @@ fn write_metadata(
             "transcripts": transcripts.display().to_string(),
             "random_prefix": "excluded",
             "after_random_excluded": args.after_random,
+            "after_random_ramp": args.after_random_ramp,
             "stones": format!("{}..={}", args.stones.first, args.stones.last),
             "games_seen": games,
             "games_skipped": skipped,
@@ -543,7 +566,7 @@ mod tests {
         for _ in 0..200 {
             let (text, before, black_margin) = random_game(&mut random);
             let skip = random.gen_range(0..before.len());
-            let records = game_records(&text, skip).unwrap();
+            let records = game_records(&text, |_| skip).unwrap();
             assert_eq!(records.len(), before.len() - skip);
             for (r, (board, black)) in records.iter().zip(&before[skip..]) {
                 assert_eq!(r.board, *board);
@@ -551,10 +574,10 @@ mod tests {
                 assert_eq!(i32::from(r.value), expected);
             }
             // An unfinished game is rejected.
-            assert!(game_records(&text[..text.len() - 2], 0).is_none());
+            assert!(game_records(&text[..text.len() - 2], |_| 0).is_none());
         }
-        assert!(game_records("f5f5", 0).is_none());
-        assert!(game_records("f5d", 0).is_none());
+        assert!(game_records("f5f5", |_| 0).is_none());
+        assert!(game_records("f5d", |_| 0).is_none());
     }
 
     #[test]
@@ -585,7 +608,7 @@ mod tests {
             let counted =
                 end.player_bits().count_ones() as i32 - end.opponent_bits().count_ones() as i32;
             assert!(expected.unsigned_abs() > counted.unsigned_abs());
-            let first = game_records(&text, 0).unwrap()[0];
+            let first = game_records(&text, |_| 0).unwrap()[0];
             assert_eq!(i32::from(first.value), expected);
             break;
         }
@@ -606,6 +629,40 @@ mod tests {
     }
 
     #[test]
+    fn the_ramp_leaves_out_fewer_moves_with_fewer_discs() {
+        let args = |ramp| ConvertArgs {
+            transcripts: Some(PathBuf::new()),
+            boards: None,
+            after_random: 16,
+            after_random_ramp: ramp,
+            stones: "4..=63".parse().unwrap(),
+            out: PathBuf::new(),
+            threads: None,
+            train: 0.98,
+            valid: 0.01,
+        };
+        let ramp = args(Some(21));
+        assert_eq!(ramp.after_random_at(12), 0);
+        assert_eq!(ramp.after_random_at(21), 0);
+        assert_eq!(ramp.after_random_at(28), 7);
+        assert_eq!(ramp.after_random_at(37), 16);
+        assert_eq!(ramp.after_random_at(63), 16);
+        assert_eq!(args(None).after_random_at(12), 16);
+        // A game keeps a position when its move number reaches the skip
+        // for its disc count.
+        let mut random = StdRng::seed_from_u64(30);
+        let (text, before, _) = random_game(&mut random);
+        let records = game_records(&text, |stones| 30 + ramp.after_random_at(stones)).unwrap();
+        let expected = before
+            .iter()
+            .enumerate()
+            .filter(|(i, (b, _))| *i >= 30 + ramp.after_random_at(64 - b.empty_count()))
+            .count();
+        assert_eq!(records.len(), expected);
+        assert!(!records.is_empty() && records.len() < before.len() - 30);
+    }
+
+    #[test]
     fn any_number_of_threads_writes_the_same_dataset() {
         let dir = crate::test_dir("convert");
         let mut random = StdRng::seed_from_u64(21);
@@ -622,6 +679,7 @@ mod tests {
                 transcripts: Some(dir.join("transcripts")),
                 boards: None,
                 after_random: 3,
+                after_random_ramp: None,
                 stones: "20..=50".parse().unwrap(),
                 out: dir.join(out),
                 threads: Some(threads),
