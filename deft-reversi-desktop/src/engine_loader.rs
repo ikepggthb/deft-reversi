@@ -37,12 +37,13 @@ pub fn find_model() -> Option<PathBuf> {
     let bundled = std::env::current_exe()
         .ok()
         .and_then(|exe| Some(exe.parent()?.join("resources").join(MODEL_FILE)));
+    // The parent rather than `..`, so the settings screen shows a plain path.
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../data/eval")
-        .join(MODEL_FILE);
+        .parent()
+        .map(|root| root.join("data").join("eval").join(MODEL_FILE));
     bundled
         .into_iter()
-        .chain([workspace])
+        .chain(workspace)
         .find(|path| path.is_file())
 }
 
