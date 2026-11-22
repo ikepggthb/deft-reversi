@@ -8,6 +8,10 @@ T=target/release/deft-reversi-train
 
 # Egaroucid の学習データ（棋譜）から rdg 形式のデータセットを作る
 $T convert --transcripts transcripts --out egaroucid-rd
+# ランダム打ちの後16手を除き、石数28以上だけを使う
+$T convert --transcripts transcripts --after-random 16 --stones 28..=63 --out v0002-r16
+# 局面と評価値のデータ（Egaroucid 7.4.0 / 7.5.1）から作る
+$T convert --boards unzip --stones 12..=27 --out v0001
 
 # 学習。--work に途中経過を残し、全段階が終わると --out に DPR2 を書く
 $T train --data egaroucid-rd --work runs/p1 --out runs/p1/model.dpr2
@@ -40,10 +44,11 @@ $T mpc -m runs/p1/model.dpr2 --data egaroucid-rd --out runs/p1/mpc --positions 1
 
 読み込み時に、石数がディレクトリ名と一致すること、石の重なりが無いこと、値が範囲内であることを確かめる。
 
-`convert` は、Egaroucid の学習データ（`<ランダムに打った手数>/*.txt`、1行1局）から、rdg と同じ規則でデータセットを作る。
+`convert` は、Egaroucid の学習データから、rdg と同じ規則でデータセットを作る。入力は2種類ある。
 
-- ランダムに打った手より前の局面は使わない。それ以降の、手番側に打てる手がある局面をすべて使う。
-- 値は終局の石差（黒 − 白、空きマスは数えない）を手番側から見たもの。
+- `--transcripts`：棋譜（学習データ v0002 など、`<ランダムに打った手数>/*.txt`、1行1局）。ランダムに打った手と、その後の `--after-random` 手（既定0）より前の局面は使わない。それ以降の、手番側に打てる手がある局面をすべて使う。値は終局の石差を手番側から見たもので、空きマスは勝った側に数える（エンジンの終局値 `final_score` と同じ。2026-11-23 より前は空きマスをどちらにも数えなかった）。
+- `--boards`：局面と評価値（Egaroucid 7.4.0 / 7.5.1 の学習データ、`<フォルダ>/*.txt`、1行1局面）。64文字の盤面（a1, b1, …, h8。`X` が手番側、`O` が相手、`-` が空き）と、手番側から見たスコア。スコアはそのまま値にする。
+- `--stones` で、その石数の局面だけを残す。
 - train / valid / test は、局面を8通りの対称で正規化したハッシュ（rdg の `canonical_own_opponent_v1`）で分ける（既定 98% / 1% / 1%）。同じ局面とその対称形は、必ず同じ分割に入る。
 - 同じ局面が何度出てきても、すべて残す（別々の対局の結果を持つため）。rdg の生成器は重複を除く。
 - 各段階に `metadata.json` と `stats.json`、全体に `summary.json` を書く。

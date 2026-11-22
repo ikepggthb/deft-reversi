@@ -1,16 +1,24 @@
-//! Builds an `.rd` dataset from game transcripts, in the layout of
-//! reversi-dataset-gen (rdg, <https://github.com/ikepggthb/reversi-dataset-gen>).
+//! Builds an `.rd` dataset from game transcripts or labelled positions, in
+//! the layout of reversi-dataset-gen (rdg,
+//! <https://github.com/ikepggthb/reversi-dataset-gen>).
 //!
-//! The input is a directory of directories named by the number of random
-//! opening moves `N` (as in Egaroucid's training data), each holding text
-//! files of one game per line (`f5d6c3...`). The first `N` moves of a game
-//! were random, so the positions before them say little about the final
-//! result and are left out. Every later position with a move to play becomes
-//! a record.
+//! Two inputs, as Egaroucid publishes its training data:
+//! - `--transcripts`: a directory of directories named by the number of
+//!   random opening moves `N` (training data v0002), each holding text
+//!   files of one game per line (`f5d6c3...`). The first `N` moves of a game
+//!   were random, so the positions before them say little about the final
+//!   result and are left out, and so are the next `--after-random` moves'.
+//!   Every later position with a move to play becomes a record, labelled
+//!   with the game's final disc difference from its side to move. Empty
+//!   squares go to the winner, as in the engine's final score.
+//! - `--boards`: directories of text files of one position per line, 64
+//!   characters (a1, b1, ..., h8; `X` the side to move, `O` the opponent,
+//!   `-` empty) and its score from the side to move (training data of
+//!   Egaroucid 7.4.0 / 7.5.1). The score is kept as it is.
+//!
+//! `--stones` keeps the positions with that many discs only.
 //!
 //! As rdg writes them:
-//! - the label is the final disc difference, black minus white, from the
-//!   side to move; empty squares count for nobody
 //! - a position goes to `train`, `valid` or `test` by its canonical hash
 //!   (`canonical_own_opponent_v1`), so a position and its symmetric copies
 //!   always land in the same split
@@ -31,10 +39,21 @@ use std::{
 };
 
 #[derive(Args, Debug)]
+#[command(group(clap::ArgGroup::new("input").required(true).args(["transcripts", "boards"])))]
 pub struct ConvertArgs {
     /// Directory of `<random moves>/` directories of transcript files.
     #[arg(long)]
-    transcripts: PathBuf,
+    transcripts: Option<PathBuf>,
+    /// Directory of directories of `<64 squares> <score>` position files.
+    #[arg(long)]
+    boards: Option<PathBuf>,
+    /// With `--transcripts`, also leave out this many moves' positions after
+    /// the random ones.
+    #[arg(long, default_value_t = 0, requires = "transcripts")]
+    after_random: usize,
+    /// Keep the positions with this many discs only.
+    #[arg(long, default_value = "4..=63")]
+    stones: crate::StoneRange,
     /// Output dataset directory.
     #[arg(long)]
     out: PathBuf,
@@ -49,8 +68,10 @@ pub struct ConvertArgs {
 const SPLITS: [&str; 3] = ["train", "valid", "test"];
 const RECORD_SPEC: &str = "u64 own_bits little-endian, u64 opponent_bits little-endian, i16 value little-endian; side-to-move perspective; bit0=a1, bit63=h8";
 
-/// The positions a game contributes and the label of each.
-pub fn game_records(moves: &str, random: usize) -> Option<Vec<rd::Record>> {
+/// The positions a game contributes, from the one before move `skip` (0
+/// based, passes not counted) on, and the label of each: the final disc
+/// difference from its side to move, empty squares to the winner.
+pub fn game_records(moves: &str, skip: usize) -> Option<Vec<rd::Record>> {
     let bytes = moves.as_bytes();
     if !bytes.len().is_multiple_of(2) {
         return None;
@@ -65,7 +86,7 @@ pub fn game_records(moves: &str, random: usize) -> Option<Vec<rd::Record>> {
             board = board.play(Action::Pass).ok()?;
             black_to_move = !black_to_move;
         }
-        if i >= random {
+        if i >= skip {
             positions.push((board, black_to_move));
         }
         board = board.play(Action::Place(square)).ok()?;
@@ -74,7 +95,7 @@ pub fn game_records(moves: &str, random: usize) -> Option<Vec<rd::Record>> {
     if !board.is_terminal() {
         return None;
     }
-    let mover = board.player_bits().count_ones() as i32 - board.opponent_bits().count_ones() as i32;
+    let mover = board.final_score();
     let black_margin = if black_to_move { mover } else { -mover };
     Some(
         positions
@@ -85,6 +106,33 @@ pub fn game_records(moves: &str, random: usize) -> Option<Vec<rd::Record>> {
             })
             .collect(),
     )
+}
+
+/// A position line of `--boards`: 64 squares from a1 to h8 (`X` the side to
+/// move, `O` the opponent, `-` empty), a space and the score from the side
+/// to move.
+pub fn board_record(line: &str) -> Option<rd::Record> {
+    let (squares, score) = line.split_once(' ')?;
+    if squares.len() != 64 {
+        return None;
+    }
+    let (mut own, mut opponent) = (0u64, 0u64);
+    for (i, c) in squares.bytes().enumerate() {
+        match c {
+            b'X' => own |= 1 << i,
+            b'O' => opponent |= 1 << i,
+            b'-' => {}
+            _ => return None,
+        }
+    }
+    let value: i8 = score.trim().parse().ok()?;
+    if !(-64..=64).contains(&value) {
+        return None;
+    }
+    Some(rd::Record {
+        board: Board::from_bits(own, opponent)?,
+        value,
+    })
 }
 
 /// rdg's transform `t` of a bitboard (bit `8 y + x` is square (x, y)).
@@ -181,22 +229,36 @@ pub fn run(args: ConvertArgs) -> Result<()> {
     if !share(args.train) || !share(args.valid) || args.train + args.valid > 1.0 {
         return Err("--train and --valid must be shares with a sum of at most 1".into());
     }
+    let input = args.transcripts.as_ref().or(args.boards.as_ref()).unwrap();
+    // Transcripts by their number of random moves; position files in one
+    // group of their directory's order.
     let mut dirs: Vec<(usize, PathBuf)> = Vec::new();
-    for entry in fs::read_dir(&args.transcripts)? {
+    for entry in fs::read_dir(input)? {
         let path = entry?.path();
-        if let Some(n) = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .and_then(|n| n.parse().ok())
-            && path.is_dir()
-        {
-            dirs.push((n, path));
+        if !path.is_dir() {
+            continue;
+        }
+        if args.transcripts.is_some() {
+            if let Some(n) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.parse().ok())
+            {
+                dirs.push((n, path));
+            }
+        } else {
+            dirs.push((0, path));
         }
     }
     if dirs.is_empty() {
         return Err(format!(
-            "{}: no directories named by the number of random moves",
-            args.transcripts.display()
+            "{}: no directories{}",
+            input.display(),
+            if args.transcripts.is_some() {
+                " named by the number of random moves"
+            } else {
+                ""
+            }
         )
         .into());
     }
@@ -207,7 +269,14 @@ pub fn run(args: ConvertArgs) -> Result<()> {
         files: (0..=64).map(|_| [None, None, None]).collect(),
         values: (0..=64).map(|_| Values::default()).collect(),
     };
-    let (mut games, mut skipped) = (0u64, 0u64);
+    let (mut lines, mut skipped) = (0u64, 0u64);
+    let write = |writers: &mut Writers, r: &rd::Record| -> std::io::Result<()> {
+        if !args.stones.contains(64 - r.board.empty_count()) {
+            return Ok(());
+        }
+        let hash = canonical_hash(r.board.player_bits(), r.board.opponent_bits());
+        writers.write(split_of(&hash, args.train, args.valid), r)
+    };
     for (random, dir) in &dirs {
         let mut files: Vec<PathBuf> = fs::read_dir(dir)?
             .map(|e| e.map(|e| e.path()))
@@ -221,14 +290,21 @@ pub fn run(args: ConvertArgs) -> Result<()> {
                 if line.is_empty() {
                     continue;
                 }
-                games += 1;
-                let Some(game) = game_records(line, *random) else {
-                    skipped += 1;
-                    continue;
-                };
-                for r in &game {
-                    let hash = canonical_hash(r.board.player_bits(), r.board.opponent_bits());
-                    writers.write(split_of(&hash, args.train, args.valid), r)?;
+                lines += 1;
+                if args.transcripts.is_some() {
+                    let Some(game) = game_records(line, random + args.after_random) else {
+                        skipped += 1;
+                        continue;
+                    };
+                    for r in &game {
+                        write(&mut writers, r)?;
+                    }
+                } else {
+                    let Some(r) = board_record(line) else {
+                        skipped += 1;
+                        continue;
+                    };
+                    write(&mut writers, &r)?;
                 }
             }
         }
@@ -237,12 +313,15 @@ pub fn run(args: ConvertArgs) -> Result<()> {
             .iter()
             .map(|v| v.split.iter().sum::<u64>())
             .sum();
-        println!("random {random:>2}: {games} games, {skipped} skipped, {total} positions");
+        println!(
+            "{}: {lines} lines, {skipped} skipped, {total} positions",
+            dir.display()
+        );
     }
     for slot in writers.files.iter_mut().flatten().flatten() {
         slot.flush()?;
     }
-    write_metadata(&args, &writers.values, games, skipped, &started)?;
+    write_metadata(&args, &writers.values, lines, skipped, &started)?;
     println!("wrote {}", args.out.display());
     Ok(())
 }
@@ -270,14 +349,31 @@ fn write_metadata(
         "valid": args.valid,
         "test": 1.0 - args.train - args.valid,
     });
-    let source = serde_json::json!({
-        "transcripts": args.transcripts.display().to_string(),
-        "random_prefix": "excluded",
-        "games_seen": games,
-        "games_skipped": skipped,
-        "label": "final disc difference (black minus white, empty squares not counted) from the side to move",
-        "dedupe": "none",
-    });
+    let source = match (&args.transcripts, &args.boards) {
+        (Some(transcripts), _) => serde_json::json!({
+            "transcripts": transcripts.display().to_string(),
+            "random_prefix": "excluded",
+            "after_random_excluded": args.after_random,
+            "stones": format!("{}..={}", args.stones.first, args.stones.last),
+            "games_seen": games,
+            "games_skipped": skipped,
+            "label": "final disc difference from the side to move, empty squares to the winner",
+            "dedupe": "none",
+        }),
+        (None, boards) => serde_json::json!({
+            "boards": boards.as_ref().unwrap().display().to_string(),
+            "stones": format!("{}..={}", args.stones.first, args.stones.last),
+            "positions_seen": games,
+            "positions_skipped": skipped,
+            "label": "the score given with each position, from the side to move",
+            "dedupe": "none",
+        }),
+    };
+    let generation = if args.transcripts.is_some() {
+        "transcripts"
+    } else {
+        "boards"
+    };
     let generated_at = now();
     let mut phases = Vec::new();
     let mut summaries = Vec::new();
@@ -295,7 +391,7 @@ fn write_metadata(
         let metadata = serde_json::json!({
             "schema": "rdg_phase_metadata_v1",
             "mode": "import",
-            "generation": "transcripts",
+            "generation": generation,
             "phase": phase,
             "format": "rdgbitboard_v1",
             "record_magic": "RDGBBVAL1\n",
@@ -347,7 +443,7 @@ fn write_metadata(
     let summary = serde_json::json!({
         "schema": "rdg_summary_v1",
         "mode": "import",
-        "generation": "transcripts",
+        "generation": generation,
         "started_at": started,
         "finished_at": now(),
         "phases": phases,
@@ -386,11 +482,9 @@ mod tests {
             board = board.play(Action::Place(square)).unwrap();
             black = !black;
         }
-        let (p, o) = (
-            board.player_bits().count_ones() as i32,
-            board.opponent_bits().count_ones() as i32,
-        );
-        let black_margin = if black { p - o } else { o - p };
+        // The engine's final score: empty squares to the winner.
+        let score = board.final_score();
+        let black_margin = if black { score } else { -score };
         (text, before, black_margin)
     }
 
@@ -415,28 +509,51 @@ mod tests {
     }
 
     #[test]
-    fn empty_squares_count_for_nobody() {
+    fn empty_squares_go_to_the_winner() {
         // Random games until one ends with empty squares.
         let mut random = StdRng::seed_from_u64(8);
         loop {
-            let (text, _, black_margin) = random_game(&mut random);
+            let (text, _, _) = random_game(&mut random);
             if text.len() / 2 == 60 {
                 continue;
             }
-            let first = game_records(&text, 0).unwrap()[0];
-            assert_eq!(i32::from(first.value), black_margin);
             let mut end = Board::new();
+            let mut black = true;
             for pair in text.as_bytes().chunks(2) {
                 if end.must_pass() {
                     end = end.play(Action::Pass).unwrap();
+                    black = !black;
                 }
                 let square: Square = std::str::from_utf8(pair).unwrap().parse().unwrap();
                 end = end.play(Action::Place(square)).unwrap();
+                black = !black;
             }
-            // The engine's score gives the empty squares to the winner.
-            assert!(end.final_score().unsigned_abs() > black_margin.unsigned_abs());
+            let expected = if black {
+                end.final_score()
+            } else {
+                -end.final_score()
+            };
+            let counted = end.player_bits().count_ones() as i32
+                - end.opponent_bits().count_ones() as i32;
+            assert!(expected.unsigned_abs() > counted.unsigned_abs());
+            let first = game_records(&text, 0).unwrap()[0];
+            assert_eq!(i32::from(first.value), expected);
             break;
         }
+    }
+
+    #[test]
+    fn board_lines_read_the_mover_and_the_score() {
+        let line = "-XO-OOXOOXX-OXOO-XXOXXOOX-OXOOXOOXOOOXXXO-XOOOXXO-O-OO---OOOX-O- 4";
+        let r = board_record(line).unwrap();
+        assert_eq!(r.value, 4);
+        assert_eq!(r.board.player_bits() & 0b111, 0b010);
+        assert_eq!(r.board.opponent_bits() & 0b111, 0b100);
+        assert_eq!(64 - r.board.empty_count(), 51);
+        assert!(board_record("-XO 4").is_none());
+        assert!(board_record(&line.replace(' ', "")).is_none());
+        assert!(board_record(&line.replace(" 4", " 65")).is_none());
+        assert!(board_record(&line.replacen('-', "?", 1)).is_none());
     }
 
     #[test]
