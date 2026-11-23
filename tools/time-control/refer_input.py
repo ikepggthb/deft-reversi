@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Positions of logged games for the reference search (stage 3-2).
 
-usage: refer_input.py FIRST:LAST OUT.tsv... > positions.tsv
+usage: refer_input.py [--missing REFER_DIR] FIRST:LAST OUT.tsv... > positions.tsv
 
 For every game of the given openings in each referee OUT.tsv (with its
 OUT.logs.tsv and clock logs from CLOCK_LOG_DIR), replays the game record
@@ -13,8 +13,13 @@ key is the position (black and white bits in hex and the side to move), so
 a position met in several games (colour-swapped self-play games nearly
 repeat each other) is searched once; later lines with the same key only add
 their chosen moves to it. `moves` are the squares (a1..h8) that any
-iteration of the turn chose as its best move, comma-separated, merged over
-all turns at that position. The output lists each key once, on its first
+iteration of the turn chose as its best move, and the move played,
+comma-separated, merged over all turns at that position. (The move played
+was added after the stage 3-2 run: a turn whose first iteration did not
+finish before hard has no iteration move, but a move played.)
+
+With --missing, only the moves that REFER_DIR's results (refer_loss.py's
+`reference`) do not have yet are listed, for a supplementary run. The output lists each key once, on its first
 turn, followed by `# also cond opening new_black player` lines for the
 other turns there (for joining the results back).
 
@@ -72,9 +77,15 @@ def turns(path, start, end):
 
 
 def main():
-    first, last = (int(x) for x in sys.argv[1].split(":"))
+    args = sys.argv[1:]
+    have = {}
+    if args[0] == "--missing":
+        from refer_loss import reference
+        have = {k: set(v[1]) for k, v in reference(args[1]).items()}
+        args = args[2:]
+    first, last = (int(x) for x in args[0].split(":"))
     found = OrderedDict()
-    for out in map(Path, sys.argv[2:]):
+    for out in map(Path, args[1:]):
         cond = out.name.removesuffix(".tsv")
         records = {}
         for line in out.read_text().splitlines()[1:]:
@@ -94,11 +105,14 @@ def main():
                     if cond.startswith("x-") and not turn["extended"]:
                         continue
                     chosen = {i["best_move"] for i in its if i["best_move"]}
-                    if not chosen:
-                        continue
+                    if turn["played"] and turn["played"] != "pass":
+                        chosen.add(turn["played"])
                     e = turn["empties"]
                     bw = pos.get((e, black))
                     key = f"{bw[0]:016x}{bw[1]:016x}{'b' if black else 'w'}"
+                    chosen -= have.get(key, set())
+                    if not chosen:
+                        continue
                     entry = found.setdefault(key, {"bw": bw, "black": black, "e": e,
                                                     "moves": set(), "turns": []})
                     entry["moves"] |= chosen

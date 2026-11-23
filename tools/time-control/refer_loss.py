@@ -15,6 +15,9 @@ iterations near depth 26 are measured against little more than themselves.
 
 Columns: cond opening new_black player empties k tag next elapsed cost
 move loss played_loss stop_reason extended after_decision decision.
+A turn whose first iteration ran into hard (no iteration finished; the
+search had warm-started from the table at a deep iteration) has one row
+with k = -1, tag -, elapsed = the turn's time and the move played.
 `next` is the kind of the following iteration of the turn if it finished
 (else -), `after_decision` is 1 for iterations that ended after the clock
 had decided to stop (extended turns only), `decision` is 1 on the last
@@ -23,6 +26,7 @@ iteration the clock had when it decided.
 `summary` prints, with 95% intervals from a bootstrap over openings (the
 colour-swapped games of one opening nearly repeat each other):
   1. the loss of the played move per turn and per game, by empties band;
+     the turns without a finished iteration, their loss and time;
   2. the gain of each finished next iteration, loss(k) - loss(k+1), by
      transition (mid, entry, stage, exact); for extension games only the
      iterations that ended after the clock's decision (those it gave up);
@@ -45,11 +49,19 @@ EXTEND = ("x-gtp2", "x-gtp20", "x-gtp60", "x-gtp20t4")
 
 def reference(refer):
     ref = {}
-    for path in sorted(Path(refer).glob("out-*.tsv")):
+    # The main run, then supplementary runs in subdirectories (moves the
+    # main run lacked); a position's best move and value come from the
+    # first run that searched it.
+    paths = sorted(Path(refer).glob("out-*.tsv")) + sorted(Path(refer).glob("*/out-*.tsv"))
+    for path in paths:
         for line in open(path):
             w = line.rstrip("\n").split("\t")
             moves = [m.split(":") for m in w[2].split()]
-            ref[w[0]] = (int(moves[0][1]), {m: int(s) for m, s in moves})
+            values = {m: int(s) for m, s in moves}
+            if w[0] in ref:
+                ref[w[0]][1].update({m: v for m, v in values.items() if m not in ref[w[0]][1]})
+            else:
+                ref[w[0]] = (int(moves[0][1]), values)
     return ref
 
 
@@ -80,15 +92,25 @@ def table(run, refer):
                     if cond in EXTEND and not turn["extended"]:
                         continue
                     its = [i for i in its if i["best_move"]]
-                    if not its:
-                        continue
                     bw = pos[(turn["empties"], black)]
                     key = f"{bw[0]:016x}{bw[1]:016x}{'b' if black else 'w'}"
-                    best, values = ref[key]
                     played = turn["played"]
+                    if key not in ref:
+                        missing["position"] += 1
+                        continue
+                    best, values = ref[key]
                     pl = best - values[played] if played in values else None
                     if pl is None:
                         missing["played"] += 1
+                    if not its:
+                        # No iteration finished (the first one ran into
+                        # hard): one row for the move played.
+                        row = [cond, opening, nb, player, turn["empties"], -1, "-", "-",
+                               f"{turn['used']:.5f}", "-", played, "-" if pl is None else pl,
+                               "-" if pl is None else pl, turn["stop_reason"],
+                               int(turn["extended"]), 0, 0]
+                        print("\t".join(map(str, row)))
+                        continue
                     dec = None
                     if turn["extended"] and turn["decision_elapsed"] is not None:
                         done = [k for k, i in enumerate(its)
@@ -189,6 +211,15 @@ def summary(path):
                               sum(r["after_decision"] == "1" for r in its))
     for (cond, opening, nb, player), s in per_game.items():
         game.add(cond, opening, s)
+    none_loss, none_time, all_time = Groups(), Groups(), defaultdict(float)
+    for (cond, opening, nb, player, e), its in rows.items():
+        if not cond.startswith("n-"):
+            continue
+        if its[0]["k"] == "-1":
+            if its[0]["played_loss"] != "-":
+                none_loss.add(cond, opening, int(its[0]["played_loss"]))
+            none_time.add(cond, opening, float(its[0]["elapsed"]))
+
 
     print("# 1. loss of the played move (normal games; discs per turn)")
     for key in sorted(played.v):
@@ -196,6 +227,10 @@ def summary(path):
     print("# 1b. sum of the played losses per game and player")
     for key in sorted(game.v):
         print(f"{key}\t{game.line(key, rng)}")
+    print("# 1c. turns without a finished iteration (first iteration cut at hard):"
+          " loss of the move played, seconds per turn")
+    for key in sorted(none_loss.v):
+        print(f"{key}\tloss {none_loss.line(key, rng)}\ttime {none_time.line(key, rng)}")
     print("# 2. gain of the next finished iteration, loss(k) - loss(k+1) (discs)"
           " and share where the move changed; x-*: iterations after the decision")
     for key in sorted(gain.v):
