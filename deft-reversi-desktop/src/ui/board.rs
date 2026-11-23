@@ -1,5 +1,10 @@
 //! The board with its coordinates, and the record navigation below it.
-use super::{analysis_panel::signed, animation::Frame, root::RootView, theme, widgets};
+use super::{
+    animation::Frame,
+    format::{reading_mark, signed},
+    root::RootView,
+    theme, widgets,
+};
 use crate::{
     app::{Command, Status},
     services::engine::Reading,
@@ -9,7 +14,54 @@ use gpui::{
     ClickEvent, Context, Div, FontWeight, MouseButton, Pixels, Rgba, Window, div, prelude::*, px,
 };
 
-const LABEL: f32 = 18.;
+pub(super) const LABEL: f32 = 18.;
+
+/// Wraps an 8×8 board `frame` with file and rank labels oriented by `view`.
+pub(super) fn labeled_board(view: crate::domain::BoardView, cell: Pixels, frame: Div) -> Div {
+    let label = |text: String| {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_xs()
+            .text_color(theme::text_muted())
+            .child(text)
+    };
+    // A line of squares shares a file or a rank, whichever way the
+    // board is turned; its label is that one.
+    let line_label = |a: Square, b: Square| {
+        if a.x() == b.x() {
+            ((b'a' + a.x()) as char).to_string()
+        } else {
+            (a.y() + 1).to_string()
+        }
+    };
+    let files = div()
+        .flex()
+        .flex_row()
+        .pl(px(LABEL + 2.))
+        .gap(px(1.))
+        .children((0..8u8).map(|x| {
+            label(line_label(view.square_at(x, 0), view.square_at(x, 1)))
+                .w(cell)
+                .h(px(LABEL))
+        }));
+    let ranks = div()
+        .flex()
+        .flex_col()
+        .pt(px(2.))
+        .gap(px(1.))
+        .children((0..8u8).map(|y| {
+            label(line_label(view.square_at(0, y), view.square_at(1, y)))
+                .w(px(LABEL))
+                .h(cell)
+        }));
+    div()
+        .flex()
+        .flex_col()
+        .child(files)
+        .child(div().flex().flex_row().child(ranks).child(frame))
+}
 
 impl RootView {
     pub(super) fn render_board(
@@ -72,41 +124,13 @@ impl RootView {
         };
         // How each value was read, in a few characters under it.
         let s = self.settings.lang.strings();
-        let mark_of = |reading: Reading| super::analysis_panel::reading_mark(s, reading);
+        let mark_of = |reading: Reading| reading_mark(s, reading);
         let cursor = self
             .board_focus
             .is_focused(window)
             .then_some(self.board_cursor);
 
         let view = self.settings.board_view;
-        let label = |text: String| {
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_xs()
-                .text_color(theme::text_muted())
-                .child(text)
-        };
-        // A line of squares shares a file or a rank, whichever way the
-        // board is turned; its label is that one.
-        let line_label = |a: Square, b: Square| {
-            if a.x() == b.x() {
-                ((b'a' + a.x()) as char).to_string()
-            } else {
-                (a.y() + 1).to_string()
-            }
-        };
-        let files = div()
-            .flex()
-            .flex_row()
-            .pl(px(LABEL + 2.))
-            .gap(px(1.))
-            .children((0..8u8).map(|x| {
-                label(line_label(view.square_at(x, 0), view.square_at(x, 1)))
-                    .w(cell)
-                    .h(px(LABEL))
-            }));
         let rows = (0..8u8).map(|y| {
             let squares = (0..8u8).map(|x| {
                 let square = view.square_at(x, y);
@@ -224,16 +248,6 @@ impl RootView {
             });
             div().flex().flex_row().gap(px(1.)).children(squares)
         });
-        let ranks = div()
-            .flex()
-            .flex_col()
-            .pt(px(2.))
-            .gap(px(1.))
-            .children((0..8u8).map(|y| {
-                label(line_label(view.square_at(0, y), view.square_at(1, y)))
-                    .w(px(LABEL))
-                    .h(cell)
-            }));
         let frame = div()
             .flex()
             .flex_col()
@@ -243,12 +257,8 @@ impl RootView {
             .children(rows);
         // A click plays without taking keyboard focus, so the arrow keys keep
         // moving through the record; Tab gives the board its focus.
-        div()
-            .flex()
-            .flex_col()
+        labeled_board(view, cell, frame)
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .child(files)
-            .child(div().flex().flex_row().child(ranks).child(frame))
     }
 
     /// Moving through the record on the left, and the game's own controls

@@ -19,8 +19,8 @@ pub enum Pen {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EditorDraft {
-    pub black: u64,
-    pub white: u64,
+    black: u64,
+    white: u64,
     pub side: Color,
 }
 

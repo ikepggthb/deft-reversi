@@ -2,7 +2,7 @@
 //! side to move, the best move and line, and every move's value; under the
 //! board, the values over the record.
 use super::{
-    ai_panel::reading_text,
+    format::{action_text, reading_mark, reading_text, signed},
     record::move_number,
     root::RootView,
     theme,
@@ -11,15 +11,14 @@ use super::{
 use crate::domain::settings::GRAPH_HEIGHTS;
 use crate::{
     app::Command,
-    i18n::Strings,
     services::engine::{Reading, Report},
 };
 use deft_reversi_book::Bound;
 use deft_reversi_engine::{Action, Color};
 use gpui::{
     Bounds, ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent, PathBuilder, Pixels,
-    Rgba, SharedString, Window,
-    canvas, div, fill, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
+    Rgba, SharedString, Window, canvas, div, fill, linear_color_stop, linear_gradient, point,
+    prelude::*, px, rgb, size,
 };
 
 /// The scale on the graph's left.
@@ -139,25 +138,6 @@ fn paint_graph(
     for &(k, v, color) in marked {
         dot(window, k, v, px(4.), color);
     }
-}
-
-pub(super) fn action_text(action: Action) -> String {
-    action.to_string().to_lowercase()
-}
-
-/// How a value was read, in a few characters: "d24@83%", "END@95%",
-/// "END@100%" or "Book".
-pub(super) fn reading_mark(s: &Strings, reading: Reading) -> String {
-    match reading {
-        Reading::Depth { depth, percent } => format!("d{depth}@{percent}%"),
-        Reading::Endgame { percent } => format!("END@{percent}%"),
-        Reading::Book => s.book.into(),
-    }
-}
-
-/// "+6", "−6" or "0".
-pub(super) fn signed(value: i32) -> String {
-    format!("{value:+}").replace('-', "−").replace("+0", "0")
 }
 
 /// A disc on the page, lit from the top left like a stone. The light side
@@ -334,39 +314,37 @@ impl RootView {
                         theme::warning()
                     }
                     Some(v) if m.fresh && !v.provisional && i < 3 => theme::text(),
-                    Some(v) if m.fresh && !v.provisional => theme::text_secondary(),
                     Some(_) if m.fresh => theme::text_secondary(),
                     _ => theme::text_muted(),
                 };
                 let reading = m.value.as_ref().and_then(|v| {
                     let mark = reading_mark(s, v.reading?);
-                    Some(if v.provisional { format!("{mark} …") } else { mark })
+                    Some(if v.provisional {
+                        format!("{mark} …")
+                    } else {
+                        mark
+                    })
                 });
                 div()
                     .flex()
-                    .flex_col()
-                    .child(
+                    .flex_row()
+                    .items_center()
+                    .h(px(22.))
+                    .text_color(color)
+                    .child(div().w(px(36.)).child(action_text(m.action)))
+                    .child(div().w(px(44.)).child(match &m.value {
+                        Some(v) => signed(v.score),
+                        None if searching => "…".into(),
+                        None => "–".into(),
+                    }))
+                    .children(reading.map(|r| {
                         div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .h(px(22.))
-                            .text_color(color)
-                            .child(div().w(px(36.)).child(action_text(m.action)))
-                            .child(div().w(px(44.)).child(match &m.value {
-                                Some(v) => signed(v.score),
-                                None if searching => "…".into(),
-                                None => "–".into(),
-                            }))
-                            .children(reading.map(|r| {
-                                div()
-                                    .flex_1()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .whitespace_nowrap()
-                                    .child(r)
-                            })),
-                    )
+                            .flex_1()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .whitespace_nowrap()
+                            .child(r)
+                    }))
             });
             div()
                 .flex()
@@ -449,7 +427,9 @@ impl RootView {
     /// The plot's height: as it is being dragged, or as it was left.
     pub(super) fn graph_height(&self) -> f32 {
         let height = f32::from(self.graph_live.unwrap_or(self.settings.graph_height));
-        height.min(self.graph_most()).max(f32::from(*GRAPH_HEIGHTS.start()))
+        height
+            .min(self.graph_most())
+            .max(f32::from(*GRAPH_HEIGHTS.start()))
     }
 
     /// The tallest the graph may be in this window: the board keeps squares
@@ -637,7 +617,7 @@ impl RootView {
             .analysis_at(history, k)
             .filter(|_| !history.position(k).is_terminal())
             .and_then(|a| {
-                let reading = reading_text(s, a.report.reading?);
+                let reading = reading_text(s, a.report.as_ref()?.reading?);
                 Some(match a.level {
                     Some(level) => format!("Lv {level} · {reading}"),
                     None => reading,
@@ -659,8 +639,18 @@ impl RootView {
             .text_xs()
             .whitespace_nowrap()
             .overflow_hidden()
-            .child(div().flex_none().text_color(theme::text_secondary()).child(which))
-            .child(div().flex_none().text_color(theme::text()).child(value_text))
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(theme::text_secondary())
+                    .child(which),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(theme::text())
+                    .child(value_text),
+            )
             .child(div().flex_1())
             .children(how);
 

@@ -8,8 +8,7 @@ use crate::{
         player::MOVE_TIMES,
         settings::{
             AiChoice, Animation, BookSettings, GRAPH_HEIGHTS, ManualMode, NewGameForm, SideForm,
-            TT_SIZES_MIB,
-            ThemeChoice,
+            TT_SIZES_MIB, ThemeChoice,
         },
     },
     i18n::Lang,
@@ -84,7 +83,7 @@ impl From<SideForm> for SideV1 {
                 ManualMode::Time => "time".into(),
             },
             level: side.level,
-            time_ms: MOVE_TIMES[side.time].as_millis() as u64,
+            time_ms: side.time_duration().as_millis() as u64,
         }
     }
 }
@@ -126,7 +125,7 @@ impl Default for SideV1 {
 
 impl Default for NewGameV1 {
     fn default() -> Self {
-        Self::from(Settings::default().new_game)
+        Self::from(NewGameForm::default())
     }
 }
 
@@ -176,7 +175,7 @@ impl From<Settings> for SettingsV1 {
             window_width: s.window_size.map(|(w, _)| w),
             window_height: s.window_size.map(|(_, h)| h),
             new_game: s.new_game.into(),
-            board_turns: s.board_view.turns,
+            board_turns: s.board_view.turns(),
             board_mirrored: s.board_view.mirrored,
             book_path: s.book.path.as_ref().map(|p| p.display().to_string()),
             book_enabled: s.book.enabled,
@@ -242,10 +241,7 @@ impl SettingsV1 {
                 ],
                 from_current: false,
             },
-            board_view: BoardView {
-                turns: self.board_turns % 4,
-                mirrored: self.board_mirrored,
-            },
+            board_view: BoardView::new(self.board_turns, self.board_mirrored),
             book: BookSettings {
                 path: self.book_path.as_ref().map(PathBuf::from),
                 enabled: self.book_enabled,
@@ -270,7 +266,7 @@ pub fn load(path: &Path) -> Settings {
         return Settings::default();
     }
     match atomic_file::read_with_backup(path, MAX_BYTES, |text: &str| {
-        serde_json::from_str::<SettingsV1>(text)
+        atomic_file::ParseOutcome::from(serde_json::from_str::<SettingsV1>(text))
     }) {
         Ok(file) => file.to_settings(),
         Err(error) => {

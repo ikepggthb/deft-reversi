@@ -119,21 +119,52 @@ pub fn play_path(work: &std::path::Path) -> PathBuf {
     work.with_extension("dbook")
 }
 
-/// Starts the generation; the thread reports through `events`, last with
-/// `EngineEvent::BookDone`.
+/// Running handle for a book generation or repair thread.
+pub struct BookHandle {
+    handle: thread::JoinHandle<Result<BookDone, String>>,
+    stop: StopHandle,
+}
+
+impl BookHandle {
+    pub fn stop(&self) {
+        self.stop.stop();
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.handle.is_finished()
+    }
+
+    pub fn join(self) -> Result<BookDone, String> {
+        self.handle
+            .join()
+            .unwrap_or_else(|_| Err("book generation panicked".into()))
+    }
+}
+
+/// Starts the generation; checkpoints report through `events`, and the final
+/// result is returned when `BookHandle::join` completes.
 pub fn spawn(
     worker: Arc<EngineWorker>,
     job: BookJob,
     events: async_channel::Sender<EngineEvent>,
-) -> std::io::Result<thread::JoinHandle<()>> {
-    thread::Builder::new()
+) -> std::io::Result<BookHandle> {
+    let stop = job.stop.clone();
+    let handle = thread::Builder::new()
         .name("book-gen".into())
         // The searches recurse on this thread, as on the search thread.
         .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let outcome = worker.with(|engine| generate(engine, job, &events));
-            let _ = events.send_blocking(EngineEvent::BookDone(outcome));
-        })
+        .spawn(move || worker.with(|engine| generate(engine, job, &events)))?;
+    Ok(BookHandle { handle, stop })
+}
+
+fn save_and_export(
+    editor: &BookEditor,
+    work: &std::path::Path,
+) -> Result<PathBuf, deft_reversi_book::BookError> {
+    editor.save(work)?;
+    let book = play_path(work);
+    editor.export()?.save(&book)?;
+    Ok(book)
 }
 
 fn generate(
@@ -143,13 +174,16 @@ fn generate(
 ) -> Result<BookDone, String> {
     let text = |error: deft_reversi_book::BookError| error.to_string();
     let mut slot = job.editor.lock().unwrap_or_else(PoisonError::into_inner);
+    if job.fix {
+        let Some(editor) = slot.as_mut().filter(|e| !e.is_empty()) else {
+            return Err("empty book".into());
+        };
+        return repair(editor, &job.work);
+    }
     if slot.is_none() {
         *slot = Some(BookEditor::for_engine(engine).map_err(text)?);
     }
     let editor = slot.as_mut().expect("made above");
-    if job.fix {
-        return repair(editor, &job.work);
-    }
     let identity = analysis_identity(engine).map_err(|e| e.to_string())?;
     if editor.identity() != identity {
         return Err("model".into());
@@ -158,10 +192,7 @@ fn generate(
         Color::Black => BookSide::Black,
         Color::White => BookSide::White,
     };
-    let mut config = editor
-        .generation_config()
-        .cloned()
-        .unwrap_or_else(GenerationConfig::default);
+    let mut config = editor.generation_config().cloned().unwrap_or_default();
     job.settings.apply(&mut config);
     config.checkpoint_interval = Duration::from_secs(10);
     // What already meets the level is kept.
@@ -193,11 +224,17 @@ fn generate(
         }));
         Ok(())
     });
-    // What was found before an error is kept too.
-    editor.save(&job.work).map_err(text)?;
-    let report = result.map_err(text)?;
-    let book = play_path(&job.work);
-    editor.export().map_err(text)?.save(&book).map_err(text)?;
+    let report = match result {
+        Ok(report) => report,
+        Err(error) => {
+            // What was found before an error is kept, without hiding the error.
+            if let Err(save_error) = editor.save(&job.work) {
+                eprintln!("[book] save after error: {save_error}");
+            }
+            return Err(text(error));
+        }
+    };
+    let book = save_and_export(editor, &job.work).map_err(text)?;
     Ok(BookDone {
         progress: BookProgress {
             positions: editor.len(),
@@ -210,16 +247,13 @@ fn generate(
     })
 }
 
-
 /// `book repair`: the values from the links, without a search; then the
 /// work file and the book for play are written again.
 fn repair(editor: &mut BookEditor, work: &std::path::Path) -> Result<BookDone, String> {
     let text = |error: deft_reversi_book::BookError| error.to_string();
     let started = std::time::Instant::now();
     editor.repair().map_err(text)?;
-    editor.save(work).map_err(text)?;
-    let book = play_path(work);
-    editor.export().map_err(text)?.save(&book).map_err(text)?;
+    let book = save_and_export(editor, work).map_err(text)?;
     Ok(BookDone {
         progress: BookProgress {
             positions: editor.len(),
@@ -290,6 +324,32 @@ mod tests {
         let fixed = generate(&mut engine, fix_job, &events).unwrap();
         assert_eq!(fixed.progress.positions, done.progress.positions);
         Book::load(&fixed.book, ReadLimits::default()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repair_refuses_an_empty_book_without_writing_a_file() {
+        let mut engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("deft-book-gen-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let work = dir.join("empty.dbook-work");
+        let (events, _rx) = async_channel::unbounded();
+        let job = BookJob {
+            editor: SharedEditor::default(),
+            work: work.clone(),
+            root: Position::initial(),
+            line: Vec::new(),
+            fix: true,
+            settings: BookSettings::of(None),
+            stop: StopHandle::new(),
+        };
+        assert!(generate(&mut engine, job, &events).is_err());
+        assert!(!work.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

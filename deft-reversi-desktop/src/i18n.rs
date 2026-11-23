@@ -47,6 +47,15 @@ pub struct Strings {
     pub book_loading: &'static str,
     pub book_other_model: &'static str,
     pub book_failed: &'static str,
+    pub version_group: &'static str,
+    pub version_app: &'static str,
+    pub version_book_lib: &'static str,
+    pub version_model: &'static str,
+    pub version_not_loaded: &'static str,
+    pub analysis_id: &'static str,
+    pub book_written_by: &'static str,
+    pub book_grown_with: &'static str,
+    pub book_model_label: &'static str,
     pub book_work: &'static str,
     pub book_work_file: &'static str,
     pub book_new: &'static str,
@@ -170,97 +179,211 @@ pub struct Strings {
     pub log_time: &'static str,
     pub log_nodes: &'static str,
     pub log_strength: &'static str,
-    passes: fn(Color) -> String,
-    depth_mark: fn(u8) -> String,
-    book_loaded: fn(usize) -> String,
-    book_plies: fn(u8) -> String,
-    book_progress: fn(usize, u64, u64) -> String,
-    book_error: fn(&str) -> String,
-    record_error: fn(usize) -> String,
-    move_number: fn(usize) -> String,
-    wins_by: fn(Color, i32) -> String,
-    color: fn(Color) -> &'static str,
-    preset: fn(Preset) -> &'static str,
-    current_position: fn(usize) -> String,
-    manual_title: fn(Color) -> String,
-    depth: fn(u8) -> String,
-    seconds: fn(u64) -> String,
-    logical_cpus: fn(usize) -> String,
-    moves: fn(usize) -> String,
-    exported: fn(&str) -> String,
-    load_failed: fn(&str) -> String,
-    save_failed: fn(&str) -> String,
-    pass_start: fn(Color) -> String,
+    lang: Lang,
 }
 
 impl Strings {
     /// The number of the move about to be played.
     pub fn move_number(&self, n: usize) -> String {
-        (self.move_number)(n)
+        match self.lang {
+            Lang::Ja => format!("{n}手目"),
+            Lang::En => format!("Move {n}"),
+        }
     }
+
     pub fn wins_by(&self, winner: Color, margin: i32) -> String {
-        (self.wins_by)(winner, margin)
+        let side = self.color(winner);
+        match self.lang {
+            Lang::Ja => format!("{side}の{margin}石勝ち"),
+            Lang::En => format!("{side} wins by {margin}"),
+        }
     }
+
     pub fn color(&self, color: Color) -> &'static str {
-        (self.color)(color)
+        match (self.lang, color) {
+            (Lang::Ja, Color::Black) => "黒",
+            (Lang::Ja, Color::White) => "白",
+            (Lang::En, Color::Black) => "Black",
+            (Lang::En, Color::White) => "White",
+        }
     }
+
     pub fn preset(&self, preset: Preset) -> &'static str {
-        (self.preset)(preset)
+        match (self.lang, preset) {
+            (Lang::Ja, Preset::Beginner) => "初級",
+            (Lang::Ja, Preset::Intermediate) => "中級",
+            (Lang::Ja, Preset::Advanced) => "上級",
+            (Lang::Ja, Preset::Expert) => "達人",
+            (Lang::Ja, Preset::Strongest) => "最強",
+            (Lang::En, Preset::Beginner) => "Beginner",
+            (Lang::En, Preset::Intermediate) => "Intermediate",
+            (Lang::En, Preset::Advanced) => "Advanced",
+            (Lang::En, Preset::Expert) => "Expert",
+            (Lang::En, Preset::Strongest) => "Strongest",
+        }
     }
+
     pub fn current_position(&self, move_number: usize) -> String {
-        (self.current_position)(move_number)
+        match self.lang {
+            Lang::Ja => format!("現在の局面（{move_number}手目）"),
+            Lang::En => format!("Current position (move {move_number})"),
+        }
     }
+
     pub fn manual_title(&self, color: Color) -> String {
-        (self.manual_title)(color)
+        let side = self.color(color);
+        match self.lang {
+            Lang::Ja => format!("{side}のマニュアル設定"),
+            Lang::En => format!("Manual settings for {side}"),
+        }
     }
+
     /// "so many moves ahead"
     pub fn depth(&self, depth: u8) -> String {
-        (self.depth)(depth)
+        match self.lang {
+            Lang::Ja => format!("{depth}手読み"),
+            Lang::En => format!("{depth} moves ahead"),
+        }
     }
+
     pub fn seconds(&self, seconds: u64) -> String {
-        (self.seconds)(seconds)
+        match self.lang {
+            Lang::Ja => format!("{seconds} 秒"),
+            Lang::En => format!("{seconds} s"),
+        }
     }
+
     pub fn logical_cpus(&self, n: usize) -> String {
-        (self.logical_cpus)(n)
+        match self.lang {
+            Lang::Ja => format!("論理CPU {n}"),
+            Lang::En => format!("{n} logical CPUs"),
+        }
     }
+
     pub fn moves(&self, n: usize) -> String {
-        (self.moves)(n)
+        match self.lang {
+            Lang::Ja => format!("{n}手"),
+            Lang::En => format!("{n} moves"),
+        }
     }
+
     pub fn exported(&self, path: &str) -> String {
-        (self.exported)(path)
+        match self.lang {
+            Lang::Ja => format!("書き出しました: {path}"),
+            Lang::En => format!("Exported to {path}"),
+        }
     }
+
     pub fn load_failed(&self, error: &str) -> String {
-        (self.load_failed)(error)
+        match self.lang {
+            Lang::Ja => format!("開けませんでした: {error}"),
+            Lang::En => format!("Could not open: {error}"),
+        }
     }
+
     pub fn save_failed(&self, error: &str) -> String {
-        (self.save_failed)(error)
+        match self.lang {
+            Lang::Ja => format!("保存できませんでした: {error}"),
+            Lang::En => format!("Could not save: {error}"),
+        }
     }
+
     /// The side to move cannot, so the other one starts.
     pub fn pass_start(&self, side: Color) -> String {
-        (self.pass_start)(side)
+        let current = self.color(side);
+        let other = self.color(side.opponent());
+        match self.lang {
+            Lang::Ja => format!("{current}に打てる手がないため、{other}番から始めます。"),
+            Lang::En => format!("{current} cannot move, so {other} starts."),
+        }
     }
+
     /// A depth in a few characters, under a value on the board.
     pub fn depth_mark(&self, depth: u8) -> String {
-        (self.depth_mark)(depth)
+        match self.lang {
+            Lang::Ja => format!("{depth}手"),
+            Lang::En => format!("d{depth}"),
+        }
     }
+
     pub fn book_plies(&self, plies: u8) -> String {
-        (self.book_plies)(plies)
+        self.moves(usize::from(plies))
     }
+
     /// Positions in the work, how many this run added, and its seconds.
     pub fn book_progress(&self, positions: usize, added: u64, seconds: u64) -> String {
-        (self.book_progress)(positions, added, seconds)
+        let (mins, secs) = (seconds / 60, seconds % 60);
+        match self.lang {
+            Lang::Ja => format!("{positions}局面（+{added}）· {mins}:{secs:02}"),
+            Lang::En => format!("{positions} positions (+{added}) · {mins}:{secs:02}"),
+        }
     }
+
     pub fn book_error(&self, error: &str) -> String {
-        (self.book_error)(error)
+        match self.lang {
+            Lang::Ja => format!("生成できませんでした: {error}"),
+            Lang::En => format!("Could not grow the book: {error}"),
+        }
     }
+
+    pub fn search_revision(&self, revision: u32) -> String {
+        match self.lang {
+            Lang::Ja => format!("探索リビジョン {revision}"),
+            Lang::En => format!("search revision {revision}"),
+        }
+    }
+
+    /// The DPR2 version 3 adds the pattern embedding network.
+    pub fn model_format(&self, format: u32, calibrated: bool) -> String {
+        let (kind, mpc) = match self.lang {
+            Lang::Ja => (
+                if format >= 3 {
+                    "パターン＋埋め込みネットワーク"
+                } else {
+                    "パターン"
+                },
+                if calibrated {
+                    "MPC較正あり"
+                } else {
+                    "MPC較正なし"
+                },
+            ),
+            Lang::En => (
+                if format >= 3 {
+                    "patterns + embedding network"
+                } else {
+                    "patterns"
+                },
+                if calibrated {
+                    "MPC calibrated"
+                } else {
+                    "no MPC calibration"
+                },
+            ),
+        };
+        format!("DPR2 v{format} · {kind} · {mpc}")
+    }
+
     pub fn book_loaded(&self, positions: usize) -> String {
-        (self.book_loaded)(positions)
+        match self.lang {
+            Lang::Ja => format!("{positions}局面"),
+            Lang::En => format!("{positions} positions"),
+        }
     }
+
     pub fn passes(&self, color: Color) -> String {
-        (self.passes)(color)
+        let side = self.color(color);
+        match self.lang {
+            Lang::Ja => format!("{side}はパス"),
+            Lang::En => format!("{side} passes"),
+        }
     }
+
     pub fn record_error(&self, move_number: usize) -> String {
-        (self.record_error)(move_number)
+        match self.lang {
+            Lang::Ja => format!("{move_number}手目が打てません"),
+            Lang::En => format!("Move {move_number} cannot be played"),
+        }
     }
 }
 
@@ -312,6 +435,15 @@ static JA: Strings = Strings {
     book_loading: "読み込み中…",
     book_other_model: "評価モデルが違うため使えません",
     book_failed: "読み込めませんでした",
+    version_group: "バージョン情報",
+    version_app: "アプリ",
+    version_book_lib: "Bookライブラリ",
+    version_model: "評価関数",
+    version_not_loaded: "まだ読み込んでいません",
+    analysis_id: "解析ID",
+    book_written_by: "作成",
+    book_grown_with: "最後の生成",
+    book_model_label: "モデル",
     book_work: "Book作成",
     book_work_file: "作業ファイル",
     book_new: "新規…",
@@ -436,47 +568,7 @@ static JA: Strings = Strings {
     log_time: "時間",
     log_nodes: "ノード数",
     log_strength: "強さ",
-    passes: |color| format!("{}はパス", (JA.color)(color)),
-    depth_mark: |depth| format!("{depth}手"),
-    book_loaded: |positions| format!("{positions}局面"),
-    book_plies: |n| format!("{n}手"),
-    book_progress: |positions, added, secs| {
-        format!("{positions}局面（+{added}）· {}:{:02}", secs / 60, secs % 60)
-    },
-    book_error: |error| format!("生成できませんでした: {error}"),
-    record_error: |n| format!("{n}手目が打てません"),
-    move_number: |n| format!("{n}手目"),
-    wins_by: |winner, margin| {
-        let side = (JA.color)(winner);
-        format!("{side}の{margin}石勝ち")
-    },
-    color: |color| match color {
-        Color::Black => "黒",
-        Color::White => "白",
-    },
-    preset: |preset| match preset {
-        Preset::Beginner => "初級",
-        Preset::Intermediate => "中級",
-        Preset::Advanced => "上級",
-        Preset::Expert => "達人",
-        Preset::Strongest => "最強",
-    },
-    current_position: |n| format!("現在の局面（{n}手目）"),
-    manual_title: |color| format!("{}のマニュアル設定", (JA.color)(color)),
-    depth: |depth| format!("{depth}手読み"),
-    seconds: |s| format!("{s} 秒"),
-    logical_cpus: |n| format!("論理CPU {n}"),
-    moves: |n| format!("{n}手"),
-    exported: |path| format!("書き出しました: {path}"),
-    load_failed: |error| format!("開けませんでした: {error}"),
-    save_failed: |error| format!("保存できませんでした: {error}"),
-    pass_start: |side| {
-        let other = (JA.color)(side.opponent());
-        format!(
-            "{}に打てる手がないため、{other}番から始めます。",
-            (JA.color)(side)
-        )
-    },
+    lang: Lang::Ja,
 };
 
 static EN: Strings = Strings {
@@ -518,6 +610,15 @@ static EN: Strings = Strings {
     book_loading: "Loading…",
     book_other_model: "Made with another model, so not used",
     book_failed: "Could not be read",
+    version_group: "Version",
+    version_app: "App",
+    version_book_lib: "Book library",
+    version_model: "Evaluation",
+    version_not_loaded: "Not loaded yet",
+    analysis_id: "Analysis ID",
+    book_written_by: "Written by",
+    book_grown_with: "Last grown with",
+    book_model_label: "Model",
     book_work: "Book builder",
     book_work_file: "Work file",
     book_new: "New…",
@@ -642,42 +743,5 @@ Right-click to erase",
     log_time: "Time",
     log_nodes: "Nodes",
     log_strength: "Level",
-    passes: |color| format!("{} passes", (EN.color)(color)),
-    depth_mark: |depth| format!("d{depth}"),
-    book_loaded: |positions| format!("{positions} positions"),
-    book_plies: |n| format!("{n} moves"),
-    book_progress: |positions, added, secs| {
-        format!("{positions} positions (+{added}) · {}:{:02}", secs / 60, secs % 60)
-    },
-    book_error: |error| format!("Could not grow the book: {error}"),
-    record_error: |n| format!("Move {n} cannot be played"),
-    move_number: |n| format!("Move {n}"),
-    wins_by: |winner, margin| format!("{} wins by {margin}", (EN.color)(winner)),
-    color: |color| match color {
-        Color::Black => "Black",
-        Color::White => "White",
-    },
-    preset: |preset| match preset {
-        Preset::Beginner => "Beginner",
-        Preset::Intermediate => "Intermediate",
-        Preset::Advanced => "Advanced",
-        Preset::Expert => "Expert",
-        Preset::Strongest => "Strongest",
-    },
-    current_position: |n| format!("Current position (move {n})"),
-    manual_title: |color| format!("Manual settings for {}", (EN.color)(color)),
-    depth: |depth| format!("{depth} moves ahead"),
-    seconds: |s| format!("{s} s"),
-    logical_cpus: |n| format!("{n} logical CPUs"),
-    moves: |n| format!("{n} moves"),
-    exported: |path| format!("Exported to {path}"),
-    load_failed: |error| format!("Could not open: {error}"),
-    save_failed: |error| format!("Could not save: {error}"),
-    pass_start: |side| {
-        format!(
-            "{} cannot move, so {} starts.",
-            (EN.color)(side),
-            (EN.color)(side.opponent())
-        )
-    },
+    lang: Lang::En,
 };

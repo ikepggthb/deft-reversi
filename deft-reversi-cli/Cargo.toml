@@ -1,6 +1,6 @@
 [package]
 name = "deft-reversi-cli"
-version.workspace = true
+version = "1.0.0-dev.1"
 edition = "2024"
 
 [dependencies]

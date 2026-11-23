@@ -1,12 +1,11 @@
 //! Every AI move of the game: when, how strong, what it read and how fast.
 use super::{
-    ai_panel::{nodes_text, reading_text},
-    analysis_panel::{action_text, disc, signed},
-    new_game::strength_label,
+    analysis_panel::disc,
+    format::{action_text, nodes_text, pv_tail, reading_text, signed, strength_label},
     root::RootView,
     theme, widgets,
 };
-use gpui::{AnyElement, Context, Div, FontWeight, SharedString, div, prelude::*, px, relative};
+use gpui::{Context, Div, FontWeight, SharedString, div, prelude::*, px, relative};
 
 /// Column widths; the line takes the rest.
 const NUMBER: f32 = 36.;
@@ -48,13 +47,12 @@ impl RootView {
             .child(cell(NODES).child(s.log_nodes))
             .child(cell(NPS).child("NPS"))
             .child(div().flex_1().child(s.expected_line));
-        let rows: Vec<AnyElement> = if log.is_empty() {
+        let rows: Vec<Div> = if log.is_empty() {
             vec![
                 div()
                     .py(px(12.))
                     .text_color(theme::text_muted())
-                    .child(s.no_ai_moves)
-                    .into_any_element(),
+                    .child(s.no_ai_moves),
             ]
         } else {
             log.iter()
@@ -66,8 +64,6 @@ impl RootView {
                     } else {
                         "–".into()
                     };
-                    let line: Vec<String> =
-                        report.pv.iter().skip(1).map(|&a| action_text(a)).collect();
                     div()
                         .flex()
                         .flex_row()
@@ -113,49 +109,24 @@ impl RootView {
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_color(theme::text_secondary())
-                                .child(line.join(" ")),
+                                .child(pv_tail(&report.pv)),
                         )
-                        .into_any_element()
                 })
                 .collect()
         };
-        div()
-            .w(px(900.))
+        widgets::dialog_box(900.)
             .max_w(relative(0.94))
             .h(px(560.))
             .max_h(relative(0.9))
-            .flex()
-            .flex_col()
-            .px(px(20.))
-            .py(px(16.))
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::border())
-            .rounded(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .mb(px(10.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_base()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(s.ai_log),
-                    )
-                    .child(widgets::link(
-                        "close-ai-log",
-                        s.close,
-                        widgets::handler(|this, cx| this.close_dialog(cx)),
-                        cx,
-                    )),
-            )
+            .child(widgets::dialog_header(
+                s.ai_log,
+                Some(("close-ai-log", s.close)),
+                cx,
+            ))
             .child(header)
             .child(widgets::scroll_area(
                 "ai-log-list",
-                &self.log_scroll,
+                &self.dialog_scroll,
                 div().flex().flex_col().text_xs().children(rows),
                 cx,
             ))

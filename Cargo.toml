@@ -4,9 +4,6 @@ members = ["deft-reversi-engine", "deft-reversi-book", "deft-reversi-train", "de
 exclude = ["deft-reversi-web"]
 resolver = "2"
 
-[workspace.package]
-version = "1.0.0-dev.1"
-
 [profile.release]
 lto = "fat"
 opt-level = 3

@@ -130,10 +130,16 @@ fn a1_requested_level_plan_completed_kind_and_profiles_survive_both_profiles() {
     let dir = Temp::new();
     let occupied = u64::MAX << 24;
     let opponent = (1u64 << 27) | (1u64 << 28);
-    let selective = Board::from_bits(occupied ^ opponent, opponent).unwrap().canonical();
-    for (i, (b, level)) in [(position(73, 56), 2), (selective, 19), (position(73, 6), 19)]
-        .into_iter()
-        .enumerate()
+    let selective = Board::from_bits(occupied ^ opponent, opponent)
+        .unwrap()
+        .canonical();
+    for (i, (b, level)) in [
+        (position(73, 56), 2),
+        (selective, 19),
+        (position(73, 6), 19),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let mut ed = BookEditor::for_engine(&eng).unwrap();
         let mut cfg = config(2, Selectivity::Full, 0);

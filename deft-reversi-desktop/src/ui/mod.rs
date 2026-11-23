@@ -8,6 +8,7 @@ mod book;
 mod book_work;
 mod editor;
 mod files;
+mod format;
 mod new_game;
 mod record;
 mod record_io;
