@@ -632,7 +632,7 @@ def predict(games):
         late_all = sum(1 for *_, ts in gs for u in ts if u.searched and u.warm and not u.nomove
                        and u.its[0][1] > u.soft) / len(gs)
         unknown = sum(1 for *_, ts in gs for u in ts if u.searched and u.warm and not u.nomove
-                      and u.table_loss is None) / len(gs)
+                      and (u.table_loss is None or u.table_imputed)) / len(gs)
         print(f"{cond}\tall late turns per side {late_all:.2f}\twarm turns with the table's move"
               f" unknown per side {unknown:.2f}")
     print("# logged iterations: share where the next one plays a better move, and how often"
@@ -659,6 +659,32 @@ def predict(games):
                         fp += inst >= 0.5
         print(f"{cond}\tsteps {pos + neg}\tbetter {pos / (pos + neg):.3f}"
               f"\tTPR {tp / pos:.3f}\tFPR {fp / neg:.3f}")
+    print("# time to finish the exact solve (world 0, logged where the log reaches it) over the"
+          " reserve formula, median by empties; before / after this side's first finished"
+          " exact solve")
+    for cond, gs in games.items():
+        cells = defaultdict(lambda: ([], []))
+        for *_, ts in gs:
+            solved = False
+            for u in ts:
+                if not u.searched or u.nomove or not u.world:
+                    continue
+                el, t = 0.0, None
+                for kind, cost, _, _ in u.world:
+                    el += cost
+                    if kind == "e100":
+                        t = el
+                        break
+                if t is not None and 18 <= u.empties <= 26:
+                    cells[u.empties][solved].append(t / (0.002 + 0.018 * 2.0 ** (u.empties - 17)))
+                if u.end == "done" and any(i[0] == "e100" for i in u.its):
+                    solved = True
+        out = []
+        for e in sorted(cells):
+            b, a = cells[e]
+            med = lambda v: f"{sorted(v)[len(v) // 2]:.2f}" if len(v) >= 10 else "-"
+            out.append(f"{e}:{med(b)}/{med(a)}")
+        print(f"{cond}\t" + " ".join(out))
     print("# warm turns whose first iteration finished: ln(its time / the previous turn's"
           " prediction), quartiles")
     for cond, gs in games.items():
@@ -691,6 +717,8 @@ def main():
     games, plan = load(run, refer)
     ratio, loss = pools(games)
     if mode == "predict":
+        ratio, losses = pools(games)
+        complete(games, plan, ratio, losses, 0)
         predict(games)
         return
     if mode == "check":
