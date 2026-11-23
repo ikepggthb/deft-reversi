@@ -5,8 +5,9 @@
 ## 準備
 
 - データセット：rdg 形式の `phase_<NN>/{train,valid,test}.rd`（NN は石数 − 4）。Egaroucid の学習データから `deft-reversi-train convert` で作る。以前の `egaroucid_rd_data_set` はディレクトリ名が石数（`phase_<石数>`）なので、そのままでは読めない。
-  - v4 からは `train-v4` を使う（作り方と理由は研究ノート `local/notes/2026-11-23-train-v4-dataset.md`）。石数14〜63 は学習データ v0002 の棋譜から、ランダム打ちの後 min(16, 石数 − 21) 手を除いて作る（`convert --after-random 16 --after-random-ramp 21`、各段階1000万局面以上）。石数4〜13 は 7.4.0 lv.17 の評価を negamax した全局面（`convert --boards … --train 1 --valid 0`）を使い、`--no-shrink-stones 4..=13` で縮めずに書き出す。値は空きマスを勝った側に数えた終局石差。
-  - 以前の `egaroucid-rd`（v0002 の全局面、空きマスはどちらにも数えない、約13.7億局面）は v3 まで使った。
+  - v4 は `train-v4-all` を使う（経緯と比較は研究ノート `local/notes/studies/2026-11-23-v4-eval/`）。石数14〜63 は学習データ v0002 の棋譜の、ランダム打ちの後の全局面（`convert --transcripts … --after-random 0 --stones 12..=63`、約13.7億局面）。石数4〜13 は 7.4.0 lv.17 の評価を negamax した v0001 の全局面（`convert --boards … --train 1 --valid 0`）を使い、`--no-shrink-stones 4..=13` で縮めずに書き出す。値は空きマスを勝った側に数えた終局石差。
+  - ランダム打ちの後の手を除いたデータ（`--after-random 16 --after-random-ramp 21`）で学習したモデルは、中盤の局面が半分以下になり、v3 より弱く遅くなった。データは減らさない。
+  - 以前の `egaroucid-rd`（v0002 の全局面、空きマスはどちらにも数えない）は v3 まで使った。局面は `train-v4-all` の石数14〜63 と同じ。
 - PEN（`train --pen`）を足すと精度が上がる（[PEN の測定](benchmarks/2026-11-06-pen/README.md)）。
 - メモリ：1局面24バイト。同時に学習する段階の数（`-t`）だけデータを載せる。最大の段階は約1.2 GB で、16スレッドでも約20 GB に収まる。
 - 時間：Core Ultra 7 265K・16スレッドで、全データ1エポックあたり約2分40秒。段階ごとの所要時間はデータ量に比例し、石数の多い段階ほど長い。
