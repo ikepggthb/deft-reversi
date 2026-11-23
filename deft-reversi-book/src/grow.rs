@@ -525,7 +525,6 @@ fn expand_and_schedule(
     state: &mut GenerationState,
     (c, d): (Context, u8),
     engine: &Engine,
-    limits: GenerationLimits,
     report: &mut GenerationReport,
     burst: u8,
 ) -> Result<()> {
@@ -561,7 +560,7 @@ fn expand_and_schedule(
     report.profile.reachability_wall += check_started.elapsed();
     if actual.is_some() {
         let timer = Instant::now();
-        expand(editor, state, c, first, limits, report)?;
+        expand(editor, state, c, first, report)?;
         report.profile.expansion_wall += timer.elapsed();
     }
     if burst > 0
@@ -615,18 +614,6 @@ pub(super) fn generate(
     stop: StopHandle,
     callback: &mut impl FnMut(&BookEditor, &GenerationReport) -> Result<()>,
 ) -> Result<GenerationReport> {
-    limits.validate()?;
-    if editor
-        .generation
-        .as_ref()
-        .is_some_and(|g| g.config.unregistered_only)
-        && limits.time.is_none()
-        && limits.nodes.is_none()
-    {
-        return Err(invalid(
-            "frontier recalculation requires a time or node budget",
-        ));
-    }
     if analysis_identity(engine)? != editor.identity {
         return Err(invalid(
             "engine/model/search semantics do not match workspace; use retarget or CLI reanalyze",
@@ -717,15 +704,7 @@ pub(super) fn generate(
             let line_only = state.has_line(editor);
             if !line_only && let Some((d, c)) = state.expansions.pop_first() {
                 if state.distances.get(&c) == Some(&d) {
-                    expand_and_schedule(
-                        editor,
-                        &mut state,
-                        (c, d),
-                        engine,
-                        limits,
-                        &mut report,
-                        0,
-                    )?;
+                    expand_and_schedule(editor, &mut state, (c, d), engine, &mut report, 0)?;
                     if report.reason != GenerationStop::Exhausted {
                         state.expansions.insert((d, c));
                         break;
@@ -792,15 +771,7 @@ pub(super) fn generate(
                     jobs.push(work);
                 } else {
                     let burst = state.active_burst;
-                    expand_and_schedule(
-                        editor,
-                        &mut state,
-                        (c, d),
-                        engine,
-                        limits,
-                        &mut report,
-                        burst,
-                    )?;
+                    expand_and_schedule(editor, &mut state, (c, d), engine, &mut report, burst)?;
                     let mainline_pending = state.has_line(editor);
                     let done = !mainline_pending
                         || prepare(engine, editor, &state, c, d, s, true)?.is_none();
@@ -903,7 +874,6 @@ pub(super) fn generate(
                         &mut state,
                         (c, d),
                         engine,
-                        limits,
                         &mut report,
                         work.burst,
                     )?;

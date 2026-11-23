@@ -794,7 +794,9 @@ mod tests {
                 protocol: Protocol::Gtp,
                 threads: 1,
             },
-            hurdle: hurdle(1, 3),
+            // Above the first iteration (about 4 ms in a debug build) and
+            // below the 300 ms extension.
+            hurdle: hurdle(10, 20),
         };
         let mut ctx = GameContext::default();
         ctx.begin_turn(pos);
@@ -808,10 +810,10 @@ mod tests {
                 Some(ms(300)),
             )
             .unwrap();
-        assert!(decision.made && decision.reached.is_some());
-        assert!(decision.elapsed <= ms(3), "{decision:?}");
+        assert!(decision.made && decision.reached.is_some(), "{decision:?} {seen:?}");
+        assert!(decision.elapsed <= ms(20), "{decision:?}");
         assert!(
-            seen.iter().any(|&t| t > ms(3)),
+            seen.iter().any(|&t| t > ms(20)),
             "nothing after the decision: {seen:?}"
         );
         assert_eq!(result.best_move, decision.best_move);

@@ -346,7 +346,6 @@ fn stopw(w: &mut dyn Write, v: GenerationStop) -> Result<()> {
             GenerationStop::Requested => 1,
             GenerationStop::TimeLimit => 2,
             GenerationStop::NodeLimit => 3,
-            GenerationStop::PositionLimit => 4,
             GenerationStop::MemoryLimit => 5,
         },
     )
@@ -357,7 +356,8 @@ fn stopr(r: &mut impl Read) -> Result<GenerationStop> {
         1 => Ok(GenerationStop::Requested),
         2 => Ok(GenerationStop::TimeLimit),
         3 => Ok(GenerationStop::NodeLimit),
-        4 => Ok(GenerationStop::PositionLimit),
+        // 4 was the removed new-position limit; such a run was stopped on purpose.
+        4 => Ok(GenerationStop::Requested),
         5 => Ok(GenerationStop::MemoryLimit),
         _ => Err(invalid("stop reason")),
     }
@@ -398,7 +398,8 @@ fn catalogw(w: &mut dyn Write, c: &catalog::Catalog) -> Result<()> {
             }),
         )?;
         u64w(w, run.limits.nodes.unwrap_or(u64::MAX))?;
-        u64w(w, run.limits.new_positions.unwrap_or(u64::MAX))?;
+        // The slot of the removed new-position limit, written as "none".
+        u64w(w, u64::MAX)?;
         match run.status {
             RunStatus::Running => u8w(w, 0)?,
             RunStatus::Stopped(reason) => {
@@ -481,13 +482,12 @@ fn catalogr(r: &mut impl Read, limits: ReadLimits, modern: bool) -> Result<ReadC
         }
         let time = u64r(r)?;
         let nodes = u64r(r)?;
-        let new_positions = u64r(r)?;
+        // The removed new-position limit is skipped.
+        u64r(r)?;
         let limits = GenerationLimits {
             time: (time != u64::MAX).then(|| Duration::from_micros(time)),
             nodes: (nodes != u64::MAX).then_some(nodes),
-            new_positions: (new_positions != u64::MAX).then_some(new_positions),
         };
-        limits.validate()?;
         let status = match u8r(r)? {
             0 => RunStatus::Running,
             1 => RunStatus::Stopped(stopr(r)?),

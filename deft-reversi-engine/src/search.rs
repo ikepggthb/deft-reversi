@@ -20,6 +20,7 @@ use session::*;
 mod endgame;
 use endgame::{EndgameCache, new_cache_epoch};
 mod level;
+pub use level::level_reading;
 mod ordering;
 mod pv;
 mod root;
@@ -267,6 +268,7 @@ impl Engine {
             minimum_score: request.minimum_score,
             reuse_pv: request.reuse_pv,
             recover_endgame_pv: request.recover_endgame_pv,
+            recover_pv: request.recover_pv,
             skip_pv_recovery: request.skip_pv_recovery,
             root_moves: request.root_moves,
             preferred_move: request.preferred_move,
@@ -429,6 +431,7 @@ impl Engine {
                 nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
                 elapsed: start.elapsed(),
                 next: plan.get(index + 1).map(|next| next.kind()),
+                moves: Vec::new(),
             });
         }
         runtime.drain();
@@ -443,8 +446,12 @@ impl Engine {
             && let Some(score) = result.score
         {
             let full = last.selectivity == Selectivity::Full;
-            let selective_recovery =
-                job.recover_endgame_pv && last.exact && result.pv_final_score(board) != Some(score);
+            let selective_recovery = if last.exact {
+                (job.recover_endgame_pv || job.recover_pv)
+                    && result.pv_final_score(board) != Some(score)
+            } else {
+                job.recover_pv && result.pv.len() < usize::from(last.depth)
+            };
             if (full || selective_recovery)
                 && let Ok(pv) =
                     context.extract_pv(board, score, last.depth, last.exact, result.best_move)
@@ -469,7 +476,24 @@ impl Engine {
             && !context.aborted()
             && let Some(last) = last
             && last.depth > 0
-            && let Ok(moves) = root.move_scores(&mut context, last.spec(), score_mask, job.move_pvs)
+            && let Ok(moves) = root.move_scores(
+                &mut context,
+                last.spec(),
+                score_mask,
+                job.move_pvs,
+                &mut |context, moves| {
+                    on_progress(&Progress {
+                        kind: result.kind.unwrap(),
+                        score: result.score.unwrap_or_default(),
+                        best_move: result.best_move,
+                        pv: result.pv.clone(),
+                        nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
+                        elapsed: start.elapsed(),
+                        next: None,
+                        moves: moves.to_vec(),
+                    })
+                },
+            )
             && !context.aborted()
         {
             for (score, pv) in moves {
@@ -621,6 +645,7 @@ struct Job {
     minimum_score: Option<i32>,
     reuse_pv: bool,
     recover_endgame_pv: bool,
+    recover_pv: bool,
     skip_pv_recovery: bool,
     board: Board,
     mode: SearchMode,

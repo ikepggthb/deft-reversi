@@ -88,7 +88,8 @@ struct Reply {
 
 enum SearchEngine {
     Loading(Receiver<std::result::Result<ReadyEngine, String>>),
-    Ready(ReadyEngine),
+    // Boxed: the engine is far larger than the channel.
+    Ready(Box<ReadyEngine>),
 }
 
 struct ReadyEngine {
@@ -122,7 +123,7 @@ impl SearchEngine {
     fn wait(&mut self, timeout: Duration) -> Result<Option<&mut ReadyEngine>> {
         if let Self::Loading(receive) = self {
             match receive.recv_timeout(timeout) {
-                Ok(engine) => *self = Self::Ready(engine?),
+                Ok(engine) => *self = Self::Ready(Box::new(engine?)),
                 Err(RecvTimeoutError::Timeout) => return Ok(None),
                 Err(RecvTimeoutError::Disconnected) => {
                     return Err("engine initialization failed".into());

@@ -67,6 +67,9 @@ impl StoneRange {
     pub fn iter(self) -> impl Iterator<Item = u8> {
         self.first..=self.last
     }
+    pub fn contains(self, stones: u8) -> bool {
+        (self.first..=self.last).contains(&stones)
+    }
 }
 
 impl FromStr for StoneRange {

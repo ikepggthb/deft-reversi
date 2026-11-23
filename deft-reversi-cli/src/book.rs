@@ -85,7 +85,6 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
         "read-candidates",
         "seconds",
         "nodes",
-        "new-positions",
         "checkpoint-seconds",
         "legacy-main-mpc",
     ];
@@ -226,12 +225,6 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
     ) {
         return Err("unknown command".into());
     }
-    if !["seconds", "nodes", "new-positions"]
-        .iter()
-        .any(|k| flags.contains_key(*k))
-    {
-        return Err("explicit --seconds, --nodes or --new-positions budget required".into());
-    }
     if flags.contains_key("record") {
         if !matches!(command.as_str(), "build" | "extend") {
             return Err("--record is only available for book build and extend".into());
@@ -246,7 +239,6 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
             .map(|s| s.parse().map(Duration::from_secs))
             .transpose()?,
         nodes: flags.get("nodes").map(|s| s.parse()).transpose()?,
-        new_positions: flags.get("new-positions").map(|s| s.parse()).transpose()?,
     };
     let work = required("work")?;
     let mut engine = Engine::new(
@@ -574,7 +566,7 @@ fn destination(path: &str) -> std::io::Result<std::path::PathBuf> {
 }
 fn help() {
     println!(
-        "deft-reversi-cli book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N | --nodes N | --new-positions N  (at least one required)\n  --level 22 | --levels 4,8,12 (alternative to --stages/--selectivity)\n  --record MOVES (build/extend: link the record and train from its endpoint)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic, about three threads per job)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
+        "deft-reversi-cli book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N --nodes N  (optional; otherwise until done or Ctrl+C)\n  --level 22 | --levels 4,8,12 (alternative to --stages/--selectivity)\n  --record MOVES (build/extend: link the record and train from its endpoint)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic, about three threads per job)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1
   --threads 1 --tt-mib 256 --memory-mib 512 --checkpoint-seconds 60\n  --memory-mib limits estimated book data and job storage; engine/TT and temporary I/O memory are separate\n  --legacy-main-mpc\nbook repair --work FILE [--book FILE]\nbook export --work FILE --book FILE\nbook inspect|verify --work FILE | --book FILE\n  inspect --positions OBF (candidate evidence and completed modes)\n  --read-mib 512 --read-positions 2000000 --read-candidates 32000000
   (read/allocation bounds; resume retains stored generation settings)"
     );

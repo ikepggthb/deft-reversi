@@ -2,7 +2,7 @@
 //! calibration.
 //!
 //! Layout, little endian:
-//! - `DPR2`, then the version as u32 (1 or 2)
+//! - `DPR2`, then the version as u32 (1 to 4)
 //! - 60 phases of i16 weights: every pattern table back to back, 128
 //!   mobility weights, the bias
 //! - version 2 only: `MPC2`, the number of selective stages (u8) and for
@@ -15,6 +15,8 @@
 //! - version 3: the phases, `PEN1` and the 60 phases' pattern embedding
 //!   networks (see `evaluation/pen.rs`), then optionally the calibration as
 //!   in version 2
+//! - version 4: as version 3 with `PEN2`, networks with the disc input
+//!   (`PEN_INPUTS` weights per hidden unit instead of `PEN1`'s)
 use crate::{
     evaluation::PatternModel,
     search::{ProbCutRule, ProbCutSigmas, validate_calibration},
@@ -74,21 +76,18 @@ impl Model {
     pub fn has_calibration(&self) -> bool {
         self.calibration.is_some()
     }
-    /// Writes the model: version 3 with a pattern embedding network, else
-    /// version 2 with its calibration and version 1 without.
+    /// Writes the model: version 4 or 3 with a pattern embedding network
+    /// (see `PatternModel::version`), else version 2 with its calibration
+    /// and version 1 without.
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
-        let version: u32 = if self.pattern.has_pen() {
-            3
-        } else if self.calibration.is_some() {
-            2
-        } else {
-            1
+        let version = match self.pattern.version() {
+            1 if self.calibration.is_some() => 2,
+            v => v,
         };
         out.write_all(b"DPR2")?;
         out.write_all(&version.to_le_bytes())?;
         self.pattern.write_phases(&mut out)?;
         if self.pattern.has_pen() {
-            out.write_all(b"PEN1")?;
             self.pattern.write_pen(&mut out)?;
         }
         if let Some(c) = &self.calibration {
@@ -147,19 +146,14 @@ fn read_weights(mut bytes: &[u8]) -> io::Result<(PatternModel, &[u8], bool)> {
         return Err(invalid_data("not a DPR2 model"));
     }
     let version = u32::from_le_bytes(header[4..].try_into().unwrap());
-    if !matches!(version, 1..=3) {
+    if !matches!(version, 1..=4) {
         return Err(invalid_data(format!("unsupported DPR2 version {version}")));
     }
     let mut pattern = PatternModel::read_phases(&mut bytes)?;
-    if version == 3 {
-        let mut tag = [0; 4];
-        bytes.read_exact(&mut tag)?;
-        if &tag != b"PEN1" {
-            return Err(invalid_data("missing pattern embedding network"));
-        }
-        pattern = pattern.read_pen(&mut bytes)?;
+    if version >= 3 {
+        pattern = pattern.read_pen(&mut bytes, version)?;
     }
-    let calibrated = version == 2 || (version == 3 && !bytes.is_empty());
+    let calibrated = version == 2 || (version >= 3 && !bytes.is_empty());
     Ok((pattern, bytes, calibrated))
 }
 

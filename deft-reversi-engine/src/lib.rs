@@ -51,7 +51,8 @@ pub use model::Model;
 pub use position::{Color, ParsePositionError, Position};
 pub use search::{
     Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind,
-    SEARCH_SEMANTICS_REVISION, SearchPlan, SearchRequest, SearchResult, SearchStats, Selectivity, StopHandle, StopReason,
+    SEARCH_SEMANTICS_REVISION, SearchPlan, SearchRequest, SearchResult, SearchStats, Selectivity,
+    StopHandle, StopReason, level_reading,
 };
 pub use types::{Action, Moves, Square};
 pub use worker::{EngineWorker, SearchHandle};
@@ -61,7 +62,8 @@ pub use worker::{EngineWorker, SearchHandle};
 pub use {
     evaluation::{
         FEATURE_COUNT, Features, MOBILITY_WEIGHT_COUNT, PATTERN_COUNT, PATTERN_WEIGHT_COUNT,
-        PEN_DIM, PEN_HIDDEN, PEN_INPUTS, PHASE_COUNT, PatternModel, PatternPhase, PenPhase,
+        PEN_DIM, PEN_GLOBALS, PEN_HIDDEN, PEN_INPUTS, PHASE_COUNT, PatternModel, PatternPhase,
+        PenPhase, global_inputs, mirror_weights, pattern_table_sizes,
     },
     search::{ProbCutRule, ProbCutSigmas},
 };
@@ -80,5 +82,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GIT_REVISION: &str = env!("DEFT_GIT_REVISION");
 
 /// Engine version and source revision.
-pub const BUILD_VERSION: &str =
-    concat!(env!("CARGO_PKG_VERSION"), " (git ", env!("DEFT_GIT_REVISION"), ")");
+pub const BUILD_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (git ",
+    env!("DEFT_GIT_REVISION"),
+    ")"
+);

@@ -101,12 +101,14 @@ impl RootSearch {
         Ok(self.window(context, spec, minimum - 1, minimum)?.score < minimum)
     }
     /// Scores the requested root moves with a full window, best first.
+    /// `on_move` sees the moves scored so far, best first, as they finish.
     pub(super) fn move_scores(
         &self,
         context: &mut Context,
         spec: SearchSpec,
         mask: u64,
         keep_pv: bool,
+        on_move: OnMove<'_>,
     ) -> Result<Vec<ScoredMove>, Aborted> {
         let candidates: Vec<_> = self
             .candidates
@@ -116,12 +118,20 @@ impl RootSearch {
             .collect();
         let can_split = context.runtime.parallel && candidates.len() >= 3 && spec.depth >= 8;
         let mut moves = if can_split {
-            score_parallel(context, self.position, spec, candidates, keep_pv)?
+            score_parallel(context, self.position, spec, candidates, keep_pv, on_move)?
         } else {
-            candidates
-                .into_iter()
-                .map(|candidate| score_candidate(context, self.position, spec, candidate, keep_pv))
-                .collect::<Result<Vec<_>, _>>()?
+            let mut moves = Vec::with_capacity(candidates.len());
+            for candidate in candidates {
+                moves.push(score_candidate(
+                    context,
+                    self.position,
+                    spec,
+                    candidate,
+                    keep_pv,
+                )?);
+                on_move(context, &best_first(moves.iter().map(|(entry, _)| *entry)));
+            }
+            moves
         };
         moves.sort_by_key(|(entry, _)| std::cmp::Reverse(entry.score));
         Ok(moves)
@@ -324,6 +334,15 @@ fn root_line(action: Action, score: i32) -> Line {
 }
 
 type ScoredMove = (MoveScore, Vec<Action>);
+/// Sees the root moves scored so far, best first.
+type OnMove<'a> = &'a mut dyn FnMut(&Context, &[MoveScore]);
+
+/// The moves scored so far, best first.
+fn best_first(moves: impl Iterator<Item = MoveScore>) -> Vec<MoveScore> {
+    let mut moves: Vec<_> = moves.collect();
+    moves.sort_by_key(|entry| std::cmp::Reverse(entry.score));
+    moves
+}
 
 fn score_candidate(
     context: &mut Context,
@@ -370,7 +389,9 @@ struct CandidateBatch {
 }
 
 impl CandidateBatch {
-    fn run(&self, context: &mut Context) -> Result<(), Aborted> {
+    /// The calling thread passes `on_move`, which sees every move finished
+    /// so far, by any thread, each time it finishes one of its own.
+    fn run(&self, context: &mut Context, mut on_move: Option<OnMove<'_>>) -> Result<(), Aborted> {
         while !context.aborted() {
             let index = self.next.fetch_add(1, Ordering::Relaxed);
             let Some(&candidate) = self.candidates.get(index) else {
@@ -378,7 +399,16 @@ impl CandidateBatch {
             };
             let result =
                 score_candidate(context, self.position, self.spec, candidate, self.keep_pv)?;
-            parallel::lock(&self.results)[index] = Some(result);
+            let done = {
+                let mut results = parallel::lock(&self.results);
+                results[index] = Some(result);
+                on_move
+                    .is_some()
+                    .then(|| best_first(results.iter().flatten().map(|(entry, _)| *entry)))
+            };
+            if let (Some(on_move), Some(done)) = (on_move.as_mut(), done) {
+                on_move(context, &done);
+            }
         }
         Err(Aborted)
     }
@@ -390,6 +420,7 @@ fn score_parallel(
     spec: SearchSpec,
     candidates: Vec<Candidate>,
     keep_pv: bool,
+    on_move: OnMove<'_>,
 ) -> Result<Vec<ScoredMove>, Aborted> {
     let count = candidates.len();
     let batch = Arc::new(CandidateBatch {
@@ -411,7 +442,7 @@ fn score_parallel(
                 let epoch = worker.cache_epoch;
                 context.end_cache = EndgameCache::take_thread(epoch);
                 context.stats.helper_jobs += 1;
-                let _ = batch.run(&mut context);
+                let _ = batch.run(&mut context, None);
                 std::mem::take(&mut context.end_cache).put_thread(epoch);
             }));
             if outcome.is_err() {
@@ -425,7 +456,9 @@ fn score_parallel(
         }
         context.stats.worker_dispatches += 1;
     }
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| batch.run(context)));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        batch.run(context, Some(on_move))
+    }));
     if outcome.is_err() {
         runtime.control.fail();
     }

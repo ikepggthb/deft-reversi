@@ -36,11 +36,6 @@ main{min-width:0;padding:2.2rem clamp(1.2rem,4vw,4.5rem) 5rem;background:white}.
 <td>バッチ内要求へ残量を分配し、停止までの実績を加算</td>
 </tr>
 <tr>
-<td>--new-positions</td>
-<td>その呼出しで追加した局面数</td>
-<td>既存局面の再解析時間を制限しない</td>
-</tr>
-<tr>
 <td>--memory-mib</td>
 <td>bookの局面・記録・仕事一覧などの保持メモリ見積もり</td>
 <td>プログラム全体の最大使用量の上限ではない</td>
@@ -110,10 +105,6 @@ target/release/book resume --model NEW_MODEL --work next.dbook-work --seconds 60
 <tr>
 <td>NodeLimit/TimeLimit</td>
 <td>正常な中断。完成証拠と未処理キューを残してresume</td>
-</tr>
-<tr>
-<td>PositionLimit</td>
-<td>新規展開の中断。既存局面の再解析予算も必要なら時間/ノードを併用</td>
 </tr>
 <tr>
 <td>checksum・形式・合法性エラー</td>
