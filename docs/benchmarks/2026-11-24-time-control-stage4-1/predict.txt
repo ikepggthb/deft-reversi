@@ -20,6 +20,18 @@ n-gtp60	all late turns per side 1.67	warm turns with the table's move unknown pe
 n-gtp20t4	early	n 3162 (7.91 per side)	mean +0.009	differ 0.017
 n-gtp20t4	late	n 300 (0.75 per side)	mean +0.063	differ 0.083
 n-gtp20t4	all late turns per side 1.70	warm turns with the table's move unknown per side 6.16
+# logged iterations: share where the next one plays a better move, and how often legacy's instability is >= 0.5 when it does (TPR) and when it does not (FPR)
+n-gtp2	steps 14340	better 0.082	TPR 0.288	FPR 0.152
+n-fs6	steps 18149	better 0.080	TPR 0.348	FPR 0.162
+n-gtp20	steps 21432	better 0.073	TPR 0.313	FPR 0.165
+n-gtp60	steps 25670	better 0.071	TPR 0.366	FPR 0.162
+n-gtp20t4	steps 25631	better 0.067	TPR 0.331	FPR 0.155
+# time to finish the exact solve (world 0, logged where the log reaches it) over the reserve formula, median by empties; before / after this side's first finished exact solve
+n-gtp2	18:0.31/0.27 19:0.49/0.30 20:0.51/0.29 21:0.53/- 22:0.55/- 23:0.49/- 24:0.54/- 25:0.64/- 26:0.42/-
+n-fs6	18:0.86/0.24 19:0.69/0.30 20:0.73/0.30 21:0.39/0.27 22:0.45/0.25 23:0.44/- 24:0.70/- 25:0.87/- 26:0.77/-
+n-gtp20	18:-/0.25 19:-/0.27 20:0.59/0.31 21:0.55/0.43 22:0.53/0.37 23:0.42/0.19 24:0.49/0.13 25:0.49/- 26:0.39/-
+n-gtp60	18:-/0.22 19:-/0.29 20:-/0.27 21:0.22/0.34 22:0.51/0.33 23:0.56/0.32 24:0.35/0.30 25:0.42/0.18 26:0.41/0.15
+n-gtp20t4	18:-/0.12 19:-/0.12 20:-/0.12 21:-/0.13 22:0.11/0.12 23:0.13/0.10 24:0.12/0.09 25:0.13/0.08 26:0.12/0.05
 # warm turns whose first iteration finished: ln(its time / the previous turn's prediction), quartiles
 n-gtp2	n 4905	-1.87 -1.28 -0.77
 n-fs6	n 4528	-1.91 -1.36 -0.79
