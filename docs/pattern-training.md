@@ -4,7 +4,10 @@
 
 ## 準備
 
-- データセット：rdg 形式の `phase_<NN>/{train,valid,test}.rd`（NN は石数 − 4。石数12〜63）。Egaroucid の学習データ（棋譜）から `deft-reversi-train convert` で作る。train は約13.5億局面、valid と test は各約1,400万局面。以前の `egaroucid_rd_data_set` はディレクトリ名が石数（`phase_<石数>`）なので、そのままでは読めない。
+- データセット：rdg 形式の `phase_<NN>/{train,valid,test}.rd`（NN は石数 − 4）。Egaroucid の学習データから `deft-reversi-train convert` で作る。以前の `egaroucid_rd_data_set` はディレクトリ名が石数（`phase_<石数>`）なので、そのままでは読めない。
+  - v4 は `train-v4-all` を使う（経緯と比較は研究ノート `local/notes/studies/2026-11-23-v4-eval/`）。石数14〜63 は学習データ v0002 の棋譜の、ランダム打ちの後の全局面（`convert --transcripts … --after-random 0 --stones 12..=63`、約13.7億局面）。石数4〜13 は 7.4.0 lv.17 の評価を negamax した v0001 の全局面（`convert --boards … --train 1 --valid 0`）を使い、`--no-shrink-stones 4..=13` で縮めずに書き出す。値は空きマスを勝った側に数えた終局石差。
+  - ランダム打ちの後の手を除いたデータ（`--after-random 16 --after-random-ramp 21`）で学習したモデルは、中盤の局面が半分以下になり、v3 より弱く遅くなった。データは減らさない。
+  - 以前の `egaroucid-rd`（v0002 の全局面、空きマスはどちらにも数えない）は v3 まで使った。局面は `train-v4-all` の石数14〜63 と同じ。
 - PEN（`train --pen`）を足すと精度が上がる（[PEN の測定](benchmarks/2026-11-06-pen/README.md)）。
 - メモリ：1局面24バイト。同時に学習する段階の数（`-t`）だけデータを載せる。最大の段階は約1.2 GB で、16スレッドでも約20 GB に収まる。
 - 時間：Core Ultra 7 265K・16スレッドで、全データ1エポックあたり約2分40秒。段階ごとの所要時間はデータ量に比例し、石数の多い段階ほど長い。
@@ -99,7 +102,10 @@ $T mpc -m runs/NAME/model.dpr2 --data $D --out runs/NAME/mpc --positions 1000 -t
 | `--lr` | 0.05 | AdaGrad の学習率（石） |
 | `--l2` | 1e-4 | 重みに比例して勾配に足す量 |
 | `--huber-delta` | 4 | これを超える誤差（石）は線形に数える |
-| `--shrink` | 32 | 書き出し時、n 回使われた重みを n / (n + shrink) 倍する |
+| `--shrink` | 32 | 書き出し時、n 回使われた重みを n / (n + shrink) 倍する（表の平均へ。合法手数差は隣の重みへ） |
+| `--no-shrink-stones` | なし | この石数の段階は縮めずに書き出す（その石数の全局面を学習する序盤用） |
+| `--no-mirror` | なし | 鏡像どうしで重みを共有しない |
+| `--pen-decay` | 0 | `--pen` の MLP の重みの減衰（AdamW）。0.01・0.1 は誤差がわずかに増えた |
 | `--seed` | 1 | `--limit` の選択とシャッフルの乱数 |
 | `--limit` | なし | 1段階あたりの train 局面数の上限 |
 | `-t` | コア数 | 同時に学習する段階の数 |

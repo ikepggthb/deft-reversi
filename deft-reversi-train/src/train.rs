@@ -45,8 +45,15 @@ pub struct TrainArgs {
     /// See `export --shrink`.
     #[arg(long, default_value_t = 32.0)]
     shrink: f32,
+    /// See `export --no-shrink-stones`.
+    #[arg(long)]
+    no_shrink_stones: Option<StoneRange>,
     #[arg(long, default_value_t = 1)]
     seed: u64,
+    /// Keep a pattern state and its mirror image apart (as before): by
+    /// default they share one weight, and one embedding with `--pen`.
+    #[arg(long)]
+    no_mirror: bool,
     /// Add a pattern embedding network (PEN) to the linear weights.
     #[arg(long)]
     pen: bool,
@@ -63,6 +70,11 @@ pub struct TrainArgs {
     /// Samples per Adam step of the PEN dense layers.
     #[arg(long, default_value_t = 256)]
     pen_batch: u32,
+    /// Decoupled weight decay of the PEN dense weights. Off by default: on
+    /// four phases, 0.01 and 0.1 raised the test error by 0.005 and 0.05
+    /// discs once the offsets were recentred.
+    #[arg(long, default_value_t = 0.0)]
+    pen_decay: f32,
     /// Phases trained at once. Each holds its data in memory: 24 bytes a
     /// position, up to about 1.2 GB for the largest phase of the full set.
     #[arg(short, long)]
@@ -79,6 +91,11 @@ pub struct ExportArgs {
     /// is multiplied by n / (n + shrink).
     #[arg(long, default_value_t = 32.0)]
     shrink: f32,
+    /// Disc counts exported without shrinking: phases whose data holds
+    /// every position of their disc count (Egaroucid's enumerated openings),
+    /// where a rarely used weight is no less reliable than another.
+    #[arg(long)]
+    no_shrink_stones: Option<StoneRange>,
 }
 
 /// What a checkpoint must match to resume.
@@ -127,7 +144,7 @@ struct Checkpoint {
     epochs: u32,
     weights: Weights,
 }
-const CHECKPOINT_VERSION: u32 = 3;
+const CHECKPOINT_VERSION: u32 = 5;
 
 #[derive(Serialize)]
 struct EpochLog {
@@ -145,11 +162,13 @@ pub fn run(args: TrainArgs) -> Result<()> {
             lr: args.lr,
             l2: args.l2,
             huber_delta: args.huber_delta,
+            mirror: !args.no_mirror,
         },
         pen: args.pen.then_some(PenSettings {
             lr: args.pen_lr,
             dense_lr: args.pen_dense_lr,
             batch: args.pen_batch,
+            decay: args.pen_decay,
         }),
         limit: args.limit,
         seed: args.seed,
@@ -186,6 +205,7 @@ pub fn run(args: TrainArgs) -> Result<()> {
         work: args.work.clone(),
         out: args.out.clone(),
         shrink: args.shrink,
+        no_shrink_stones: args.no_shrink_stones,
     })
 }
 
@@ -272,6 +292,7 @@ fn train_phase(
             let w = Box::new(PenWeights::new(
                 &records,
                 args.seed ^ u64::from(stones) << 40,
+                identity.settings.mirror,
             ));
             let w = if args.pen_no_linear {
                 Weights::PenOnly(w)
@@ -280,7 +301,10 @@ fn train_phase(
             };
             (w, 0)
         }
-        None => (Weights::Linear(PhaseWeights::new(&records)), 0),
+        None => (
+            Weights::Linear(PhaseWeights::new(&records, identity.settings.mirror)),
+            0,
+        ),
     };
     // Replay the finished epochs' shuffles so a resumed run sees the same
     // orders as an uninterrupted one.
@@ -331,10 +355,15 @@ pub fn export(args: &ExportArgs) -> Result<()> {
     for stones in 4..=63u8 {
         if let Some(c) = read_checkpoint(&checkpoint_path(&args.work, stones))? {
             let p = usize::from(stones) - 4;
+            let shrink = if args.no_shrink_stones.is_some_and(|r| r.contains(stones)) {
+                0.0
+            } else {
+                args.shrink
+            };
             match c.weights {
-                Weights::Linear(w) => trained[p] = Some(w.export(args.shrink)),
+                Weights::Linear(w) => trained[p] = Some(w.export(shrink)),
                 Weights::Pen(w) | Weights::PenOnly(w) => {
-                    let (linear, network) = w.export(args.shrink);
+                    let (linear, network) = w.export(shrink);
                     trained[p] = Some(linear);
                     networks[p] = Some(network);
                 }
@@ -425,12 +454,15 @@ mod tests {
             l2: 1e-4,
             huber_delta: 4.0,
             shrink: 32.0,
+            no_shrink_stones: None,
             seed: 1,
+            no_mirror: false,
             pen: false,
             pen_no_linear: false,
             pen_lr: 0.01,
             pen_dense_lr: 0.001,
             pen_batch: 256,
+            pen_decay: 0.01,
             threads: Some(2),
         };
         run(args(1)).unwrap();
@@ -457,6 +489,41 @@ mod tests {
         let replaced = crate::test_records(&mut random, 20, 250);
         rd::write(&rd::path(&data, 20, "train"), &replaced);
         assert!(run(args(3)).is_err());
+
+        // Phases in --no-shrink-stones export as with --shrink 0.
+        let export_to = |out: &str, shrink, no_shrink_stones| {
+            export(&ExportArgs {
+                work: dir.join("work"),
+                out: dir.join(out),
+                shrink,
+                no_shrink_stones,
+            })
+            .unwrap();
+            fs::read(dir.join(out)).unwrap()
+        };
+        let plain = export_to("k0.dpr2", 0.0, None);
+        assert_ne!(export_to("k1000.dpr2", 1000.0, None), plain);
+        assert_eq!(
+            export_to("k1000-none.dpr2", 1000.0, Some("20..=21".parse().unwrap())),
+            plain
+        );
+
+        // So does a PEN run, with a partial last batch and decay.
+        let pen = |epochs, work: &str| TrainArgs {
+            work: dir.join(work),
+            out: dir.join(format!("{work}.dpr2")),
+            pen: true,
+            pen_batch: 7,
+            pen_decay: 0.01,
+            ..args(epochs)
+        };
+        run(pen(1, "pen")).unwrap();
+        run(pen(2, "pen")).unwrap();
+        run(pen(2, "pen-straight")).unwrap();
+        assert_eq!(
+            fs::read(dir.join("pen.dpr2")).unwrap(),
+            fs::read(dir.join("pen-straight.dpr2")).unwrap()
+        );
 
         // A phase without positions leaves no checkpoint behind.
         rd::write(&rd::path(&data, 22, "train"), &[]);
