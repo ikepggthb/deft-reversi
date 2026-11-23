@@ -6,6 +6,7 @@ usage: sim.py check RUN_DIR REFER_DIR
        sim.py first RUN_DIR REFER_DIR [WORLDS] [HEAVY]
        sim.py predict RUN_DIR REFER_DIR
        sim.py rest RUN_DIR REFER_DIR [WORLDS] [HEAVY]
+       SIM_SIGNALS=... sim.py signal RUN_DIR REFER_DIR [WORLDS] [HEAVY]
 
 Each side of each normal game of openings 200..299 (stage 3-1, `n-*`) is
 replayed turn by turn on its own clock: the moves of the game are fixed,
@@ -66,6 +67,12 @@ and FPR when it does not (legacy's own instability >= 0.5 has about
 0.3/0.16 on the logged iterations, `predict`); `weight A`
 shares weighted by exp(A (empties - 36) / 10); `hardk H` hard borrowing
 H times as much (see budget()).
+`signal` runs legacy, nowaste and value signals given per transition in
+SIM_SIGNALS ("name:mid=T/F,entry=T/F,stage=T/F,exact=T/F;..."), the TPR
+and FPR of a signal measured on the logs (value_signal.py), stage 4-2.
+It also runs `instbin C`: legacy's instability made on/off at C.
+SIM_BASE names the variant the differences are taken against (default
+legacy).
 `predict` reports, for the warm-started turns, how well the previous
 turn's prediction of its next iteration (over this turn's hard) separates
 the turns whose first iteration runs into hard (AUC, and the share of such
@@ -521,17 +528,28 @@ def play_turn(u, soft, hard, truth, sigma, noise_key):
             if not better:
                 return elapsed + u.tail, best_loss, False
             continue
+        used_inst = inst
+        cut = policy(truth, "instbin")
+        if cut is not None:
+            # legacy's own instability made on/off: 1 if it is at least
+            # `cut`, else 0 (a rule the clock can use as it is).
+            used_inst = 1.0 if inst >= cut else 0.0
         rates = policy(truth, "vinst", str)
         if rates is not None:
             # The instability replaced by a value signal: 1 if the next
             # iteration is said to play a better move, else 0. It says so
             # with probability TPR when it does and FPR when it does not
             # (1/0 is the truth).
-            tpr, fpr = map(float, rates.split("/"))
+            if "=" in rates:
+                # Per transition: "mid=T/F,entry=T/F,stage=T/F,exact=T/F".
+                spec = dict(x.split("=") for x in rates.split(","))
+                tpr, fpr = map(float, spec.get(tr, "0/0").split("/"))
+            else:
+                tpr, fpr = map(float, rates.split("/"))
             nl = w[k + 1][2]
             v = nl is not None and best_loss is not None and nl < best_loss
-            inst = 1.0 if vrng.random() < (tpr if v else fpr) else 0.0
-        if elapsed + pred > min(soft * (1 + inst), hard):
+            used_inst = 1.0 if vrng.random() < (tpr if v else fpr) else 0.0
+        if elapsed + pred > min(soft * (1 + used_inst), hard):
             return elapsed + u.tail, best_loss, False
     return elapsed + u.tail, best_loss, False
 
@@ -753,6 +771,14 @@ def main():
             variants.append((f"weight {a}", frozenset({f"weight:{a}"}), 0.0))
         for h in (0.5, 1.5, 2.0):
             variants.append((f"hardk {h}", frozenset({f"hardk:{h}"}), 0.0))
+    if mode == "signal":
+        for c in (0.5, 1.0):
+            variants.append((f"instbin {c}", frozenset({f"instbin:{c}"}), 0.0))
+        # SIM_SIGNALS="name:mid=T/F,entry=T/F,...;name:..." (stage 4-2).
+        for item in os.environ.get("SIM_SIGNALS", "").split(";"):
+            if item:
+                name, spec = item.split(":", 1)
+                variants.append((f"vinst {name}", frozenset({f"vinst:{spec}"}), 0.0))
     if mode == "first":
         for k in (1.0, 1.5):
             variants.append((f"firstsoft {k}", frozenset({f"firstsoft:{k}"}), 0.0))
@@ -801,7 +827,9 @@ def main():
     print(f"# worlds {worlds}, heavy {heavy}; per game and side: loss (discs), time (s), "
           "time losses; difference to legacy [95%, bootstrap over openings]")
     for cond in NORMAL:
-        base = res[cond]["legacy"]
+        # SIM_BASE: the variant the differences are taken against (default
+        # legacy), e.g. "vinst legacy-rates =t" in stage 4-2.
+        base = res[cond][os.environ.get("SIM_BASE", "legacy")]
         for name in [n + e for n, _, _ in variants for e in ("", " =t")]:
             if name == "legacy =t":
                 continue
