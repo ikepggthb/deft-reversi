@@ -157,6 +157,17 @@ python3 tools/time-control/cost_fit.py table.tsv
 - 実行：`DEFT_MODEL=local/time-control/stage3/bin/model-v4.dpr2 tools/time-control/stage3_refer.sh local/time-control/stage3/run-v4 local/time-control/stage3/refer-v4`
 - 止め方：`touch local/time-control/stage3/refer-v4/STOP` とすると、各プロセスが今の局面を終えてから止まる。同じコマンドで再開する（STOP は消してから）。
 
+## 6f. 段階3-2 の結果（2026-11-24）
+
+- 20,561局面を止めずに最後まで読んだ（22:27〜01:18、2時間51分）。試しの局面から出した見積もり（約2.5時間）より少し長かった。
+- `tools/time-control/refer_loss.py` で、参照を各手番の反復に戻した（`table` で反復ごとの損失、`summary` で集計）。実際に指した手で参照の値がない手番は0件。
+- 主な数字（詳しくは `docs/benchmarks/2026-11-24-time-control-stage3-2/`）：
+  - 1局・片方あたりの指した手の損失：2秒 4.0、FlipSight 6秒 2.8、20秒 1.6、60秒 0.87、20秒・4スレッド 0.74 石。20空き以下は全条件で0。
+  - 次の反復の値：中盤→中盤 0.10〜0.16 石、ENTRY 1.0〜1.4 石、選択的→選択的 0.09〜0.13 石、EXACT 0.03〜0.05 石。
+  - 延長した手番で、時計の判断の時点と延長の最後の損失の差は 0.00〜0.05 石で、区間は4条件とも0をまたぐ。
+- 注意：29空き以上の参照は深さ26。60秒と4スレッドでは中盤の反復の約16%が深さ23以上なので、その値は小さく出る。
+- 残り：重い ENTRY の価値（延長の上限で打ち切られたもの）は測れていない。ENTRY を狙った追加の延長で埋まる。
+
 ## 7. 一時ファイル
 
 作業中のデータは scratchpad（セッションごとの一時ディレクトリ）にある。消えても、上のコマンドとリポジトリの記録から作り直せる。評価対局の GTP ログ（`eval/log-*`）は長いのでリポジトリに入れていない。消えた場合、GTP ログを使う分析には評価対局の再実行が必要。
