@@ -5,6 +5,7 @@ usage: sim.py check RUN_DIR REFER_DIR
        sim.py run RUN_DIR REFER_DIR [WORLDS] [HEAVY]
        sim.py first RUN_DIR REFER_DIR [WORLDS] [HEAVY]
        sim.py predict RUN_DIR REFER_DIR
+       sim.py rest RUN_DIR REFER_DIR [WORLDS] [HEAVY]
 
 Each side of each normal game of openings 200..299 (stage 3-1, `n-*`) is
 replayed turn by turn on its own clock: the moves of the game are fixed,
@@ -54,6 +55,17 @@ plays the table's move at once when the previous turn predicted its next
 iteration at more than T times this turn's hard. The table's move is the
 previous PV's when known, else its loss is drawn as SIM_TABLE says
 (complete()).
+`rest` runs legacy, nowaste and the other parts of the clock (stage 4-1,
+rest): `reserve R` the reserve for future exact solves -- truth (the
+world's time to finish the exact solve at this side's later turns) or
+the formula times R; `voracle` stops when no later iteration within
+min(hard, 2 soft) plays a better move (value and time known); `vinst TPR/FPR`
+the legacy rule with the instability replaced by a signal of whether the
+next iteration plays a better move, on with probability TPR when it does
+and FPR when it does not (legacy's own instability >= 0.5 has about
+0.3/0.16 on the logged iterations, `predict`); `weight A`
+shares weighted by exp(A (empties - 36) / 10); `hardk H` hard borrowing
+H times as much (see budget()).
 `predict` reports, for the warm-started turns, how well the previous
 turn's prediction of its next iteration (over this turn's hard) separates
 the turns whose first iteration runs into hard (AUC, and the share of such
@@ -373,18 +385,28 @@ def complete(games, plan, ratio, losses, seed, heavy=1.0):
 
 # ---- the legacy clock (game_clock/legacy.rs) ----
 
-def budget(empties, remaining, cap):
+def budget(empties, remaining, cap, solve=None, weight=0.0, hardk=1.0):
+    """legacy.rs's soft and hard. Stage 4-1 variants: `solve(future)` the
+    reserve for the exact solve of a future turn (default the formula);
+    `weight` a: the share of this turn is pool * w(e) / sum of w over the
+    turns left, w(e) = exp(a * (e - 36) / 10) (a > 0 spends more in the
+    midgame; 0 is legacy's equal share); `hardk` scales what hard borrows
+    beyond the share."""
     turns = max(1, (empties + 1) // 2)
     pool, left = remaining, turns
     for distance in range(turns - 1, 0, -1):
         future = empties - 2 * distance
-        solve = 0.002 + 3.0 * 0.006 * 2.0 ** (future - 17)
-        if solve >= pool / left:
+        reserve = solve(future) if solve else 0.002 + 3.0 * 0.006 * 2.0 ** (future - 17)
+        if reserve >= pool / left:
             break
-        pool -= solve
+        pool -= reserve
         left -= 1
-    share = pool / left
-    hard = min(share + min(share, (pool - share) / 2), cap)
+    if weight:
+        ws = [math.exp(weight * (empties - 2 * i - 36) / 10) for i in range(left)]
+        share = pool * ws[0] / sum(ws)
+    else:
+        share = pool / left
+    hard = min(share + hardk * min(share, (pool - share) / 2), cap)
     return min(share, hard), hard
 
 
@@ -411,11 +433,26 @@ def growth(empties, kind, nxt, cost, last_cost, last_depth):
     return entry
 
 
-def policy(truth, name):
+def policy(truth, name, cast=float):
     for t in truth:
         if t.startswith(name + ":"):
-            return float(t.split(":")[1])
+            return cast(t.split(":", 1)[1])
     return None
+
+
+def solve_times(ts):
+    """{empties: time to finish the exact solve} of the searched turns of
+    one side, in their worlds (the true reserve, stage 4-1 A6)."""
+    out = {}
+    for u in ts:
+        if u.searched and not u.nomove and u.world:
+            el = 0.0
+            for kind, cost, _, _ in u.world:
+                el += cost
+                if kind == "e100":
+                    out[u.empties] = el
+                    break
+    return out
 
 
 def play_turn(u, soft, hard, truth, sigma, noise_key):
@@ -447,6 +484,7 @@ def play_turn(u, soft, hard, truth, sigma, noise_key):
     best_loss, inst, best = None, 0.0, None
     w = u.world
     rng = random.Random(noise_key) if any(t in TRANSITIONS for t in truth) else None
+    vrng = random.Random(noise_key + "/value")
     for k, (kind, cost, loss, move) in enumerate(w):
         if elapsed + cost > hard:
             return hard + (u.cut_latency or 0.002), (best_loss if best_loss is not None else loss), True
@@ -467,6 +505,32 @@ def play_turn(u, soft, hard, truth, sigma, noise_key):
             pred = cost * growth(u.empties, kind, nxt, cost, last_cost, last_depth)
         last_cost = cost
         last_depth = int(kind[1:]) if kind[0] == "d" else None
+        if "voracle" in truth:
+            # Value and time known: go on while some later iteration that
+            # ends within min(hard, 2 soft) -- legacy's largest limit --
+            # plays a better move.
+            limit, t = min(hard, 2 * soft), elapsed
+            better = False
+            for kind2, cost2, loss2, _ in w[k + 1:]:
+                t += cost2
+                if t > limit:
+                    break
+                if loss2 is not None and best_loss is not None and loss2 < best_loss:
+                    better = True
+                    break
+            if not better:
+                return elapsed + u.tail, best_loss, False
+            continue
+        rates = policy(truth, "vinst", str)
+        if rates is not None:
+            # The instability replaced by a value signal: 1 if the next
+            # iteration is said to play a better move, else 0. It says so
+            # with probability TPR when it does and FPR when it does not
+            # (1/0 is the truth).
+            tpr, fpr = map(float, rates.split("/"))
+            nl = w[k + 1][2]
+            v = nl is not None and best_loss is not None and nl < best_loss
+            inst = 1.0 if vrng.random() < (tpr if v else fpr) else 0.0
         if elapsed + pred > min(soft * (1 + inst), hard):
             return elapsed + u.tail, best_loss, False
     return elapsed + u.tail, best_loss, False
@@ -488,13 +552,27 @@ def play_game(ts, truth=frozenset(), sigma=0.0, key="", check=False, margin=0.01
     used_total = 0.0
     flags = mism = cuts = 0
     bands = [0, 0, 0, 0]
+    reserve = policy(truth, "reserve", str)
+    solve = None
+    if reserve == "truth":
+        st = solve_times(ts)
+
+        def solve(e):
+            return st.get(e, st.get(e + 1, 0.002 + 3.0 * 0.006 * 2.0 ** (e - 17)))
+    elif reserve is not None:
+        f = float(reserve)
+
+        def solve(e):
+            return f * (0.002 + 3.0 * 0.006 * 2.0 ** (e - 17))
+    weight = policy(truth, "weight") or 0.0
+    hardk = policy(truth, "hardk") or 1.0
     for ti, u in enumerate(ts):
         cap = rem
         if not u.searched:
             used = u.used
         else:
             cap = min(u.permove, rem) if u.permove is not None else rem
-            soft, hard = budget(u.empties, rem, cap)
+            soft, hard = budget(u.empties, rem, cap, solve, weight, hardk)
             soft = min(soft * scale, hard)
             used, loss, cut = play_turn(u, soft, hard, truth, sigma, f"{key}/{ti}")
             total_loss += loss
@@ -557,6 +635,30 @@ def predict(games):
                       and u.table_loss is None) / len(gs)
         print(f"{cond}\tall late turns per side {late_all:.2f}\twarm turns with the table's move"
               f" unknown per side {unknown:.2f}")
+    print("# logged iterations: share where the next one plays a better move, and how often"
+          " legacy's instability is >= 0.5 when it does (TPR) and when it does not (FPR)")
+    for cond, gs in games.items():
+        tp = fp = pos = neg = 0
+        for *_, ts in gs:
+            for u in ts:
+                if not u.searched or u.nomove:
+                    continue
+                inst, best, bl = 0.0, None, None
+                for k, (_, _, l, m) in enumerate(u.its[:-1]):
+                    inst = 1.0 if best is not None and best != m else inst * 0.5
+                    best = m
+                    bl = l if l is not None else bl
+                    nl = u.its[k + 1][2]
+                    if nl is None or bl is None:
+                        continue
+                    if nl < bl:
+                        pos += 1
+                        tp += inst >= 0.5
+                    else:
+                        neg += 1
+                        fp += inst >= 0.5
+        print(f"{cond}\tsteps {pos + neg}\tbetter {pos / (pos + neg):.3f}"
+              f"\tTPR {tp / pos:.3f}\tFPR {fp / neg:.3f}")
     print("# warm turns whose first iteration finished: ln(its time / the previous turn's"
           " prediction), quartiles")
     for cond, gs in games.items():
@@ -613,6 +715,16 @@ def main():
             for sigma in (0.0, 0.25, 0.5, 1.0):
                 variants.append((f"{name} s={sigma}", frozenset(tr), sigma))
     variants.append(("nowaste", frozenset({"nowaste"}), 0.0))
+    if mode == "rest":
+        for r in ("truth", "0.25", "0.5", "2"):
+            variants.append((f"reserve {r}", frozenset({f"reserve:{r}"}), 0.0))
+        variants.append(("voracle", frozenset({"voracle"}), 0.0))
+        for r in ("1/0", "0.9/0.1", "0.75/0.25", "0.75/0.1", "0.5/0.1", "0.5/0.15", "0.3/0.15"):
+            variants.append((f"vinst {r}", frozenset({f"vinst:{r}"}), 0.0))
+        for a in (-0.5, -0.25, 0.25, 0.5):
+            variants.append((f"weight {a}", frozenset({f"weight:{a}"}), 0.0))
+        for h in (0.5, 1.5, 2.0):
+            variants.append((f"hardk {h}", frozenset({f"hardk:{h}"}), 0.0))
     if mode == "first":
         for k in (1.0, 1.5):
             variants.append((f"firstsoft {k}", frozenset({f"firstsoft:{k}"}), 0.0))
