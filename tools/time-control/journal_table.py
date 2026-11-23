@@ -17,6 +17,8 @@ are not logged and are 0). Extra columns follow:
   after_decision  1 if the next iteration ended after the clock had
               decided to stop (only extension turns have such rows)
   prev_turn_used  seconds the side's previous turn took
+  opening     the referee's opening id (colour-swapped games of one opening
+              nearly repeat each other in self-play: resample by opening)
 
 The next iteration of the last one of a turn:
   - not planned (next is null): no row;
@@ -32,7 +34,7 @@ from pathlib import Path
 HEAD = ("game empties side_mob opp_mob odd_regions regions corners_empty disc_diff "
         "tag t cost score move prev_tag prev_cost next_tag next_cost censored "
         "cond side protocol threads remaining soft hard nodes next_nodes "
-        "reply_matched extended after_decision prev_turn_used").split()
+        "reply_matched extended after_decision prev_turn_used opening").split()
 
 
 def turns(path, start, end):
@@ -97,7 +99,7 @@ def main():
                                cond, side, turn["protocol"], turn["threads"],
                                fmt(turn["remaining"]), fmt(turn["soft"]), fmt(turn["hard"]),
                                it["nodes"], fmt(nnodes), fmt(turn["reply_matched"]),
-                               int(ext), int(after), fmt(turn["previous_used"])]
+                               int(ext), int(after), fmt(turn["previous_used"]), w[0]]
                         print("\t".join(map(str, row)))
 
 
