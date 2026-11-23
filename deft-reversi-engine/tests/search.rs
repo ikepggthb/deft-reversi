@@ -128,7 +128,13 @@ fn timed_levels_return_last_completed_stage_on_timeout() {
         })
         .unwrap();
     let last = last.expect("the first stage should complete");
-    assert_eq!(last.kind, ResultKind::Depth { depth: 5, selectivity: Selectivity::Percent83 });
+    assert_eq!(
+        last.kind,
+        ResultKind::Depth {
+            depth: 5,
+            selectivity: Selectivity::Percent83
+        }
+    );
     assert_eq!(result.stop_reason, StopReason::TimeLimit);
     assert_eq!(result.kind, Some(last.kind));
     assert_eq!(result.score, Some(last.score));
@@ -145,10 +151,14 @@ fn timed_levels_searches_selective_stages_and_solves_exactly() {
     let mut reported = Vec::new();
     let mut announced = Vec::new();
     let timed = engine
-        .search_with(board, &SearchRequest::timed_levels(60, budget), |progress| {
-            reported.push(progress.kind);
-            announced.push(progress.next);
-        })
+        .search_with(
+            board,
+            &SearchRequest::timed_levels(60, budget),
+            |progress| {
+                reported.push(progress.kind);
+                announced.push(progress.next);
+            },
+        )
         .unwrap();
     // Each report announces the iteration reported next; the last none.
     let following: Vec<_> = reported[1..].iter().copied().map(Some).chain([None]).collect();
@@ -157,11 +167,16 @@ fn timed_levels_searches_selective_stages_and_solves_exactly() {
     assert!(timed.is_solved());
     assert_eq!(timed.score, fixed.score);
     assert!(timed.stats.tt_hits > 0);
-    let expected: Vec<_> = [2, 4].into_iter()
-        .map(|depth| ResultKind::Depth { depth, selectivity: Selectivity::Percent83 })
-        .chain([Selectivity::Percent85, Selectivity::Full].map(|selectivity| {
-            ResultKind::Endgame { selectivity }
-        }))
+    let expected: Vec<_> = [2, 4]
+        .into_iter()
+        .map(|depth| ResultKind::Depth {
+            depth,
+            selectivity: Selectivity::Percent83,
+        })
+        .chain(
+            [Selectivity::Percent85, Selectivity::Full]
+                .map(|selectivity| ResultKind::Endgame { selectivity }),
+        )
         .collect();
     assert_eq!(reported, expected);
 }
@@ -464,6 +479,32 @@ fn selective_endgame_recovers_a_warm_pv_without_changing_the_result() {
 }
 
 #[test]
+fn selective_midgame_recovers_a_warm_pv_without_changing_the_result() {
+    for seed in [3, 9, 21] {
+        let board = position(seed, 40);
+        let request = depth(8).selectivity(Selectivity::Percent85);
+        let run = |request_with_pv: &SearchRequest| {
+            let mut engine = engine(1);
+            engine.search(board, &request).unwrap();
+            engine.search(board, request_with_pv).unwrap()
+        };
+        let warm = run(&request);
+        let recovered = run(&request.clone().recover_pv());
+        assert_eq!(recovered.best_move, warm.best_move, "seed {seed}");
+        assert_eq!(recovered.score, warm.score, "seed {seed}");
+        assert_eq!(recovered.kind, warm.kind, "seed {seed}");
+        assert_eq!(recovered.pv.first(), warm.pv.first(), "seed {seed}");
+        // The warm table cut the line short; recovery reads it to the depth.
+        assert!(warm.pv.len() < 8, "seed {seed}");
+        assert_eq!(recovered.pv.len(), 8, "seed {seed}");
+        let mut line = board;
+        for &action in &recovered.pv {
+            line = line.play(action).unwrap();
+        }
+    }
+}
+
+#[test]
 fn stopping_after_selective_preparation_does_not_report_exact() {
     // Exact preparation stops endgame ProbCut below thirteen empties; a rule at
     // thirteen makes it search the same tree as the selective request.
@@ -540,15 +581,26 @@ fn all_moves_scores_every_move_exactly() {
     let mut reviewer = engine(1);
     let all = reviewer.search(board, &exact().all_moves()).unwrap();
     for played in board.legal_moves() {
-        let result = reviewer.search(board, &exact().review_move(played)).unwrap();
+        let result = reviewer
+            .search(board, &exact().review_move(played))
+            .unwrap();
         assert_eq!(result.score, all.score);
         assert_eq!(result.moves[0].score, all.score.unwrap());
         assert_eq!(
             result.moves.len(),
-            if result.best_move == Some(Action::Place(played)) { 1 } else { 2 }
+            if result.best_move == Some(Action::Place(played)) {
+                1
+            } else {
+                2
+            }
         );
         assert!(result.moves.iter().all(|score| all.moves.contains(score)));
-        assert!(result.moves.iter().any(|m| m.action == Action::Place(played)));
+        assert!(
+            result
+                .moves
+                .iter()
+                .any(|m| m.action == Action::Place(played))
+        );
     }
     // A stopped search leaves the list empty rather than partial.
     let result = engine(1)
@@ -569,7 +621,10 @@ fn candidate_lines_are_legal_and_match_full_window_scores() {
         assert_eq!(pv.first(), Some(&scored.action));
         let child = board.play(scored.action).unwrap();
         assert_eq!(scored.score, -reference(child));
-        let final_board = pv.iter().try_fold(board, |board, &action| board.play(action)).unwrap();
+        let final_board = pv
+            .iter()
+            .try_fold(board, |board, &action| board.play(action))
+            .unwrap();
         if final_board.is_terminal() {
             let score = final_board.final_score();
             assert_eq!(scored.score, if pv.len() % 2 == 0 { score } else { -score });

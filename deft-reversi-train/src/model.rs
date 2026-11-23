@@ -24,7 +24,8 @@ pub fn assemble(phase: &mut dyn FnMut(usize) -> Option<PatternPhase>) -> io::Res
     Ok(bytes)
 }
 
-/// A DPR2 version 3 model: linear phases with their networks. Missing
+/// A DPR2 version 4 model (version 3 when no network reads the stable or
+/// disc inputs): linear phases with their networks. Missing
 /// phases copy the nearest trained one, as in `assemble`.
 pub fn assemble_pen(
     linear: &[Option<PatternPhase>],

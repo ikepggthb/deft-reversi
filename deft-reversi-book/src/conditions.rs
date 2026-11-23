@@ -89,8 +89,14 @@ impl SearchConditions {
         self.horizon
     }
     pub(crate) fn minimum_selectivity(self) -> Selectivity {
-        let ordinal = [self.mid_sel, self.end_sel, self.legacy_sel].into_iter().min().unwrap();
-        Selectivity::ALL.get(ordinal as usize).copied().unwrap_or(Selectivity::Full)
+        let ordinal = [self.mid_sel, self.end_sel, self.legacy_sel]
+            .into_iter()
+            .min()
+            .unwrap();
+        Selectivity::ALL
+            .get(ordinal as usize)
+            .copied()
+            .unwrap_or(Selectivity::Full)
     }
     // 子から親へは点数の符号だけでなく到達深さも変わる。石を置いた場合だけ+1。
     // パスは手番を変えるが深さを消費しない。中盤・終盤という種類も変えない。

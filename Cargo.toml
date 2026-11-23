@@ -1,11 +1,8 @@
 [workspace]
-members = ["deft-reversi-engine", "deft-reversi-book", "deft-reversi-train", "deft-reversi-cli"]
+members = ["deft-reversi-engine", "deft-reversi-book", "deft-reversi-train", "deft-reversi-cli", "deft-reversi-desktop"]
 # The web application still uses the legacy API and requires migration.
 exclude = ["deft-reversi-web"]
 resolver = "2"
-
-[workspace.package]
-version = "1.0.0-dev.1"
 
 [profile.release]
 lto = "fat"
@@ -13,3 +10,9 @@ opt-level = 3
 # YBWC jobs drain their children and report worker failures on unwind.
 panic = 'unwind'
 codegen-units = 1
+
+# GPUI builds against these forks in Zed; patches do not carry over from a
+# dependency's workspace.
+[patch.crates-io]
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+calloop = { git = "https://github.com/zed-industries/calloop" }

@@ -226,15 +226,6 @@ impl GenerationConfig {
 pub struct GenerationLimits {
     pub time: Option<Duration>,
     pub nodes: Option<u64>,
-    pub new_positions: Option<u64>,
-}
-impl GenerationLimits {
-    pub(super) fn validate(self) -> Result<()> {
-        if self.time.is_none() && self.nodes.is_none() && self.new_positions.is_none() {
-            return Err(invalid("explicit generation budget required"));
-        }
-        Ok(())
-    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GenerationStop {
@@ -242,7 +233,6 @@ pub enum GenerationStop {
     Requested,
     TimeLimit,
     NodeLimit,
-    PositionLimit,
     MemoryLimit,
 }
 #[derive(Clone, Debug, Default)]
@@ -668,7 +658,6 @@ pub(super) fn expand(
     state: &mut GenerationState,
     context: Context,
     first: Option<Action>,
-    limits: GenerationLimits,
     report: &mut GenerationReport,
 ) -> Result<()> {
     let key = context.key;
@@ -733,13 +722,6 @@ pub(super) fn expand(
         };
         let child = Key::new(key.board().play(action).unwrap()).0;
         if !editor.nodes.contains_key(&child) {
-            if limits
-                .new_positions
-                .is_some_and(|n| report.new_positions >= n)
-            {
-                report.reason = GenerationStop::PositionLimit;
-                return Ok(());
-            }
             if editor
                 .estimated_bytes()
                 .saturating_add(state.estimated_bytes())
@@ -1293,18 +1275,7 @@ mod path_tests {
             elapsed: Duration::ZERO,
             profile: GenerationProfile::default(),
         };
-        expand(
-            &mut editor,
-            &mut state,
-            c,
-            None,
-            GenerationLimits {
-                new_positions: Some(100),
-                ..Default::default()
-            },
-            &mut report,
-        )
-        .unwrap();
+        expand(&mut editor, &mut state, c, None, &mut report).unwrap();
         assert_eq!(
             editor
                 .move_values(board, first)

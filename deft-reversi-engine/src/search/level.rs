@@ -58,8 +58,35 @@ fn endgame_limits(level: i32) -> [i32; 5] {
         }
     }
 }
+/// What `Goal::Level(level)` reads from a position with `empties` empty
+/// squares, as its final iteration would report it; for showing a level's
+/// plan without searching. `level` must be 1..=60.
+pub fn level_reading(level: u8, empties: u8) -> ResultKind {
+    match plan(level).at(empties) {
+        (SearchMode::Depth(depth), selectivity) => ResultKind::Depth {
+            depth: depth.min(empties),
+            selectivity,
+        },
+        (SearchMode::Exact | SearchMode::SelectiveEndgame, selectivity) => {
+            ResultKind::Endgame { selectivity }
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn level_reading_matches_the_plan() {
+        use super::*;
+        let depth = |depth, selectivity| ResultKind::Depth { depth, selectivity };
+        let endgame = |selectivity| ResultKind::Endgame { selectivity };
+        assert_eq!(level_reading(25, 60), depth(25, Selectivity::Percent83));
+        assert_eq!(level_reading(25, 32), depth(25, Selectivity::Percent83));
+        assert_eq!(level_reading(25, 31), endgame(Selectivity::Percent85));
+        assert_eq!(level_reading(25, 24), endgame(Selectivity::Full));
+        assert_eq!(level_reading(1, 50), depth(1, Selectivity::Percent83));
+        assert_eq!(level_reading(1, 7), endgame(Selectivity::Full));
+        assert_eq!(level_reading(60, 60), endgame(Selectivity::Full));
+    }
     use super::*;
     /// The midgame depth, if the level searches the midgame there, and the
     /// selectivity in percent (100 is exact).

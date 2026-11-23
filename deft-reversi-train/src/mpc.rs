@@ -396,9 +396,18 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
     let threads = args
         .threads
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+    // One engine per thread, kept across jobs and positions: a table entry
+    // only cuts a search of the same depth and selectivity, so what other
+    // positions left in it does not change a value, and a fresh 512 MiB
+    // table per position would cost more than many searches.
+    let engines: Mutex<Vec<Engine>> = Mutex::new(Vec::new());
     for_each_parallel(&jobs, threads, |(empties, boards)| {
         let empties = *empties;
-        let mut engine = Engine::new(model.clone(), EngineOptions::default().tt_mib(64))?;
+        let pooled = engines.lock().unwrap().pop();
+        let mut engine = match pooled {
+            Some(engine) => engine,
+            None => Engine::new(model.clone(), EngineOptions::default().tt_mib(512))?,
+        };
         let value = |engine: &mut Engine, board: Board, goal: Goal| -> Result<i32> {
             let result = engine.search(board, &SearchRequest::new(goal))?;
             result.score.ok_or_else(|| "search gave no score".into())
@@ -409,11 +418,8 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
             let values = (0..=deepest)
                 .map(|d| value(&mut engine, board, Goal::Depth(d)))
                 .collect::<Result<Vec<_>>>()?;
-            engine.clear_tt()?;
             let exact = if solved(empties) {
-                let v = value(&mut engine, board, Goal::Endgame)?;
-                engine.clear_tt()?;
-                Some(v)
+                Some(value(&mut engine, board, Goal::Endgame)?)
             } else {
                 None
             };
@@ -433,6 +439,7 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
             file.write_all(text.as_bytes())?;
             file.flush()?;
         }
+        engines.lock().unwrap().push(engine);
         let mut finished = finished.lock().unwrap();
         *finished += 1;
         if finished.is_multiple_of(50) || *finished == jobs.len() {

@@ -1,7 +1,7 @@
 use deft_reversi_book::{BookEditor, RequestedAnalysis, SearchKind};
 use deft_reversi_engine::{
-    Action, Board, Engine, EngineOptions, Goal, SearchRequest, Model, PatternModel, Position, ProbCutSigmas,
-    Selectivity, legacy_main_rules,
+    Action, Board, Engine, EngineOptions, Goal, Model, PatternModel, Position, ProbCutSigmas,
+    SearchRequest, Selectivity, legacy_main_rules,
 };
 use std::{
     fs,
@@ -59,14 +59,21 @@ fn commands_work_through_the_binary() {
     let mut engine = Engine::new(model, EngineOptions::default().tt_mib(1)).unwrap();
     let mut book = BookEditor::for_engine(&engine).unwrap();
     let board = Board::new().canonical();
-    let result = engine.search(board, &SearchRequest::new(Goal::Depth(12))).unwrap();
-    book.register_move(board, result.best_move.unwrap()).unwrap();
+    let result = engine
+        .search(board, &SearchRequest::new(Goal::Depth(12)))
+        .unwrap();
+    book.register_move(board, result.best_move.unwrap())
+        .unwrap();
     book.record_search(
         board,
         RequestedAnalysis::External,
-        SearchKind::Midgame { depth: 12, selectivity: Selectivity::Full },
+        SearchKind::Midgame {
+            depth: 12,
+            selectivity: Selectivity::Full,
+        },
         &result,
-    ).unwrap();
+    )
+    .unwrap();
     let book_path = f.0.join("test.dbook");
     let snapshot = book.export().unwrap();
     snapshot.save(&book_path).unwrap();
@@ -193,11 +200,25 @@ fn commands_work_through_the_binary() {
     assert!(output.contains("  unlinked   "));
     assert!(output.contains(&format!("plays {linked} from the book")));
 
-    for (action, expected) in [(linked, "No Book departure"), (unlinked, "First Book departure: move 1")] {
-        let output = f.success(&[
-            "review", &action.to_string(), "--book", book_path.to_str().unwrap(),
-            "--depth", "1", "--threads", "1", "--tt-mib", "1",
-        ], "");
+    for (action, expected) in [
+        (linked, "No Book departure"),
+        (unlinked, "First Book departure: move 1"),
+    ] {
+        let output = f.success(
+            &[
+                "review",
+                &action.to_string(),
+                "--book",
+                book_path.to_str().unwrap(),
+                "--depth",
+                "1",
+                "--threads",
+                "1",
+                "--tt-mib",
+                "1",
+            ],
+            "",
+        );
         assert!(output.contains(expected), "{output}");
         assert!(output.contains("best linked"));
     }
@@ -311,7 +332,9 @@ fn commands_work_through_the_binary() {
     assert!(diagnostics.contains("Search: eval 1@100; endgame 100:2"));
     assert!(diagnostics.contains(&format!(
         "Versions: CLI {} | Engine {} | Book library {}",
-        env!("CARGO_PKG_VERSION"), deft_reversi_engine::VERSION, deft_reversi_book::VERSION
+        env!("CARGO_PKG_VERSION"),
+        deft_reversi_engine::VERSION,
+        deft_reversi_book::VERSION
     )));
     let custom = f.success(
         &[

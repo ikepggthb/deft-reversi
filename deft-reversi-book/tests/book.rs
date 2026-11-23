@@ -102,6 +102,11 @@ fn budget() -> GenerationLimits {
         ..GenerationLimits::default()
     }
 }
+fn stopped() -> StopHandle {
+    let stop = StopHandle::new();
+    stop.stop();
+    stop
+}
 #[test]
 fn transforms_restore_board_and_moves_and_share_one_key() {
     let b = position(42, 32);
@@ -355,22 +360,15 @@ fn work_and_play_files_round_trip_deterministically() {
     assert!(BookEditor::load(temp.file("play"), ReadLimits::default()).is_err());
 }
 #[test]
-fn position_budget_keeps_unexpanded_frontier_for_resume() {
+fn stopped_run_keeps_unexpanded_frontier_for_resume() {
     let mut eng = engine();
     let b = position(44, 12);
     let mut e = BookEditor::for_engine(&eng).unwrap();
     e.configure_generation(&[b], config(2, 1)).unwrap();
     let r = e
-        .generate(
-            &mut eng,
-            GenerationLimits {
-                new_positions: Some(0),
-                ..GenerationLimits::default()
-            },
-            StopHandle::new(),
-        )
+        .generate(&mut eng, GenerationLimits::default(), stopped())
         .unwrap();
-    assert_eq!(r.reason, GenerationStop::PositionLimit);
+    assert_eq!(r.reason, GenerationStop::Requested);
     assert_eq!(e.len(), 1);
     let temp = Temp::new();
     let p = temp.file("resume");
@@ -451,18 +449,14 @@ fn checkpoint_preserves_the_current_popped_job() {
     );
 }
 #[test]
-fn external_stop_and_explicit_budget_validation() {
+fn external_stop_ends_a_run_without_limits() {
     let mut eng = engine();
     let mut e = BookEditor::for_engine(&eng).unwrap();
     e.configure_generation(&[Board::new()], config(2, 1))
         .unwrap();
-    assert!(
-        e.generate(&mut eng, GenerationLimits::default(), StopHandle::new())
-            .is_err()
-    );
-    let stop = StopHandle::new();
-    stop.stop();
-    let r = e.generate(&mut eng, budget(), stop).unwrap();
+    let r = e
+        .generate(&mut eng, GenerationLimits::default(), stopped())
+        .unwrap();
     assert_eq!(r.reason, GenerationStop::Requested);
     assert_eq!(r.nodes, 0);
     assert_eq!(
@@ -1499,17 +1493,6 @@ fn frontier_recalculation_is_resumable_and_does_not_analyze_or_expand_registered
         ..Default::default()
     };
     ed.configure_generation(&[b], cfg.clone()).unwrap();
-    assert!(
-        ed.generate(
-            &mut eng,
-            GenerationLimits {
-                new_positions: Some(1),
-                ..Default::default()
-            },
-            StopHandle::new()
-        )
-        .is_err()
-    );
     let interrupted = ed
         .generate(
             &mut eng,

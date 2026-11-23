@@ -166,12 +166,12 @@ analyze
 
 ### 棋譜の分岐を追加学習
 
-検討で確認した棋譜を `book extend --record` に渡すと、棋譜の手順をリンクし、末尾の局面から学習する。`--max-plies` は末尾からの深さ。明示した棋譜の登録は `--new-positions` の学習件数に含めない。`--record` を指定した学習ではその末尾が学習の起点になり、`resume` でも引き継ぐ。既存の局面は作業ファイルに残る。`--read-mib` は作業ファイルの読み込み時の割当上限。大きな作業ファイルではファイルサイズより大きな値が必要になる。
+検討で確認した棋譜を `book extend --record` に渡すと、棋譜の手順をリンクし、末尾の局面から学習する。`--max-plies` は末尾からの深さ。`--record` を指定した学習ではその末尾が学習の起点になり、`resume` でも引き継ぐ。既存の局面は作業ファイルに残る。`--read-mib` は作業ファイルの読み込み時の割当上限。大きな作業ファイルではファイルサイズより大きな値が必要になる。
 
 ```sh
 ./target/release/deft-reversi-cli book extend --record f5d6c3 \
   --model model.dpr2 --work openings.dbook-work --book openings.dbook \
-  --level 22 --max-plies 8 --new-positions 1000 --read-mib 2048
+  --level 22 --max-plies 8 --read-mib 2048
 ```
 
 
