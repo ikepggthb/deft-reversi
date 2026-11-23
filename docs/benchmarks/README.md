@@ -76,3 +76,4 @@
 | [2026-11-20-time-allocation-loss-table](2026-11-20-time-allocation-loss-table/README.md) | 持ち時間の配分：20〜48空き各64局面の損失の表と最適配分の計算（交差検証で今の配分との差は見えず） |
 | [2026-11-20-time-stopping-oracle](2026-11-20-time-stopping-oracle/README.md) | 持ち時間制：反復の時間が既知の場合の打ち切り規則の比較（264局×10局面、価値÷時間の規則と今の方式の差は見えず、最善手変化による延長は有効） |
 | [2026-11-20-time-prediction-features](2026-11-20-time-prediction-features/README.md) | 持ち時間制：時間管理の各予測に効く特徴量の分析（probe 2,639局面と対局ログ。中盤→中盤の今の式は定数より外れる、予約は実際の3〜10倍、価値は最善手の変化以外ほぼ効かない） |
+| [2026-11-23-time-control-stage3](2026-11-23-time-control-stage3/README.md) | 持ち時間制：段階3-1 のデータ生成（ログ付き自己対局 v4 1,000局・延長モード 1,200手番、時間切れ0。v3 と v4 で反復の倍率とノード速度に差は見えず、延長の ENTRY は約7割が打ち切り） |
