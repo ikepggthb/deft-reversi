@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Positions of logged games for the reference search (stage 3-2).
 
-usage: refer_input.py [--missing REFER_DIR] FIRST:LAST OUT.tsv... > positions.tsv
+usage: refer_input.py [--missing REFER_DIR] [--table-moves] FIRST:LAST OUT.tsv... > positions.tsv
 
 For every game of the given openings in each referee OUT.tsv (with its
 OUT.logs.tsv and clock logs from CLOCK_LOG_DIR), replays the game record
@@ -17,6 +17,11 @@ iteration of the turn chose as its best move, and the move played,
 comma-separated, merged over all turns at that position. (The move played
 was added after the stage 3-2 run: a turn whose first iteration did not
 finish before hard has no iteration move, but a move played.)
+
+With --table-moves, a turn after a searched turn whose PV the opponent
+followed (`reply_matched`) also lists the PV's third move: the move the
+table holds there, which a warm-started turn plays if its first iteration
+is cut (stage 4-1, sim.py).
 
 With --missing, only the moves that REFER_DIR's results (refer_loss.py's
 `reference`) do not have yet are listed, for a supplementary run. The output lists each key once, on its first
@@ -83,6 +88,9 @@ def main():
         from refer_loss import reference
         have = {k: set(v[1]) for k, v in reference(args[1]).items()}
         args = args[2:]
+    table_moves = args[0] == "--table-moves"
+    if table_moves:
+        args = args[1:]
     first, last = (int(x) for x in args[0].split(":"))
     found = OrderedDict()
     for out in map(Path, args[1:]):
@@ -99,14 +107,18 @@ def main():
             pos = positions(records[(opening, nb)])
             for player, (name, a, b) in (("new", w[3:6]), ("old", w[6:9])):
                 black = (player == "new") == (nb == "1")
+                pv = []
                 for its, turn in turns(out.parent / cond / name, int(a), int(b)):
                     if not turn["searched"] or turn["after_extension"]:
                         continue
+                    prev_pv, pv = pv, next((i["pv"] for i in reversed(its) if i["best_move"]), [])
                     if cond.startswith("x-") and not turn["extended"]:
                         continue
                     chosen = {i["best_move"] for i in its if i["best_move"]}
                     if turn["played"] and turn["played"] != "pass":
                         chosen.add(turn["played"])
+                    if table_moves and turn["reply_matched"] and len(prev_pv) >= 3:
+                        chosen.add(prev_pv[2])
                     e = turn["empties"]
                     bw = pos.get((e, black))
                     key = f"{bw[0]:016x}{bw[1]:016x}{'b' if black else 'w'}"

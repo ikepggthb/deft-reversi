@@ -3,6 +3,8 @@
 
 usage: sim.py check RUN_DIR REFER_DIR
        sim.py run RUN_DIR REFER_DIR [WORLDS] [HEAVY]
+       sim.py first RUN_DIR REFER_DIR [WORLDS] [HEAVY]
+       sim.py predict RUN_DIR REFER_DIR
 
 Each side of each normal game of openings 200..299 (stage 3-1, `n-*`) is
 replayed turn by turn on its own clock: the moves of the game are fixed,
@@ -46,6 +48,17 @@ times exp(sigma * z): mid, entry, stage+exact, all; sigma 0 (truth),
 `nowaste`: legacy, but a turn whose first (warm-started) iteration ran
 into hard stops at once and plays the table's move -- the move a cut first
 iteration returns anyway (search.rs) -- so its time goes to later turns.
+`first` runs legacy, nowaste and the policies for the warm-started first
+iteration (see play_turn): `firstsoft K` cuts it at K times soft, `skip T`
+plays the table's move at once when the previous turn predicted its next
+iteration at more than T times this turn's hard. The table's move is the
+previous PV's when known, else its loss is drawn as SIM_TABLE says
+(complete()).
+`predict` reports, for the warm-started turns, how well the previous
+turn's prediction of its next iteration (over this turn's hard) separates
+the turns whose first iteration runs into hard (AUC, and the share of such
+turns by bins), and on the turns where the previous PV shows the table's
+move, its loss minus the loss of the first iteration's move.
 Each variant is also run at equal time (`=t`): its soft target scaled so
 that its mean time per game matches legacy's (a better forecast also
 changes how much the stop rule spends, which would confound the loss).
@@ -67,6 +80,18 @@ MID_POOL_DEPTH = int(os.environ.get("SIM_MID_POOL_DEPTH", "99"))
 # SIM_DEPTH_BUCKETS=0 pools the midgame loss pairs over all depths (the
 # first version; it overstates how often a deep step spoils a good move).
 DEPTH_BUCKETS = os.environ.get("SIM_DEPTH_BUCKETS", "1") != "0"
+# The loss of the table's move of a warm-started turn, when the previous
+# PV does not show it (SIM_TABLE): `known` draws it from the warm turns
+# where the PV shows it, as a pair (loss of the first iteration's move, loss
+# of the table's move) of the same depth and lateness (first iteration
+# finished after soft or not); `back` from the logged steps of the same
+# transition read backwards (the loss before a step given the loss after
+# it), which on the known turns gives the table's move 0.01-0.04 discs per
+# turn more loss than it has (sim.py predict).
+TABLE = os.environ.get("SIM_TABLE", "known")
+
+
+TRANSITIONS = ("mid", "entry", "stage", "exact", "back")
 
 
 def transition(a, b):
@@ -80,7 +105,14 @@ def transition(a, b):
 class Turn:
     __slots__ = ("empties", "searched", "rem", "cap", "permove", "used", "soft", "hard",
                  "overhead", "tail", "its", "end", "cut_at", "cut_latency", "logged_loss",
-                 "first_next", "world", "nomove")
+                 "first_next", "world", "nomove", "warm", "first_pred", "table_loss",
+                 "first_tr", "table_imputed")
+
+
+def fresh_start(kind):
+    """A first iteration that starts the ladder from the bottom (no table
+    to warm-start from)."""
+    return kind[0] == "d" and int(kind[1:]) <= 6
 
 
 def load(run, refer):
@@ -104,6 +136,7 @@ def load(run, refer):
                 black = (player == "new") == (nb == "1")
                 ts = []
                 threads = 1
+                prev = None  # last finished iteration and reached kind of the previous searched turn
                 for its, t in turns(out.parent / cond / name, int(a), int(b)):
                     for i in its:
                         if i["next"] is not None:
@@ -118,11 +151,32 @@ def load(run, refer):
                     u.its, u.end, u.cut_at, u.cut_latency = [], None, None, None
                     u.logged_loss = None
                     u.nomove = False
+                    u.warm, u.first_pred, u.table_loss, u.first_tr = False, None, None, None
+                    u.table_imputed = False
                     if u.searched:
                         bw = pos[(u.empties, black)]
                         key = f"{bw[0]:016x}{bw[1]:016x}{'b' if black else 'w'}"
                         best, values = ref[key]
-                        if not any(i["best_move"] for i in its):
+                        fin = [i for i in its if i["best_move"]]
+                        # Warm start: the first iteration starts deep, from
+                        # the table of the previous turn. If it is cut, the
+                        # engine plays the table's move: the third move of
+                        # the previous turn's PV when the opponent replied
+                        # as it expected (the cut turns that show it played
+                        # it in 747 of 750), else unknown (imputed in
+                        # complete()). `first_pred` is the previous turn's
+                        # prediction of its next iteration (taken from the
+                        # log, not from the simulated previous turn).
+                        u.warm = not its or not fresh_start(its[0]["kind"])
+                        if prev is not None:
+                            u.first_pred = prev[0]["predicted"]
+                            pv = prev[0]["pv"]
+                            if t["reply_matched"] and len(pv) >= 3 and pv[2] in values:
+                                u.table_loss = best - values[pv[2]]
+                            if its:
+                                u.first_tr = transition(prev[1], its[0]["kind"])
+                        prev = (fin[-1], t["reached"]) if fin else None
+                        if not fin:
                             # The first iteration (warm-started from the
                             # table at a deep one) ran into hard. Its time
                             # is unknown beyond that; the simulation assumes
@@ -130,6 +184,7 @@ def load(run, refer):
                             # the one logged.
                             u.nomove = True
                             u.logged_loss = best - values[t["played"]]
+                            u.table_loss = u.logged_loss
                             u.cut_latency = max(0.0, u.used - u.hard)
                             u.world = []
                             ts.append(u)
@@ -164,8 +219,10 @@ def load(run, refer):
     return games, plan
 
 
-def pools(games):
-    """Ratio and loss pools from the logged iterations."""
+def pools(games, table=None):
+    """Ratio and loss pools from the logged iterations; the pool for the
+    table's move is built as `table` (default SIM_TABLE) says."""
+    table = table or TABLE
     ratio = defaultdict(list)
     loss = defaultdict(list)
     for cond, gs in games.items():
@@ -180,7 +237,22 @@ def pools(games):
                         loss[(tr, u.empties <= 28, depth_bucket(kb))].append((la, lb))
     split = {k: ([b for a, b in v if a == 0] or [0], [(a, b) for a, b in v if a > 0] or [(1, 1)])
              for k, v in loss.items()}
-    return ratio, split
+    # The same pairs read backwards, for the loss before a step given the
+    # loss after it (the table's move of a warm start whose first iteration
+    # finished): (befores of no-loss afters, lossy pairs as (after, before)).
+    back = {k: ([a for a, b in v if b == 0] or [0], [(b, a) for a, b in v if b > 0] or [(1, 1)])
+            for k, v in loss.items()}
+    if table == "known":
+        known = defaultdict(list)
+        for cond, gs in games.items():
+            for _, _, _, _, ts in gs:
+                for u in ts:
+                    if (u.searched and u.warm and not u.nomove and not u.table_imputed
+                            and u.table_loss is not None and u.its[0][2] is not None):
+                        known[table_key(u)].append((u.its[0][2], u.table_loss))
+        back = {k: ([t for f, t in v if f == 0] or [0], [(f, t) for f, t in v if f > 0] or [(1, 1)])
+                for k, v in known.items()}
+    return ratio, (split, back)
 
 
 def next_kind(plan, empties, kind):
@@ -216,6 +288,24 @@ def draw_ratio(rng, ratio, threads, tr, empties, above=0.0, heavy=1.0):
     return above * math.exp(rng.expovariate(2.0))
 
 
+def table_key(u):
+    return (u.its[0][1] > u.soft, u.empties <= 28, depth_bucket(u.its[0][0]))
+
+
+def draw_table(rng, pool, u):
+    late, e, b = table_key(u)
+    for bb in range(b, -2, -1) if b >= 0 else (-1,):
+        p = pool.get((late, e, bb))
+        if p:
+            break
+    zero, lossy = p or ([0], [(1, 1)])
+    cur = u.its[0][2]
+    if cur is None or cur == 0:
+        return rng.choice(zero)
+    f, t = rng.choice(lossy)
+    return round(cur * t / f)
+
+
 def depth_bucket(kind):
     """Midgame steps change their move less often the deeper they are, so
     their loss pairs are kept by the depth reached (in fours); endgame
@@ -225,8 +315,8 @@ def depth_bucket(kind):
     return min(int(kind[1:]) // 4, 6)
 
 
-def draw_loss(rng, loss, tr, empties, kind, cur):
-    if kind == "e100" and empties <= 28:
+def draw_loss(rng, loss, tr, empties, kind, cur, exact_free=True):
+    if exact_free and kind == "e100" and empties <= 28:
         return 0
     b = depth_bucket(kind)
     # The deepest bucket with data at or below this depth.
@@ -241,14 +331,26 @@ def draw_loss(rng, loss, tr, empties, kind, cur):
     return round(cur * b / a)
 
 
-def complete(games, plan, ratio, loss, seed, heavy=1.0):
+def complete(games, plan, ratio, losses, seed, heavy=1.0):
     """Give each searched turn a world: the logged ladder carried on to the
     exact solve."""
+    loss, back = losses
     for cond, gs in games.items():
         for gi, (opening, nb, player, threads, ts) in enumerate(gs):
             for ti, u in enumerate(ts):
                 if not u.searched or u.nomove:
                     continue
+                if u.warm and (u.table_loss is None or u.table_imputed):
+                    # The table's move unknown: the loss before the first
+                    # iteration's step, drawn backwards from its loss
+                    # (own generator, so the worlds stay as before).
+                    trng = random.Random(f"{seed}/{cond}/{opening}/{nb}/{player}/{ti}/table")
+                    u.table_imputed = True
+                    if TABLE == "known":
+                        u.table_loss = draw_table(trng, back, u)
+                    else:
+                        u.table_loss = draw_loss(trng, back, u.first_tr or "mid", u.empties,
+                                                 u.its[0][0], u.its[0][2], exact_free=False)
                 rng = random.Random(f"{seed}/{cond}/{opening}/{nb}/{player}/{ti}")
                 w = [list(i) for i in u.its]
                 if u.end != "done":
@@ -309,10 +411,31 @@ def growth(empties, kind, nxt, cost, last_cost, last_depth):
     return entry
 
 
+def policy(truth, name):
+    for t in truth:
+        if t.startswith(name + ":"):
+            return float(t.split(":")[1])
+    return None
+
+
 def play_turn(u, soft, hard, truth, sigma, noise_key):
     """(used, loss, cut) of one turn under the legacy stop rule; `truth` is
     the set of transitions whose prediction is the world's time times
     exp(sigma * z)."""
+    if u.warm:
+        # Policies for the warm-started first iteration (stage 4-1, A):
+        # skip:T plays the table's move at once when the previous turn's
+        # prediction of its next iteration exceeds T times hard;
+        # firstsoft:K cuts the first iteration at K times soft (at most
+        # hard) and plays the table's move.
+        th = policy(truth, "skip")
+        if th is not None and u.first_pred is not None and u.first_pred > th * hard:
+            return 0.002, u.table_loss, False
+        k = policy(truth, "firstsoft")
+        if k is not None:
+            limit = min(hard, k * soft)
+            if u.nomove or u.world[0][1] > limit:
+                return limit + 0.002, u.table_loss, True
     if u.nomove:
         if "nowaste" in truth:
             # Stop at once and play the table's move, which a cut first
@@ -323,7 +446,7 @@ def play_turn(u, soft, hard, truth, sigma, noise_key):
     last_cost, last_depth = 0.0, None
     best_loss, inst, best = None, 0.0, None
     w = u.world
-    rng = random.Random(noise_key) if truth - {"nowaste"} else None
+    rng = random.Random(noise_key) if any(t in TRANSITIONS for t in truth) else None
     for k, (kind, cost, loss, move) in enumerate(w):
         if elapsed + cost > hard:
             return hard + (u.cut_latency or 0.002), (best_loss if best_loss is not None else loss), True
@@ -400,10 +523,74 @@ def boot(diffs, rng, n=2000):
     return mean(ops), b[n // 40], b[n - 1 - n // 40]
 
 
+def predict(games):
+    import bisect
+    bins = (-9, -2, -1.5, -1, -0.5, 0, 0.5, 9)
+    print("# warm-started turns: x = ln(previous turn's predicted next iteration / hard);"
+          " AUC of x for the first iteration running into hard; share of such turns by x")
+    for cond, gs in games.items():
+        xs = [(math.log(u.first_pred / u.hard), u.nomove) for *_, ts in gs for u in ts
+              if u.searched and u.warm and u.first_pred and u.hard]
+        neg = sorted(x for x, c in xs if not c)
+        pos = [x for x, c in xs if c]
+        auc = sum(bisect.bisect_left(neg, x) + 0.5 * (bisect.bisect_right(neg, x)
+                  - bisect.bisect_left(neg, x)) for x in pos) / len(pos) / len(neg)
+        cells = []
+        for lo, hi in zip(bins, bins[1:]):
+            b = [c for x, c in xs if lo <= x < hi]
+            cells.append(f"[{lo:g},{hi:g}) {sum(b)}/{len(b)}")
+        print(f"{cond}\tturns {len(xs)}\tcut {len(pos)}\tAUC {auc:.3f}\t" + "\t".join(cells))
+    print("# warm turns whose table's move the previous PV shows: loss of the table's move"
+          " minus loss of the first iteration's move (discs per turn), share where they differ;"
+          " late = the first iteration finished after soft")
+    for cond, gs in games.items():
+        for late in (False, True):
+            d = [u.table_loss - (u.its[0][2] or 0) for *_, ts in gs for u in ts
+                 if u.searched and u.warm and not u.nomove and u.table_loss is not None
+                 and not u.table_imputed and (u.its[0][1] > u.soft) == late]
+            per_side = len(d) / len(gs)
+            print(f"{cond}\t{'late' if late else 'early'}\tn {len(d)} ({per_side:.2f} per side)"
+                  f"\tmean {sum(d) / len(d):+.3f}\tdiffer {sum(x != 0 for x in d) / len(d):.3f}")
+        late_all = sum(1 for *_, ts in gs for u in ts if u.searched and u.warm and not u.nomove
+                       and u.its[0][1] > u.soft) / len(gs)
+        unknown = sum(1 for *_, ts in gs for u in ts if u.searched and u.warm and not u.nomove
+                      and u.table_loss is None) / len(gs)
+        print(f"{cond}\tall late turns per side {late_all:.2f}\twarm turns with the table's move"
+              f" unknown per side {unknown:.2f}")
+    print("# warm turns whose first iteration finished: ln(its time / the previous turn's"
+          " prediction), quartiles")
+    for cond, gs in games.items():
+        r = sorted(math.log(u.its[0][1] / u.first_pred) for *_, ts in gs for u in ts
+                   if u.searched and u.warm and not u.nomove and u.first_pred and u.its[0][1] > 0)
+        print(f"{cond}\tn {len(r)}\t" + " ".join(f"{r[int(q * (len(r) - 1))]:+.2f}"
+                                               for q in (0.25, 0.5, 0.75)))
+    print("# the two imputations of the table's move, tried on the turns where it is known:"
+          " mean (table's move - first iteration's move) loss, known and drawn")
+    _, (_, known) = pools(games, "known")
+    _, (_, back) = pools(games, "back")
+    for cond, gs in games.items():
+        k, a, b = [], [], []
+        for o, nb, pl, _, ts in gs:
+            for ti, u in enumerate(ts):
+                if (u.searched and u.warm and not u.nomove and u.table_loss is not None
+                        and not u.table_imputed):
+                    f = u.its[0][2] or 0
+                    rng = random.Random(f"predict/{cond}/{o}/{nb}/{pl}/{ti}")
+                    k.append(u.table_loss - f)
+                    a.append(draw_table(rng, known, u) - f)
+                    b.append(draw_loss(rng, back, u.first_tr or "mid", u.empties, u.its[0][0],
+                                       u.its[0][2], exact_free=False) - f)
+        print(f"{cond}\tknown {sum(k) / len(k):+.3f}\tdrawn known {sum(a) / len(a):+.3f}"
+              f"\tdrawn back {sum(b) / len(b):+.3f}")
+
+
 def main():
     mode, run, refer = sys.argv[1:4]
     games, plan = load(run, refer)
     ratio, loss = pools(games)
+    if mode == "predict":
+        predict(games)
+        return
     if mode == "check":
         complete(games, plan, ratio, loss, 0)
         for cond, gs in games.items():
@@ -420,11 +607,18 @@ def main():
     worlds = int(sys.argv[4]) if len(sys.argv) > 4 else 4
     heavy = float(sys.argv[5]) if len(sys.argv) > 5 else 1.0
     variants = [("legacy", frozenset(), 0.0)]
-    for name, tr in (("mid", {"mid"}), ("entry", {"entry"}), ("stage+exact", {"stage", "exact"}),
-                     ("all", {"mid", "entry", "stage", "exact", "back"})):
-        for sigma in (0.0, 0.25, 0.5, 1.0):
-            variants.append((f"{name} s={sigma}", frozenset(tr), sigma))
+    if mode == "run":
+        for name, tr in (("mid", {"mid"}), ("entry", {"entry"}), ("stage+exact", {"stage", "exact"}),
+                         ("all", {"mid", "entry", "stage", "exact", "back"})):
+            for sigma in (0.0, 0.25, 0.5, 1.0):
+                variants.append((f"{name} s={sigma}", frozenset(tr), sigma))
     variants.append(("nowaste", frozenset({"nowaste"}), 0.0))
+    if mode == "first":
+        for k in (1.0, 1.5):
+            variants.append((f"firstsoft {k}", frozenset({f"firstsoft:{k}"}), 0.0))
+        for th in (2.0, 3.0, 5.0, 8.0):
+            variants.append((f"skip {th}", frozenset({f"skip:{th}"}), 0.0))
+        variants.append(("skip 3+firstsoft 1", frozenset({"skip:3.0", "firstsoft:1.0"}), 0.0))
     res = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))  # cond, variant, opening
     # A variant that predicts better also changes how much time the stop
     # rule spends. To compare at equal time, each variant's soft target is
