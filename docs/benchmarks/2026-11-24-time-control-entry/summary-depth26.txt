@@ -1,0 +1,62 @@
+# x-gtp20e: extended turns; skipped (no reference or no iteration): 0
+24-26:   ENTRY finished	6
+24-26: decided in the endgame	208
+24-26: decided in the midgame	6
+27-28:   ENTRY finished	13
+27-28: decided in the endgame	112
+27-28: decided in the midgame	13
+29-32:   ENTRY finished	122
+29-32:   ENTRY not reached within the extension	1
+29-32:   ENTRY started, not finished	2
+29-32: decided in the endgame	73
+29-32: decided in the midgame	125
+no iteration at the decision	63
+# ENTRY time (s), and over the turn's soft and hard: median [10%, 90%]
+24-26	n=6	seconds 0.46 [0.04, 0.92]	/soft 0.59 [0.07, 0.70]	/hard 0.39 [0.07, 0.46]
+27-28	n=13	seconds 1.65 [0.70, 4.31]	/soft 1.17 [0.44, 3.31]	/hard 0.59 [0.22, 1.66]
+29-32	n=122	seconds 4.44 [1.97, 12.01]	/soft 3.25 [1.19, 8.24]	/hard 1.62 [0.60, 4.12]
+# value (loss before - loss after, discs per turn) and share where ENTRY changed the move
+24-26	mid steps after the decision	n=6	+0.000 [+0.000, +0.000]
+27-28	mid steps after the decision	n=13	+0.000 [+0.000, +0.000]
+29-32	mid steps after the decision	n=125	+0.048 [+0.000, +0.111]
+all	mid steps after the decision	n=144	+0.042 [+0.000, +0.096]
+1-3 hard	ENTRY finished	n=63	+0.000 [-0.125, +0.169]
+24-26	ENTRY (unfinished = 0)	n=6	+0.333 [+0.000, +1.000]
+24-26	ENTRY finished	n=6	+0.333 [+0.000, +1.000]
+27-28	ENTRY (unfinished = 0)	n=13	+0.000 [+0.000, +0.000]
+27-28	ENTRY finished	n=13	+0.000 [+0.000, +0.000]
+29-32	ENTRY (unfinished = 0)	n=124	+0.056 [-0.024, +0.156]
+29-32	ENTRY finished	n=122	+0.057 [-0.017, +0.160]
+<1 hard	ENTRY finished	n=54	+0.130 [+0.000, +0.296]
+>=3 hard	ENTRY finished	n=24	+0.083 [+0.000, +0.208]
+all	ENTRY (unfinished = 0)	n=143	+0.063 [-0.007, +0.151]
+all	ENTRY finished	n=141	+0.064 [-0.007, +0.154]
+24-26	ENTRY changed the move	n=6	+0.167 [+0.000, +0.500]
+27-28	ENTRY changed the move	n=13	+0.000 [+0.000, +0.000]
+29-32	ENTRY changed the move	n=122	+0.131 [+0.073, +0.192]
+all	ENTRY changed the move	n=141	+0.121 [+0.067, +0.176]
+24-26	stages after ENTRY (to e100)	n=6	+0.000 [+0.000, +0.000]
+27-28	stages after ENTRY (to e100)	n=4	+0.000 [+0.000, +0.000]
+27-28	stages after ENTRY (to e99)	n=9	+0.222 [+0.000, +0.667]
+29-32	stages after ENTRY (to e95)	n=32	+0.031 [+0.000, +0.100]
+29-32	stages after ENTRY (to e98)	n=22	-0.091 [-0.286, +0.000]
+29-32	stages after ENTRY (to e99)	n=52	-0.038 [-0.115, +0.038]
+24-26	after deciding at e100 (to the end)	n=92	+0.000 [+0.000, +0.000]
+24-26	after deciding at e85 (to the end)	n=5	+0.000 [+0.000, +0.000]
+24-26	after deciding at e95 (to the end)	n=11	+0.000 [+0.000, +0.000]
+24-26	after deciding at e98 (to the end)	n=19	+0.000 [+0.000, +0.000]
+24-26	after deciding at e99 (to the end)	n=81	+0.000 [+0.000, +0.000]
+24-26	endgame decision: value of the extension	n=208	+0.000 [+0.000, +0.000]
+27-28	after deciding at e100 (to the end)	n=1	+0.000 [+0.000, +0.000]
+27-28	after deciding at e85 (to the end)	n=29	+0.138 [+0.000, +0.345]
+27-28	after deciding at e95 (to the end)	n=44	+0.136 [-0.048, +0.400]
+27-28	after deciding at e98 (to the end)	n=22	+0.000 [+0.000, +0.000]
+27-28	after deciding at e99 (to the end)	n=16	+0.000 [+0.000, +0.000]
+27-28	endgame decision: value of the extension	n=112	+0.089 [+0.000, +0.200]
+29-32	after deciding at e85 (to the end)	n=61	+0.000 [+0.000, +0.000]
+29-32	after deciding at e95 (to the end)	n=9	+0.000 [+0.000, +0.000]
+29-32	after deciding at e98 (to the end)	n=3	+0.000 [+0.000, +0.000]
+29-32	endgame decision: value of the extension	n=73	+0.000 [+0.000, +0.000]
+24-26	endgame decision: exact solve finished	n=208	+1.000 [+1.000, +1.000]
+27-28	endgame decision: exact solve finished	n=112	+0.723 [+0.642, +0.803]
+29-32	endgame decision: exact solve finished	n=73	+0.137 [+0.057, +0.219]
