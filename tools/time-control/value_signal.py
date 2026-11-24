@@ -5,6 +5,8 @@ play a better move? (stage 4-2, roadmap B1)
 usage: value_signal.py table RUN_DIR REFER_DIR > pairs.tsv
        value_signal.py fit pairs.tsv
        value_signal.py positions RUN_DIR N_EXACT N_MID > positions.tsv
+       value_signal.py gapmissing GAP_DIR REFER_DIR > missing.tsv
+       value_signal.py gapfit GAP_DIR REFER_DIR
 
 `table` writes one row per pair of consecutive finished iterations (k,
 k+1) of the logged turns that refer_loss.py covers (normal games of
@@ -17,6 +19,22 @@ move of k+1 has less loss than the move of k (stage 3-2 reference), and
 200..299) for the gap probe (probe/src/bin/gap.rs): N_EXACT with 20 to 28
 empties (where the reference is exact) and N_MID with 29 to 44, each
 position once, in a fixed random order (seed 20261124).
+
+`gapmissing` lists, in refer_input.py's format, the moves of the gap
+probe's output (GAP_DIR/out-*.tsv: each iteration's best move and the
+second move of its all-moves search) that REFER_DIR does not have, for a
+supplementary refer_log run into a subdirectory of REFER_DIR.
+
+`gapfit` labels the probe's consecutive iterations as `table` does (the
+next iteration's move has less loss) and compares, with 5-fold
+cross-validation by position, logistic regressions on: legacy's
+instability; what the logs have (best-move changes, score, depth, nodes);
+that plus the free root counters of Progress::root (share of nodes off the
+first move, fail-highs, aspiration fails); that plus the true gap to the
+second move (which a game cannot afford). Separately for positions with at
+most 28 empties (exact reference) and 29 to 44 with the next iteration at
+most d22. Also: how often the all-moves second move is in fact better than
+the iteration's best by the reference.
 
 `fit` fits logistic regressions on feature sets of growing size, with
 5-fold cross-validation by opening (all games of an opening in one fold),
@@ -264,6 +282,150 @@ def fit(path):
                   f"\tAUC {auc(s[idx], y[idx]):.3f}\tTPR@0.15 {t[0]:.3f}")
 
 
+def gap_rows(gap_dir):
+    """{key: [iteration rows]} from the gap probe."""
+    out = defaultdict(list)
+    for path in sorted(Path(gap_dir).glob("out-*.tsv")):
+        for line in open(path):
+            w = line.rstrip("\n").split("\t")
+            if len(w) < 15:
+                continue
+            out[w[0]].append({
+                "empties": int(w[1]), "k": int(w[2]), "kind": w[3], "best": w[4].lower(),
+                "score": int(w[5]), "nodes": int(w[6]), "elapsed": float(w[7]),
+                "first_nodes": int(w[8]), "window_nodes": int(w[9]),
+                "fail_highs": int(w[10]), "asp": int(w[11]),
+                "gap": None if w[12] == "-" else int(w[12]),
+                "second": None if w[13] == "-" else w[13].lower()})
+    for rows in out.values():
+        rows.sort(key=lambda r: r["k"])
+    return out
+
+
+def gap_missing(gap_dir, refer):
+    ref = reference(refer)
+    pos = {}
+    for line in open(Path(gap_dir) / "positions.tsv"):
+        w = line.rstrip("\n").split("\t")
+        pos[w[0]] = w
+    for key, rows in gap_rows(gap_dir).items():
+        have = set(ref[key][1]) if key in ref else set()
+        want = {r["best"] for r in rows} | {r["second"] for r in rows if r["second"]}
+        want = sorted(m for m in want - have if m not in ("-", "pass"))
+        if want:
+            w = pos[key]
+            print(f"{key}\t{w[1]}\t{w[2]}\t{w[3]}\t{w[4]}\t{','.join(want)}\tgap\t0\t0\tnew")
+
+
+GAP_SETS = ("legacy", "log", "+free", "+gap")
+
+
+def gap_features(rows, k, name):
+    r, n = rows[k], rows[k + 1]
+    tr = transition(r["kind"], n["kind"])
+    trv = [float(tr == x) for x in TRS]
+    inst, changes, since = 0.0, 0, 0
+    for j in range(k + 1):
+        ch = j > 0 and rows[j - 1]["best"] != rows[j]["best"]
+        inst = 1.0 if ch else inst * 0.5
+        changes += ch
+        since = 0 if ch else since + 1
+    if name == "legacy":
+        return trv + [inst]
+    prev = rows[k - 1] if k > 0 else r
+    v = trv + [inst, float(since == 0 and k > 0), min(changes, 6), min(since, 6),
+               abs(r["score"] - prev["score"]), abs(r["score"]), float(abs(r["score"]) <= 2),
+               r["empties"] / 10, (int(r["kind"][1:]) if r["kind"][0] == "d" else 0) / 10,
+               k / 10, math.log(max(r["nodes"], 1)) / 10,
+               math.log(max(r["nodes"], 1) / max(prev["nodes"], 1))]
+    if name == "log":
+        return v
+    off = 1 - r["first_nodes"] / r["window_nodes"] if r["window_nodes"] else 0.0
+    v += [off, float(off > 0.5), min(r["fail_highs"], 4), float(r["fail_highs"] > 0),
+          min(r["asp"], 4), float(r["asp"] > 0)]
+    if name == "+free":
+        return v
+    g = r["gap"]
+    return v + [min(g, 10) / 10, float(g == 0), float(g <= 1), float(g <= 2)]
+
+
+def gap_fit(gap_dir, refer):
+    ref = reference(refer)
+    data = {"exact": [], "mid": []}
+    second_better = defaultdict(lambda: [0, 0])
+    missing = 0
+    for key, rows in gap_rows(gap_dir).items():
+        if key not in ref:
+            continue
+        best, values = ref[key]
+        for k in range(len(rows) - 1):
+            r, n = rows[k], rows[k + 1]
+            if r["gap"] is None:
+                continue
+            if r["best"] not in values or n["best"] not in values:
+                missing += 1
+                continue
+            tr = transition(r["kind"], n["kind"])
+            if tr == "back":
+                continue
+            e = r["empties"]
+            if e <= 28:
+                group = "exact"
+            elif n["kind"][0] == "d" and int(n["kind"][1:]) <= 22:
+                group = "mid"
+            else:
+                continue
+            lk, ln = best - values[r["best"]], best - values[n["best"]]
+            data[group].append((key, rows, k, tr, int(ln < lk), lk - ln))
+            if r["second"] in values:
+                sb = second_better[(group, tr)]
+                sb[0] += values[r["second"]] > values[r["best"]]
+                sb[1] += 1
+    print(f"# gap probe pairs; skipped for moves without a reference value: {missing}")
+    for group, rs in data.items():
+        if not rs:
+            continue
+        y = np.array([x[4] for x in rs], dtype=float)
+        gain = np.array([x[5] for x in rs], dtype=float)
+        keys = sorted({x[0] for x in rs})
+        rng = random.Random(20261124)
+        rng.shuffle(keys)
+        fold = {kk: i % 5 for i, kk in enumerate(keys)}
+        f = np.array([fold[x[0]] for x in rs])
+        trs = np.array([x[3] for x in rs])
+        print(f"## {group}: pairs {len(rs)}, positions {len(keys)}, better {y.mean():.3f}")
+        held = {}
+        for name in GAP_SETS:
+            x = np.array([gap_features(x_[1], x_[2], name) for x_ in rs])
+            mu, sd = x.mean(0), x.std(0)
+            sd[sd == 0] = 1
+            x = np.hstack([np.ones((len(x), 1)), (x - mu) / sd])
+            s_ = np.zeros(len(rs))
+            for k in range(5):
+                t = f != k
+                w = logistic(x[t], y[t])
+                s_[~t] = x[~t] @ w
+            held[name] = s_
+        inst = np.array([gap_features(x_[1], x_[2], "legacy")[-1] for x_ in rs])
+        for tr in TRS:
+            idx = np.where(trs == tr)[0]
+            yy = y[idx]
+            if yy.sum() < 10 or (1 - yy).sum() < 10:
+                print(f"{group}\t{tr}\tpairs {len(idx)}\tbetter {int(yy.sum())} (too few)")
+                continue
+            lt = (inst[idx] >= 0.5)[yy == 1].mean()
+            lf = (inst[idx] >= 0.5)[yy == 0].mean()
+            cells = []
+            for name in GAP_SETS:
+                tpr = at_fpr(held[name][idx], yy, gain[idx], lf)[0]
+                cells.append(f"{name} AUC {auc(held[name][idx], yy):.3f} TPR {tpr:.3f}")
+            print(f"{group}\t{tr}\tpairs {len(idx)}\tbetter {yy.mean():.3f}"
+                  f"\tlegacy rule {lt:.3f}/{lf:.3f}\t" + "\t".join(cells))
+    print("# the all-moves second move better than the iteration's best (reference)")
+    for (group, tr), (a, n) in sorted(second_better.items()):
+        print(f"{group}\t{tr}\t{a}/{n}\t{a / n:.3f}")
+
+
 def sample(run, n_exact, n_mid):
     seen = {}
     for cond in NORMAL:
@@ -298,7 +460,11 @@ def sample(run, n_exact, n_mid):
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "positions":
+    if len(sys.argv) > 1 and sys.argv[1] == "gapmissing":
+        gap_missing(sys.argv[2], sys.argv[3])
+    elif len(sys.argv) > 1 and sys.argv[1] == "gapfit":
+        gap_fit(sys.argv[2], sys.argv[3])
+    elif len(sys.argv) > 1 and sys.argv[1] == "positions":
         sample(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
     elif len(sys.argv) > 1 and sys.argv[1] == "table":
         table(sys.argv[2], sys.argv[3])
