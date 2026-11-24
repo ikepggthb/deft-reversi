@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Losses of the logged searches against the stage 3-2 reference.
 
-usage: refer_loss.py table RUN_DIR REFER_DIR > iterations.tsv
+usage: refer_loss.py table RUN_DIR REFER_DIR [COND...] > iterations.tsv
        refer_loss.py summary iterations.tsv
 
 `table` replays the turns that refer_input.py took (normal games of
@@ -22,6 +22,10 @@ with k = -1, tag -, elapsed = the turn's time and the move played.
 (else -), `after_decision` is 1 for iterations that ended after the clock
 had decided to stop (extended turns only), `decision` is 1 on the last
 iteration the clock had when it decided.
+
+COND limits `table` to the named conditions (default: the normal games and
+the four extension conditions of stage 3-1); x-gtp20e is the extension
+run aimed at heavy ENTRYs (openings 450..749).
 
 `summary` prints, with 95% intervals from a bootstrap over openings (the
 colour-swapped games of one opening nearly repeat each other):
@@ -45,6 +49,12 @@ HEAD = ("cond opening new_black player empties k tag next elapsed cost move loss
         "played_loss stop_reason extended after_decision decision").split()
 NORMAL = ("n-gtp2", "n-fs6", "n-gtp20", "n-gtp60", "n-gtp20t4")
 EXTEND = ("x-gtp2", "x-gtp20", "x-gtp60", "x-gtp20t4")
+# Openings of each condition (normal games 200..299, extension 300..449).
+OPENINGS = {"x-gtp20e": (450, 749)}
+
+
+def openings(cond):
+    return OPENINGS.get(cond, (200, 299) if cond in NORMAL else (300, 449))
 
 
 def reference(refer):
@@ -65,15 +75,15 @@ def reference(refer):
     return ref
 
 
-def table(run, refer):
+def table(run, refer, conds=None):
     ref = reference(refer)
     print("\t".join(HEAD))
     missing = defaultdict(int)
-    for cond in NORMAL + EXTEND:
+    for cond in conds or NORMAL + EXTEND:
         out = Path(run) / f"{cond}.tsv"
         if not out.exists():
             continue
-        first, last = (200, 299) if cond in NORMAL else (300, 449)
+        first, last = openings(cond)
         records = {}
         for line in out.read_text().splitlines()[1:]:
             f = line.split("\t")
@@ -89,7 +99,7 @@ def table(run, refer):
                 for its, turn in turns(out.parent / cond / name, int(a), int(b)):
                     if not turn["searched"] or turn["after_extension"]:
                         continue
-                    if cond in EXTEND and not turn["extended"]:
+                    if cond.startswith("x-") and not turn["extended"]:
                         continue
                     its = [i for i in its if i["best_move"]]
                     bw = pos[(turn["empties"], black)]
@@ -246,7 +256,7 @@ def summary(path):
 
 def main():
     if sys.argv[1] == "table":
-        table(sys.argv[2], sys.argv[3])
+        table(sys.argv[2], sys.argv[3], sys.argv[4:])
     elif sys.argv[1] == "summary":
         summary(sys.argv[2])
     else:

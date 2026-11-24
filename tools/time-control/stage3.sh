@@ -7,6 +7,8 @@
 # Conditions (default: all, in this order):
 #   n-gtp2 n-fs6 n-gtp20 n-gtp60 n-gtp20t4   normal games, openings 200..299
 #   x-gtp2 x-gtp20 x-gtp60 x-gtp20t4         extension, openings 300..449
+#   x-gtp20e  (not in the default list)       extension aimed at heavy ENTRYs:
+#             20 s games, openings 450..749, 24-32 empties, 30 s extension
 #
 # Stopping: `touch OUT_DIR/STOP` ends the run after the games in progress
 # (at most one game per worker). Killing it is also safe: rows are written
@@ -36,6 +38,7 @@ for c in "${conditions[@]}"; do
     x-gtp20)   a=(gtp 20 300:449);      cpus=$one;  t=1; ext=20-40:5 ;;
     x-gtp60)   a=(gtp 60 300:449);      cpus=$one;  t=1; ext=20-40:15 ;;
     x-gtp20t4) a=(gtp 20 300:449);      cpus=$four; t=4; ext=20-40:5 ;;
+    x-gtp20e)  a=(gtp 20 450:749);      cpus=$one;  t=1; ext=24-32:30 ;;
     *) echo "unknown condition $c"; exit 2 ;;
   esac
   echo "$(date '+%F %T') start $c"
