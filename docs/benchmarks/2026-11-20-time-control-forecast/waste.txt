@@ -1,0 +1,20 @@
+# g2 old (a21b8c9; pending iteration from the new build's plan)
+moves 10398  stopped before a transition 358  ran into hard 94 (26.3%)  {'sel->full': 49, 'mid->sel': 45}  unfinished time 14.1s of 729.6s used (1.9%)
+# g2 new
+moves 10395  stopped before a transition 442  ran into hard 27 (6.1%)  {'mid->sel': 5, 'sel->full': 22}  unfinished time 2.8s of 718.8s used (0.4%)
+# g20 old (a21b8c9; pending iteration from the new build's plan)
+moves 5199  stopped before a transition 285  ran into hard 99 (34.7%)  {'mid->sel': 40, 'sel->full': 59}  unfinished time 189.8s of 3772.7s used (5.0%)
+# g20 new
+moves 5195  stopped before a transition 341  ran into hard 12 (3.5%)  {'sel->full': 9, 'mid->sel': 3}  unfinished time 18.7s of 3648.9s used (0.5%)
+# g60 old (a21b8c9; pending iteration from the new build's plan)
+moves 3332  stopped before a transition 212  ran into hard 90 (42.5%)  {'mid->sel': 34, 'sel->full': 56}  unfinished time 567.4s of 7293.4s used (7.8%)
+# g60 new
+moves 3324  stopped before a transition 234  ran into hard 12 (5.1%)  {'sel->full': 7, 'mid->sel': 5}  unfinished time 47.5s of 7073.5s used (0.7%)
+# g2t4 old (a21b8c9; pending iteration from the new build's plan)
+moves 5198  stopped before a transition 219  ran into hard 30 (13.7%)  {'mid->sel': 25, 'sel->full': 5}  unfinished time 7.5s of 342.0s used (2.2%)
+# g2t4 new
+moves 5200  stopped before a transition 319  ran into hard 3 (0.9%)  {'sel->full': 2, 'mid->sel': 1}  unfinished time 0.4s of 330.6s used (0.1%)
+# g20t4 old (a21b8c9; pending iteration from the new build's plan)
+moves 2600  stopped before a transition 143  ran into hard 53 (37.1%)  {'sel->full': 33, 'mid->sel': 20}  unfinished time 127.7s of 1808.8s used (7.1%)
+# g20t4 new
+moves 2600  stopped before a transition 176  ran into hard 4 (2.3%)  {'sel->full': 1, 'mid->sel': 3}  unfinished time 9.9s of 1677.6s used (0.6%)

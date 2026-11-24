@@ -1,0 +1,196 @@
+##### g2
+== mid: 2521 rows, censored (left out) 55 (2%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.774 (x2.17)  median|e| 0.522  bias -0.064  censored>pred 100%
+  ols   constant                               rmse 0.621 (x1.86)  median|e| 0.424  bias +0.000  censored>pred  98%  loglik -0.996
+  tobit constant                               rmse 0.622 (x1.86)  median|e| 0.421  bias -0.030  censored>pred  98%  loglik -0.993
+  ols   prev                                   rmse 0.607 (x1.84)  median|e| 0.405  bias +0.002  censored>pred  98%  loglik -0.972
+  tobit prev                                   rmse 0.608 (x1.84)  median|e| 0.408  bias -0.026  censored>pred  96%  loglik -0.969
+  ols   prev+e+d+odd                           rmse 0.593 (x1.81)  median|e| 0.386  bias -0.001  censored>pred  98%  loglik -0.945
+  tobit prev+e+d+odd                           rmse 0.594 (x1.81)  median|e| 0.386  bias -0.026  censored>pred  95%  loglik -0.941
+  ols   prev+e+d+odd+cost                      rmse 0.583 (x1.79)  median|e| 0.377  bias -0.001  censored>pred 100%  loglik -0.932
+  tobit prev+e+d+odd+cost                      rmse 0.584 (x1.79)  median|e| 0.381  bias -0.028  censored>pred  98%  loglik -0.928
+  tobit coefficients of the last model (all rows): const=-1.443 prev_ratio=-0.329 has_prev=+0.173 empties=+0.017 depth=+0.050 depth_odd=-0.034 log_cost=-0.272 sigma=0.601
+== entry: 79 rows, censored (left out) 2 (2%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.536 (x1.71)  median|e| 0.391  bias +0.139  censored>pred 100%
+  ols   constant                               rmse 0.545 (x1.73)  median|e| 0.378  bias -0.008  censored>pred   0%  loglik -0.977
+  tobit constant                               rmse 0.543 (x1.72)  median|e| 0.362  bias -0.019  censored>pred   0%  loglik -0.973
+  ols   e                                      rmse 0.599 (x1.82)  median|e| 0.421  bias +0.046  censored>pred   0%  loglik -1.091
+  tobit e                                      rmse 0.592 (x1.81)  median|e| 0.414  bias +0.031  censored>pred   0%  loglik -1.079
+  ols   e+full                                 rmse 0.599 (x1.82)  median|e| 0.421  bias +0.046  censored>pred   0%  loglik -1.091
+  tobit e+full                                 rmse 0.592 (x1.81)  median|e| 0.414  bias +0.032  censored>pred   0%  loglik -1.078
+  ols   e+full+d+odd                           rmse 0.559 (x1.75)  median|e| 0.400  bias +0.024  censored>pred   0%  loglik -0.973
+  tobit e+full+d+odd                           rmse 0.573 (x1.77)  median|e| 0.401  bias +0.017  censored>pred   0%  loglik -1.035
+  ols   e+full+d+odd+cost                      rmse 0.543 (x1.72)  median|e| 0.375  bias +0.030  censored>pred 100%  loglik -0.969
+  tobit e+full+d+odd+cost                      rmse 0.533 (x1.70)  median|e| 0.350  bias +0.010  censored>pred 100%  loglik -0.957
+  ols   e+full+d+odd+cost+prev                 rmse 0.532 (x1.70)  median|e| 0.389  bias -0.021  censored>pred   0%  loglik -0.943
+  tobit e+full+d+odd+cost+prev                 rmse 0.543 (x1.72)  median|e| 0.368  bias -0.038  censored>pred   0%  loglik -0.996
+  tobit coefficients of the last model (all rows): const=-5.919 empties=+0.411 next_full=+0.000 depth=-0.196 depth_odd=-0.019 log_cost=-0.293 prev_ratio=-0.398 has_prev=+0.232 sigma=0.449
+== exact: 246 rows, censored (left out) 18 (7%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.504 (x1.66)  median|e| 0.276  bias -0.089  censored>pred 100%
+  ols   constant                               rmse 0.574 (x1.77)  median|e| 0.336  bias -0.001  censored>pred 100%  loglik -0.964
+  tobit constant                               rmse 0.580 (x1.79)  median|e| 0.329  bias -0.072  censored>pred 100%  loglik -0.957
+  ols   e                                      rmse 0.468 (x1.60)  median|e| 0.260  bias +0.009  censored>pred  72%  loglik -0.745
+  tobit e                                      rmse 0.471 (x1.60)  median|e| 0.260  bias -0.038  censored>pred  67%  loglik -0.735
+  ols   e+stg                                  rmse 0.473 (x1.61)  median|e| 0.272  bias +0.009  censored>pred  67%  loglik -0.753
+  tobit e+stg                                  rmse 0.473 (x1.61)  median|e| 0.276  bias -0.037  censored>pred  61%  loglik -0.737
+  ols   e+stg+cost                             rmse 0.457 (x1.58)  median|e| 0.249  bias +0.009  censored>pred  83%  loglik -0.727
+  tobit e+stg+cost                             rmse 0.458 (x1.58)  median|e| 0.248  bias -0.037  censored>pred  72%  loglik -0.711
+  tobit coefficients of the last model (all rows): const=+0.864 empties=+0.413 stage=-0.096 log_cost=-0.249 sigma=0.473
+== stage: 724 rows, censored (left out) 5 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.523 (x1.69)  median|e| 0.287  bias -0.224  censored>pred 100%
+  ols   constant                               rmse 0.473 (x1.60)  median|e| 0.270  bias +0.000  censored>pred 100%  loglik -0.692
+  tobit constant                               rmse 0.473 (x1.60)  median|e| 0.268  bias -0.007  censored>pred 100%  loglik -0.691
+  ols   e                                      rmse 0.462 (x1.59)  median|e| 0.274  bias -0.001  censored>pred 100%  loglik -0.664
+  tobit e                                      rmse 0.462 (x1.59)  median|e| 0.273  bias -0.007  censored>pred 100%  loglik -0.663
+  ols   e+stg                                  rmse 0.450 (x1.57)  median|e| 0.251  bias -0.001  censored>pred 100%  loglik -0.641
+  tobit e+stg                                  rmse 0.450 (x1.57)  median|e| 0.250  bias -0.007  censored>pred 100%  loglik -0.639
+  ols   e+stg+cost                             rmse 0.444 (x1.56)  median|e| 0.251  bias -0.001  censored>pred 100%  loglik -0.629
+  tobit e+stg+cost                             rmse 0.444 (x1.56)  median|e| 0.248  bias -0.008  censored>pred 100%  loglik -0.627
+  tobit coefficients of the last model (all rows): const=-4.937 empties=+0.140 stage=+0.016 log_cost=-0.136 sigma=0.448
+##### g20
+== mid: 2872 rows, censored (left out) 44 (2%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.917 (x2.50)  median|e| 0.593  bias -0.080  censored>pred 100%
+  ols   constant                               rmse 0.700 (x2.01)  median|e| 0.457  bias -0.000  censored>pred 100%  loglik -1.109
+  tobit constant                               rmse 0.701 (x2.02)  median|e| 0.463  bias -0.026  censored>pred 100%  loglik -1.106
+  ols   prev                                   rmse 0.656 (x1.93)  median|e| 0.451  bias +0.001  censored>pred 100%  loglik -1.045
+  tobit prev                                   rmse 0.657 (x1.93)  median|e| 0.457  bias -0.023  censored>pred 100%  loglik -1.041
+  ols   prev+e+d+odd                           rmse 0.641 (x1.90)  median|e| 0.432  bias +0.000  censored>pred 100%  loglik -1.020
+  tobit prev+e+d+odd                           rmse 0.642 (x1.90)  median|e| 0.436  bias -0.022  censored>pred 100%  loglik -1.015
+  ols   prev+e+d+odd+cost                      rmse 0.631 (x1.88)  median|e| 0.425  bias +0.001  censored>pred 100%  loglik -1.004
+  tobit prev+e+d+odd+cost                      rmse 0.632 (x1.88)  median|e| 0.426  bias -0.021  censored>pred 100%  loglik -1.000
+  tobit coefficients of the last model (all rows): const=-1.476 prev_ratio=-0.372 has_prev=+0.143 empties=+0.022 depth=+0.061 depth_odd=-0.022 log_cost=-0.188 sigma=0.651
+== entry: 160 rows, censored (left out) 1 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.772 (x2.16)  median|e| 0.595  bias -0.292  censored>pred 100%
+  ols   constant                               rmse 0.798 (x2.22)  median|e| 0.610  bias +0.002  censored>pred 100%  loglik -1.234
+  tobit constant                               rmse 0.798 (x2.22)  median|e| 0.581  bias -0.017  censored>pred 100%  loglik -1.239
+  ols   e                                      rmse 0.647 (x1.91)  median|e| 0.417  bias +0.001  censored>pred 100%  loglik -1.015
+  tobit e                                      rmse 0.647 (x1.91)  median|e| 0.394  bias -0.011  censored>pred 100%  loglik -1.017
+  ols   e+full                                 rmse 0.647 (x1.91)  median|e| 0.417  bias +0.001  censored>pred 100%  loglik -1.015
+  tobit e+full                                 rmse 0.647 (x1.91)  median|e| 0.395  bias -0.011  censored>pred 100%  loglik -1.018
+  ols   e+full+d+odd                           rmse 0.599 (x1.82)  median|e| 0.423  bias +0.009  censored>pred 100%  loglik -0.960
+  tobit e+full+d+odd                           rmse 0.597 (x1.82)  median|e| 0.459  bias -0.001  censored>pred 100%  loglik -0.960
+  ols   e+full+d+odd+cost                      rmse 0.576 (x1.78)  median|e| 0.377  bias +0.040  censored>pred 100%  loglik -0.916
+  tobit e+full+d+odd+cost                      rmse 0.578 (x1.78)  median|e| 0.389  bias +0.038  censored>pred 100%  loglik -0.921
+  ols   e+full+d+odd+cost+prev                 rmse 0.573 (x1.77)  median|e| 0.392  bias +0.048  censored>pred 100%  loglik -0.911
+  tobit e+full+d+odd+cost+prev                 rmse 0.576 (x1.78)  median|e| 0.381  bias +0.047  censored>pred 100%  loglik -0.918
+  tobit coefficients of the last model (all rows): const=-8.080 empties=+0.512 next_full=-0.000 depth=-0.235 depth_odd=+0.120 log_cost=-0.264 prev_ratio=-0.273 has_prev=+0.106 sigma=0.534
+== exact: 338 rows, censored (left out) 6 (2%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.825 (x2.28)  median|e| 0.737  bias -0.630  censored>pred 100%
+  ols   constant                               rmse 0.604 (x1.83)  median|e| 0.401  bias -0.000  censored>pred 100%  loglik -1.074
+  tobit constant                               rmse 0.608 (x1.84)  median|e| 0.426  bias -0.040  censored>pred 100%  loglik -1.090
+  ols   e                                      rmse 0.537 (x1.71)  median|e| 0.366  bias +0.001  censored>pred 100%  loglik -0.917
+  tobit e                                      rmse 0.546 (x1.73)  median|e| 0.364  bias -0.025  censored>pred 100%  loglik -0.931
+  ols   e+stg                                  rmse 0.495 (x1.64)  median|e| 0.310  bias +0.001  censored>pred 100%  loglik -0.834
+  tobit e+stg                                  rmse 0.502 (x1.65)  median|e| 0.309  bias -0.021  censored>pred 100%  loglik -0.849
+  ols   e+stg+cost                             rmse 0.488 (x1.63)  median|e| 0.302  bias +0.003  censored>pred 100%  loglik -0.821
+  tobit e+stg+cost                             rmse 0.496 (x1.64)  median|e| 0.315  bias -0.019  censored>pred 100%  loglik -0.838
+  tobit coefficients of the last model (all rows): const=+69.686 empties=+0.245 stage=-0.750 log_cost=+0.147 sigma=0.513
+== stage: 895 rows, censored (left out) 11 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.517 (x1.68)  median|e| 0.260  bias -0.104  censored>pred 100%
+  ols   constant                               rmse 0.507 (x1.66)  median|e| 0.255  bias -0.001  censored>pred 100%  loglik -0.820
+  tobit constant                               rmse 0.508 (x1.66)  median|e| 0.255  bias -0.023  censored>pred 100%  loglik -0.821
+  ols   e                                      rmse 0.490 (x1.63)  median|e| 0.262  bias -0.001  censored>pred 100%  loglik -0.776
+  tobit e                                      rmse 0.492 (x1.64)  median|e| 0.268  bias -0.020  censored>pred 100%  loglik -0.776
+  ols   e+stg                                  rmse 0.488 (x1.63)  median|e| 0.256  bias -0.001  censored>pred 100%  loglik -0.782
+  tobit e+stg                                  rmse 0.491 (x1.63)  median|e| 0.260  bias -0.020  censored>pred 100%  loglik -0.782
+  ols   e+stg+cost                             rmse 0.473 (x1.61)  median|e| 0.246  bias +0.000  censored>pred 100%  loglik -0.760
+  tobit e+stg+cost                             rmse 0.476 (x1.61)  median|e| 0.256  bias -0.019  censored>pred 100%  loglik -0.757
+  tobit coefficients of the last model (all rows): const=-4.442 empties=+0.141 stage=+0.009 log_cost=-0.180 sigma=0.497
+##### g60
+== mid: 2295 rows, censored (left out) 31 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.923 (x2.52)  median|e| 0.592  bias -0.110  censored>pred 100%
+  ols   constant                               rmse 0.699 (x2.01)  median|e| 0.439  bias -0.000  censored>pred 100%  loglik -1.098
+  tobit constant                               rmse 0.699 (x2.01)  median|e| 0.444  bias -0.022  censored>pred 100%  loglik -1.097
+  ols   prev                                   rmse 0.653 (x1.92)  median|e| 0.425  bias +0.001  censored>pred 100%  loglik -1.029
+  tobit prev                                   rmse 0.654 (x1.92)  median|e| 0.428  bias -0.018  censored>pred 100%  loglik -1.027
+  ols   prev+e+d+odd                           rmse 0.633 (x1.88)  median|e| 0.408  bias +0.001  censored>pred 100%  loglik -0.998
+  tobit prev+e+d+odd                           rmse 0.635 (x1.89)  median|e| 0.412  bias -0.017  censored>pred 100%  loglik -0.995
+  ols   prev+e+d+odd+cost                      rmse 0.623 (x1.86)  median|e| 0.401  bias +0.002  censored>pred 100%  loglik -0.981
+  tobit prev+e+d+odd+cost                      rmse 0.624 (x1.87)  median|e| 0.401  bias -0.016  censored>pred 100%  loglik -0.979
+  tobit coefficients of the last model (all rows): const=-1.362 prev_ratio=-0.367 has_prev=+0.092 empties=+0.023 depth=+0.054 depth_odd=-0.022 log_cost=-0.169 sigma=0.636
+== entry: 200 rows, censored (left out) 3 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.675 (x1.96)  median|e| 0.505  bias -0.347  censored>pred 100%
+  ols   constant                               rmse 0.688 (x1.99)  median|e| 0.436  bias -0.007  censored>pred 100%  loglik -1.130
+  tobit constant                               rmse 0.683 (x1.98)  median|e| 0.442  bias -0.037  censored>pred 100%  loglik -1.102
+  ols   e                                      rmse 0.609 (x1.84)  median|e| 0.400  bias -0.005  censored>pred 100%  loglik -0.980
+  tobit e                                      rmse 0.604 (x1.83)  median|e| 0.403  bias -0.024  censored>pred 100%  loglik -0.955
+  ols   e+full                                 rmse 0.609 (x1.84)  median|e| 0.400  bias -0.005  censored>pred 100%  loglik -0.980
+  tobit e+full                                 rmse 0.603 (x1.83)  median|e| 0.402  bias -0.026  censored>pred 100%  loglik -0.954
+  ols   e+full+d+odd                           rmse 0.601 (x1.82)  median|e| 0.397  bias -0.009  censored>pred 100%  loglik -0.982
+  tobit e+full+d+odd                           rmse 0.589 (x1.80)  median|e| 0.396  bias -0.026  censored>pred 100%  loglik -0.940
+  ols   e+full+d+odd+cost                      rmse 0.566 (x1.76)  median|e| 0.370  bias -0.017  censored>pred 100%  loglik -0.937
+  tobit e+full+d+odd+cost                      rmse 0.559 (x1.75)  median|e| 0.369  bias -0.038  censored>pred 100%  loglik -0.895
+  ols   e+full+d+odd+cost+prev                 rmse 0.540 (x1.72)  median|e| 0.339  bias -0.013  censored>pred 100%  loglik -0.894
+  tobit e+full+d+odd+cost+prev                 rmse 0.530 (x1.70)  median|e| 0.358  bias -0.022  censored>pred 100%  loglik -0.852
+  tobit coefficients of the last model (all rows): const=-5.083 empties=+0.367 next_full=+0.000 depth=-0.178 depth_odd=+0.012 log_cost=-0.219 prev_ratio=-0.233 has_prev=-0.152 sigma=0.499
+== exact: 315 rows, censored (left out) 7 (2%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.988 (x2.69)  median|e| 0.919  bias -0.829  censored>pred 100%
+  ols   constant                               rmse 0.603 (x1.83)  median|e| 0.330  bias -0.001  censored>pred 100%  loglik -1.043
+  tobit constant                               rmse 0.606 (x1.83)  median|e| 0.364  bias -0.046  censored>pred 100%  loglik -1.029
+  ols   e                                      rmse 0.543 (x1.72)  median|e| 0.334  bias +0.002  censored>pred 100%  loglik -0.925
+  tobit e                                      rmse 0.545 (x1.72)  median|e| 0.366  bias -0.038  censored>pred 100%  loglik -0.914
+  ols   e+stg                                  rmse 0.530 (x1.70)  median|e| 0.315  bias +0.001  censored>pred 100%  loglik -0.903
+  tobit e+stg                                  rmse 0.533 (x1.70)  median|e| 0.321  bias -0.038  censored>pred 100%  loglik -0.893
+  ols   e+stg+cost                             rmse 0.525 (x1.69)  median|e| 0.316  bias -0.001  censored>pred 100%  loglik -0.897
+  tobit e+stg+cost                             rmse 0.530 (x1.70)  median|e| 0.340  bias -0.038  censored>pred 100%  loglik -0.892
+  tobit coefficients of the last model (all rows): const=+38.541 empties=+0.113 stage=-0.407 log_cost=+0.167 sigma=0.567
+== stage: 859 rows, censored (left out) 7 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.482 (x1.62)  median|e| 0.224  bias -0.090  censored>pred 100%
+  ols   constant                               rmse 0.474 (x1.61)  median|e| 0.233  bias -0.001  censored>pred 100%  loglik -0.730
+  tobit constant                               rmse 0.475 (x1.61)  median|e| 0.227  bias -0.015  censored>pred 100%  loglik -0.728
+  ols   e                                      rmse 0.457 (x1.58)  median|e| 0.265  bias -0.004  censored>pred 100%  loglik -0.685
+  tobit e                                      rmse 0.461 (x1.58)  median|e| 0.275  bias -0.015  censored>pred 100%  loglik -0.685
+  ols   e+stg                                  rmse 0.457 (x1.58)  median|e| 0.265  bias -0.004  censored>pred 100%  loglik -0.687
+  tobit e+stg                                  rmse 0.460 (x1.58)  median|e| 0.276  bias -0.015  censored>pred 100%  loglik -0.686
+  ols   e+stg+cost                             rmse 0.433 (x1.54)  median|e| 0.253  bias -0.003  censored>pred 100%  loglik -0.626
+  tobit e+stg+cost                             rmse 0.435 (x1.55)  median|e| 0.263  bias -0.012  censored>pred 100%  loglik -0.625
+  tobit coefficients of the last model (all rows): const=-4.580 empties=+0.161 stage=+0.004 log_cost=-0.218 sigma=0.442
+##### g20t4
+== mid: 1346 rows, censored (left out) 18 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.953 (x2.59)  median|e| 0.603  bias -0.121  censored>pred 100%
+  ols   constant                               rmse 0.724 (x2.06)  median|e| 0.457  bias -0.001  censored>pred 100%  loglik -1.130
+  tobit constant                               rmse 0.725 (x2.06)  median|e| 0.465  bias -0.023  censored>pred 100%  loglik -1.129
+  ols   prev                                   rmse 0.665 (x1.95)  median|e| 0.432  bias -0.000  censored>pred 100%  loglik -1.048
+  tobit prev                                   rmse 0.666 (x1.95)  median|e| 0.442  bias -0.020  censored>pred 100%  loglik -1.047
+  ols   prev+e+d+odd                           rmse 0.650 (x1.92)  median|e| 0.427  bias +0.000  censored>pred 100%  loglik -1.022
+  tobit prev+e+d+odd                           rmse 0.651 (x1.92)  median|e| 0.429  bias -0.018  censored>pred 100%  loglik -1.020
+  ols   prev+e+d+odd+cost                      rmse 0.643 (x1.90)  median|e| 0.425  bias -0.001  censored>pred 100%  loglik -1.013
+  tobit prev+e+d+odd+cost                      rmse 0.644 (x1.90)  median|e| 0.428  bias -0.019  censored>pred 100%  loglik -1.010
+  tobit coefficients of the last model (all rows): const=-1.571 prev_ratio=-0.389 has_prev=+0.072 empties=+0.023 depth=+0.059 depth_odd=-0.049 log_cost=-0.159 sigma=0.655
+== entry: 95 rows, censored (left out) 3 (3%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.875 (x2.40)  median|e| 0.717  bias -0.623  censored>pred 100%
+  ols   constant                               rmse 0.728 (x2.07)  median|e| 0.557  bias +0.005  censored>pred 100%  loglik -1.345
+  tobit constant                               rmse 0.739 (x2.09)  median|e| 0.532  bias -0.068  censored>pred 100%  loglik -1.306
+  ols   e                                      rmse 0.572 (x1.77)  median|e| 0.374  bias +0.022  censored>pred 100%  loglik -0.997
+  tobit e                                      rmse 0.577 (x1.78)  median|e| 0.417  bias -0.011  censored>pred 100%  loglik -0.965
+  ols   e+full                                 rmse 0.572 (x1.77)  median|e| 0.374  bias +0.022  censored>pred 100%  loglik -0.997
+  tobit e+full                                 rmse 0.577 (x1.78)  median|e| 0.417  bias -0.011  censored>pred 100%  loglik -0.965
+  ols   e+full+d+odd                           rmse 0.504 (x1.65)  median|e| 0.303  bias +0.028  censored>pred 100%  loglik -0.872
+  tobit e+full+d+odd                           rmse 0.510 (x1.67)  median|e| 0.283  bias +0.002  censored>pred 100%  loglik -0.843
+  ols   e+full+d+odd+cost                      rmse 0.503 (x1.65)  median|e| 0.342  bias +0.047  censored>pred 100%  loglik -0.922
+  tobit e+full+d+odd+cost                      rmse 0.503 (x1.65)  median|e| 0.346  bias +0.018  censored>pred 100%  loglik -0.853
+  ols   e+full+d+odd+cost+prev                 rmse 0.508 (x1.66)  median|e| 0.303  bias +0.024  censored>pred 100%  loglik -0.968
+  tobit e+full+d+odd+cost+prev                 rmse 0.519 (x1.68)  median|e| 0.317  bias +0.011  censored>pred 100%  loglik -0.954
+  tobit coefficients of the last model (all rows): const=-6.343 empties=+0.594 next_full=+0.000 depth=-0.422 depth_odd=-0.327 log_cost=-0.137 prev_ratio=-0.341 has_prev=+0.061 sigma=0.472
+== exact: 183 rows, censored (left out) 1 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 1.085 (x2.96)  median|e| 1.054  bias -0.931  censored>pred 100%
+  ols   constant                               rmse 0.676 (x1.97)  median|e| 0.358  bias -0.001  censored>pred 100%  loglik -1.058
+  tobit constant                               rmse 0.676 (x1.97)  median|e| 0.363  bias -0.014  censored>pred 100%  loglik -1.060
+  ols   e                                      rmse 0.531 (x1.70)  median|e| 0.340  bias -0.001  censored>pred 100%  loglik -0.822
+  tobit e                                      rmse 0.531 (x1.70)  median|e| 0.350  bias -0.007  censored>pred 100%  loglik -0.825
+  ols   e+stg                                  rmse 0.527 (x1.69)  median|e| 0.353  bias -0.003  censored>pred 100%  loglik -0.814
+  tobit e+stg                                  rmse 0.525 (x1.69)  median|e| 0.358  bias -0.010  censored>pred 100%  loglik -0.817
+  ols   e+stg+cost                             rmse 0.511 (x1.67)  median|e| 0.300  bias -0.010  censored>pred 100%  loglik -0.779
+  tobit e+stg+cost                             rmse 0.511 (x1.67)  median|e| 0.305  bias -0.017  censored>pred 100%  loglik -0.782
+  tobit coefficients of the last model (all rows): const=+50.103 empties=+0.174 stage=-0.536 log_cost=+0.234 sigma=0.513
+== stage: 502 rows, censored (left out) 6 (1%), min cost 0.01s
+  current (game_clock.rs)                      rmse 0.472 (x1.60)  median|e| 0.294  bias -0.137  censored>pred 100%
+  ols   constant                               rmse 0.452 (x1.57)  median|e| 0.255  bias +0.000  censored>pred 100%  loglik -0.716
+  tobit constant                               rmse 0.452 (x1.57)  median|e| 0.256  bias -0.019  censored>pred 100%  loglik -0.708
+  ols   e                                      rmse 0.424 (x1.53)  median|e| 0.261  bias +0.003  censored>pred 100%  loglik -0.626
+  tobit e                                      rmse 0.426 (x1.53)  median|e| 0.269  bias -0.012  censored>pred 100%  loglik -0.619
+  ols   e+stg                                  rmse 0.420 (x1.52)  median|e| 0.249  bias +0.004  censored>pred 100%  loglik -0.612
+  tobit e+stg                                  rmse 0.422 (x1.53)  median|e| 0.258  bias -0.010  censored>pred 100%  loglik -0.605
+  ols   e+stg+cost                             rmse 0.409 (x1.51)  median|e| 0.257  bias +0.004  censored>pred 100%  loglik -0.588
+  tobit e+stg+cost                             rmse 0.411 (x1.51)  median|e| 0.261  bias -0.010  censored>pred 100%  loglik -0.579
+  tobit coefficients of the last model (all rows): const=-2.990 empties=+0.143 stage=-0.010 log_cost=-0.178 sigma=0.420

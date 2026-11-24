@@ -1,0 +1,14 @@
+run local/time-control/stage3/run/n-fs6.tsv	games 200	pairs 100	diff -0.06 [-0.20, +0.08]	W/D/L 82/35/83	flags new 0 old 0	used new 5.341 old 5.330
+run local/time-control/stage3/run/n-gtp20t4.tsv	games 160	pairs 80	diff -0.11 [-0.28, +0.05]	W/D/L 54/46/60	flags new 0 old 0	used new 16.856 old 17.002
+run local/time-control/stage3/run/n-gtp20.tsv	games 200	pairs 100	diff -0.05 [-0.13, +0.03]	W/D/L 73/53/74	flags new 0 old 0	used new 18.183 old 18.160
+run local/time-control/stage3/run/n-gtp2.tsv	games 200	pairs 100	diff +0.10 [-0.00, +0.20]	W/D/L 81/43/76	flags new 0 old 0	used new 1.806 old 1.806
+run local/time-control/stage3/run/n-gtp60.tsv	games 200	pairs 100	diff +0.00 [+0.00, +0.00]	W/D/L 67/66/67	flags new 0 old 0	used new 54.967 old 54.960
+run-v4 local/time-control/stage3/run-v4/n-fs6.tsv	games 200	pairs 100	diff +0.02 [-0.05, +0.09]	W/D/L 78/44/78	flags new 0 old 0	used new 5.374 old 5.376
+run-v4 local/time-control/stage3/run-v4/n-gtp20t4.tsv	games 200	pairs 100	diff +0.05 [-0.11, +0.21]	W/D/L 74/55/71	flags new 0 old 0	used new 17.014 old 17.031
+run-v4 local/time-control/stage3/run-v4/n-gtp20.tsv	games 200	pairs 100	diff -0.03 [-0.10, +0.04]	W/D/L 72/54/74	flags new 0 old 0	used new 18.295 old 18.330
+run-v4 local/time-control/stage3/run-v4/n-gtp2.tsv	games 200	pairs 100	diff -0.07 [-0.15, +0.01]	W/D/L 82/34/84	flags new 0 old 0	used new 1.803 old 1.801
+run-v4 local/time-control/stage3/run-v4/n-gtp60.tsv	games 200	pairs 100	diff +0.00 [+0.00, +0.00]	W/D/L 73/54/73	flags new 0 old 0	used new 54.891 old 55.032
+run-v4 local/time-control/stage3/run-v4/x-gtp20t4.tsv	games 0	aborted (extension) 300
+run-v4 local/time-control/stage3/run-v4/x-gtp20.tsv	games 0	aborted (extension) 300
+run-v4 local/time-control/stage3/run-v4/x-gtp2.tsv	games 0	aborted (extension) 300
+run-v4 local/time-control/stage3/run-v4/x-gtp60.tsv	games 0	aborted (extension) 300
