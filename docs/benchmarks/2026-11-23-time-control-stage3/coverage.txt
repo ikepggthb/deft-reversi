@@ -1,0 +1,14 @@
+## extension turns: rows after the decision (done/censored), by transition
+cond	mid	entry	stage	exact
+x-gtp2	385/158	38/33	77/32	22/19
+x-gtp20	149/87	14/39	59/45	19/21
+x-gtp20t4	124/51	19/43	53/50	17/25
+x-gtp60	122/51	17/41	44/53	24/27
+
+## normal games: rows by transition (done/censored) and turns
+cond	mid	entry	stage	exact
+n-fs6	10787/96	2338/19	2152/14	2872/12
+n-gtp2	8034/117	1978/4	1653/13	2675/9
+n-gtp20	12845/89	2571/6	2900/30	3116/17
+n-gtp20t4	15389/80	2922/12	3823/16	3497/10
+n-gtp60	15588/57	2917/8	3760/32	3405/37

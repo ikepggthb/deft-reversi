@@ -1,0 +1,60 @@
+game 0 new_black=true score_new=0 flag=None solved new@20 old@23 left new=0.97 old=9.04
+game 0 new_black=false score_new=8 flag=None solved new@23 old@24 left new=2.65 old=9.19
+running: W1 D1 L0 avg 4.00
+game 1 new_black=true score_new=6 flag=None solved new@22 old@23 left new=1.57 old=8.65
+game 1 new_black=false score_new=-6 flag=None solved new@23 old@24 left new=2.32 old=8.68
+running: W2 D1 L1 avg 2.00
+game 2 new_black=true score_new=6 flag=None solved new@20 old@23 left new=1.40 old=8.71
+game 2 new_black=false score_new=0 flag=None solved new@21 old@22 left new=1.65 old=8.98
+running: W3 D2 L1 avg 2.33
+game 3 new_black=true score_new=-6 flag=None solved new@20 old@23 left new=0.96 old=8.80
+game 3 new_black=false score_new=4 flag=None solved new@21 old@24 left new=0.90 old=9.08
+running: W4 D2 L2 avg 1.50
+game 4 new_black=true score_new=-26 flag=None solved new@20 old@23 left new=1.41 old=9.17
+game 4 new_black=false score_new=26 flag=None solved new@21 old@22 left new=3.30 old=8.99
+running: W5 D2 L3 avg 1.20
+game 5 new_black=true score_new=-18 flag=None solved new@20 old@23 left new=1.24 old=8.90
+game 5 new_black=false score_new=22 flag=None solved new@21 old@22 left new=2.19 old=8.91
+running: W6 D2 L4 avg 1.33
+game 6 new_black=true score_new=-16 flag=None solved new@20 old@23 left new=1.60 old=8.57
+game 6 new_black=false score_new=20 flag=None solved new@21 old@22 left new=1.35 old=8.84
+running: W7 D2 L5 avg 1.43
+game 7 new_black=true score_new=16 flag=None solved new@20 old@23 left new=0.77 old=9.21
+game 7 new_black=false score_new=-14 flag=None solved new@21 old@22 left new=1.70 old=8.77
+running: W8 D2 L6 avg 1.38
+game 8 new_black=true score_new=22 flag=None solved new@22 old@25 left new=1.57 old=9.58
+game 8 new_black=false score_new=-18 flag=None solved new@21 old@22 left new=1.14 old=8.76
+running: W9 D2 L7 avg 1.44
+game 9 new_black=true score_new=14 flag=None solved new@22 old@23 left new=0.55 old=9.11
+game 9 new_black=false score_new=-14 flag=None solved new@23 old@22 left new=1.33 old=8.95
+running: W10 D2 L8 avg 1.30
+game 10 new_black=true score_new=0 flag=None solved new@22 old@25 left new=1.48 old=9.59
+game 10 new_black=false score_new=10 flag=None solved new@21 old@22 left new=1.76 old=8.92
+running: W11 D3 L8 avg 1.64
+game 11 new_black=true score_new=-10 flag=None solved new@22 old@23 left new=1.68 old=9.28
+game 11 new_black=false score_new=10 flag=None solved new@21 old@22 left new=1.15 old=8.75
+running: W12 D3 L9 avg 1.50
+game 12 new_black=true score_new=-32 flag=None solved new@20 old@21 left new=0.97 old=8.57
+game 12 new_black=false score_new=30 flag=None solved new@21 old@22 left new=1.54 old=8.62
+running: W13 D3 L10 avg 1.31
+game 13 new_black=true score_new=20 flag=None solved new@20 old@23 left new=1.07 old=8.86
+game 13 new_black=false score_new=-26 flag=None solved new@21 old@22 left new=1.32 old=8.72
+running: W14 D3 L11 avg 1.00
+game 14 new_black=true score_new=28 flag=None solved new@18 old@21 left new=1.06 old=8.49
+game 14 new_black=false score_new=-26 flag=None solved new@19 old@20 left new=0.95 old=8.06
+running: W15 D3 L12 avg 1.00
+game 15 new_black=true score_new=6 flag=None solved new@24 old@23 left new=2.22 old=9.39
+game 15 new_black=false score_new=6 flag=None solved new@19 old@22 left new=0.96 old=8.72
+running: W17 D3 L12 avg 1.31
+game 16 new_black=true score_new=0 flag=None solved new@22 old@23 left new=1.41 old=8.81
+game 16 new_black=false score_new=0 flag=None solved new@21 old@22 left new=1.52 old=8.92
+running: W17 D5 L12 avg 1.24
+game 17 new_black=true score_new=-20 flag=None solved new@18 old@21 left new=0.74 old=8.44
+game 17 new_black=false score_new=22 flag=None solved new@21 old@22 left new=0.90 old=9.12
+running: W18 D5 L13 avg 1.22
+game 18 new_black=true score_new=2 flag=None solved new@22 old@23 left new=2.38 old=8.72
+game 18 new_black=false score_new=8 flag=None solved new@21 old@22 left new=1.05 old=8.67
+running: W20 D5 L13 avg 1.42
+game 19 new_black=true score_new=10 flag=None solved new@22 old@23 left new=1.87 old=9.06
+game 19 new_black=false score_new=-2 flag=None solved new@21 old@22 left new=1.81 old=8.59
+running: W21 D5 L14 avg 1.55

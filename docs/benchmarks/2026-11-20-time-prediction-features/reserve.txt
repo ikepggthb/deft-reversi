@@ -1,0 +1,144 @@
+##### g2
+used / reserve estimate (median, n) by empties; previous own move solved exactly or not
+  e26  solved       - (   0)   not   0.010 ( 200)
+  e25  solved       - (   0)   not   0.021 ( 200)
+  e24  solved       - (   0)   not   0.041 ( 200)
+  e23  solved       - (   0)   not   0.127 ( 200)
+  e22  solved       - (   0)   not   0.258 ( 200)
+  e21  solved   0.213 (   6)   not   0.341 ( 194)
+  e20  solved   0.192 (  48)   not   0.335 ( 152)
+  e19  solved   0.260 ( 114)   not   0.425 (  86)
+  e18  solved   0.289 ( 173)   not   0.455 (  27)
+  e17  solved   0.217 ( 192)   not   0.342 (   8)
+  e16  solved   0.127 ( 197)   not   0.218 (   3)
+  e15  solved   0.085 ( 198)   not   0.177 (   2)
+  e14  solved   0.047 ( 200)   not       - (   0)
+  e13  solved   0.032 ( 200)   not       - (   0)
+  e12  solved   0.000 ( 200)   not       - (   0)
+  e11  solved   0.000 ( 199)   not   0.000 (   1)
+  e10  solved   0.047 ( 200)   not       - (   0)
+  e 9  solved   0.000 ( 199)   not   0.000 (   1)
+  e 8  solved   0.000 ( 200)   not       - (   0)
+  e 7  solved   0.000 ( 197)   not       - (   0)
+  e 6  solved   0.000 ( 193)   not   0.000 (   2)
+  e 5  solved   0.000 ( 187)   not   0.000 (   5)
+  e 4  solved   0.000 ( 175)   not   0.000 (   7)
+  e 3  solved   0.000 ( 173)   not   0.000 (   7)
+  e 2  solved   0.000 ( 146)   not   0.000 (  20)
+  e 1  solved   0.000 ( 130)   not   0.000 (  26)
+ln(used) on held-out games (RMSE, bias); `estimate` is the reserve itself, not fitted
+  reserve as is          rmse 2.802  bias -2.611
+  estimate               rmse 1.014  bias -0.000
+  e                      rmse 1.289  bias -0.000
+  e+solved               rmse 1.040  bias +0.000
+  e+solved+prev          rmse 0.694  bias +0.000
+  e+solved+prev+inter    rmse 0.683  bias -0.000
+  coefficients e+solved+prev: const=-1.730 e=+0.032 solved=-1.923 ln_prev=+0.651
+##### g20
+used / reserve estimate (median, n) by empties; previous own move solved exactly or not
+  e26  solved       - (   0)   not   0.114 ( 100)
+  e25  solved       - (   0)   not   0.210 ( 100)
+  e24  solved   0.148 (  11)   not   0.339 (  89)
+  e23  solved   0.266 (  38)   not   0.360 (  62)
+  e22  solved   0.341 (  64)   not   0.418 (  36)
+  e21  solved   0.386 (  83)   not   0.370 (  17)
+  e20  solved   0.281 (  91)   not   0.364 (   9)
+  e19  solved   0.271 (  96)   not   0.536 (   4)
+  e18  solved   0.245 (  99)   not   0.839 (   1)
+  e17  solved   0.200 ( 100)   not       - (   0)
+  e16  solved   0.136 ( 100)   not       - (   0)
+  e15  solved   0.077 ( 100)   not       - (   0)
+  e14  solved   0.047 ( 100)   not       - (   0)
+  e13  solved   0.032 ( 100)   not       - (   0)
+  e12  solved   0.000 ( 100)   not       - (   0)
+  e11  solved   0.000 ( 100)   not       - (   0)
+  e10  solved   0.047 ( 100)   not       - (   0)
+  e 9  solved   0.000 (  99)   not   0.048 (   1)
+  e 8  solved   0.000 ( 100)   not       - (   0)
+  e 7  solved   0.000 ( 100)   not       - (   0)
+  e 6  solved   0.000 (  99)   not   0.000 (   1)
+  e 5  solved   0.000 (  97)   not       - (   0)
+  e 4  solved   0.000 (  92)   not   0.000 (   3)
+  e 3  solved   0.000 (  87)   not   0.000 (   4)
+  e 2  solved   0.000 (  80)   not   0.000 (   7)
+  e 1  solved   0.000 (  60)   not   0.000 (  10)
+ln(used) on held-out games (RMSE, bias); `estimate` is the reserve itself, not fitted
+  reserve as is          rmse 2.498  bias -2.292
+  estimate               rmse 0.737  bias +0.000
+  e                      rmse 1.464  bias +0.000
+  e+solved               rmse 1.297  bias -0.000
+  e+solved+prev          rmse 0.717  bias -0.000
+  e+solved+prev+inter    rmse 0.706  bias -0.001
+  coefficients e+solved+prev: const=-0.011 e=-0.024 solved=-1.463 ln_prev=+0.854
+##### g60
+used / reserve estimate (median, n) by empties; previous own move solved exactly or not
+  e26  solved   0.119 (   5)   not   0.340 (  59)
+  e25  solved   0.248 (  19)   not   0.332 (  45)
+  e24  solved   0.262 (  44)   not   0.516 (  20)
+  e23  solved   0.313 (  51)   not   0.315 (  13)
+  e22  solved   0.398 (  58)   not   0.500 (   6)
+  e21  solved   0.406 (  59)   not   0.246 (   5)
+  e20  solved   0.312 (  62)   not   0.452 (   2)
+  e19  solved   0.345 (  63)   not   0.834 (   1)
+  e18  solved   0.307 (  64)   not       - (   0)
+  e17  solved   0.230 (  64)   not       - (   0)
+  e16  solved   0.118 (  64)   not       - (   0)
+  e15  solved   0.092 (  64)   not       - (   0)
+  e14  solved   0.047 (  64)   not       - (   0)
+  e13  solved   0.032 (  64)   not       - (   0)
+  e12  solved   0.039 (  63)   not   0.078 (   1)
+  e11  solved   0.000 (  64)   not       - (   0)
+  e10  solved   0.047 (  64)   not       - (   0)
+  e 9  solved   0.000 (  64)   not       - (   0)
+  e 8  solved   0.000 (  63)   not   0.000 (   1)
+  e 7  solved   0.000 (  62)   not       - (   0)
+  e 6  solved   0.000 (  63)   not   0.000 (   1)
+  e 5  solved   0.000 (  62)   not       - (   0)
+  e 4  solved   0.000 (  55)   not   0.000 (   5)
+  e 3  solved   0.000 (  54)   not   0.000 (   2)
+  e 2  solved   0.000 (  45)   not   0.000 (   4)
+  e 1  solved   0.000 (  44)   not   0.000 (  13)
+ln(used) on held-out games (RMSE, bias); `estimate` is the reserve itself, not fitted
+  reserve as is          rmse 2.451  bias -2.229
+  estimate               rmse 0.633  bias +0.000
+  e                      rmse 1.517  bias +0.000
+  e+solved               rmse 1.393  bias +0.002
+  e+solved+prev          rmse 0.718  bias +0.002
+  e+solved+prev+inter    rmse 0.701  bias +0.002
+  coefficients e+solved+prev: const=+0.270 e=-0.030 solved=-1.358 ln_prev=+0.897
+##### g20t4
+used / reserve estimate (median, n) by empties; previous own move solved exactly or not
+  e26  solved   0.039 (   5)   not   0.109 (  45)
+  e25  solved   0.059 (  17)   not   0.111 (  33)
+  e24  solved   0.073 (  37)   not   0.143 (  13)
+  e23  solved   0.102 (  46)   not   0.132 (   4)
+  e22  solved   0.113 (  50)   not       - (   0)
+  e21  solved   0.146 (  49)   not   0.070 (   1)
+  e20  solved   0.117 (  50)   not       - (   0)
+  e19  solved   0.139 (  50)   not       - (   0)
+  e18  solved   0.120 (  50)   not       - (   0)
+  e17  solved   0.125 (  50)   not       - (   0)
+  e16  solved   0.100 (  50)   not       - (   0)
+  e15  solved   0.092 (  50)   not       - (   0)
+  e14  solved   0.094 (  50)   not       - (   0)
+  e13  solved   0.064 (  50)   not       - (   0)
+  e12  solved   0.039 (  50)   not       - (   0)
+  e11  solved   0.044 (  50)   not       - (   0)
+  e10  solved   0.047 (  50)   not       - (   0)
+  e 9  solved   0.000 (  50)   not       - (   0)
+  e 8  solved   0.000 (  49)   not   0.000 (   1)
+  e 7  solved   0.000 (  48)   not       - (   0)
+  e 6  solved   0.000 (  51)   not       - (   0)
+  e 5  solved   0.000 (  47)   not       - (   0)
+  e 4  solved   0.000 (  46)   not   0.000 (   5)
+  e 3  solved   0.000 (  46)   not       - (   0)
+  e 2  solved   0.000 (  37)   not   0.000 (   6)
+  e 1  solved   0.000 (  36)   not   0.000 (  10)
+ln(used) on held-out games (RMSE, bias); `estimate` is the reserve itself, not fitted
+  reserve as is          rmse 2.660  bias -2.581
+  estimate               rmse 0.575  bias -0.000
+  e                      rmse 1.257  bias +0.000
+  e+solved               rmse 1.144  bias -0.000
+  e+solved+prev          rmse 0.573  bias -0.001
+  e+solved+prev+inter    rmse 0.552  bias +0.000
+  coefficients e+solved+prev: const=+0.197 e=-0.026 solved=-1.254 ln_prev=+0.899
