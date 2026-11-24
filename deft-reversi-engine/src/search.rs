@@ -432,7 +432,6 @@ impl Engine {
                 elapsed: start.elapsed(),
                 next: plan.get(index + 1).map(|next| next.kind()),
                 moves: Vec::new(),
-                root: root.stats,
             });
         }
         runtime.drain();
@@ -492,7 +491,6 @@ impl Engine {
                         elapsed: start.elapsed(),
                         next: None,
                         moves: moves.to_vec(),
-                        root: RootStats::default(),
                     })
                 },
             )

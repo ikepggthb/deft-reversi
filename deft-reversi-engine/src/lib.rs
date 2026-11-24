@@ -50,7 +50,7 @@ pub use diagnostics::perft;
 pub use model::Model;
 pub use position::{Color, ParsePositionError, Position};
 pub use search::{
-    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind, RootStats,
+    Engine, EngineError, EngineOptions, Goal, MoveScore, Progress, ResultKind,
     SEARCH_SEMANTICS_REVISION, SearchPlan, SearchRequest, SearchResult, SearchStats, Selectivity,
     StopHandle, StopReason, level_reading,
 };

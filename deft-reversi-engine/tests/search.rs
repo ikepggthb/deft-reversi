@@ -880,22 +880,3 @@ fn root_threshold_keeps_equal_moves_and_reports_only_an_upper_bound_on_failure()
     assert!(!accepted.score_is_upper_bound);
     assert_eq!(accepted.pv.first(), Some(&Action::Place(square)));
 }
-
-#[test]
-fn progress_reports_root_counters_per_iteration() {
-    let mut engine = engine(1);
-    let board = position(21, 28);
-    let mut seen = Vec::new();
-    engine
-        .search_with(board, &depth(12), |progress| seen.push(progress.root))
-        .unwrap();
-    assert!(!seen.is_empty());
-    for root in &seen {
-        // One thread: every root window's nodes are counted, and the first
-        // move's are part of them.
-        assert!(root.window_nodes > 0);
-        assert!(root.first_nodes <= root.window_nodes);
-    }
-    // The aspiration window starts above depth 10; counters reset per iteration.
-    assert!(seen.iter().any(|root| root.first_nodes < root.window_nodes));
-}
