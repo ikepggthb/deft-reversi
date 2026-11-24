@@ -380,6 +380,9 @@ impl Engine {
         let plan = self.plan(&job);
         let warm = self.warm_start(&job, mask, &plan);
         let (skip, mut prediction) = if let Some((skip, square, score)) = warm {
+            // If time expires in the first uncached iteration, the compatible
+            // cached move is a better fallback than the lowest legal square.
+            result.best_move = Some(Action::Place(square));
             root.restrict(mask, Some(square));
             context.stats.reused_iterations += skip as u64;
             (skip, score)
@@ -427,6 +430,7 @@ impl Engine {
                 pv: result.pv.clone(),
                 nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
                 elapsed: start.elapsed(),
+                next: plan.get(index + 1).map(|next| next.kind()),
                 moves: Vec::new(),
             });
         }
@@ -485,6 +489,7 @@ impl Engine {
                         pv: result.pv.clone(),
                         nodes: context.stats.nodes + parallel::lock(&runtime.stats).nodes,
                         elapsed: start.elapsed(),
+                        next: None,
                         moves: moves.to_vec(),
                     })
                 },
@@ -712,17 +717,20 @@ impl Iteration {
             probcut: true,
         }
     }
-    /// Makes `line`, the completed iteration's result, the search result.
-    fn record(self, result: &mut SearchResult, line: &Line) {
+    fn kind(self) -> ResultKind {
         let selectivity = self.selectivity;
-        result.kind = Some(if self.exact {
+        if self.exact {
             ResultKind::Endgame { selectivity }
         } else {
             ResultKind::Depth {
                 depth: self.depth,
                 selectivity,
             }
-        });
+        }
+    }
+    /// Makes `line`, the completed iteration's result, the search result.
+    fn record(self, result: &mut SearchResult, line: &Line) {
+        result.kind = Some(self.kind());
         result.score = Some(line.score);
         result.pv = line.moves();
         if let Some(action) = result.pv.first() {
@@ -977,7 +985,7 @@ mod warm_start_tests {
         )
         .unwrap();
         let board = Board::new();
-        let best = board.legal_moves().next().unwrap();
+        let best = board.legal_moves().last().unwrap();
         engine.pv_table.store(
             board,
             crate::transposition::Entry {
@@ -992,6 +1000,13 @@ mod warm_start_tests {
             },
         );
         let request = SearchRequest::new(Goal::Depth(8)).reuse_pv();
+        let stopped = engine
+            .search(board, &request.clone().time_limit(Duration::ZERO))
+            .unwrap();
+        assert_eq!(stopped.best_move, Some(Action::Place(best)));
+        assert_eq!(stopped.kind, None);
+        assert_eq!(stopped.score, None);
+
         let excluded = engine
             .search(
                 board,
