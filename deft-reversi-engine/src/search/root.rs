@@ -42,6 +42,8 @@ pub(super) struct RootSearch {
     position: Position,
     candidates: Vec<Candidate>,
     bounds: [RootBound; 64],
+    /// Counters of the last iteration (by-products, see `RootStats`).
+    pub(super) stats: RootStats,
 }
 impl RootSearch {
     pub(super) fn new(position: Position) -> Self {
@@ -60,6 +62,7 @@ impl RootSearch {
             position,
             candidates,
             bounds: [RootBound::UNBOUNDED; 64],
+            stats: RootStats::default(),
         }
     }
     pub(super) fn restrict(&mut self, mask: u64, preferred: Option<Square>) {
@@ -78,6 +81,7 @@ impl RootSearch {
         prediction: i32,
     ) -> Result<Line, Aborted> {
         self.bounds.fill(RootBound::UNBOUNDED);
+        self.stats = RootStats::default();
         let previous = self.candidates.first().copied();
         let outcome = self.aspiration(context, spec, prediction);
         if outcome.is_err()
@@ -170,9 +174,11 @@ impl RootSearch {
                     break;
                 }
                 if score <= alpha && left != 0 {
+                    self.stats.aspiration_fails += 1;
                     left = (left * 2).min(128);
                     right = 0;
                 } else if score >= beta && right != 0 {
+                    self.stats.aspiration_fails += 1;
                     right = (right * 2).min(128);
                     left = 0;
                 } else {
@@ -223,7 +229,7 @@ impl RootSearch {
         &mut self,
         context: &mut Context,
         spec: SearchSpec,
-        mut alpha: i32,
+        alpha: i32,
         beta: i32,
     ) -> Result<Line, Aborted> {
         if context.aborted() {
@@ -233,8 +239,23 @@ impl RootSearch {
             return context.node(self.position, alpha, beta, spec);
         }
         context.enter()?;
+        let start_nodes = context.stats.nodes;
+        let first = self.candidate(context, 0, spec, alpha, beta);
+        self.stats.first_nodes += context.stats.nodes - start_nodes;
+        let result = first.and_then(|best| self.rest(context, spec, alpha, beta, best));
+        self.stats.window_nodes += context.stats.nodes - start_nodes;
+        result
+    }
+    /// The root window after its first move.
+    fn rest(
+        &mut self,
+        context: &mut Context,
+        spec: SearchSpec,
+        mut alpha: i32,
+        beta: i32,
+        mut best: Line,
+    ) -> Result<Line, Aborted> {
         let reuse = spec.exact && !context.runtime.selective();
-        let mut best = self.candidate(context, 0, spec, alpha, beta)?;
         if best.score >= beta {
             return Ok(best);
         }
@@ -304,6 +325,9 @@ impl RootSearch {
                     alpha,
                     alpha + 1,
                 );
+            }
+            if line.score > alpha {
+                self.stats.fail_highs += 1;
             }
             if line.score >= beta {
                 self.candidates.swap(0, index);

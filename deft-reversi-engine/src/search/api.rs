@@ -499,6 +499,28 @@ pub struct Progress {
     /// With `all_moves`, after the last iteration: the moves scored so far,
     /// best first, reported as each one is scored.
     pub moves: Vec<MoveScore>,
+    /// Counters of the root search in this iteration (zero where not
+    /// counted). Read-only by-products: the search does not change.
+    pub root: RootStats,
+}
+
+/// How the root search of one iteration went, for a game clock that judges
+/// whether the next iteration may change the move.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RootStats {
+    /// Nodes this search thread spent on the move searched first in each
+    /// root window (the previous best). With several threads, helpers'
+    /// nodes in that move's subtree are not included.
+    pub first_nodes: u64,
+    /// Nodes this search thread spent in the root windows of the iteration.
+    pub window_nodes: u64,
+    /// Root moves after the first that scored above the null window (they
+    /// were searched again or ended the window). Not counted when the root
+    /// is split among threads.
+    pub fail_highs: u32,
+    /// Aspiration windows that failed and were widened.
+    pub aspiration_fails: u32,
 }
 
 #[derive(Debug)]
