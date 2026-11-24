@@ -4,6 +4,7 @@ play a better move? (stage 4-2, roadmap B1)
 
 usage: value_signal.py table RUN_DIR REFER_DIR > pairs.tsv
        value_signal.py fit pairs.tsv
+       value_signal.py positions RUN_DIR N_EXACT N_MID > positions.tsv
 
 `table` writes one row per pair of consecutive finished iterations (k,
 k+1) of the logged turns that refer_loss.py covers (normal games of
@@ -11,6 +12,11 @@ openings 200..299, the extended turns of extension games of 300..449):
 features known when iteration k ends, and the label `better` = 1 if the
 move of k+1 has less loss than the move of k (stage 3-2 reference), and
 `gain` = loss(k) - loss(k+1).
+
+`positions` samples searched positions of the normal games (openings
+200..299) for the gap probe (probe/src/bin/gap.rs): N_EXACT with 20 to 28
+empties (where the reference is exact) and N_MID with 29 to 44, each
+position once, in a fixed random order (seed 20261124).
 
 `fit` fits logistic regressions on feature sets of growing size, with
 5-fold cross-validation by opening (all games of an opening in one fold),
@@ -258,8 +264,43 @@ def fit(path):
                   f"\tAUC {auc(s[idx], y[idx]):.3f}\tTPR@0.15 {t[0]:.3f}")
 
 
+def sample(run, n_exact, n_mid):
+    seen = {}
+    for cond in NORMAL:
+        out = Path(run) / f"{cond}.tsv"
+        records = {}
+        for line in out.read_text().splitlines()[1:]:
+            f = line.split("\t")
+            records[(int(f[0]), f[1])] = f[6]
+        for line in out.with_suffix(".logs.tsv").read_text().splitlines()[1:]:
+            w = line.split("\t")
+            opening, nb = int(w[0]), w[1]
+            if not 200 <= opening <= 299:
+                continue
+            pos = positions(records[(opening, nb)])
+            for player, (name, a, b) in (("new", w[3:6]), ("old", w[6:9])):
+                black = (player == "new") == (nb == "1")
+                for _, t in turns(out.parent / cond / name, int(a), int(b)):
+                    e = t["empties"]
+                    if not t["searched"] or not 20 <= e <= 44:
+                        continue
+                    bw = pos[(e, black)]
+                    key = f"{bw[0]:016x}{bw[1]:016x}{'b' if black else 'w'}"
+                    seen.setdefault(key, (bw, black, e))
+    rng = random.Random(20261124)
+    keys = sorted(seen)
+    rng.shuffle(keys)
+    exact = [k for k in keys if seen[k][2] <= 28][:n_exact]
+    mid = [k for k in keys if seen[k][2] > 28][:n_mid]
+    for k in exact + mid:
+        bw, black, e = seen[k]
+        print(f"{k}\t{bw[0]:016x}\t{bw[1]:016x}\t{'b' if black else 'w'}\t{e}")
+
+
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "table":
+    if len(sys.argv) > 1 and sys.argv[1] == "positions":
+        sample(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "table":
         table(sys.argv[2], sys.argv[3])
     elif len(sys.argv) > 1 and sys.argv[1] == "fit":
         fit(sys.argv[2])
