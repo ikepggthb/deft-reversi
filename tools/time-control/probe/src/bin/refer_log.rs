@@ -6,7 +6,7 @@
 //! does, searches it without restriction (best move and score), then each
 //! other move an iteration chose, alone. Positions with at most 28 empties
 //! are solved exactly; others get a DEPTH-ply search at 85% MPC, a
-//! reference rather than the truth.
+//! reference rather than the truth. DEPTH 0 solves every position exactly.
 //!
 //! Appends `key empties best:score move:score ... seconds` per position and
 //! skips keys already in OUT.tsv, so a stopped run resumes where it ended.
@@ -56,7 +56,7 @@ fn main() {
         let pos = Position::from_colors(black, white, side).unwrap();
         assert_eq!(pos.empty_count(), empties, "{line}");
         let request = || {
-            if empties <= 28 {
+            if empties <= 28 || depth == 0 {
                 SearchRequest::new(Goal::Endgame)
             } else {
                 SearchRequest::new(Goal::Depth(depth)).selectivity(Selectivity::Percent85)

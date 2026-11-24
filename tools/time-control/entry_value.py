@@ -30,7 +30,8 @@ over openings:
      decision minus the loss at the end of the extension, and how often
      the exact solve (e100) finished within it.
 Positions with at most 28 empties have exact references; above that the
-reference is a depth-26 search at 85% MPC.
+reference is a depth-26 search at 85% MPC, unless REFER_DIR lists an exact
+run first (`refer_log ... 0`, comma-separated: EXACT_DIR,REFER_DIR).
 """
 import random, sys
 from collections import defaultdict
@@ -115,8 +116,19 @@ def heavy(cost, t):
     return "<1 hard" if r < 1 else "1-3 hard" if r < 3 else ">=3 hard"
 
 
+def references(refer):
+    """REFER may list several directories, `A,B`: a position's best move and
+    values come from the first that has it (e.g. an exact run, then the
+    stage 3-2 reference)."""
+    ref = {}
+    for d in refer.split(","):
+        for k, v in reference(d).items():
+            ref.setdefault(k, v)
+    return ref
+
+
 def summary(run, refer, cond):
-    ref = reference(refer)
+    ref = references(refer)
     rng = random.Random(20261124)
     count = defaultdict(int)
     mid, ent, stages, changed = Groups(), Groups(), Groups(), Groups()
