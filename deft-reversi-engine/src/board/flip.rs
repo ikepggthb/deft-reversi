@@ -1,3 +1,5 @@
+//! 着手したときに裏返る 8 方向の石のビットマスクを計算するモジュールです（AVX2 版および汎用版）。
+
 #[cfg(target_feature = "avx2")]
 pub use avx2::flip;
 #[cfg(not(target_feature = "avx2"))]
@@ -7,10 +9,13 @@ pub use generic::flip;
 mod avx2 {
     use std::arch::x86_64::*;
 
+    /// 64 バイト境界にアラインされた `u64` × 8 の配列です（256 ビット AVX2 レジスタ 2 本分のマスク）。
     #[repr(align(64))]
     #[derive(Copy, Clone)]
     pub struct V8DI(pub [u64; 8]);
 
+    /// 各着手マス（0..63 およびパス用の 64..65）から 8 方向に伸びる直線上のマスを表すマスクテーブルです。
+    /// 前半 4 要素が正方向（左シフト側）、後半 4 要素が逆方向（右シフト側）のマスクを保持します。
     const LR_MASK: [V8DI; 66] = [
         V8DI([
             0x00000000000000fe,
@@ -677,11 +682,10 @@ mod avx2 {
     #[cfg(target_feature = "avx2")]
     #[inline(always)]
     fn load_256(v: &V8DI) -> [__m256i; 2] {
-        // SAFETY: this module is compiled only with AVX2. V8DI is 64-byte
-        // aligned and contains eight u64 values; both 256-bit loads fit.
+        // SAFETY: このモジュールは AVX2 有効時のみコンパイルされます。V8DI は 64 バイト境界に
+        // アラインされており 8 個の u64 を持つため、256 ビット（32 バイト）のロード 2 回は安全です。
         unsafe {
-            // v.0.as_ptr()は *const u64、つまり先頭ポインタ
-            // これを __m256i(32バイト) のポインタにキャストしてロード
+            // `v.0.as_ptr()`（*const u64）を 32 バイト単位の `__m256i` ポインタにキャストして読み込みます。
             [
                 _mm256_load_si256(v.0.as_ptr() as *const __m256i),
                 _mm256_load_si256(v.0.as_ptr().add(4) as *const __m256i),
@@ -689,9 +693,10 @@ mod avx2 {
         }
     }
 
+    /// 着手マス `pos`（0..63）に手番側が打ったときに裏返る石のマスクを AVX2 で計算します。
     #[inline]
     fn mm_flip(op: __m128i, pos: usize) -> __m128i {
-        // SAFETY: AVX2 is enabled for this entire module; mask access is checked.
+        // SAFETY: モジュール全体が AVX2 有効時のみコンパイルされ、`pos` に対するマスク参照も範囲内です。
         unsafe {
             let pp = _mm256_broadcastq_epi64(op);
             let op_hi = _mm_unpackhi_epi64(op, op);
@@ -700,7 +705,7 @@ mod avx2 {
             let masks = load_256(&LR_MASK[pos]);
             let mut mask = masks[1];
 
-            // Right shadow calculation
+            // 右シフト側 4 方向について、着手点に最も近い自分の石（MSB 側）から着手点までの区間を特定します。
             let rp = _mm256_and_si256(pp, mask);
             let shift1 = _mm256_srlv_epi64(rp, _mm256_set_epi64x(7, 9, 8, 1));
             let mut rs = _mm256_or_si256(rp, shift1);
@@ -712,7 +717,7 @@ mod avx2 {
             let re = _mm256_xor_si256(_mm256_andnot_si256(oo, mask), rp);
             let flip = _mm256_and_si256(_mm256_andnot_si256(rs, mask), _mm256_cmpgt_epi64(rp, re));
 
-            // Left calculation
+            // 左シフト側 4 方向は、連続する相手石が途切れる位置を加算の桁上がり（キャリー）で検出します。
             mask = masks[0];
             let lo = {
                 let tmp = _mm256_andnot_si256(oo, mask);
@@ -732,6 +737,7 @@ mod avx2 {
         }
     }
 
+    /// 単一ビット `x` に手番石 `p` を置いたときに裏返る相手石 `o` のビットマスクを返します（AVX2 版）。
     #[cfg(target_feature = "avx2")]
     #[inline]
     pub fn flip(x: u64, p: u64, o: u64) -> u64 {
@@ -746,6 +752,7 @@ mod avx2 {
 
 #[cfg(not(target_feature = "avx2"))]
 mod generic {
+    /// 単一ビット `move_bit` に手番石 `p` を置いたときに裏返る相手石 `o` のビットマスクを返します（汎用版）。
     #[inline(always)]
     pub fn flip(move_bit: u64, p: u64, o: u64) -> u64 {
         let x = move_bit;

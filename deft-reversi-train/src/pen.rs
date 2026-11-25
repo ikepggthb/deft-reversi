@@ -1,24 +1,25 @@
-//! Training the pattern embedding network (PEN) of one phase, together with
-//! the linear pattern weights it is added to.
+//! 1 フェーズ分の補助ニューラルネット（パターン埋め込みネットワーク）と、
+//! それに併用する線形パターン重みを学習するモジュール。
 //!
-//! The float network mirrors the engine's integers (`evaluation/pen.rs` in
-//! the engine): embeddings and activations are in 0..=1 where the engine
-//! uses 0..=127, and the weights are kept within what the engine's i8 can
-//! hold.
+//! この補助ネットワークは、線形パターン評価だけでは捉えきれない「パターン同士の相互作用」や
+//! 「お互いの着手可能手数などの盤面全体の情報」を補うための小型ニューラルネットである。
+//! ここで学習した浮動小数点ネットワークは、エンジン側の高速な整数推論（`evaluation/pen.rs`）に
+//! 対応しており、エンジンの `0..=127` に対して埋め込みと活性化関数出力を `0..=1`（埋め込みは `-1..=1`）で
+//! 表現し、重みもエンジンの `i8` 範囲に収まるようクランプする。
 //!
-//! The linear weights and the embeddings take an AdaGrad step after every
-//! sample, as the linear trainer does. The dense layers take an Adam step
-//! after every `batch` samples, with the mean gradient, and decay toward 0
-//! (`PenSettings::decay`).
+//! 最適化の役割分担：
+//! - 線形重みとパターン埋め込みは、線形学習器と同様に 1 サンプルごとに AdaGrad で更新する。
+//! - 全結合層（隠れ層・出力層）は `batch` サンプルごとの平均勾配を使って Adam で更新し、
+//!   [`PenSettings::decay`] に従って重みを 0 方向へ減衰させる（Decoupled Weight Decay）。
 //!
-//! The network and the linear weights can trade a constant: before, the
-//! network's output drifted to ±25 discs on average and the linear tables
-//! carried the opposite offset, which shrinking rare weights at export
-//! uncovered. After every pass the network's mean output moves into the
-//! linear bias (through the output bias, which changes no prediction), and
-//! the linear tables are recentred (`PhaseWeights::recenter`). Rarely seen
-//! embeddings shrink toward their table's mean embedding, not toward the
-//! starting value no trained state keeps.
+//! 定数オフセットの分離と中心化：
+//! ネットワークと線形重みの間では、定数の足し引きを自由にやり取りできる。
+//! そのため以前は、ネットワーク出力の平均が ±25 石ほどにずれ、線形テーブル側が逆符号のオフセットを
+//! 持つことで、書き出し（export）時に出現回数の少ない重みを縮小した際に誤差が表面化していた。
+//! そこで本実装では、各パスの最後にネットワークの平均出力を線形バイアスへ移し
+//! （出力バイアス `B2` から同じ値を引くため予測結果は変わらない）、線形テーブル側も中心化
+//! （[`PhaseWeights::recenter`]）する。さらに出現回数の少ない埋め込みは、初期値ではなく
+//! 所属テーブルの平均埋め込みへ寄せる。
 use crate::{
     phase::{Accumulator, Metrics, PhaseWeights, Settings, shared_weights},
     rd::Record,
@@ -30,21 +31,22 @@ use deft_reversi_engine::{
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 
-/// Network settings. Stored in checkpoints; resuming requires the same.
+/// PEN 学習のハイパーパラメータ設定。チェックポイントに保存され、再開時には同じ値であることが要求される。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PenSettings {
-    /// AdaGrad step size of the embeddings.
+    /// 埋め込みテーブル（AdaGrad）の学習率。
     pub lr: f32,
-    /// Adam step size of the dense layers.
+    /// 全結合層（Adam）の学習率。
     pub dense_lr: f32,
-    /// Samples per Adam step.
+    /// Adam で 1 回更新するあたりのサンプル数（ミニバッチサイズ）。
     pub batch: u32,
-    /// Decoupled weight decay of the dense weights (not the biases): each
-    /// Adam step also multiplies them by `1 - dense_lr * decay`.
+    /// 全結合重み（バイアスを除く）に対する Decoupled Weight Decay（重み減衰）：
+    /// 各 Adam ステップで重みに `1 - dense_lr * decay` を掛けて過学習を抑える。
     pub decay: f32,
 }
 
 impl PenSettings {
+    /// 設定値が有効範囲内かを検証する。
     pub fn validate(&self) -> Result<(), String> {
         if !(self.lr.is_finite() && self.lr > 0.0)
             || !(self.dense_lr.is_finite() && self.dense_lr > 0.0)
@@ -60,12 +62,11 @@ impl PenSettings {
     }
 }
 
-/// Every embedding starts here, so states never seen stay alike.
+/// 全埋め込みの初期値。未出現の状態同士が同じ値になるよう統一する。
 const EMBEDDING_INIT: f32 = 0.125;
-/// Gradient kept through a clipped activation outside its range, so a
-/// unit that left it can come back.
+/// クリップ済み活性化関数（`[0, 1]`）の範囲外で通すリーク勾配。範囲外に出たユニットが復帰できるようにする。
 const LEAK: f32 = 0.01;
-/// Largest hidden weight the engine's i8 holds at scale 64.
+/// エンジンの `i8`（スケール 64）で表現可能な隠れ層重みの最大絶対値。
 const HIDDEN_MAX: f32 = 127.0 / 64.0;
 const GLOBAL_INPUT: usize = PATTERN_COUNT * PEN_DIM;
 
@@ -95,18 +96,17 @@ impl Adam {
     }
 }
 
-/// The dense parameters in one vector: hidden weights (input-major: the
-/// weights of input `k` for every unit are `W1 + k * PEN_HIDDEN ..`, so one
-/// input updates all units with one vector operation), hidden biases,
-/// output weights, output bias.
+/// 全結合層の全パラメータを 1 本のベクタに格納するためのオフセット定義。
+/// 隠れ層重みは入力メジャー（入力 `k` に対する全ユニットの重みが `W1 + k * PEN_HIDDEN ..` に連続配置）とし、
+/// 1 入力あたり 1 回のベクトル演算で全ユニットを更新できるようにする。
 const W1: usize = 0;
 const B1: usize = W1 + PEN_HIDDEN * PEN_INPUTS;
 const W2: usize = B1 + PEN_HIDDEN;
 const B2: usize = W2 + PEN_HIDDEN;
 const DENSE: usize = B2 + 1;
 
-/// A pattern state's embedding with its AdaGrad state, in one cache line:
-/// a sample touches 44 states at random, and one miss each is the cost.
+/// 1 パターン状態の埋め込みベクトルと AdaGrad 状態を 1 キャッシュライン（64 バイト）に収めた構造体。
+/// 1 サンプルにつき 44 個の状態をランダムアクセスするため、各状態のアクセスを 1 キャッシュミスに抑える。
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[repr(C, align(64))]
 struct Embedding {
@@ -114,18 +114,20 @@ struct Embedding {
     squares: [f32; PEN_DIM],
 }
 
+/// 1 フェーズ分の PEN 学習重み（線形重み + パターン埋め込み + 全結合層 + Adam 状態）。
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PenWeights {
+    /// 併用する線形パターン重み。
     pub linear: PhaseWeights,
     embeddings: Vec<Embedding>,
-    /// Samples that used each pattern state.
+    /// 各パターン状態が学習サンプルで参照された回数。
     seen: Vec<u32>,
     dense: Vec<f32>,
     adam: Adam,
     steps: u64,
 }
 
-/// The forward pass of one sample, kept for the backward pass.
+/// 逆伝播用に保持する 1 サンプル分の順伝播中間値。
 struct Pass {
     features: deft_reversi_engine::Features,
     sums: [f32; PATTERN_COUNT * PEN_DIM],
@@ -135,18 +137,16 @@ struct Pass {
     output: f32,
 }
 
-/// 1 for a clipped activation's input inside its range, else `LEAK`;
-/// without a branch, as the inputs fall either way at random.
+/// クリップ活性化関数の入力が `(0, 1)` 内のとき `1.0`、範囲外のとき `LEAK` を返す。
+/// 入力がランダムに範囲内外へ落ちるため、分岐なし（branchless）で計算する。
 #[inline]
 fn inside_slope(x: f32) -> f32 {
     let inside = (x > 0.0) & (x < 1.0);
     LEAK + (1.0 - LEAK) * f32::from(u8::from(inside))
 }
 
-/// Calls `f(state, pattern, times)` once for every distinct state among
-/// the 44 reads, with how many orientations read it. A state belongs to
-/// one pattern's table, so only the four orientations of a pattern can
-/// repeat one.
+/// 44 個の参照パターン状態のうち重複を除いた各状態について `f(state, pattern, times)` を 1 回ずつ呼ぶ。
+/// 各状態は 1 つのパターンテーブルに属するため、重複しうるのは同一パターンの 4 向きのみ。
 #[inline]
 pub fn for_each_read(patterns: &[u32; FEATURE_COUNT], mut f: impl FnMut(u32, usize, u32)) {
     for (p, four) in patterns.as_chunks::<4>().0.iter().enumerate() {
@@ -160,13 +160,11 @@ pub fn for_each_read(patterns: &[u32; FEATURE_COUNT], mut f: impl FnMut(u32, usi
     }
 }
 
-// The dense layer's loops, each in a function of its own: inlined into the
-// large forward and backward passes, the compiler left them scalar (about
-// 4x slower).
+// 全結合層のループ群はそれぞれ独立した関数に切り出す：
+// 大きな順伝播・逆伝播関数へインライン展開するとコンパイラがスカラ化してしまうため（約 4 倍遅くなる）。
 
-/// `bias + Σ_k inputs[k] · weights[k]`, every unit at once, input by input:
-/// independent sums in vector registers (one sum per unit would chain every
-/// add). `weights` is input-major.
+/// `bias + Σ_k inputs[k] · weights[k]` を全ユニット同時に計算する（`weights` は入力メジャー）。
+/// ユニット単位ではなく入力単位で加算することで、ベクトルレジスタ上で独立した累積和を保てる。
 #[inline(never)]
 fn hidden_sums(
     weights: &[f32],
@@ -183,7 +181,7 @@ fn hidden_sums(
     sums
 }
 
-/// `grads[k][j] += inputs[k] · d[j]`, the hidden weights' gradient.
+/// 隠れ層重みの勾配 `grads[k][j] += inputs[k] · d[j]` を加算する。
 #[inline(never)]
 fn add_outer(grads: &mut [f32], inputs: &[f32; PEN_INPUTS], d: &[f32; PEN_HIDDEN]) {
     for (k, &x) in inputs.iter().enumerate() {
@@ -194,8 +192,7 @@ fn add_outer(grads: &mut [f32], inputs: &[f32; PEN_INPUTS], d: &[f32; PEN_HIDDEN
     }
 }
 
-/// The gradient of each summed embedding: the dot product of the units'
-/// gradients with the input's weights, in eight lanes.
+/// 合算済み埋め込み入力の勾配（入力重みとユニット勾配 `d` の内積）を 8 レーン並列で計算する。
 #[inline(never)]
 fn input_gradients(weights: &[f32], d: &[f32; PEN_HIDDEN]) -> [f32; PATTERN_COUNT * PEN_DIM] {
     let mut out = [0.0; PATTERN_COUNT * PEN_DIM];
@@ -213,6 +210,7 @@ fn input_gradients(weights: &[f32], d: &[f32; PEN_HIDDEN]) -> [f32; PATTERN_COUN
 }
 
 impl PenWeights {
+    /// 指定した学習レコードの平均値で線形バイアスを初期化し、PEN の重み・埋め込みを初期化する。
     pub fn new(records: &[Record], seed: u64, mirror: bool) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut dense = vec![0.0; DENSE];
@@ -220,8 +218,8 @@ impl PenWeights {
         for w in &mut dense[W1..B1] {
             *w = rng.gen_range(-bound..bound);
         }
-        // Units start in the middle of their range; the output starts at 0,
-        // so the model starts as the linear one.
+        // 隠れユニットは活性域 `[0, 1]` の中央（0.5）から開始し、出力層重み・バイアスは 0 とすることで
+        // 学習開始時点では線形モデルと同一の予測値からスタートする。
         dense[B1..W2].fill(0.5);
         Self {
             linear: PhaseWeights::new(records, mirror),
@@ -257,8 +255,7 @@ impl PenWeights {
         for (x, &g) in inputs[GLOBAL_INPUT..].iter_mut().zip(&globals) {
             *x = f32::from(g) / 127.0;
         }
-        // Every unit at once, input by input: independent sums the compiler
-        // keeps in vector registers (one sum per unit would chain every add).
+        // 入力単位で全ユニットを同時更新し、ベクトルレジスタ上で独立した累積和を保つ。
         let pre = hidden_sums(
             &self.dense[W1..B1],
             self.dense[B1..W2].try_into().unwrap(),
@@ -280,14 +277,15 @@ impl PenWeights {
         }
     }
 
+    /// 盤面 `board` に対する線形モデル + PEN の合算予測値（石単位）を返す。
     pub fn predict(&self, board: &Board) -> f32 {
         let pass = self.forward(board);
         self.linear.predict(&pass.features) + pass.output
     }
 
-    /// One pass over `records` in their order. Without `linear`, the linear
-    /// weights stay as they started (only the bias, at the mean label) and
-    /// the network alone fits the positions.
+    /// `records` を先頭から順に 1 パス学習する。
+    /// `linear` が `false` の場合は線形重みを更新せず（ラベル平均バイアスのみ保持）、
+    /// PEN ネットワーク単体で局面を学習する。
     pub fn train(
         &mut self,
         records: &[Record],
@@ -319,10 +317,9 @@ impl PenWeights {
         if in_batch > 0 {
             self.dense_step(&mut grads, in_batch, pen);
         }
-        // The network's mean output into the linear bias, then the linear
-        // tables' means. The mean is of the outputs as each sample saw them
-        // during the pass, not of the final network, so a small mean can
-        // remain (about 0.5 discs on the full data); it saves a pass.
+        // ネットワークの平均出力を線形バイアスへ移し、さらに線形テーブルを中心化する。
+        // ここで用いる平均はパス中に各サンプルが見た出力の平均であり最終重みでの再評価ではないため、
+        // わずかな平均残差（全データで約 0.5 石）が残る場合があるが、1 パス分の計算を節約できる。
         let mean = (outputs / records.len().max(1) as f64) as f32;
         self.dense[B2] -= mean;
         self.linear.add_to_bias(mean);
@@ -346,14 +343,12 @@ impl PenWeights {
         for (d, &sum) in d_inputs.iter_mut().zip(&pass.sums) {
             *d *= inside_slope(sum);
         }
-        // An embedding read more than once (symmetric discs, or a state and
-        // its mirror image sharing one) takes one step with the summed
-        // gradient, as the linear weights do. Every orientation of a
-        // pattern has the same gradient, and a state belongs to one table.
+        // 同一パス内で複数回参照される埋め込み（対称石配置や鏡像共有）は、
+        // 線形重みと同様に勾配を合算して 1 回の AdaGrad ステップとして更新する。
+        // 同一パターンの各向きは同じ勾配を持ち、各状態は 1 つのテーブルのみに属する。
         for_each_read(&pass.features.patterns, |state, p, times| {
             let times = times as f32;
-            // All dimensions at once; a zero gradient leaves its dimension
-            // as it is, as skipping it would.
+            // 全次元をまとめて更新する（勾配 0 の次元は値が変わらないためスキップと同等）。
             let e = &mut self.embeddings[state as usize];
             let g = &d_inputs[p * PEN_DIM..][..PEN_DIM];
             for d in 0..PEN_DIM {
@@ -371,7 +366,7 @@ impl PenWeights {
             *g /= n as f32;
         }
         self.steps += 1;
-        // Decay before the step, as AdamW: w · keep − Δ.
+        // AdamW に準拠し、ステップ前に Decoupled Weight Decay（w · keep − Δ）を適用する。
         let keep = 1.0 - pen.dense_lr * pen.decay;
         let (hidden, rest) = self.dense[W1..B2].split_at_mut(B1 - W1);
         for w in hidden.iter_mut().chain(&mut rest[W2 - B1..]) {
@@ -385,6 +380,7 @@ impl PenWeights {
         grads.fill(0.0);
     }
 
+    /// `records` 上で重みを更新せずに Huber 損失と MAE を計測する。
     pub fn validate(&self, records: &[Record], huber_delta: f32) -> Metrics {
         let mut m = Accumulator::default();
         for r in records {
@@ -393,8 +389,7 @@ impl PenWeights {
         m.finish()
     }
 
-    /// The mean embedding of every pattern table, weighted by use; the
-    /// start value for a table no sample used.
+    /// 各パターンテーブルの参照回数加重平均埋め込みを計算する（未使用テーブルは初期値 `EMBEDDING_INIT`）。
     fn mean_embeddings(&self) -> Vec<[f32; PEN_DIM]> {
         let mut offset = 0;
         pattern_table_sizes()
@@ -421,10 +416,11 @@ impl PenWeights {
             .collect()
     }
 
-    /// Engine weights. `shrink` pulls the linear weights toward their
-    /// table's mean, as `PhaseWeights::export` does, and the embeddings
-    /// toward their table's mean embedding. Mirror images get the values
-    /// they share.
+    /// エンジン用に量子化した線形フェーズ [`PatternPhase`] とネットワーク [`PenPhase`] を生成する。
+    ///
+    /// 出現回数の少ない重みや埋め込みは `shrink` を使って縮小し、過学習を防ぐ：
+    /// 線形重みは [`PhaseWeights::export`] と同様にテーブル平均（0）へ寄せ、
+    /// 埋め込みベクトルは所属テーブルの平均埋め込みへ寄せる。鏡像共有が有効な場合は同じ値を複製する。
     pub fn export(&self, shrink: f32) -> (PatternPhase, PenPhase) {
         let means = self.mean_embeddings();
         let shared = shared_weights();
@@ -460,7 +456,7 @@ impl PenWeights {
                     .clamp(-127.0, 127.0) as i8
             })
         });
-        // The engine's limit on the biases (`PenPhase::new`).
+        // エンジン側のバイアス上限（`PenPhase::new`）に合わせる。
         const BIAS: f32 = (1 << 24) as f32;
         let hidden_bias = std::array::from_fn(|j| {
             (self.dense[B1 + j] * 127.0 * 64.0)

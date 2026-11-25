@@ -1,7 +1,14 @@
+//! YBWC（Young Brothers Wait Concept）による並列探索の分割点（[`Split`]）を実装するモジュールです。
+//!
+//! 最初の有力な手（長男）を探索し終えて探索窓を狭めたあと、残りの兄弟候補を待機中の祖先スレッドや
+//! 空いているワーカースレッドへ分配して並列に探索します。
+//! もし途中でベータカット（これ以上調べる必要がないほどの良い手が見つかること）が発生したら、
+//! 残りの兄弟ジョブを即座に中断して合流します。
 use super::tree::pick_best;
 use super::*;
 
 impl Context {
+    /// 現在のノードを分割点（[`Split`]）として残りの候補手を並列探索します。
     pub(super) fn split(
         &mut self,
         position: Position,
@@ -42,25 +49,26 @@ impl Context {
             ancestors,
             cuts,
         });
-        // Unwind must join descendants too: a queued handoff can otherwise retain
-        // its own ancestor slot with nobody left to execute it.
+        // パニックによるスタックの巻き戻しが起きた場合でも、割り当て済みの子孫ヘルパージョブが完了するまで必ず待機します。
+        // 待機せずに親スレッドが抜けてしまうと、親に仕事を引き渡そうとしていた子孫ジョブが
+        // 実行者不在のまま取り残される恐れがあるためです。
         let _join_on_unwind = JoinOnUnwind {
             point: point.clone(),
             runtime: self.runtime.clone(),
         };
-        // Offer every remaining move but the master's own; only idle threads
-        // accept, so a split takes as many helpers as are free and useful.
+        // マスター自身の 1 手を除いた残りの候補手数分だけヘルパーを募集します。
+        // 空いているスレッドだけが引き受けるため、余剰スレッド数に応じた自然な並列度になります。
         let wanted = parallel::lock(&point.state).candidates.len() - 1;
         let spawned = self.offer_helpers(&point, wanted);
         if spawned != 0 {
             self.stats.splits += 1;
         }
-        // The master searches too, then only accepts descendant work while joining.
+        // マスター自身も候補手を探索し、その後合流待ちの間は自分の配下の子孫ジョブだけを受け入れて手伝います（デッドロック防止）。
         let old_ancestors = std::mem::replace(&mut self.ancestors, point.ancestors.clone());
         let old_cuts = std::mem::replace(&mut self.cuts, point.cuts.clone());
         self.split_loop(&point);
         let join_start = Instant::now();
-        // Jobs this thread runs while joining share its cache.
+        // 合流待ち中に実行する子孫ジョブとスレッドローカル終盤キャッシュを共有するため、一時的にスレッド枠へ返却します。
         let epoch = self.runtime.cache_epoch;
         std::mem::take(&mut self.end_cache).put_thread(epoch);
         point
@@ -76,15 +84,14 @@ impl Context {
         let result = parallel::lock(&point.state).best.clone();
         Ok(result)
     }
-    /// Offers up to `wanted` helper jobs for `point` to idle threads and
-    /// returns how many were taken.
+    /// 分割点 `point` に対して最大 `wanted` 個のヘルパージョブを空きスレッドへ提供し、引き受けられた数を返します。
     fn offer_helpers(&mut self, point: &Arc<Split>, wanted: usize) -> usize {
         let mut spawned = 0;
         for _ in 0..wanted {
             let runtime = self.runtime.clone();
             let task_point = point.clone();
-            // The offering thread is the master before its join or a helper
-            // still counted here, so `active` cannot reach zero in between.
+            // 募集側のスレッド自身（join 前のマスター、または active に計上中のヘルパー）がまだ動作しているため、
+            // 途中で `active` が 0 になることはありません。
             point.active.fetch_add(1, Ordering::AcqRel);
             self.runtime.pending.fetch_add(1, Ordering::AcqRel);
             let job: parallel::Job = Box::new(move || {
@@ -123,6 +130,7 @@ impl Context {
         }
         spawned
     }
+    /// 分割点から未探索の候補手を 1 手ずつ取り出して探索し、最善手・α値・ベータカットを更新するループです。
     fn split_loop(&mut self, point: &Arc<Split>) {
         loop {
             if self.aborted() {
@@ -171,8 +179,7 @@ impl Context {
                 point.helper.wake();
                 break;
             }
-            // Threads that became idle after the split can still take the
-            // remaining moves, like the reference's per-move node_split.
+            // 分割後に他のスレッドが空きになった場合も、残り候補手を引き受けられるよう再度募集します。
             let remaining = state.candidates.len() - state.next;
             drop(state);
             if remaining >= 2 && self.runtime.pool.can_offer(&self.ancestors) {
@@ -181,14 +188,17 @@ impl Context {
         }
     }
 }
+/// 分割点のミューテックスで保護された動的共有状態です。
 struct SplitState {
     candidates: Vec<Candidate>,
     next: usize,
     alpha: i32,
     best: Line,
 }
-// Cloned for every helper job; keep the reference counts off the shared state.
+// すべてのヘルパージョブに `Arc` がクローンされるため、参照カウントの更新が共有状態と同じ
+// キャッシュラインに乗らないよう 128 バイト境界に揃えています。
 #[repr(align(128))]
+/// YBWC の 1 つの並列分割点です。
 struct Split {
     position: Position,
     root_bounds: Option<Arc<Mutex<[root::RootBound; 64]>>>,
@@ -200,11 +210,12 @@ struct Split {
     cut: Arc<Padded<AtomicBool>>,
     helper: Arc<Helper>,
     active: AtomicUsize,
-    /// What the helper jobs of this point inherit: `helper` and `cut` last.
+    /// この分割点のヘルパージョブが引き継ぐリストです（末尾が自身の `helper` と `cut`）。
     ancestors: Vec<Arc<Helper>>,
     cuts: Vec<Arc<Padded<AtomicBool>>>,
 }
 
+/// パニックによるスタック巻き戻し時に子孫ヘルパージョブの完了を待機する RAII ガードです。
 struct JoinOnUnwind {
     point: Arc<Split>,
     runtime: Arc<Runtime>,

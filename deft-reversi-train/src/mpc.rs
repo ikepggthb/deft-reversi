@@ -1,21 +1,18 @@
-//! ProbCut (MPC) calibration for a model.
+//! モデルの Multi-ProbCut（MPC）パラメータを調整（校正）するモジュール。
 //!
-//! ProbCut predicts a deep search value from a shallow one,
-//! `deep ≈ slope * shallow + intercept`, and cuts when the prediction is
-//! beyond the window by `sigma * deviation`. The coefficients depend on how
-//! well the evaluation predicts, so every model needs its own.
+//! ProbCut（MPC）はまず「浅い探索」を行って「深い探索」のスコアを一次式
+//! `deep ≈ slope * shallow + intercept` で予測し、その予測値が探索窓（α-β 窓）から
+//! `sigma * deviation` 以上外れていて見込みがないと判断した手を早めに切り落とす（枝刈りする）手法である。
+//! 予測の傾き・切片・ばらつき（`deviation`）は評価関数モデルの精度によって変わるため、
+//! モデルごとに実測データから校正する必要がある。
 //!
-//! Midgame rules (a search of `depth` plies at `empties` empties) are
-//! measured for depths 4..=`max_depth` and fitted with the reference
-//! regression in empties, depth and shallow depth, which extends them to
-//! every depth. Endgame rules (an exact solve) are fitted as formulas in
-//! empties e and shallow depth s, one per parity of s, from every measured
-//! pair of an exact score and a full-width depth-s value (`ExactFormula`):
-//! slope and intercept linear in (e, s), and
-//! `deviation² = (c0 + c1·s + c2·s²)·(1 − exp(−(e − s)/λ))`. The rules then
-//! hold for any shallow depth within the measured ones; `exact_shallow`
-//! chooses them. The derivation and its checks are in
-//! deft-reversi-notes/benchmarks/2026-11-02-exact-mpc-formula.
+//! - **中盤ルール**（空きマス `empties`、探索深さ `depth`）: 深さ `4..=max_depth` を実際に探索して計測し、
+//!   `(empties, depth, shallow_depth)` を説明変数とする線形回帰モデルを当てはめて全深さへ外挿する。
+//! - **終盤ルール**（完全読み）: 実測した完全読みスコアと浅い深さ `s` の評価値ペアから、
+//!   浅い深さ `s` の偶奇別に空きマス `e` と浅い深さ `s` の数式（[`ExactFormula`]）をフィットする。
+//!   `slope` と `intercept` は `(e, s)` の一次関数、
+//!   `deviation² = (c0 + c1·s + c2·s²)·(1 − exp(−(e − s)/λ))` としてフィッティングする。
+//!   これにより実測範囲内の任意の浅い深さに適用でき、[`exact_shallow`] で適切な浅い深さを選べる。
 use crate::{Result, for_each_parallel, rd};
 use clap::Args;
 use deft_reversi_engine::{
@@ -32,43 +29,46 @@ use std::{
     sync::Mutex,
 };
 
+/// `mpc` サブコマンドの CLI 引数。
 #[derive(Args, Debug)]
 pub struct MpcArgs {
-    /// The model to calibrate (any format the engine reads).
+    /// 校正対象のモデルファイル（エンジンが読み込める任意の形式）。
     #[arg(short, long)]
     model: PathBuf,
-    /// Dataset directory; positions come from `--split`. Not used with
-    /// `--fit-only`.
+    /// データセットディレクトリ（`--split` から局面を取得）。`--fit-only` 時は不要。
     #[arg(long, required_unless_present = "fit_only")]
     data: Option<PathBuf>,
+    /// 局面を取得するデータセット分割名。
     #[arg(long, default_value = "valid")]
     split: String,
-    /// Writes `positions.tsv`, `cells.tsv`, `tails.tsv`, `rules.json` and
-    /// `model.dpr2` (the model with this calibration) here.
+    /// `positions.tsv`, `cells.tsv`, `tails.tsv`, `rules.json`, `model.dpr2`
+    /// （校正パラメータを埋め込んだモデル）の出力先ディレクトリ。
     #[arg(long)]
     out: PathBuf,
-    /// Positions per empties count.
+    /// 空きマス数ごとの計測局面数。
     #[arg(long, default_value_t = 64)]
     positions: usize,
-    /// Empties counts of the positions, inclusive.
+    /// 計測対象の空きマス数範囲（両端含む）。
     #[arg(long, default_value = "12..=52")]
     empties: EmptiesRange,
-    /// Deepest search measured (also capped at empties - 1).
+    /// 実測する最大探索深さ（`empties - 1` でも上限制限される）。
     #[arg(long, default_value_t = 14)]
     max_depth: u8,
-    /// Empties counts whose positions are also solved exactly, inclusive.
+    /// 完全読みも併せて実測する空きマス数範囲（両端含む）。
     #[arg(long, default_value = "12..=24")]
     exact_empties: EmptiesRange,
-    /// Fit the rules again from `--out/positions.tsv` without searching.
+    /// 探索を行わず、既存の `--out/positions.tsv` からルールのみを再フィッティングする。
     #[arg(long)]
     fit_only: bool,
+    /// 局面抽出の乱数シード。
     #[arg(long, default_value_t = 1)]
     seed: u64,
+    /// 並列計測スレッド数。
     #[arg(short, long)]
     threads: Option<usize>,
 }
 
-/// Empties counts `a..=b` (also `a..b`, inclusive) or `a`, within 1..=60.
+/// 空きマス数範囲 `a..=b`（または両端含む `a..b`、単一値 `a`）。有効範囲は `1..=60`。
 #[derive(Clone, Copy, Debug)]
 pub struct EmptiesRange {
     first: u8,
@@ -95,15 +95,14 @@ impl std::str::FromStr for EmptiesRange {
     }
 }
 
-/// The shallow depth for each midgame depth, from the reference engine.
+/// 参照エンジンに基づく、各中盤深さに対応する浅い探索深さテーブル。
 const SHALLOW_BY_DEPTH: [u8; 61] = [
     0, 0, 0, 0, 0, 1, 2, 1, 2, 1, 2, 3, 4, 3, 4, 5, 6, 5, 6, 5, 6, 5, 6, 5, 6, 7, 8, 7, 8, 7, 8, 7,
     8, 7, 8, 7, 8, 7, 8, 7, 8, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9,
     10,
 ];
 
-/// The shallow depth for an exact solve, chosen by FFO 40-59 solve times
-/// (deft-reversi-notes/benchmarks/2026-11-02-exact-mpc-formula).
+/// FFO 40-59 の解決時間ベンチマークに基づいて選定された、終盤完全読み用の浅い探索深さ。
 fn exact_shallow(empties: u8) -> u8 {
     match empties {
         ..=15 => 1,
@@ -114,7 +113,7 @@ fn exact_shallow(empties: u8) -> u8 {
     }
 }
 
-/// One measured pair of search values.
+/// 実測された浅い探索と深い探索の評価値ペア 1 件。
 #[derive(Clone, Copy, Debug)]
 struct Sample {
     exact: bool,
@@ -125,7 +124,7 @@ struct Sample {
     deep: i32,
 }
 
-/// A ProbCut rule, as written to `rules.json`.
+/// `rules.json` に書き出される 1 件の ProbCut ルール。
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Rule {
     pub exact: bool,
@@ -137,9 +136,7 @@ pub struct Rule {
     pub deviation: f64,
 }
 
-/// The deviation multiples of the engine's selective stages
-/// (`ProbCutSigmas::STAGES`, least accurate first), as written to
-/// `rules.json`.
+/// `rules.json` に書き出されるエンジンの選択性ステージ（[`ProbCutSigmas::STAGES`]、精度低い順）ごとの偏差倍率。
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Sigmas {
     pub midgame: [f64; 5],
@@ -164,9 +161,8 @@ impl From<Sigmas> for ProbCutSigmas {
     }
 }
 
-/// `rules.json`: what `Engine::set_probcut_calibration` takes. `stages`
-/// names the percent of each multiple so that a file fitted for another
-/// list of stages is refused.
+/// `rules.json` の全体構造。`stages` に各倍率の信頼確率（%）を記録し、
+/// 異なるステージ構成向けに校正されたファイルの誤読込を防止する。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Calibration {
     pub stages: Vec<u8>,
@@ -174,18 +170,17 @@ pub struct Calibration {
     pub rules: Vec<Rule>,
 }
 
-/// The percents of the engine's selective stages.
+/// エンジンの各選択性ステージの信頼確率（%）。
 fn stage_percents() -> Vec<u8> {
     ProbCutSigmas::STAGES.iter().map(|s| s.percent()).collect()
 }
 
-/// The probabilities of the engine's selective stages.
+/// エンジンの各選択性ステージの信頼確率（0..=1）。
 fn stage_probabilities() -> [f64; 5] {
     ProbCutSigmas::STAGES.map(|s| f64::from(s.percent()) / 100.0)
 }
 
-/// The quantiles of sorted `values` at the stage probabilities, made
-/// non-decreasing.
+/// ソート済み `values` から各ステージ確率の分位点を求め、単調非減少に補正する。
 fn stage_quantiles(sorted: &[f64]) -> [f64; 5] {
     let mut t = stage_probabilities().map(|p| quantile(sorted, p));
     for i in 1..t.len() {
@@ -208,23 +203,24 @@ impl From<Rule> for ProbCutRule {
     }
 }
 
+/// `pack` サブコマンドの CLI 引数。
 #[derive(Args, Debug)]
 pub struct PackArgs {
-    /// The model whose weights to keep (any DPR2 version).
+    /// 重みを保持する入力モデル（任意の DPR2 バージョン）。
     #[arg(short, long)]
     model: PathBuf,
-    /// The calibration written by `mpc` (`rules.json`).
+    /// `mpc` サブコマンドが生成した校正ファイル（`rules.json`）。
     #[arg(long, conflicts_with = "legacy_main")]
     rules: Option<PathBuf>,
-    /// The legacy main-branch rules, for models converted from main.
+    /// main ブランチ由来のレガシールールを埋め込む（旧モデル変換用）。
     #[arg(long)]
     legacy_main: bool,
-    /// The model with the calibration (DPR2 version 2).
+    /// 校正パラメータ付きモデルの出力パス（DPR2 version 2）。
     #[arg(short, long)]
     out: PathBuf,
 }
 
-/// Writes a model with its ProbCut calibration in one file.
+/// モデルと ProbCut 校正パラメータを 1 ファイルに統合して書き出す。
 pub fn pack(args: PackArgs) -> Result<()> {
     let model = Model::weights_from_file(&args.model)?;
     let model = match (&args.rules, args.legacy_main) {
@@ -263,6 +259,7 @@ pub fn pack(args: PackArgs) -> Result<()> {
     Ok(())
 }
 
+/// `mpc` サブコマンドを実行し、局面探索計測・回帰フィッティング・テール倍率算出・モデル書き出しを行う。
 pub fn run(args: MpcArgs) -> Result<()> {
     fs::create_dir_all(&args.out)?;
     if args.max_depth < 4 || args.max_depth > 60 {
@@ -307,10 +304,9 @@ pub fn run(args: MpcArgs) -> Result<()> {
     Ok(())
 }
 
-/// The search values of one position: full-width searches of depth
-/// `0..values.len()` and, when solved, the exact score. `index` is the
-/// position's place in the seeded shuffle of its empties count, so a run
-/// with more `--positions` extends the same selection.
+/// 1 局面分の計測結果：深さ `0..values.len()` の全幅探索値および（完全読み対象なら）完全読みスコア。
+/// `index` は空きマス数ごとのシード付きシャッフル順における位置であり、
+/// `--positions` を増やして再実行した際に既存の選択を拡張できるようになっている。
 #[derive(Clone, Debug, PartialEq)]
 struct Position {
     empties: u8,
@@ -320,7 +316,7 @@ struct Position {
     values: Vec<i32>,
 }
 
-/// What a positions file was measured with; resuming requires the same.
+/// 計測条件ヘッダ行を生成する（中断後の再開時に同一条件であることを検証するため）。
 fn settings_line(args: &MpcArgs) -> String {
     format!(
         "# split={} seed={} max_depth={} exact_empties={}..={} model_bytes={}",
@@ -333,8 +329,7 @@ fn settings_line(args: &MpcArgs) -> String {
     )
 }
 
-/// Measures every selected position not yet in `path`, appending each job's
-/// positions as it finishes, so an interrupted run resumes where it stopped.
+/// `path` に未計測の選択局面をすべて計測し、ジョブ完了ごとに追記する（中断時のレジューム対応）。
 fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
     let settings = settings_line(args);
     let done: HashSet<(u8, usize)> = if path.exists() {
@@ -362,8 +357,7 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
             .map(|r| r.board)
             .filter(|b| !b.is_terminal() && !b.must_pass())
             .collect();
-        // A shuffle per empties count, so the selection of one count does
-        // not depend on the others.
+        // 空きマス数ごとに独立してシャッフルし、ある空きマス数の選択が他に影響しないようにする。
         let mut random = StdRng::seed_from_u64(args.seed ^ (u64::from(empties) << 32));
         boards.shuffle(&mut random);
         boards.truncate(args.positions);
@@ -377,14 +371,14 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
             .enumerate()
             .filter(|&(i, _)| !done.contains(&(empties, i)))
             .collect();
-        // Small jobs keep the threads busy until the end.
+        // 小さなチャンクに分割し、終盤まで全スレッドが遊ばないようにする。
         for chunk in todo.chunks(4) {
             jobs.push((empties, chunk.to_vec()));
         }
     }
     let solved =
         |empties: u8| (args.exact_empties.first..=args.exact_empties.last).contains(&empties);
-    // The slowest jobs first: exact solves of many empties, then deep searches.
+    // 最も重いジョブ（空きマスの多い完全読み → 深い探索）から先に投入する。
     jobs.sort_by_key(|&(empties, _)| std::cmp::Reverse((solved(empties), empties)));
     println!(
         "{} positions already measured, {} jobs to go",
@@ -396,10 +390,9 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
     let threads = args
         .threads
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
-    // One engine per thread, kept across jobs and positions: a table entry
-    // only cuts a search of the same depth and selectivity, so what other
-    // positions left in it does not change a value, and a fresh 512 MiB
-    // table per position would cost more than many searches.
+    // スレッドごとに 1 つの Engine をプールして使い回す：
+    // 置換表エントリは同一深さ・同一選択性の探索のみをカットするため他局面の残留エントリは結果を変えず、
+    // 局面ごとに 512 MiB の置換表を確保し直すコストを避けられる。
     let engines: Mutex<Vec<Engine>> = Mutex::new(Vec::new());
     for_each_parallel(&jobs, threads, |(empties, boards)| {
         let empties = *empties;
@@ -449,8 +442,8 @@ fn measure(args: &MpcArgs, path: &Path) -> Result<()> {
     })
 }
 
-/// The pairs the reference rules use: each midgame depth with its table
-/// shallow depth, and each exact score with the main-branch shallow depth.
+/// 参照ルールが用いる `(浅い探索値, 深い探索値)` ペアを抽出する：
+/// 中盤深さはテーブル対応する浅い深さ、完全読みは [`exact_shallow`] で決まる浅い深さと組にする。
 fn pairs(positions: &[Position]) -> Vec<Sample> {
     let mut samples = Vec::new();
     for p in positions {
@@ -499,9 +492,8 @@ fn write_position(text: &mut String, p: &Position) -> std::fmt::Result {
     )
 }
 
-/// The settings line and the positions, in a fixed order whatever the
-/// order the jobs finished in. A torn last line (an interrupted write) is
-/// skipped.
+/// 設定行と局面データを（ジョブ完了順に依存しない固定順で）読み込む。
+/// 書き込み中断による不完全な最終行は読み飛ばす。
 fn read_positions(path: &Path) -> Result<(String, Vec<Position>)> {
     let text = fs::read_to_string(path)?;
     let mut lines = text.lines();
@@ -554,8 +546,7 @@ fn parse_position(line: &str) -> Option<Position> {
     })
 }
 
-/// Least-squares line through one cell's samples and the standard deviation
-/// of its residuals.
+/// 1 セル（同一 `(exact, empties, depth)`）のサンプル群に対する最小二乗直線と残差標準偏差。
 #[derive(Clone, Copy, Debug)]
 struct Cell {
     exact: bool,
@@ -605,7 +596,7 @@ fn cell(samples: &[Sample]) -> Option<Cell> {
     })
 }
 
-/// Least squares `x · β ≈ y` by the normal equations.
+/// 正規方程式をガウス・ジョルダン法で解き、最小二乗解 `x · β ≈ y` を求める。
 fn least_squares(x: &[Vec<f64>], y: &[f64]) -> Option<Vec<f64>> {
     let k = x[0].len();
     let mut a = vec![vec![0.0; k + 1]; k];
@@ -645,7 +636,7 @@ fn fit(samples: &[Sample], formula: &ExactFormula) -> Result<(Vec<Rule>, String)
     if midgame.len() < 8 || exact.is_empty() {
         return Err("too few measured cells to fit".into());
     }
-    // Midgame: the reference regression in (empties, depth, shallow depth).
+    // 中盤：`(empties, depth, shallow_depth)` に対する参照線形回帰。
     let features = |e: f64, d: f64, s: f64| vec![1.0, e, d, s];
     let x: Vec<Vec<f64>> = midgame
         .iter()
@@ -659,7 +650,7 @@ fn fit(samples: &[Sample], formula: &ExactFormula) -> Result<(Vec<Rule>, String)
     let intercept = coefficients(|c| c.intercept)?;
     let deviation = coefficients(|c| c.deviation)?;
     let dot = |b: &[f64], f: &[f64]| b.iter().zip(f).map(|(b, f)| b * f).sum::<f64>();
-    // Keep extrapolated deviations within the measured range.
+    // 外挿された標準偏差が実測範囲から極端に外れないようクランプする。
     let (low, high) = midgame.iter().fold((f64::MAX, 0.0f64), |(lo, hi), c| {
         (lo.min(c.deviation), hi.max(c.deviation))
     });
@@ -718,7 +709,7 @@ fn fit(samples: &[Sample], formula: &ExactFormula) -> Result<(Vec<Rule>, String)
     Ok((rules, report))
 }
 
-/// The `p` quantile of sorted values, interpolating between neighbours.
+/// ソート済み配列 `sorted` の `p` 分位点を隣接要素間の線形補間で求める。
 fn quantile(sorted: &[f64], p: f64) -> f64 {
     let x = p * (sorted.len() - 1) as f64;
     let (i, f) = (x.floor() as usize, x.fract());
@@ -726,11 +717,11 @@ fn quantile(sorted: &[f64], p: f64) -> f64 {
     sorted[i] * (1.0 - f) + next * f
 }
 
-/// The multiples of the deviation at which each stage really cuts with its
-/// probability: the quantiles of |deep - predicted| / deviation over the
-/// measured pairs, for midgame and exact rules separately. The normal
-/// multiples assume normal errors; the measured errors have heavier tails.
-/// Also reports how often the errors pass each multiple, by empties band.
+/// 各選択性ステージで所定の確率通りに枝刈りを行うための偏差倍率（`sigma`）を求める。
+///
+/// 実際の探索誤差は正規分布よりも裾が重いため、理論値ではなく実測ペア上の標準化残差
+/// `|deep - predicted| / deviation` の分位点を中盤・終盤別に算出する。
+/// あわせて、空きマス帯域ごとの超過率レポートも生成する。
 fn tail_sigmas(
     samples: &[Sample],
     rules: &[Rule],
@@ -800,17 +791,15 @@ fn tail_sigmas(
     Ok((sigmas, report))
 }
 
-/// Endgame rules as formulas in empties e and shallow depth s, one per
-/// parity of s: the value of an odd-depth search carries the uncancelled
-/// bias of the side to move picking its best noisy child, and its slope in
-/// s runs the other way from even depths.
+/// 空きマス `e` と浅い深さ `s` による終盤完全読みルール式（`s` の偶奇別）。
+/// 奇数深さの探索値は「手番側が評価誤差の乗った最善子ノードを選ぶ」ことで生じる未相殺のバイアスを含むため、
+/// 偶数深さとは `s` に対する傾きの向きが逆になる。そのため偶奇で別の式をフィットする。
 #[derive(Clone, Copy, Debug)]
 struct ExactFormula {
     parity: [ParityFit; 2],
-    /// The largest measured empties count; slope and intercept stay at its
-    /// value beyond it.
+    /// 実測した最大の空きマス数。これより大きい空きマスでは傾き・切片をこの値で頭打ちにする。
     last_empties: u8,
-    /// The deepest measured shallow search.
+    /// 実測した最大の浅い深さ。
     max_shallow: u8,
 }
 
@@ -818,13 +807,12 @@ struct ExactFormula {
 struct ParityFit {
     slope: [f64; 3],
     intercept: [f64; 3],
-    /// `deviation² = (c0 + c1·s + c2·s²)·(1 − exp(−(e − s)/lambda))`.
+    /// `deviation² = (c0 + c1·s + c2·s²)·(1 − exp(−(e − s)/lambda))`。
     deviation: [f64; 3],
     lambda: f64,
 }
 
-/// Cells use remaining depths of at least this many plies, the range a
-/// rule can need.
+/// ルールが必要としうる最小の残り深さ（プライ）。これ未満のセルは除外する。
 const EXACT_MIN_REMAINING: u8 = 4;
 
 impl ParityFit {
@@ -846,7 +834,7 @@ fn saturation(remaining: f64, lambda: f64) -> f64 {
     1.0 - (-remaining / lambda).exp()
 }
 
-/// `x · β ≈ y` by least squares, each row weighted by `w`.
+/// 各行に重み `w` を付けた重み付き最小二乗法 `x · β ≈ y`。
 fn weighted_least_squares(x: &[Vec<f64>], y: &[f64], w: &[f64]) -> Option<Vec<f64>> {
     let xs: Vec<Vec<f64>> = x
         .iter()
@@ -857,8 +845,8 @@ fn weighted_least_squares(x: &[Vec<f64>], y: &[f64], w: &[f64]) -> Option<Vec<f6
     least_squares(&xs, &ys)
 }
 
-/// The regression of the exact scores on the depth-s values, for every
-/// solved empties count and every measured s with enough remaining depth.
+/// 完全読み済みの全空きマス数および十分な残り深さを持つ全浅い深さ `s` について、
+/// 完全読みスコアを深さ `s` 評価値に回帰した [`Cell`] 一覧を生成する。
 fn exact_cells(positions: &[Position]) -> Vec<Cell> {
     let mut by_empties: Vec<(u8, Vec<&Position>)> = Vec::new();
     for p in positions.iter().filter(|p| p.exact.is_some()) {
@@ -917,8 +905,8 @@ impl ExactFormula {
             };
             fit.slope = linear(|c| c.slope)?;
             fit.intercept = linear(|c| c.intercept)?;
-            // λ by a geometric grid; the coefficients by least squares on
-            // deviation² for each λ, judged by the error in deviation.
+            // λ は対数等間隔グリッドで探索し、各 λ に対して deviation² の最小二乗係数を求めた上で
+            // 実際の偏差 `deviation` の二乗誤差が最小となる λ を採用する。
             let mut best: Option<(f64, f64, [f64; 3])> = None;
             for i in 0..300 {
                 let lambda = 0.3 * (200.0f64).powf(f64::from(i) / 299.0);
@@ -962,9 +950,8 @@ impl ExactFormula {
         })
     }
 
-    /// The rule for an exact solve at `empties` with a depth-`shallow`
-    /// test, the depth kept within the measured ones and the remaining
-    /// depth (same parity).
+    /// 空きマス `empties`・浅い深さ `shallow` の完全読みルールを生成する。
+    /// 浅い深さは同じ偶奇を保ちつつ、実測範囲および最小残り深さ制約内に収まるよう調整する。
     fn rule(&self, empties: u8, shallow: u8) -> Rule {
         let mut s = shallow;
         while s > self.max_shallow || s + EXACT_MIN_REMAINING > empties {
@@ -984,9 +971,8 @@ impl ExactFormula {
         }
     }
 
-    /// The deviation multiples of the exact stages: quantiles of |z| over
-    /// every measured pair, whatever its shallow depth, so they hold for
-    /// any table.
+    /// 終盤ステージの偏差倍率を算出する：任意の浅い深さテーブルに適用できるよう、
+    /// すべての実測 `(empties, shallow_depth)` ペア上の標準化残差 `|z|` から分位点を求める。
     fn multiples(&self, positions: &[Position]) -> Result<[f64; 5]> {
         let mut z = Vec::new();
         for p in positions {

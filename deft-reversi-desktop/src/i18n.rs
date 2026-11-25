@@ -1,13 +1,19 @@
-//! UI strings in Japanese and English. Views read every string from here.
+//! UI 文言の多言語（日本語 / 英語）定義を提供するモジュール。
+//!
+//! すべてのビューはこのモジュールの [`Strings`] を通じて表示テキストを取得する。
 use crate::domain::Preset;
 use deft_reversi_engine::Color;
 
+/// サポートする表示言語。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
+    /// 日本語。
     Ja,
+    /// 英語。
     En,
 }
 
+/// 選択中の言語に対応する UI 文言テーブル。
 pub struct Strings {
     pub new_game: &'static str,
     pub pass: &'static str,
@@ -183,7 +189,7 @@ pub struct Strings {
 }
 
 impl Strings {
-    /// The number of the move about to be played.
+    /// これから打たれる手数（例: `"5手目"` / `"Move 5"`）を返す。
     pub fn move_number(&self, n: usize) -> String {
         match self.lang {
             Lang::Ja => format!("{n}手目"),
@@ -238,7 +244,7 @@ impl Strings {
         }
     }
 
-    /// "so many moves ahead"
+    /// 先読みの深さ（例: `"12手読み"` / `"12 moves ahead"`）を返す。
     pub fn depth(&self, depth: u8) -> String {
         match self.lang {
             Lang::Ja => format!("{depth}手読み"),
@@ -288,7 +294,7 @@ impl Strings {
         }
     }
 
-    /// The side to move cannot, so the other one starts.
+    /// 合法手がなく相手番から対局が始まる場合の案内文を返す。
     pub fn pass_start(&self, side: Color) -> String {
         let current = self.color(side);
         let other = self.color(side.opponent());
@@ -298,7 +304,7 @@ impl Strings {
         }
     }
 
-    /// A depth in a few characters, under a value on the board.
+    /// 盤面上の評価値の下に表示する短い深さ表記（例: `"12手"` / `"d12"`）を返す。
     pub fn depth_mark(&self, depth: u8) -> String {
         match self.lang {
             Lang::Ja => format!("{depth}手"),
@@ -310,7 +316,7 @@ impl Strings {
         self.moves(usize::from(plies))
     }
 
-    /// Positions in the work, how many this run added, and its seconds.
+    /// Book 生成の進捗行（総局面数・今回の追加数・経過時間）を整形する。
     pub fn book_progress(&self, positions: usize, added: u64, seconds: u64) -> String {
         let (mins, secs) = (seconds / 60, seconds % 60);
         match self.lang {
@@ -333,7 +339,8 @@ impl Strings {
         }
     }
 
-    /// The DPR2 version 3 adds the pattern embedding network.
+    /// 評価モデルのフォーマット種別と MPC（ProbCut 枝刈り）較正の有無を説明する文字列を返す。
+    /// DPR2 フォーマット v3 以降ではパターン評価に加えて埋め込みネットワークが使用される。
     pub fn model_format(&self, format: u32, calibrated: bool) -> String {
         let (kind, mpc) = match self.lang {
             Lang::Ja => (

@@ -1,5 +1,7 @@
-//! `settings.json`. Unknown fields are ignored and missing ones take their
-//! defaults, so older and newer versions read each other's files.
+//! 設定ファイル（`settings.json`）の読み書きを行うモジュール。
+//!
+//! `#[serde(default)]` を付けることで、知らない項目は無視し、足りない項目には既定値を補うようにしている。
+//! これにより、アプリをアップデートしたりダウングレードしたりしても設定ファイルをそのまま読み込める。
 use super::atomic_file;
 use crate::{
     app::AnalysisSettings,
@@ -17,56 +19,83 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// `settings.json` のスキーマバージョン。
 const SCHEMA_VERSION: u32 = 1;
+/// 設定ファイルの読み込みサイズ上限（64 KiB）。
 const MAX_BYTES: u64 = 64 * 1024;
 
+/// `settings.json` v1 形式の JSON ルート構造体。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SettingsV1 {
+    /// スキーマバージョン。
     pub schema_version: u32,
+    /// 表示言語（`"ja"` または `"en"`）。
     pub language: String,
+    /// 合法手マーカーの表示有無。
     pub show_legal_moves: bool,
+    /// 探索スレッド数。
     pub threads: usize,
+    /// 置換表（計算済み局面のキャッシュ）に割り当てるメモリサイズ（MiB）。
     pub tt_mib: usize,
+    /// 解析時の探索レベル。
+    ///
+    /// 旧バージョンのファイルには `analysis_time_ms` / `batch_time_ms` が含まれる場合があるが、
+    /// 現在はレベル指定のみを使用するため無視される。
     pub analysis_level: u8,
-    /// Older files also carry `analysis_time_ms` and `batch_time_ms`, which
-    /// are ignored: analysis is set by level only.
+    /// 悪手マークの損失石数閾値。
     pub loss_threshold: i32,
+    /// 解析中に候補手の評価値を盤面に表示するか。
     pub candidate_values: bool,
-    /// "system", "light" or "dark".
+    /// テーマ設定（`"system"`, `"light"`, `"dark"`）。
     pub theme: String,
-    /// "normal", "short" or "off".
+    /// 反転アニメーション設定（`"normal"`, `"short"`, `"off"`）。
     pub animation: String,
+    /// 効果音の有効/無効。
     pub sound: bool,
+    /// 効果音の音量（0〜100）。
     pub volume: u8,
+    /// 前回終了時のウィンドウ幅（論理ピクセル）。
     pub window_width: Option<u32>,
+    /// 前回終了時のウィンドウ高さ（論理ピクセル）。
     pub window_height: Option<u32>,
+    /// 新規対局ダイアログの前回入力値。
     pub new_game: NewGameV1,
-    /// Quarter turns clockwise and whether the board is mirrored.
+    /// 盤面の時計回り 90 度回転回数と左右反転フラグ。
     pub board_turns: u8,
+    /// 盤面の左右反転フラグ。
     pub board_mirrored: bool,
-    /// The opening book file and its use by the AI.
+    /// Book（`.dbook`）のファイルパスと使用フラグ。
     pub book_path: Option<String>,
+    /// Book の有効/無効。
     pub book_enabled: bool,
+    /// 評価値グラフ領域の高さ（論理ピクセル）。
     pub graph_height: u16,
 }
 
+/// 新規対局フォームの永続化表現。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NewGameV1 {
+    /// 黒番の設定。
     pub black: SideV1,
+    /// 白番の設定。
     pub white: SideV1,
 }
 
+/// 片側プレイヤー設定の永続化表現。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SideV1 {
+    /// AI 担当フラグ。
     pub ai: bool,
-    /// A preset's name, or "manual".
+    /// プリセット名または `"manual"`。
     pub strength: String,
-    /// "level" or "time".
+    /// 手動時のモード（`"level"` または `"time"`）。
     pub manual: String,
+    /// 手動時の探索レベル。
     pub level: u8,
+    /// 手動時の思考時間制限（ミリ秒）。
     pub time_ms: u64,
 }
 
@@ -89,7 +118,7 @@ impl From<SideForm> for SideV1 {
 }
 
 impl SideV1 {
-    /// Anything unknown falls back to the default side.
+    /// 不明な値や範囲外の値が含まれていた場合は `default` の該当フィールドへフォールバックする。
     fn to_form(&self, default: SideForm) -> SideForm {
         let choice = if self.strength == "manual" {
             AiChoice::Manual
@@ -185,7 +214,7 @@ impl From<Settings> for SettingsV1 {
 }
 
 impl SettingsV1 {
-    /// Values out of range take their defaults.
+    /// 範囲外の値をクランプまたは既定値へフォールバックさせて [`Settings`] に変換する。
     pub fn to_settings(&self) -> Settings {
         let default = Settings::default();
         let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -229,7 +258,7 @@ impl SettingsV1 {
             },
             sound: self.sound,
             volume: self.volume.min(100),
-            // A size the screen cannot have is dropped.
+            // 画面に収まらない異常なウィンドウサイズは破棄する。
             window_size: self
                 .window_width
                 .zip(self.window_height)
@@ -254,13 +283,16 @@ impl SettingsV1 {
         }
     }
 
+    /// 整形済み JSON 文字列へシリアライズする。
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("settings always serialize")
     }
 }
 
-/// A missing file gives the defaults; a broken one is set aside and also
-/// gives the defaults, so the app always starts.
+/// 設定ファイルを読み込む。
+///
+/// ファイルが存在しない場合や、本体・バックアップともに破損していた場合は
+/// 既定値（[`Settings::default`]）を返し、アプリが必ず起動できるようにする。
 pub fn load(path: &Path) -> Settings {
     if !path.exists() && !atomic_file::backup_path(path).exists() {
         return Settings::default();

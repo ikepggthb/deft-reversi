@@ -1,25 +1,34 @@
+//! 初期局面から指定手数までの合法手をすべて展開し、末端局面数を数える `perft` コマンド。
+//!
+//! エンジンの着手生成と局面遷移が正しいかを検証したり、探索速度の目安を測ったりするために使う。
+
 use crate::display;
 use clap::Args;
 use deft_reversi_engine::{Action, Position};
 use std::time::Instant;
 
+/// `perft` サブコマンドの引数。
 #[derive(Args, Debug)]
 pub struct PerftArgs {
-    /// Depth in plies.
+    /// 展開する深さ（手数＝ply）。
     depth: u8,
-    /// Count a forced pass as a ply and a leaf, as the engine's perft does.
+    /// 強制パスも 1 手および 1 末端として数える（エンジンの perft と同じ数え方）。
     #[arg(long)]
     count_pass: bool,
 }
 
+/// `perft` の計測結果。
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Counts {
+    /// 指定深さに到達した局面数と、その前に終局した局面数の合計。
     pub leaves: u64,
+    /// 展開中に発生した強制パスの回数。
     pub passes: u64,
-    /// Finished games before the last ply; each is also a leaf.
+    /// 指定深さに達する前に終局した局面数（それぞれ `leaves` にも含まれる）。
     pub ends: u64,
 }
 
+/// `position` から残り `depth` 手まで合法手を展開し、結果を `counts` に加算する。
 pub fn count(position: Position, depth: u8, count_pass: bool, counts: &mut Counts) {
     if depth == 0 {
         counts.leaves += 1;
@@ -29,6 +38,7 @@ pub fn count(position: Position, depth: u8, count_pass: bool, counts: &mut Count
     } else if position.must_pass() {
         counts.passes += 1;
         let next = position.play(Action::Pass).unwrap();
+        // `count_pass` が真のときだけ強制パスで残り手数を 1 減らす。
         count(next, depth - u8::from(count_pass), count_pass, counts);
     } else {
         for square in position.legal_moves() {
@@ -42,6 +52,7 @@ pub fn count(position: Position, depth: u8, count_pass: bool, counts: &mut Count
     }
 }
 
+/// 深さ 1 から `args.depth` まで順に `perft` を実行し、結果を表形式で標準出力へ表示する。
 pub fn run(args: PerftArgs) {
     eprintln!("{}", crate::settings::versions());
     println!(

@@ -1,5 +1,9 @@
-//! The controller: commands in, state changes and effects out. It does not
-//! touch GPUI or threads, so it is tested without a window or an engine.
+//! アプリケーションの状態遷移を担う純粋コントローラ層。
+//!
+//! ユーザー操作（[`Command`]）やエンジンからの通知（[`EngineEvent`]）を受け取り、
+//! 棋譜・対局・解析・検討モード・AI ログの状態を更新する。
+//! 探索の開始や効果音再生などの外部への働きかけは直接実行せず、[`Effect`] のリストとして返すため、
+//! GPUI のウィンドウやバックグラウンドスレッドに依存せず単体テストができる。
 use crate::{
     domain::{GameInfo, Grouping, History, Player, Strength, editor},
     persistence::record::LoadedGame,
@@ -9,10 +13,12 @@ use deft_reversi_engine::{Action, Color, Position, Square};
 mod analysis;
 pub use analysis::{AnalysisSettings, Analyzer};
 
+/// 新規対局の開始パラメータ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NewGame {
-    /// Black, then White.
+    /// 黒番（0）・白番（1）のプレイヤー設定。
     pub players: [Player; 2],
+    /// 開始局面。
     pub start: Position,
 }
 
@@ -25,125 +31,167 @@ impl Default for NewGame {
     }
 }
 
+/// UI やユーザー操作からコントローラへ送られるコマンド。
 #[derive(Clone, Debug)]
 pub enum Command {
+    /// 新しい対局を開始する。
     NewGame(NewGame),
+    /// 指定マスに着手する。
     Play(Square),
+    /// 直前の Undo 単位を取り消す。
     Undo,
+    /// 取り消した手順をやり直す。
     Redo,
-    /// Moves back (negative) or forward through the record.
+    /// 棋譜カーソルを前（負）または後（正）へ移動する。
     Step(isize),
+    /// 棋譜の先頭へ移動する。
     First,
+    /// 棋譜の末尾へ移動する。
     Last,
-    /// Shows the position after that many actions.
+    /// 指定手数目の局面へ移動する。
     GoTo(usize),
+    /// 対局を再開する（強制パス位置にいる場合はパスを進めてから AI 思考を開始する）。
     Resume,
+    /// 対局を一時停止し、実行中の AI 思考をキャンセルする。
     Pause,
-    /// One AI move while paused.
+    /// 一時停止中に AI へ 1 手だけ打たせる。
     StepAi,
-    /// Plays the AI's best move so far.
+    /// 思考中の AI に現時点の最善手で即座に着手させる。
     MoveNow,
+    /// エンジンのスレッド数・置換表サイズを変更する。
     SetResources(Resources),
-    /// A checked record replaces the game; it opens paused.
+    /// 検証済みの棋譜を読み込んで現在の対局を置き換える（一時停止状態で開く）。
     Load(Box<LoadedGame>),
-    /// Analysis mode pauses the game and searches the shown position.
+    /// 解析モードを切り替える（オン時は表示中局面の解析をバックグラウンドで開始する）。
     SetAnalysis(bool),
-    /// Study mode keeps the record aside: moves played meanwhile make a
-    /// line of their own, and leaving it brings the record back.
+    /// 検討モードを切り替える。
+    ///
+    /// 検討中は本譜を退避し、盤上で自由に別変化を試せる（解除すると本譜に戻る）。
     SetStudy(bool),
+    /// 表示中局面の完全解析（選択率 100% 終局読み）を実行する。
     AnalyzeExact,
-    /// Searches the positions of the record not yet read at the level,
-    /// from the end; with `redo`, every one that is not solved exactly.
+    /// 棋譜全体の未解析局面を末尾から遡って一括解析する。`redo` が `true` なら完全解析済み以外を再解析する。
     AnalyzeRecord {
+        /// 完全解析済み以外の局面も再解析する場合は `true`。
         redo: bool,
     },
-    /// Stops the analysis search, keeping what it found, and the batch.
+    /// 実行中の局面解析・一括解析を途中までの結果を保持したまま停止する。
     StopAnalysis,
-    /// Reads the shown position again from the lowest level.
+    /// 表示中局面のキャッシュを破棄し、最低レベルから再解析する。
     Reanalyze,
+    /// 解析レベル・悪手閾値の設定変更を反映する。
     SetAnalysisSettings(AnalysisSettings),
-    /// Whether AI moves may come from the opening book.
+    /// AI の対局で Book を使用するかを切り替える。
     SetBook(bool),
-    /// The engine grows a book; it is free again on `EngineEvent::BookDone`.
+    /// Book 生成のためにエンジンを占有状態にする（[`EngineEvent::BookDone`] で解除される）。
     GenerateBook,
 }
 
+/// コントローラが再生を要求する効果音の種類。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sound {
+    /// 着手音。
     Place,
+    /// パス音。
     Pass,
+    /// 終局音。
     GameOver,
 }
 
-/// Work for the services; sounds are played from P6.
+/// コントローラがサービス層へ実行を依頼する副作用。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
-    StartSearch { job: SearchJob },
+    /// 探索ジョブを開始する。
+    StartSearch {
+        /// 開始する探索ジョブ。
+        job: SearchJob,
+    },
+    /// 実行中の探索をキャンセルする。
     CancelSearch,
+    /// 実行中の探索を打ち切って現時点の最善手を返させる。
     MoveNow,
+    /// 置換表をクリアする。
     ClearTt,
+    /// エンジンリソースを再構成する。
     Reconfigure(Resources),
+    /// 効果音を再生する。
     Sound(Sound),
 }
 
+/// 対局の進行状態。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
-    /// AI players move by themselves.
+    /// 対局中（AI の手番になれば自動で探索を開始する）。
     Playing,
-    /// Nothing moves until the user resumes or plays.
+    /// 一時停止中（ユーザーの操作または再開指示まで AI は動かない）。
     Paused,
 }
 
+/// バックグラウンドエンジンの動作状態。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EngineStatus {
+    /// モデル読み込み・再構成中。
     Loading,
+    /// 探索可能。
     Ready,
-    /// Growing a book; nothing else searches.
+    /// Book 生成でエンジンを占有中（通常探索・解析は待機する）。
     Generating,
+    /// モデル不在や初期化失敗により利用不可。
     Unavailable(String),
 }
 
+/// 現在進行中の AI 思考情報。
 #[derive(Clone, Debug)]
 pub struct Thinking {
     id: SearchId,
     revision: u64,
     strength: Strength,
-    /// Stays paused after the move.
+    /// `StepAi` による 1 手実行時は着手後に `Paused` へ戻す。
     single_step: bool,
+    /// 思考中の手番色。
     pub color: Color,
+    /// 最新の途中経過レポート。
     pub report: Option<Report>,
 }
 
-/// One move the AI played, with the search behind it.
+/// AI が実際に行った 1 手と、その裏付けとなる探索結果ログ。
 #[derive(Clone, Debug)]
 pub struct AiMove {
-    /// The move number, as in the record.
+    /// 棋譜上の手数番号。
     pub number: usize,
+    /// 着手した色。
     pub color: Color,
+    /// その手番での AI 強さ設定。
     pub strength: Strength,
+    /// 実際に打たれた手。
     pub action: Action,
+    /// 探索結果レポート。
     pub report: Report,
 }
 
+/// 対局・解析・検討モードの状態を一元管理するコントローラ。
 pub struct Controller {
     game: GameInfo,
     history: History,
     players: [Player; 2],
     status: Status,
     engine: EngineStatus,
-    /// Grows with every change of the record or the players, so a search
-    /// result can be checked against the state it was asked for.
+    /// 棋譜やプレイヤー設定が変わるたびに 1 増えるリビジョン番号。
+    ///
+    /// AI の思考は別スレッドで非同期に進むため、思考中に Undo や新規対局が行われると
+    /// 古い局面に対する結果が遅れて届くことがある。開始時の `revision` と照合して
+    /// 食い違いがあれば古い結果として破棄するほか、自動保存の変更検知にも使われる。
     revision: u64,
     next_search: u64,
     thinking: Option<Thinking>,
     analyzing: bool,
     analyzer: Analyzer,
     notice: Option<String>,
-    /// Every AI move of this game, oldest first; Undo keeps them.
+    /// 現在の対局で AI が打った全手のログ（古い順。Undo しても保持される）。
     ai_log: Vec<AiMove>,
-    /// See `Command::SetBook`.
+    /// Book を AI が使用するか（[`Command::SetBook`] で更新）。
     book: bool,
-    /// The record, kept while study mode plays other lines in `history`.
+    /// 検討モード中に本譜を退避しておくスロット（`history` 側で別変化を操作する）。
     main: Option<History>,
 }
 
@@ -177,78 +225,90 @@ fn index(color: Color) -> usize {
 }
 
 impl Controller {
+    /// 現在画面に表示中の棋譜履歴（検討モード中は検討手順）を返す。
     pub fn history(&self) -> &History {
         &self.history
     }
 
-    /// The game's own record: in study mode the one kept aside, otherwise
-    /// the one shown. This is what is saved.
+    /// 対局本来の本譜を返す（検討モード中は退避中の本譜、通常時は `history`）。
+    ///
+    /// 自動保存・エクスポートには常にこちらを使用する。
     pub fn game_record(&self) -> &History {
         self.main.as_ref().unwrap_or(&self.history)
     }
 
-    /// The record kept aside while studying.
+    /// 検討モード中に退避されている本譜を返す。
     pub fn main_line(&self) -> Option<&History> {
         self.main.as_ref()
     }
 
+    /// 現在検討モード中であるかを返す。
     pub fn studying(&self) -> bool {
         self.main.is_some()
     }
 
+    /// 現在の対局識別情報を返す。
     pub fn game(&self) -> &GameInfo {
         &self.game
     }
 
-    /// Changes with every change worth saving.
+    /// 保存対象の状態変更ごとにインクリメントされるリビジョン番号を返す。
     pub fn revision(&self) -> u64 {
         self.revision
     }
 
+    /// 黒番・白番のプレイヤー設定を返す。
     pub fn players(&self) -> [Player; 2] {
         self.players
     }
 
+    /// 対局の進行状態（対局中 / 一時停止）を返す。
     pub fn status(&self) -> Status {
         self.status
     }
 
+    /// バックグラウンドエンジンの状態を返す。
     pub fn engine(&self) -> &EngineStatus {
         &self.engine
     }
 
+    /// 現在 AI が思考中であればその情報を返す。
     pub fn thinking(&self) -> Option<&Thinking> {
         self.thinking.as_ref()
     }
 
-    /// Whether the event brings the AI's move, which plays it.
+    /// エンジンイベントが現在思考中の AI の着手完了通知であるかを判定する。
     pub fn is_ai_move(&self, event: &EngineEvent) -> bool {
         matches!(event, EngineEvent::Finished { id, .. }
             if self.thinking.as_ref().is_some_and(|t| t.id == *id))
     }
 
+    /// 解析モードが有効かを返す。
     pub fn analyzing(&self) -> bool {
         self.analyzing
     }
 
+    /// 局面解析器への参照を返す。
     pub fn analyzer(&self) -> &Analyzer {
         &self.analyzer
     }
 
+    /// AI の着手ログ一覧を返す。
     pub fn ai_log(&self) -> &[AiMove] {
         &self.ai_log
     }
 
-    /// The last search error, until the next command.
+    /// 直近の探索エラーメッセージ（次のコマンド実行まで保持）を返す。
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
     }
 
+    /// 少なくとも一方のプレイヤーが AI であるかを返す。
     pub fn has_ai(&self) -> bool {
         self.players.iter().any(|p| p.is_ai())
     }
 
-    /// The AI's strength when it can place a disc in the shown position.
+    /// 表示中の局面で AI が着手可能であればその強さ設定を返す。
     pub fn ai_to_move(&self) -> Option<Strength> {
         let position = self.history.current();
         if position.legal_moves().is_empty() || !editor::searchable(position) {
@@ -260,6 +320,7 @@ impl Controller {
         }
     }
 
+    /// ユーザー操作等のコマンドを適用し、発生した副作用のリストを返す。
     pub fn apply(&mut self, command: Command) -> Vec<Effect> {
         self.notice = None;
         let mut effects = Vec::new();
@@ -267,7 +328,7 @@ impl Controller {
             Command::NewGame(new_game) => {
                 self.cancel(&mut effects);
                 self.main = None;
-                // Analysis mode stays on for the new game.
+                // 解析モードのオン/オフ設定は新しい対局を始めても維持する。
                 self.analyzer.cancel(&mut effects);
                 self.ai_log.clear();
                 self.game = GameInfo::new();
@@ -327,13 +388,13 @@ impl Controller {
                 self.players = players;
                 self.history = history;
                 self.ai_log.clear();
-                // A loaded game never plays on by itself.
+                // ファイルから開いた対局は勝手に AI が打ち始めないよう一時停止状態で開く。
                 self.status = Status::Paused;
                 self.revision += 1;
                 effects.push(Effect::ClearTt);
             }
-            // The game goes on in analysis mode: an AI move takes the engine,
-            // and the analysis searches while a person is to move.
+            // 解析モード中も対局は止めない。AI の手番では AI 思考がエンジンを使い、
+            // 人間の手番でエンジンが空いている間に局面解析を進める。
             Command::SetStudy(on) => self.set_study(on, &mut effects),
             Command::SetAnalysis(on) => {
                 if !on {
@@ -362,7 +423,7 @@ impl Controller {
             }
             Command::SetAnalysisSettings(settings) => self.analyzer.settings_changed(settings),
             Command::SetBook(book) => self.book = book,
-            // A book being grown takes the engine: the AI and the analysis wait.
+            // Book 生成中はエンジンを占有するため、AI の着手も局面解析も完了まで待機させる。
             Command::GenerateBook => {
                 if self.engine == EngineStatus::Ready {
                     self.cancel(&mut effects);
@@ -377,11 +438,12 @@ impl Controller {
         effects
     }
 
+    /// エンジンイベントを処理して状態を更新し、後続の副作用（次の AI 探索や解析など）を返す。
     pub fn on_engine(&mut self, event: EngineEvent) -> Vec<Effect> {
         let mut effects = Vec::new();
         match event {
             EngineEvent::Ready { .. } => self.engine = EngineStatus::Ready,
-            // The settings screen shows it.
+            // モデル情報・Book 状態・Book 生成の途中経過は画面表示用なので、コントローラ側では何もしない。
             EngineEvent::Model(_) | EngineEvent::Book(_) | EngineEvent::BookProgress(_) => {}
             EngineEvent::BookDone(_) => {
                 if self.engine == EngineStatus::Generating {
@@ -427,7 +489,7 @@ impl Controller {
         effects
     }
 
-    /// The running search if `id` is it and nothing changed since it began.
+    /// 指定 `id` が現在思考中の探索と一致し、かつ開始時点から盤面・プレイヤーが変化していない場合のみ返す。
     fn take_thinking(&mut self, id: SearchId) -> Option<Thinking> {
         let current = self.thinking.as_ref()?;
         if current.id != id {
@@ -439,7 +501,7 @@ impl Controller {
 
     fn play_human(&mut self, square: Square, effects: &mut Vec<Effect>) {
         let human_turn = !self.history.current().is_terminal() && self.ai_to_move().is_none();
-        // While paused, the user may also play the AI's side to explore.
+        // 一時停止中は、検討や実験のために AI 側の手番でも人間が代わりに石を置けるようにする。
         if !human_turn && self.status != Status::Paused {
             return;
         }
@@ -448,7 +510,7 @@ impl Controller {
         }
         self.cancel(effects);
         self.record(Action::Place(square), Grouping::NewGroup, effects);
-        // A study line is played by hand on both sides.
+        // 検討モードでは黒番・白番のどちらも人間が手動で並べて変化を調べる。
         if human_turn && !self.studying() {
             self.status = Status::Playing;
         }
@@ -465,7 +527,7 @@ impl Controller {
             self.status = Status::Paused;
             return;
         }
-        // Discs on the board count the moves, also from an edited start.
+        // 編集局面から始めた対局でも手数が破綻しないよう、盤上の石数から手数を求める。
         let discs = position.disc_count(Color::Black) + position.disc_count(Color::White);
         self.ai_log.push(AiMove {
             number: discs.saturating_sub(3) as usize,
@@ -474,7 +536,7 @@ impl Controller {
             action: best_move.expect("checked legal"),
             report,
         });
-        // An AI reply undoes together with the human move before it.
+        // 人間対 AI 戦では、1 回の Undo で人間の直前の手までまとめて戻せるよう前の手に結合する。
         let grouping = if self.players.iter().all(|p| p.is_ai()) {
             Grouping::NewGroup
         } else {
@@ -500,8 +562,7 @@ impl Controller {
         }));
     }
 
-    /// Into study mode the game pauses where it is shown; out of it the
-    /// record comes back, at the position it showed.
+    /// 検討モードの切り替え。開始時は表示中の局面で一時停止し、終了時は退避した本譜を復元する。
     fn set_study(&mut self, on: bool, effects: &mut Vec<Effect>) {
         if on == self.studying() {
             return;
@@ -519,7 +580,7 @@ impl Controller {
         }
     }
 
-    /// Moving through the record stops the AI; play resumes on request.
+    /// 棋譜カーソル移動時の共通処理。移動に成功したら AI 思考を停止し、AI 戦なら一時停止状態にする。
     fn navigate(&mut self, step: impl FnOnce(&mut History) -> bool, effects: &mut Vec<Effect>) {
         if !step(&mut self.history) {
             return;
@@ -537,7 +598,7 @@ impl Controller {
         }
     }
 
-    /// The only place an analysis search starts.
+    /// エンジンが空きかつ解析モード中であれば、解析器に次の探索を起動させる（解析探索の唯一のエントリポイント）。
     fn pump_analysis(&mut self, effects: &mut Vec<Effect>) {
         if self.analyzing && self.thinking.is_none() && self.engine == EngineStatus::Ready {
             let shown = self.history.current();
@@ -545,7 +606,7 @@ impl Controller {
         }
     }
 
-    /// The only place a move search starts by itself.
+    /// 対局中かつ AI の手番であれば自動で AI 思考を開始する（自動着手の唯一のエントリポイント）。
     fn autoplay(&mut self, effects: &mut Vec<Effect>) {
         if self.status != Status::Playing
             || self.thinking.is_some()
@@ -559,7 +620,7 @@ impl Controller {
     }
 
     fn start_search(&mut self, strength: Strength, single_step: bool, effects: &mut Vec<Effect>) {
-        // The move comes first; the analysis picks up after it.
+        // 対局の着手を最優先し、進行中の解析は中断する（AI の着手後に自動で再開される）。
         self.analyzer.interrupt(effects);
         let id = SearchId(self.next_search);
         self.next_search += 1;

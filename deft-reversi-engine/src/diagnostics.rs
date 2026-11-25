@@ -1,8 +1,15 @@
+//! 着手生成や盤面更新が正しく動作するかを検証するための診断ユーティリティです。
+//!
+//! 棋譜ソフトや探索エンジンのテストで広く使われる `perft`（Performance Test の略）を提供します。
+//! 指定した手数先までの合法手をすべて展開し、到達する末端局面数を数え上げることで、
+//! 既知の正しいノード数と一致するかを確かめられます。
+
 use crate::Board;
 
-/// Counts leaf positions through the same unchecked transitions as the search.
-/// A forced pass consumes one ply here; a terminal position counts as one leaf.
-/// Search depth, unlike this diagnostic depth, counts placements only.
+/// 探索時と同じ、正当性チェックを省いた高速な盤面遷移を用いて、指定深さまでの末端局面数（葉ノード数）を数え上げます。
+///
+/// 通常の探索深さとは異なり、ここでの `depth` には強制パス（Pass）も 1 手（1 プライ）として数えます。
+/// 両者とも合法手がなく終局した局面に到達した場合は、その時点で 1 つの末端としてカウントします。
 pub fn perft(board: Board, depth: u8) -> u64 {
     if depth == 0 {
         return 1;

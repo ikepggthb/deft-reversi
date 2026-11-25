@@ -1,5 +1,5 @@
-//! The opening book in the settings: choosing the file, and telling the
-//! engine thread and the controller (§24).
+//! 設定画面における対局用 Book（`.dbook`）の選択・有効化と、
+//! エンジンスレッドおよびコントローラへの設定反映を担うモジュール。
 use super::root::RootView;
 use crate::{
     app::Command,
@@ -13,8 +13,7 @@ use gpui::{Context, PathPromptOptions};
 use std::path::PathBuf;
 
 impl RootView {
-    /// Sends the book settings out: the file to the engine thread, its use
-    /// to the controller.
+    /// 現在の Book 設定を反映する（ファイルパスはエンジンスレッドへ、使用有無はコントローラへ通知）。
     pub(super) fn apply_book(&mut self) {
         let book = &self.settings.book;
         self.book_status = None;
@@ -23,6 +22,7 @@ impl RootView {
         self.controller.apply(Command::SetBook(use_for_ai));
     }
 
+    /// 選択された Book ファイルパスを更新し、エンジンへ読み込みを指示する。
     pub(super) fn set_book_path(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
         self.book_selection_gen = self.book_selection_gen.wrapping_add(1);
         self.settings.book.path = path;
@@ -30,12 +30,14 @@ impl RootView {
         cx.notify();
     }
 
+    /// AI が Book を使用するかの有効/無効を切り替える。
     pub(super) fn set_book_use(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.settings.book.enabled = enabled;
         let use_for_ai = self.settings.book.use_for_ai();
         self.run(Command::SetBook(use_for_ai), cx);
     }
 
+    /// ファイル選択ダイアログを開き、選ばれた `.dbook` ファイルを Book として設定する。
     pub(super) fn choose_book(&mut self, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -56,8 +58,7 @@ impl RootView {
 }
 
 impl RootView {
-    /// What the loaded book has for `position`, whether or not the AI
-    /// plays from it.
+    /// 読み込み済みの Book から `position` の登録手一覧を取得する（AI の使用有無に関わらず参照可能）。
     pub(super) fn book_lines(&self, position: Position) -> Option<Vec<BookLine>> {
         match &self.book_status {
             Some(BookStatus::Loaded { book, .. }) => book::lines(&book.0, position),

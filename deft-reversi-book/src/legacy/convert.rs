@@ -1,4 +1,4 @@
-//! 旧形式の検査を終えた値と、現在の評価との境界。
+//! 検証を終えた旧形式の評価値（`Assessment`）と、現在の評価型（`Evaluation`）を相互変換するモジュール。
 use super::*;
 use crate::{Bound as CurrentBound, Evaluation, EvaluationSource as Source, Score};
 

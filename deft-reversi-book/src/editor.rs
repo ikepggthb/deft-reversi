@@ -1,8 +1,10 @@
-//! 局面グラフの編集と、子局面から親局面への値の更新。
+//! Book の局面グラフを編集し、子局面の評価から親局面の評価を更新（バックアップ）するモジュール。
 //!
-//! 読む入口はBookEditor::record_search / register_move。採用する値をevidenceで
-//! 決め、refresh_fromで影響する親まで再計算する。評価記録そのものはvaluesが所有する。
-//! 保存の入口は末尾のsave / loadで、形式の処理はformat.rsへ委譲する。
+//! 主な入り口は `BookEditor::record_search` や `BookEditor::register_move` です。
+//! 各候補手に複数ある評価（直接評価・子からのバックアップ・手動値など）の中から
+//! どれを採用するかを `move_values` で決め、`refresh_from` で影響を受ける親局面まで順に再計算します。
+//! 評価レコードの実体は `values.rs` の [`ValueStore`] が一元所有します。
+//! ファイルへの保存・読み込みは `save` / `load` を通じて `format.rs` へ委譲します。
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 // 手固有の独立評価がある場合だけ確保する。子から得る値や集合探索の上限は
@@ -90,9 +92,10 @@ impl Edge {
         self.cleanup();
     }
 }
-/// 一回の集合探索の結果。MoveSearchはここでは「対象候補の中の最良手と残りの上限」。
-/// bestに対応する値と、それ以外の手の上限は同じ探索記録を参照する。
-/// 集合がしきい値を下回った場合は、bestも含めてすべて上限になる。
+/// 1 回の集合探索（一部または全部の候補手をまとめて調べた探索）の結果。
+/// ここでは「対象にした候補手の中の最良手」と「それ以外の候補手の上界（`Bound::Upper`）」を表す。
+/// `best` に付けた点評価と、残りの手に付けた上界は、どちらも同じ探索記録（`CompletedSearch`）を参照する。
+/// 探索対象全体がしきい値を下回った（fail-low した）場合は、`best` も含めてすべて上界になる。
 #[derive(Clone, Debug)]
 pub(super) struct MoveSearch {
     /// Canonical edge indexes covered by a single restricted root search.
@@ -161,10 +164,9 @@ impl Node {
             * (std::mem::size_of::<CandidateNotes>() as u64 + 16)
     }
 
-    /// Retiring an aggregate must not discard its individual certificates.
-    /// Non-best moves retain upper bounds, never fabricated point values.
-    /// Incomparable lower/upper pairs still need aggregate coverage from the
-    /// retained frontier or its replacement subset.
+    /// 集約評価を退役させる際にも、各候補手の確定情報は破棄しない。
+    /// 非最善手には上限のみを保持し、根拠のない点評価は作らない。
+    /// 比較不能な下限／上限ペアについては、保持中のフロンティアまたは置換サブセットによる集約カバレッジが必要となる。
     pub(super) fn preserve_search_final_scores(&mut self, values: &mut ValueStore) {
         let Some(frontier) = self
             .move_search
@@ -192,7 +194,7 @@ pub enum SelectedFrom {
     Search,
     FinalScore,
 }
-/// All values use the input parent's perspective, including `propagated`.
+/// `child` や `direct` など、すべての値は入力親局面の視点（手番）で表される。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MoveValues {
     /// 登録した子に残る最終石差の情報を、親の手番へ変換したもの。
@@ -202,7 +204,7 @@ pub struct MoveValues {
     pub registered: bool,
     /// この手を独立に評価した記録。子の値に採用が切り替わっても保持する。
     pub direct: Option<Evaluation>,
-    /// Retained even when its identity is no longer active.
+    /// 識別値（`identity`）が一致しなくなっても破棄せず保持する手動評価値。
     pub manual: Option<Evaluation>,
     /// 登録した子の現在値を、親の手番へ変換したもの。
     pub child: Option<Evaluation>,
@@ -267,7 +269,7 @@ pub(super) struct EditCheckpoint {
     extensions: Vec<Extension>,
     workspace_bytes: u64,
 }
-/// Summary of a one-time old-file conversion; never used to select moves.
+/// 旧ファイルからの 1 回限りの変換サマリー（対局時の着手選択には一切使用しない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MigrationReport {
     pub source_version: u32,
@@ -277,8 +279,10 @@ pub struct MigrationReport {
     pub changed_candidate_values: u64,
     pub jobs_rebuilt: bool,
 }
-/// Mutable source of truth. Derived values and parent links are reconstructible.
-/// A generator borrows this editor exclusively; readers use an exported Book.
+/// 編集可能な Book の作業データ（`.dbook-work` の実体）。
+/// 子から親へ伝播した評価値（バックアップ値）や親への逆リンクは、変更に応じてここから再構築できる。
+/// 自動生成処理はこのエディタを排他的に借用して進め、対局時の参照には
+/// ここから書き出した読み取り専用の [`Book`]（`.dbook`）を使う。
 pub struct BookEditor {
     pub(super) migration: Option<MigrationReport>,
     pub(super) identity: AnalysisIdentity,
@@ -321,8 +325,8 @@ impl BookEditor {
         editor.catalog.engine(editor.identity);
         Ok(editor)
     }
-    /// Invalidate incompatible estimates, retain proven game results, and rebuild.
-    /// The old file is not changed until the caller explicitly saves.
+    /// 非互換な推定値を無効化し、確定済みの終局結果を保持したまま再構築する。
+    /// 呼び出し側が明示的に保存するまで、元のファイルは変更されない。
     pub fn retarget(&mut self, engine: &Engine) -> Result<()> {
         let identity = analysis_identity(engine)?;
         if identity == self.identity {
@@ -473,14 +477,14 @@ impl BookEditor {
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
-    /// Canonical stored boards, including retained positions outside current roots.
+    /// 正規化座標で格納されている全盤面のイテレータ（現在のルート外の保持局面も含む）。
     pub fn positions(&self) -> impl Iterator<Item = Board> + '_ {
         self.nodes.keys().map(|k| k.board())
     }
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
-    /// Conservative storage estimate including tree/index overhead, excluding Engine.
+    /// 木構造・索引オーバーヘッドを含む保守的なメモリ使用量見積もり（Engine 本体は除く）。
     pub fn estimated_bytes(&self) -> u64 {
         self.catalog.bytes()
             + self.values.bytes()
@@ -559,7 +563,7 @@ impl BookEditor {
         self.extensions.clear();
         Ok(())
     }
-    /// Register a branch without claiming it has been evaluated.
+    /// 評価済みであることを主張せずに、指定着手の枝を Book に登録する。
     pub fn register_move(&mut self, board: Board, action: Action) -> Result<()> {
         board
             .play(action)
@@ -624,7 +628,7 @@ impl BookEditor {
         }
         self.record_value(board, action, value)
     }
-    /// Import explicitly asserted external data. Unknown search modes stay unknown.
+    /// 明示的に申告された外部データを取り込む。探索モードが不明な場合は不明のまま保持する。
     pub fn record_imported(
         &mut self,
         board: Board,
@@ -649,8 +653,8 @@ impl BookEditor {
         let value = Evaluation::manual(score, self.identity)?;
         self.record_manual(board, action, value)
     }
-    /// Publish a completed root search, preserving its actual subject and result.
-    /// The caller supplies a result from this book's analysis profile, in canonical coordinates.
+    /// 完了したルート探索結果を公開する（実際の探索対象と結果をそのまま保持）。
+    /// 呼び出し側はこの Book の解析プロファイルに一致する結果を正規化座標で渡す必要がある。
     pub fn record_search(
         &mut self,
         board: Board,
@@ -787,7 +791,7 @@ impl BookEditor {
         self.reschedule_edit(&affected);
         Ok(())
     }
-    /// Remove a registered branch, retaining its direct analysis as a frontier.
+    /// 登録済みの枝を解除する。直接評価はフロンティアとして保持する。
     pub fn unregister_move(&mut self, board: Board, action: Action) -> Result<()> {
         let (key, t) = Key::new(board);
         let a = t.action(action);
@@ -839,7 +843,6 @@ impl BookEditor {
     // 採用順序の中心。手動値→確定した直接値→登録した子の値→直接値を基本とし、
     // その後に集合探索の結果と最終石差の共通範囲を確認する。
     // 子の推定値を、単に深さが大きいという理由で直接推定値へ戻さない。
-    // 詳しい例と例外はdocs/book-v2/propagation.mdを参照。
     pub(super) fn move_values_at(&self, key: Key, edge: &Edge) -> MoveValues {
         let propagated_id = if edge.registered {
             self.nodes.get(&edge.child).and_then(|n| {

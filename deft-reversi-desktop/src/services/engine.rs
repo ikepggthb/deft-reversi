@@ -1,6 +1,8 @@
-//! The `engine-ctl` thread: it owns the engine, runs one search at a time,
-//! and reports to the UI over a channel the UI awaits. It also holds the
-//! opening book, which answers a move search before the engine does.
+//! 探索エンジンと Book を専用スレッド（`engine-ctl`）で管理するサービスモジュール。
+//!
+//! エンジンを所有し、同時に 1 つの探索（または Book 生成）のみを実行して、
+//! 進捗と結果を非同期チャネル経由で UI スレッドへ通知する。
+//! また、対局用 Book を保持し、探索前に Book 手の照会を行う。
 use super::{
     book::SharedBook,
     book_gen::{self, BookDone, BookHandle, BookJob, BookProgress},
@@ -21,31 +23,36 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How often a running search is polled for commands and progress.
+/// 実行中の探索に対するコマンド受信および進捗ポーリング間隔。
 const POLL: Duration = Duration::from_millis(8);
-/// At most about 15 progress reports a second reach the UI.
+/// UI スレッドへ送出する探索進捗レポートの最小間隔（約 15 fps 上限）。
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(66);
 
+/// 個々の探索リクエストを識別する一意な ID。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SearchId(pub u64);
 
+/// 探索リクエストの条件仕様。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchSpec {
+    /// 探索目標（深さ・レベル・終局読みなど）。
     pub goal: Goal,
+    /// 1 手あたりの時間制限（任意）。
     pub time_limit: Option<Duration>,
-    /// Also scores every legal move, for the analysis panel.
+    /// 解析パネル向けに、最善手だけでなくすべての合法手の評価値も計算するか。
     pub all_moves: bool,
-    /// For `Goal::Endgame`; a level chooses its own.
+    /// `Goal::Endgame` 時の選択率（枝刈りの慎重さ。レベル指定時はエンジン側が自動決定する）。
     pub selectivity: Option<Selectivity>,
-    /// A move search first asks the book, which plays its best move.
+    /// 有効な場合、エンジンで探索する前に Book へ問い合わせて登録手があれば即答する。
     pub book: bool,
-    /// Searches only these root moves; the analysis reads one at a time.
+    /// 探索対象を限定するルート手のビットマスク（解析時に 1 手ずつ順番に読むために使う）。
     pub root_moves: Option<u64>,
-    /// Recovers the whole line even when the table cut it short.
+    /// 置換表（キャッシュ）で探索が打ち切られた場合でも、読み筋（PV）を末尾まで辿って復元するか。
     pub recover_pv: bool,
 }
 
 impl SearchSpec {
+    /// 指定された [`Goal`] を持つ既定の探索仕様を生成する。
     pub fn new(goal: Goal) -> Self {
         Self {
             goal,
@@ -59,37 +66,48 @@ impl SearchSpec {
     }
 }
 
-/// What the settings screen shows of the evaluation model.
+/// 設定画面に表示する評価モデルファイルのメタ情報。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelInfo {
+    /// モデルファイルのパス。
     pub path: PathBuf,
-    /// The DPR2 version: 3 adds the pattern embedding network.
+    /// DPR2 フォーマットバージョン（3 以降でパターン埋め込みネットワーク対応）。
     pub format: u32,
-    /// Whether the file carries a ProbCut calibration.
+    /// ProbCut 用のキャリブレーションデータを含むか。
     pub calibrated: bool,
+    /// ファイルサイズ（バイト）。
     pub bytes: u64,
-    /// Of the model with its calibration and search settings; a book made
-    /// with another has values that do not fit.
+    /// モデル・キャリブレーション・探索設定から算出される解析同一性 ID。
+    /// 異なる ID で作成された Book とは評価値の互換性がない。
     pub identity: Option<AnalysisIdentity>,
 }
 
-/// The opening book the engine thread holds.
+/// エンジンスレッドが保持している Book の状態。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BookStatus {
+    /// Book 未設定。
     None,
+    /// 読み込み完了。
     Loaded {
+        /// 登録局面数。
         positions: usize,
+        /// 共有ブックハンドル。
         book: SharedBook,
     },
-    /// Made with another model, so none of its values are used.
+    /// 異なるモデル／設定で生成されたブックのため使用不可。
     OtherModel,
+    /// 読み込みエラー。
     Failed(String),
 }
 
+/// エンジンへ投入する探索ジョブ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchJob {
+    /// 探索 ID。
     pub id: SearchId,
+    /// 探索対象の局面。
     pub position: Position,
+    /// 探索条件。
     pub spec: SearchSpec,
 }
 
@@ -114,37 +132,46 @@ impl From<crate::domain::Strength> for SearchSpec {
 
 pub use crate::domain::settings::Resources;
 
+/// `engine-ctl` スレッドへ送信する制御コマンド。
 #[derive(Debug)]
 pub enum EngineCommand {
-    /// Stops and drops a running search first.
+    /// 実行中の探索を停止・破棄してから新しい探索を開始する。
     Start(SearchJob),
-    /// Stops a running search; its result is dropped.
+    /// 実行中の探索を停止し、結果を破棄する。
     Cancel,
-    /// Stops a running search; its result is still reported.
+    /// 実行中の探索を停止し、そこまでの最善手結果を報告させる。
     MoveNow,
+    /// 置換表をクリアする。
     ClearTt,
-    /// Builds a new engine after the running search is dropped.
+    /// 実行中の探索を破棄した上で、新しいリソース設定でエンジンを再構築する。
     Reconfigure(Resources),
-    /// Reads the book at the path, or drops the book.
+    /// 指定パスの Book を読み込む（`None` で解除）。
     SetBook(Option<PathBuf>),
-    /// Grows a book with the engine; nothing else runs until it is done.
+    /// エンジンを占有して Book 生成・修復を実行する（完了まで他の探索は受け付けない）。
     Generate(BookJob),
+    /// 実行中の処理を停止してスレッドを終了する。
     Shutdown,
 }
 
-/// What a completed iteration read: so many moves ahead, or to the end.
-/// `percent` is the ProbCut confidence; 100 means no pruning, and an
-/// endgame at 100 is an exact solve.
+/// 完了した反復深化（段階的に読みを深くする探索）の深さと精度情報。
+///
+/// `percent` は ProbCut（確率的な枝刈り）の信頼度を表す。
+/// 値が低いほど強く枝刈りをして高速に読み、100 は枝刈りを一切行わない（`Endgame` なら完全読み切り）ことを意味する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reading {
+    /// 深さ指定探索。
     Depth {
+        /// 読み深さ（手数）。
         depth: u8,
+        /// ProbCut 信頼度（%）。
         percent: u8,
     },
+    /// 終局読み切り探索。
     Endgame {
+        /// ProbCut 信頼度（%）。100 で完全解析。
         percent: u8,
     },
-    /// The move came from the opening book, not a search.
+    /// 探索ではなく Book から即答された手。
     Book,
 }
 
@@ -162,16 +189,22 @@ impl From<ResultKind> for Reading {
     }
 }
 
-/// A search's state, from the side to move.
+/// 探索の途中経過または最終結果（手番側から見た評価値）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
+    /// 最善手。
     pub best_move: Option<Action>,
+    /// 評価値（手番側が有利なほど正の石差になる）。
     pub score: Option<i32>,
+    /// 読みの深さ・精度情報。
     pub reading: Option<Reading>,
+    /// 読み筋（PV: お互いに最善を尽くしたときに進むと予想される手順）。
     pub pv: Vec<Action>,
-    /// Every legal move, best first, when asked for and completed.
+    /// 全合法手の評価結果（最善手順。`all_moves` 指定時のみ格納される）。
     pub moves: Vec<MoveScore>,
+    /// 探索した局面（ノード）数。
     pub nodes: u64,
+    /// 経過時間。
     pub elapsed: Duration,
 }
 
@@ -203,46 +236,68 @@ impl From<SearchResult> for Report {
     }
 }
 
+/// `engine-ctl` スレッドから UI 側へ通知されるイベント。
 #[derive(Debug)]
 pub enum EngineEvent {
+    /// エンジンの初期化または再構成が完了し、探索可能になった。
     Ready {
+        /// 適用されたリソース設定。
         resources: Resources,
+        /// 初期化に要した時間。
         load_time: Duration,
     },
-    /// Sent once, after the first `Ready`.
+    /// 初回の `Ready` 直後に 1 度だけ送信される評価モデル情報。
     Model(ModelInfo),
+    /// 初期ロードに失敗した。
     LoadFailed(String),
-    /// The engine keeps its previous resources.
+    /// リソース再構成に失敗した（エンジンは従来のリソース設定のまま維持される）。
     ReconfigureFailed(String),
+    /// Book の読み込み結果。
     Book(BookStatus),
+    /// Book 生成のチェックポイント進捗。
     BookProgress(BookProgress),
-    /// The generation ended and the engine is free again.
+    /// Book 生成・修復が完了し、エンジンが再び通常探索を受け付けられる状態になった。
     BookDone(Result<BookDone, String>),
+    /// 探索中の定期進捗レポート。
     Progress {
+        /// 探索 ID。
         id: SearchId,
+        /// 途中経過。
         report: Report,
     },
+    /// 探索完了。
     Finished {
+        /// 探索 ID。
         id: SearchId,
+        /// 最終結果。
         report: Report,
     },
+    /// 探索失敗。
     Failed {
+        /// 探索 ID。
         id: SearchId,
+        /// エラー内容。
         error: String,
     },
 }
 
-/// The engine as `engine-ctl` sees it; tests use a fake.
+/// `engine-ctl` スレッドが操作するエンジンバックエンドの抽象トレイト（テストではフェイク実装を差し替える）。
 pub trait Backend {
+    /// 実行中探索のハンドル型。
     type Running: Running;
+    /// 探索を開始する。
     fn start(&mut self, position: Position, spec: SearchSpec) -> Result<Self::Running, String>;
+    /// 置換表をクリアする。
     fn clear_tt(&mut self) -> Result<(), String>;
+    /// リソース設定を変更してエンジンを再構成する。
     fn reconfigure(&mut self, resources: Resources) -> Result<(), String>;
+    /// Book を設定または解除する。
     fn set_book(&mut self, path: Option<&Path>) -> BookStatus;
-    /// None from test fakes.
+    /// モデル情報を返す（テスト用フェイクでは `None`）。
     fn model(&self) -> Option<ModelInfo> {
         None
     }
+    /// Book 生成・修復スレッドを起動する。
     fn generate(
         &mut self,
         job: BookJob,
@@ -250,21 +305,28 @@ pub trait Backend {
     ) -> Result<BookHandle, String>;
 }
 
+/// 実行中の探索または Book 即答を制御するトレイト。
 pub trait Running {
-    /// The newest progress since the last call.
+    /// 前回呼び出し以降の最新進捗を取得する。
     fn latest(&mut self) -> Option<Report>;
+    /// 停止要求を送る。
     fn stop(&self);
+    /// 探索がすでに完了しているかを返す。
     fn is_finished(&self) -> bool;
+    /// 完了を待機して最終結果を返す。
     fn wait(self) -> Result<Report, String>;
 }
 
+/// 探索エンジン制御スレッド（`engine-ctl`）のサービスハンドル。
 pub struct EngineService {
     commands: Option<mpsc::Sender<EngineCommand>>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl EngineService {
-    /// `load` runs on the new thread, so the window does not wait for it.
+    /// `engine-ctl` スレッドを起動し、そのスレッド上で `load` を実行する。
+    ///
+    /// ウィンドウの初期表示をブロックしないよう、モデル読み込みはバックグラウンドで行う。
     pub fn spawn<B, F>(load: F) -> (Self, async_channel::Receiver<EngineEvent>)
     where
         B: Backend,
@@ -291,15 +353,14 @@ impl EngineService {
         )
     }
 
-    /// A closed thread has already reported why, so a failed send is dropped.
+    /// コマンドを送信する（スレッドが既に終了している場合は理由を報告済みのため無視する）。
     pub fn send(&self, command: EngineCommand) {
         if let Some(commands) = &self.commands {
             let _ = commands.send(command);
         }
     }
 
-    /// Stops any running search or book generation and waits for the thread
-    /// to finish saving and exit.
+    /// 実行中の探索・Book 生成を停止し、スレッドの終了を待機する。
     pub fn shutdown(&mut self) {
         self.send(EngineCommand::Shutdown);
         self.commands = None;
@@ -352,7 +413,7 @@ fn run<B, F>(
     };
 
     let mut current: Option<Current<B::Running>> = None;
-    // A book being grown holds the engine; nothing else may use it.
+    // Book 生成中はエンジンを占有するため、他の探索・再構成コマンドは受け付けない。
     let mut generating: Option<BookHandle> = None;
     let mut queue = VecDeque::new();
     loop {
@@ -361,7 +422,7 @@ fn run<B, F>(
         {
             send(EngineEvent::BookDone(handle.join()));
         }
-        // Idle: block on the next command. Searching: wake up to poll.
+        // 待機中はブロッキング受信で省電力化し、探索・生成中は POLL 間隔で起床して進捗を回収する。
         if current.is_none() && generating.is_none() {
             match commands.recv() {
                 Ok(command) => queue.push_back(command),
@@ -401,7 +462,8 @@ fn run<B, F>(
                     }
                 }
                 EngineCommand::Start(job) => {
-                    // Only the newest request matters.
+                    // すでにキューの後ろに新しい Start / Cancel / 再構成などが積まれているなら、
+                    // この古い探索要求を始めてもすぐ中断するだけなのでスキップする。
                     let superseded = queue.iter().any(|c| {
                         matches!(
                             c,
@@ -451,7 +513,7 @@ fn run<B, F>(
                         Err(error) => EngineEvent::ReconfigureFailed(error),
                     });
                 }
-                // A running search goes on; the next one asks the new book.
+                // 実行中の探索はそのまま継続し、新しい Book は次の探索から適用する。
                 EngineCommand::SetBook(path) => {
                     send(EngineEvent::Book(backend.set_book(path.as_deref())))
                 }
@@ -487,7 +549,7 @@ fn run<B, F>(
     }
 }
 
-/// Stops a search and waits for its thread, without reporting it.
+/// 実行中の探索を停止させ、結果を破棄してスレッド終了を待つ。
 fn drop_search<R: Running>(current: &mut Option<Current<R>>) {
     if let Some(c) = current.take() {
         c.running.stop();
@@ -495,7 +557,7 @@ fn drop_search<R: Running>(current: &mut Option<Current<R>>) {
     }
 }
 
-/// Stops a running book generation and waits for it to finish saving.
+/// 実行中の Book 生成を停止させ、保存完了までスレッド終了を待つ。
 fn drop_book(generating: &mut Option<BookHandle>) {
     if let Some(handle) = generating.take() {
         handle.stop();
@@ -503,23 +565,23 @@ fn drop_book(generating: &mut Option<BookHandle>) {
     }
 }
 
-/// The real engine. `make` builds an engine for given resources; it runs
-/// again when the resources change.
+/// 実エンジン（[`EngineWorker`]）をラップする [`Backend`] 実装。
+///
+/// `make` クロージャは指定されたリソース設定で [`Engine`] を構築し、設定変更時に再実行される。
 pub struct EngineBackend {
     worker: Arc<EngineWorker>,
     make: Box<dyn FnMut(Resources) -> Result<Engine, String>>,
-    /// What the model and its calibration make; a book made by another
-    /// model has values that do not fit this one.
+    /// 現在のモデル・キャリブレーションの識別子（別モデル製の Book との互換性判定に使用）。
     identity: Option<AnalysisIdentity>,
     book: Option<Arc<Book>>,
     model: Option<ModelInfo>,
-    /// Made from the book when a search first asks it, as that needs the
-    /// engine idle.
+    /// Book から着手を選ぶ [`BookPlayer`]（初回照会時にアイドル状態のエンジンから遅延生成する）。
     player: Option<BookPlayer>,
     player_failed: bool,
 }
 
 impl EngineBackend {
+    /// 初期リソースでエンジンを構築し、[`EngineBackend`] を生成する。
     pub fn new(
         resources: Resources,
         mut make: impl FnMut(Resources) -> Result<Engine, String> + 'static,
@@ -537,7 +599,7 @@ impl EngineBackend {
         })
     }
 
-    /// Records what the model file is; the identity comes from the engine.
+    /// モデルファイルのヘッダ情報等を記録する（`identity` はエンジンから取得済みの値を引き継ぐ）。
     pub fn set_model(&mut self, path: PathBuf, format: u32, calibrated: bool, bytes: u64) {
         self.model = Some(ModelInfo {
             path,
@@ -548,7 +610,7 @@ impl EngineBackend {
         });
     }
 
-    /// The book's move when it has one for this position.
+    /// Book に現在局面の登録手があれば即座に [`Report`] として返す。
     fn book_move(&mut self, position: Position) -> Option<Report> {
         let book = self.book.clone()?;
         if self.player.is_none() {
@@ -588,9 +650,11 @@ impl EngineBackend {
     }
 }
 
-/// A search, or a move the book answered at once.
+/// 通常のエンジン探索ハンドルか、Book による即答結果のいずれかを表す実行状態。
 pub enum Answer {
+    /// エンジンで非同期探索中。
     Search(SearchHandle),
+    /// Book から即座に得られた回答。
     Book(Report),
 }
 
@@ -632,11 +696,10 @@ impl Backend for EngineBackend {
     }
 
     fn reconfigure(&mut self, resources: Resources) -> Result<(), String> {
-        // Build the new engine before replacing the old one so that a
-        // failure leaves the previous engine intact.
+        // 構築に失敗しても従来のエンジンを維持できるよう、新しいエンジンを先に生成してから差し替える。
         let engine = (self.make)(resources)?;
         self.worker = Arc::new(EngineWorker::new(engine));
-        // The player is made again from the new engine.
+        // 新しいエンジンに合わせて BookPlayer も作り直す。
         self.player = None;
         self.player_failed = false;
         Ok(())
@@ -674,8 +737,8 @@ impl Backend for EngineBackend {
         job: BookJob,
         events: async_channel::Sender<EngineEvent>,
     ) -> Result<BookHandle, String> {
-        // The book in play may come from the work file; it is read again
-        // when the generation has written it.
+        // 対局中の Book は作業ファイルから書き出されたものを使っている可能性があるため、
+        // 生成完了後に再読み込みされるようプレイヤーをリセットする。
         self.player = None;
         self.player_failed = false;
         book_gen::spawn(self.worker.clone(), job, events).map_err(|error| error.to_string())

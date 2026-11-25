@@ -1,79 +1,76 @@
-//! Pattern embedding network (PEN): a small nonlinear term added to the
-//! linear pattern evaluation.
+//! 線形パターン評価に加算する小型の非線形ニューラルネットワークです。
 //!
-//! Every pattern state has, besides its linear weight, an embedding of
-//! `PEN_DIM` i8 values. The four orientations of a pattern are summed, so
-//! the network sees `PATTERN_COUNT * PEN_DIM` values, clipped to 0..=127,
-//! and `PEN_GLOBALS` whole-board inputs: both mobilities and the mover's
-//! discs. One hidden layer of `PEN_HIDDEN` clipped units
-//! gives the output in 1/128 discs, which is added to the linear sum before
-//! the final rounding.
+//! 通常のパターン評価は各パターンの重みを単純に足し合わせるだけですが、
+//! このネットワークを使うことでパターン同士の組み合わせや局面全体の状況（合法手数・石数）を踏まえた補正ができます。
 //!
-//! The quantised network computes, with `E` the float embeddings, `W1`,
-//! `b1`, `w2`, `b2` the float layers and every activation in 0..=1 as a
-//! float:
-//! - `a = clamp(round(127 E) summed over orientations, 0, 127)` ≈ 127 a
-//! - mobility inputs `min(4 m, 127)` for each side's move count `m`; the
-//!   disc input `min(2 d, 127)` for the mover's discs `d` (`global_inputs`)
-//! - `h = clamp((Σ a W1q + b1q + 32) >> 6, 0, 127)` with `W1q = round(64 W1)`
-//!   and `b1q = round(127 · 64 · b1)`, ≈ 127 h
-//! - output `(Σ h w2q) >> 7` with `w2q = round(128 · 128 / 127 · w2)`, plus
-//!   `b2q = round(128 b2)`
+//! 仕組みは次のとおりです。
+//! 1. 各パターン状態には、線形重みに加えて `PEN_DIM` 次元の `i8` 埋め込みベクトルを持たせます。
+//! 2. 各パターンの 4 回転方向の埋め込みベクトルを足し合わせて 0..=127 に収めた値（`PATTERN_COUNT * PEN_DIM` 個）と、
+//!    `PEN_GLOBALS` 個の盤面全体入力（双方の合法手数と手番側の石数）をネットワークの入力にします。
+//! 3. `PEN_HIDDEN` ユニットの隠れ層 1 層を通して、1/128 石単位の補正値を計算します。
+//! 4. この補正値を線形パターン評価の合計に加算してから、最終的な石数へ丸めます。
 //!
-//! The trainer mirrors this in floats; see `deft-reversi-train/src/pen.rs`.
+//! 探索中に浮動小数点演算を避け、高速な整数演算（SIMD の積和命令を含む）だけで推論を実行するため、
+//! 学習時の浮動小数点パラメータ（`E`, `W1`, `b1`, `w2`, `b2`、各活性化値の範囲は 0..=1）を
+//! 以下のように固定小数点の整数へ量子化して計算します。
+//! - `a = clamp(round(127 * E) を 4 回転分合算, 0, 127)` ≈ 127 a
+//! - 着手可能数入力: 各手番の合法手数 `m` に対し `min(4 * m, 127)`、
+//!   石数入力: 手番側石数 `d` に対し `min(2 * d, 127)`（[`global_inputs`]）
+//! - `h = clamp((Σ a * W1q + b1q + 32) >> 6, 0, 127)`（`W1q = round(64 * W1)`, `b1q = round(127 * 64 * b1)`）≈ 127 h
+//! - 出力 `(Σ h * w2q) >> 7`（`w2q = round(128 * 128 / 127 * w2)`）＋ `b2q = round(128 * b2)`
+//!
+//! トレーナ側にもこれに対応する浮動小数点モデルがあります（`deft-reversi-train/src/pen.rs` 参照）。
 use super::{EvalState, PATTERN_COUNT, PATTERN_TABLE_SIZES, TOTAL_PATTERN_WEIGHTS};
 use crate::Board;
 use std::io::{self, Read, Write};
 
-/// Embedding values per pattern state.
+/// 1 パターン状態あたりの埋め込みベクトルの次元数です。
 pub const PEN_DIM: usize = 8;
-/// Hidden units.
+/// 隠れ層のユニット数です。
 pub const PEN_HIDDEN: usize = 32;
-/// Whole-board inputs after the summed embeddings: the mover's and the
-/// opponent's moves, and the mover's discs.
+/// 埋め込み和の後ろに連結する盤面全体入力の数（手番側合法手数、相手側合法手数、手番側石数）です。
 pub const PEN_GLOBALS: usize = 3;
-/// Network inputs: the summed embeddings, then the whole-board inputs.
+/// ネットワークの総入力次元数（パターン埋め込み和 ＋ 盤面全体入力）です。
 pub const PEN_INPUTS: usize = PATTERN_COUNT * PEN_DIM + PEN_GLOBALS;
-/// Inputs of a `PEN1` network (DPR2 version 3): the embeddings and the two
-/// mobilities only. It reads as a network with zero weights on the others.
+/// `PEN1` 形式（DPR2 バージョン 3）の入力次元数です。埋め込み和と双方の合法手数のみを含みます。
+/// 読み込み時は残りの石数重みに 0 を入れた `PEN2` 相当として扱います。
 pub(crate) const PEN1_INPUTS: usize = PATTERN_COUNT * PEN_DIM + 2;
-/// The largest magnitude of a hidden or output bias.
+/// 隠れ層バイアス・出力バイアスの絶対値上限です。
 const PEN_BIAS_LIMIT: u32 = 1 << 24;
-/// Inputs padded to whole groups of four.
+/// SIMD 命令（4 要素単位の積和）に合わせるため、入力次元数を 4 の倍数へ切り上げた値です。
 const PEN_INPUTS_PADDED: usize = PEN_INPUTS.next_multiple_of(4);
+/// 4 入力単位のグループ数です。
 const GROUPS: usize = PEN_INPUTS_PADDED / 4;
 
-/// The network of one phase.
+/// 1 フェーズ分の補助ニューラルネットワークパラメータです。
 #[derive(Clone)]
 pub struct PenPhase {
-    /// One embedding per pattern state, indexed like the pattern weights.
+    /// 各パターン状態に対応する埋め込みベクトルです（パターン重みと同じ順序で格納します）。
     embeddings: Box<[[i8; PEN_DIM]]>,
-    /// The hidden weights by groups of four inputs: `hidden[g][4 j + t]` is
-    /// unit `j`'s weight of input `4 g + t`, so one group's products with
-    /// every unit are one vector multiply.
+    /// 4 入力グループ単位に並べ替えて詰めた隠れ層重みです。
+    /// `hidden[g][4 * j + t]` はユニット `j` における入力 `4 * g + t` の重みを表し、
+    /// これにより 1 グループ分の全ユニット積和を 1 回のベクトル積で計算できます。
     hidden: Box<[[i8; 4 * PEN_HIDDEN]; GROUPS]>,
     hidden_bias: [i32; PEN_HIDDEN],
     output: [i32; PEN_HIDDEN],
     output_bias: i32,
-    /// Whether a weight reads the disc input. Without, the network is a
-    /// `PEN1` one.
+    /// 石数入力（`PEN1_INPUTS` 以降）に非ゼロ重みを持つかどうかです。false なら `PEN1` 互換です。
     board_inputs: bool,
 }
 
-/// The mover's moves as a network input.
+/// 合法手数を 0..=127 のネットワーク入力値へスケーリングします。
 #[inline]
 fn mobility_input(moves: u32) -> u8 {
     (moves * 4).min(127) as u8
 }
 
-/// A disc count as a network input.
+/// 石数を 0..=127 のネットワーク入力値へスケーリングします。
 #[inline]
 fn count_input(discs: u32) -> u8 {
     (discs * 2).min(127) as u8
 }
 
-/// The whole-board inputs of `board`, in 0..=127, in the order of
-/// `PEN_GLOBALS`. The trainer reads them from here.
+/// `board` に対する盤面全体入力（0..=127）を `PEN_GLOBALS` 順で返します。トレーナもここから参照します。
 #[cfg_attr(not(feature = "tuning"), allow(dead_code))]
 pub fn global_inputs(board: &Board) -> [u8; PEN_GLOBALS] {
     [
@@ -84,7 +81,7 @@ pub fn global_inputs(board: &Board) -> [u8; PEN_GLOBALS] {
 }
 
 impl PenPhase {
-    /// `hidden[j]` holds unit `j`'s `PEN_INPUTS` weights.
+    /// `hidden[j]` にユニット `j` の `PEN_INPUTS` 個の重みを渡して [`PenPhase`] を構築します。
     pub fn new(
         embeddings: Vec<[i8; PEN_DIM]>,
         hidden: &[[i8; PEN_INPUTS]; PEN_HIDDEN],
@@ -95,9 +92,9 @@ impl PenPhase {
         if embeddings.len() != TOTAL_PATTERN_WEIGHTS {
             return Err("invalid embedding table size");
         }
-        // Keeps every sum within i32: a hidden unit's input sum is below
-        // 127 * 128 * PEN_INPUTS < 2^21, its output below 127 * 2^16 per
-        // unit, and the network's output plus the linear part below 2^26.
+        // すべての加算結果が 32 ビット符号付き整数（`i32`）に収まるよう範囲を制限します。
+        // 隠れユニットの入力和は `127 * 128 * PEN_INPUTS < 2^21` 未満、出力項は `127 * 2^16` 未満となり、
+        // 線形評価項と合算しても `2^26` 未満に収まります。
         if output.iter().any(|w| w.unsigned_abs() > 1 << 16) {
             return Err("PEN output weight out of range");
         }
@@ -127,12 +124,12 @@ impl PenPhase {
         })
     }
 
-    /// Whether the network reads more than a `PEN1` network can hold.
+    /// `PEN1` 形式に収まらない追加の盤面入力（石数）を使用しているかを返します。
     pub(crate) fn needs_pen2(&self) -> bool {
         self.board_inputs
     }
 
-    /// The network's output in 1/128 discs.
+    /// ネットワークの出力値（1/128 石単位）を計算します。
     #[inline]
     pub(crate) fn evaluate(
         &self,
@@ -172,9 +169,7 @@ impl PenPhase {
         std::array::from_fn(|k| self.hidden[k / 4][4 * j + k % 4])
     }
 
-    /// Writes the network with `inputs` weights per hidden unit:
-    /// `PEN_INPUTS` (`PEN2`), or `PEN1_INPUTS` (`PEN1`) when `needs_pen2` is
-    /// false.
+    /// 隠れユニットごとに `inputs` 個の重み（`PEN2` なら `PEN_INPUTS`、`PEN1` なら `PEN1_INPUTS`）を書き出します。
     pub(crate) fn write(&self, out: &mut impl Write, inputs: usize) -> io::Result<()> {
         assert!(inputs == PEN_INPUTS || (inputs == PEN1_INPUTS && !self.board_inputs));
         let mut bytes = Vec::with_capacity(TOTAL_PATTERN_WEIGHTS * PEN_DIM + 8192);
@@ -195,8 +190,7 @@ impl PenPhase {
         out.write_all(&bytes)
     }
 
-    /// Reads a network written with `inputs` weights per hidden unit; see
-    /// `write`.
+    /// 隠れユニットあたり `inputs` 個の重み形式でネットワークを読み込みます（[`write`](Self::write) と対になる処理です）。
     pub(crate) fn read(input: &mut impl Read, inputs: usize) -> io::Result<Self> {
         let mut bytes = vec![0u8; TOTAL_PATTERN_WEIGHTS * PEN_DIM];
         input.read_exact(&mut bytes)?;
@@ -229,7 +223,7 @@ impl PenPhase {
     }
 }
 
-/// Every unit's weighted input sum.
+/// 各隠れユニットの重み付き入力総和を計算します（AVX2 版：`_mm256_maddubs_epi16` で 4 入力ずつ並列積和を行います）。
 #[cfg(target_feature = "avx2")]
 #[inline]
 fn hidden_sums(
@@ -237,8 +231,7 @@ fn hidden_sums(
     weights: &[[i8; 4 * PEN_HIDDEN]; GROUPS],
 ) -> [i32; PEN_HIDDEN] {
     use std::arch::x86_64::*;
-    // SAFETY: AVX2 is enabled at compile time; loads are unaligned and
-    // within the arrays.
+    // SAFETY: AVX2 はコンパイル時に有効化されており、配列境界内の非アラインロードのみを行います。
     unsafe {
         let ones = _mm256_set1_epi16(1);
         let mut acc = [_mm256_setzero_si256(); PEN_HIDDEN / 8];
@@ -246,7 +239,7 @@ fn hidden_sums(
             let x = _mm256_set1_epi32(i32::from_le_bytes(input[4 * g..][..4].try_into().unwrap()));
             for (q, a) in acc.iter_mut().enumerate() {
                 let wv = _mm256_loadu_si256(w.as_ptr().add(32 * q).cast());
-                // Inputs are at most 127, so a pair of products fits i16.
+                // 入力は最大 127 なので、2 要素の積和は符号付き `i16` の範囲内にオーバーフローせず収まります。
                 let pairs = _mm256_maddubs_epi16(x, wv);
                 *a = _mm256_add_epi32(*a, _mm256_madd_epi16(pairs, ones));
             }
@@ -259,6 +252,7 @@ fn hidden_sums(
     }
 }
 
+/// 各隠れユニットの重み付き入力総和を計算します（汎用スカラー版）。
 #[cfg(not(target_feature = "avx2"))]
 #[inline]
 fn hidden_sums(

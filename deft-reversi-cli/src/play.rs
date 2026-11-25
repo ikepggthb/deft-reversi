@@ -1,3 +1,8 @@
+//! ターミナル上でエンジンと対局・検討を行う対話型 `play` コマンド。
+//!
+//! 対局モード（先手／後手／AI 同士／二人打ち）の切り替え、待った・やり直し、
+//! Book のオン・オフ、全候補手の解析、棋譜検討などのコマンドを受け付ける。
+
 use crate::{EngineArgs, GoalArgs, Result, book_view, display, game::Game, settings, stop};
 use clap::Args;
 use deft_reversi_book::{BookDecision, BookMiss, BookPlayer, MovePolicy};
@@ -9,26 +14,26 @@ use std::{
     time::Duration,
 };
 
+/// `play` サブコマンドの引数。
 #[derive(Args, Debug)]
 pub struct PlayArgs {
     #[command(flatten)]
     engine: EngineArgs,
-    /// Level 10 unless a level, depth or exact solve is given.
+    /// 探索レベル・深さ・完全読みの指定（省略時はレベル 10）。
     #[command(flatten)]
     pub(super) goal: GoalArgs,
-    /// Opening book to play from before searching.
+    /// 探索の前に参照する Book ファイル（`.dbook`）。
     #[arg(short, long)]
     book: Option<PathBuf>,
-    /// Pick at random among book moves at most this many discs worse than
-    /// the best one, instead of always the best.
+    /// 最善手だけでなく、最善との差がこの石数以内の Book 手からランダムに選ぶ。
     #[arg(long, requires = "book", value_parser = clap::value_parser!(u8).range(0..=128))]
     book_loss: Option<u8>,
-    /// 0: you play black, 1: you play white, 2: engine against itself,
-    /// 3: two players.
+    /// 対局モード（0: 黒番人間, 1: 白番人間, 2: AI 対 AI, 3: 人間同士）。
     #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=3))]
     mode: u8,
 }
 
+/// 対話セッションの状態。
 struct Session {
     game: Game,
     engine: Engine,
@@ -36,11 +41,12 @@ struct Session {
     book_on: bool,
     goal: Goal,
     time: Option<Duration>,
-    /// Which colors the engine plays: black, white.
+    /// エンジンが担当する手番（添字 0: 黒番、添字 1: 白番）。
     computer: [bool; 2],
     details: Option<ModelDetails>,
 }
 
+/// `settings` コマンドで表示するために保持しておくモデルと Book の詳細情報。
 struct ModelDetails {
     path: PathBuf,
     sha256: String,
@@ -51,6 +57,7 @@ struct ModelDetails {
     book_matches: Option<bool>,
 }
 
+/// モデルと Book を読み込み、対話型対局ループを開始する。
 pub fn run(args: PlayArgs) -> Result<()> {
     let bytes = std::fs::read(&args.engine.model)
         .map_err(|e| format!("{}: {e}", args.engine.model.display()))?;
@@ -94,6 +101,7 @@ pub fn run(args: PlayArgs) -> Result<()> {
     session.run()
 }
 
+/// 現在時刻のナノ秒値から Book ランダム選択用の簡易シードを生成する。
 fn seed() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -101,6 +109,7 @@ fn seed() -> u64 {
 }
 
 impl Session {
+    /// 盤面表示、AI 思考、標準入力からのコマンド受付を繰り返すメインループ。
     fn run(&mut self) -> Result<()> {
         let mut input = io::stdin().lock();
         loop {
@@ -143,10 +152,12 @@ impl Session {
         }
     }
 
+    /// 指定された手番をエンジンが担当するかどうかを返す。
     fn is_computer(&self, color: Color) -> bool {
         self.computer[color as usize]
     }
 
+    /// 対局モード（0〜3）に応じて黒番・白番のエンジン担当フラグを設定する。
     fn set_mode(&mut self, mode: u8) {
         self.computer = match mode {
             0 => [false, true],
@@ -156,6 +167,7 @@ impl Session {
         };
     }
 
+    /// 1 行分のユーザー入力を解釈して実行し、次の画面遷移先を返す。
     fn command(&mut self, line: &str) -> Result<Next> {
         let words: Vec<&str> = line.split_whitespace().collect();
         let arg = |i: usize| words.get(i).copied().unwrap_or("");
@@ -214,7 +226,7 @@ impl Session {
                     println!("Nothing to undo.");
                     return Ok(Next::Prompt);
                 }
-                // Back to a position where a player is to move.
+                // 次の人間手番まで戻る。
                 while self.is_computer(self.game.current().side_to_move()) && self.game.undo() {}
             }
             "redo" => {
@@ -275,7 +287,7 @@ impl Session {
                     Ok(position) => {
                         self.engine.clear_tt()?;
                         self.game = Game::from_position(position);
-                        // Keep the loaded position available for inspection even in AI-vs-AI mode.
+                        // AI 対 AI モードのまま読み込むと即座に手が進行するため、二人打ちへ切り替えて盤面を保持する。
                         self.set_mode(3);
                         println!("Position loaded; mode 3 (two players). History starts here.");
                     }
@@ -373,7 +385,7 @@ impl Session {
         Ok(Next::Show)
     }
 
-    /// Plays the engine's move for the side to move.
+    /// 現在の手番でエンジンの手（Book または探索）を 1 手進める。
     fn think(&mut self) -> Result<()> {
         let position = self.game.current();
         let side = display::color(position.side_to_move());
@@ -434,6 +446,7 @@ impl Session {
         Ok(())
     }
 
+    /// `hint`（最善手のみ）または `analyze`（全候補手）を実行し、盤面を変えずに結果を表示する。
     fn analyze(&mut self, all: bool, full_pvs: bool) -> Result<()> {
         let position = self.game.current();
         if position.is_terminal() {
@@ -549,6 +562,7 @@ impl Session {
         Ok(())
     }
 
+    /// 現在の探索設定と、現局面の空きマス数で有効になる探索段階を表示する。
     fn show_search(&self) {
         println!("Search: {}", settings::summary(self.goal, self.time));
         println!(
@@ -558,6 +572,7 @@ impl Session {
         );
     }
 
+    /// エンジン構成、モデル、Book、探索目標、ビルド情報をまとめて表示する。
     fn show_settings(&self) {
         let options = self.engine.options();
         let actual = 1usize << options.tt_mib.ilog2();
@@ -613,6 +628,7 @@ impl Session {
         }
     }
 
+    /// 現在の探索設定、盤面、石数、手数、棋譜を表示する。
     fn show(&self) {
         let position = self.game.current();
         println!();
@@ -635,6 +651,7 @@ impl Session {
         }
     }
 
+    /// 終局時の石差と勝敗メッセージを表示する。
     fn show_result(&self) {
         let score = self.game.current().final_score(Color::Black);
         let winner = match score {
@@ -646,6 +663,7 @@ impl Session {
     }
 }
 
+/// `setboard` コマンドの引数（OBF 文字列または `--file PATH [--line N]`）を局面へ変換する。
 fn imported_position(text: &str) -> Result<deft_reversi_engine::Position> {
     if let Some(file) = text.strip_prefix("--file ") {
         let (file, index) = match file.rsplit_once(" --line ") {
@@ -663,19 +681,23 @@ fn imported_position(text: &str) -> Result<deft_reversi_engine::Position> {
     }
 }
 
+/// 対話コマンド処理後のループ遷移先。
 enum Next {
-    /// Show the board and continue the game.
+    /// 盤面を再描画して対局を続行する。
     Show,
-    /// Ask for another command.
+    /// 盤面を再描画せず次のプロンプトを出す。
     Prompt,
+    /// 対話セッションを終了する。
     Quit,
 }
 
+/// コマンドの使い方を表示し、盤面を再描画せず次の入力を待つ。
 fn usage(text: &str) -> Result<Next> {
     println!("usage: {text}");
     Ok(Next::Prompt)
 }
 
+/// 現在の探索目標と制限時間を短い表示文字列に整形する。
 fn goal(goal: Goal, time: Option<Duration>) -> String {
     let goal = match goal {
         Goal::Level(n) => format!("level {n}"),
@@ -689,6 +711,7 @@ fn goal(goal: Goal, time: Option<Duration>) -> String {
     }
 }
 
+/// Book が選んだ手の評価値と探索品質を 1 行の補足文字列にする。
 fn book_value(choice: &deft_reversi_book::BookChoice) -> String {
     let v = choice.value;
     let quality = if v.is_solved() {
@@ -701,6 +724,7 @@ fn book_value(choice: &deft_reversi_book::BookChoice) -> String {
     format!("{:+}, {quality}", v.score())
 }
 
+/// 対話コマンド一覧を標準出力へ表示する。
 fn help() {
     println!(
         "\

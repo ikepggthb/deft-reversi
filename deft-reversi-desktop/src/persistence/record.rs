@@ -1,92 +1,137 @@
-//! The game record file v1 (`.dreversi`, UTF-8 JSON; §8.1 of the plan).
-//! The initial position and the actions are the record; status and outcome
-//! are written for other readers and recomputed on load.
+//! 対局棋譜ファイル v1（`.dreversi`、UTF-8 JSON）の書き出しと検証付き読み込みを行うモジュール。
+//!
+//! このファイルでは「初期局面」と「着手列」を正（一次情報）として保存し、
+//! `status` や `outcome` は外部ツールが中身を覗き見やすいよう参考情報として併記している。
+//! 読み込み時には保存された着手列を 1 手ずつ実際に盤面へ並べて（リプレイして）、
+//! 非合法手や矛盾がないかを検証した上でアプリの状態へ復元する。
 use crate::domain::{GameInfo, History, Player, Preset, Strength, game::now_rfc3339};
 use deft_reversi_engine::{Action, Color, Position};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// 棋譜ファイルのフォーマット識別子。
 pub const FORMAT: &str = "deft-reversi-record";
+/// サポートしている棋譜スキーマバージョン。
 pub const SCHEMA_VERSION: u32 = 1;
-/// Larger files are not read.
+/// 読み込みを許可する棋譜ファイルの最大サイズ（1 MiB）。
 pub const MAX_BYTES: u64 = 1024 * 1024;
-/// A game has at most 60 moves and as many passes; this leaves room for
-/// edited starts and still bounds the replay.
+/// 1 局あたりの最大アクション数上限（60 手＋パス上限に編集開始局面の余裕を加えた値）。
 const MAX_ACTIONS: usize = 200;
 
+/// `.dreversi` v1 形式の JSON ルート構造体。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordV1 {
+    /// フォーマット識別子（[`FORMAT`]）。
     pub format: String,
+    /// スキーマバージョン（[`SCHEMA_VERSION`]）。
     pub schema_version: u32,
+    /// 対局 ID。
     pub game_id: String,
+    /// 対局開始日時（RFC 3339）。
     pub created_at: String,
+    /// 最終更新日時（RFC 3339）。
     pub updated_at: String,
+    /// 初期局面の文字列表現。
     pub initial_position: String,
+    /// 着手・パス列（小文字表記）。
     pub actions: Vec<String>,
+    /// 現在のカーソル位置。
     pub cursor: usize,
+    /// Undo グループの開始インデックス列。
     pub action_groups: Vec<usize>,
+    /// 黒番・白番のプレイヤー情報。
     pub players: PlayersV1,
+    /// 対局状態（`"playing"` または `"finished"`）。
     pub status: String,
+    /// 終局時の結果（空きマスを勝者に加算した石数）。
     pub outcome: Option<OutcomeV1>,
+    /// 記録時のエンジン・モデル情報。
     pub engine: EngineInfoV1,
 }
 
+/// 黒番・白番のプレイヤー定義。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayersV1 {
+    /// 黒番プレイヤー。
     pub black: PlayerV1,
+    /// 白番プレイヤー。
     pub white: PlayerV1,
 }
 
+/// 棋譜ファイル内のプレイヤー表現。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PlayerV1 {
+    /// 人間。
     Human,
+    /// AI（プリセット名・レベル・思考時間制限のいずれかで強さを記録）。
     Ai {
+        /// プリセットキー名。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         preset: Option<String>,
+        /// 探索レベル。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         level: Option<u8>,
+        /// 1 手あたりの思考時間上限（ミリ秒）。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         time_limit_ms: Option<u64>,
     },
 }
 
-/// Disc counts with the empty squares given to the winner.
+/// 終局時の最終石数（空きマスを勝者に加算したリバーシ公式ルール準拠のスコア）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutcomeV1 {
+    /// 黒の最終石数。
     pub black: u32,
+    /// 白の最終石数。
     pub white: u32,
 }
 
+/// 対局時に使用したエンジン・評価モデルのバージョン情報。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EngineInfoV1 {
+    /// アプリ／エンジンバージョン。
     pub version: String,
+    /// 評価モデル名。
     pub model: String,
 }
 
-/// A record checked and turned back into game state.
+/// 検証を経てアプリ内の対局状態へ復元された棋譜データ。
 #[derive(Clone, Debug)]
 pub struct LoadedGame {
+    /// 対局 ID と開始日時。
     pub game: GameInfo,
+    /// 黒番・白番のプレイヤー。
     pub players: [Player; 2],
+    /// 検証済みの棋譜履歴。
     pub history: History,
 }
 
-/// A validated record together with the metadata needed for the game list.
+/// 検証済み棋譜と対局一覧表示用メタデータのセット。
+///
+/// 一覧構築時に JSON を二重パースせずに済むよう `updated_at` と `outcome` も合わせて返す。
 #[derive(Clone, Debug)]
 pub struct ParsedRecord {
+    /// 復元された対局状態。
     pub loaded: LoadedGame,
+    /// 最終更新日時（RFC 3339）。
     pub updated_at: String,
+    /// 終局済みの場合の `(黒石数, 白石数)`。
     pub outcome: Option<(u32, u32)>,
 }
 
+/// 棋譜ファイルの読み込み・検証エラー。
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
+    /// ファイルサイズが [`MAX_BYTES`] を超えている。
     TooLarge,
+    /// JSON として不正。
     NotJson(String),
+    /// `deft-reversi` の棋譜フォーマットではない。
     NotARecord,
-    /// Written by a newer version of the app.
+    /// より新しいバージョンのアプリで作成されたスキーマ。
     NewerVersion(u32),
+    /// スキーマは一致するが内容（ID・局面・手順等）が不正。
     Invalid(&'static str),
 }
 
@@ -113,7 +158,7 @@ impl From<Player> for PlayerV1 {
         };
         match player {
             Player::Human => Self::Human,
-            // The level is also written so other readers know the strength.
+            // 外部リーダーでも強さを判別できるよう、プリセット時も対応レベルを併記する。
             Player::Ai(Strength::Preset(p)) => ai(Some(p), Some(p.level()), None),
             Player::Ai(Strength::Level(level)) => ai(None, Some(level), None),
             Player::Ai(Strength::TimePerMove(limit)) => {
@@ -148,13 +193,13 @@ impl TryFrom<&PlayerV1> for Player {
     }
 }
 
-/// The engine's position text uses upper-case squares; the record uses
-/// lower case, as the UI does.
+/// エンジン内部表記は大文字座標だが、棋譜ファイルでは UI に合わせて小文字で出力する。
 fn action_text(action: Action) -> String {
     action.to_string().to_lowercase()
 }
 
 impl RecordV1 {
+    /// 現在の対局状態から保存用の [`RecordV1`] を構築する。
     pub fn new(
         game: &GameInfo,
         players: [Player; 2],
@@ -195,23 +240,23 @@ impl RecordV1 {
         }
     }
 
+    /// 整形済み JSON 文字列へシリアライズする。
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("a record always serializes")
     }
 
-    /// Checks everything before any state changes.
+    /// JSON テキストを検証・パースして [`LoadedGame`] を返す。
     pub fn parse(text: &str) -> Result<LoadedGame, LoadError> {
         Self::parse_with_meta(text).map(|parsed| parsed.loaded)
     }
 
-    /// Parses and validates a record, also returning `updated_at` and `outcome`
-    /// so callers such as the game list do not parse the JSON twice.
+    /// JSON テキストを検証・パースし、対局一覧用のメタデータと合わせて [`ParsedRecord`] を返す。
     pub fn parse_with_meta(text: &str) -> Result<ParsedRecord, LoadError> {
         if text.len() as u64 > MAX_BYTES {
             return Err(LoadError::TooLarge);
         }
-        // The header first, so a newer schema is reported as such even when
-        // its fields no longer match this version.
+        // 新しいスキーマで他フィールドが変更されていても正しく NewerVersion を返せるよう、
+        // まずフォーマット識別子とスキーマバージョンだけを先行して読み取る。
         #[derive(Deserialize)]
         struct Header {
             format: String,

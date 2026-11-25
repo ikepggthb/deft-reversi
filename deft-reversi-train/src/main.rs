@@ -1,3 +1,11 @@
+//! リバーシエンジンの評価関数モデルおよび ProbCut（MPC）パラメータを学習・評価・変換する CLI バイナリ。
+//!
+//! 棋譜や局面テキストから学習用データセット（`.rd`）を作成する `convert`、
+//! 盤面パターン重みや補助ニューラルネットを学習する `train`、
+//! チェックポイントからモデルを書き出す `export`、モデルの精度を比較する `eval`、
+//! 枝刈り用の ProbCut パラメータを調整する `mpc`、
+//! モデルと校正パラメータを 1 ファイルにまとめる `pack` の各サブコマンドを提供します。
+
 mod convert;
 mod eval;
 mod model;
@@ -16,7 +24,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 static BUILD_VERSION: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| format!("{VERSION} (git {})", deft_reversi_engine::GIT_REVISION));
 
-/// Trains the engine's pattern evaluation from `.rd` datasets.
+/// 学習用データセット（`.rd`）からエンジンの評価関数を学習・評価・校正する CLI。
 #[derive(Parser, Debug)]
 #[command(author, version, long_version = BUILD_VERSION.as_str(), about)]
 struct Cli {
@@ -26,17 +34,17 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Build an `.rd` dataset from game transcripts.
+    /// 棋譜または局面テキストから `.rd` データセットを作成する。
     Convert(convert::ConvertArgs),
-    /// Train every phase and write the model.
+    /// 全フェーズを学習してモデルファイルを書き出す。
     Train(train::TrainArgs),
-    /// Write the model from the checkpoints of a training run.
+    /// 学習途中のチェックポイントからモデルファイルを書き出す。
     Export(train::ExportArgs),
-    /// Compare models by their error on a dataset split.
+    /// データセットの評価誤差（MAE）を計測してモデル同士を比較する。
     Eval(eval::EvalArgs),
-    /// Calibrate ProbCut (MPC) for a model.
+    /// モデルの枝刈り用 ProbCut（MPC）パラメータを調整（校正）する。
     Mpc(mpc::MpcArgs),
-    /// Write a model with a ProbCut calibration in one file.
+    /// モデルと ProbCut 校正パラメータを 1 ファイルにまとめて書き出す。
     Pack(mpc::PackArgs),
 }
 
@@ -55,8 +63,7 @@ fn main() {
     }
 }
 
-/// Disc counts `a..=b`, written as `a..=b` or `a..b` (both inclusive, as the
-/// dataset directories are named), or `a`.
+/// 対象とする石数の範囲（`a..=b`、データセットディレクトリ名に合わせた両端含む `a..b`、または単一値 `a`）。
 #[derive(Clone, Copy, Debug)]
 pub struct StoneRange {
     first: u8,
@@ -64,9 +71,11 @@ pub struct StoneRange {
 }
 
 impl StoneRange {
+    /// 範囲内の石数を昇順に反復するイテレータを返す。
     pub fn iter(self) -> impl Iterator<Item = u8> {
         self.first..=self.last
     }
+    /// 指定した石数 `stones` が範囲に含まれるか判定する。
     pub fn contains(self, stones: u8) -> bool {
         (self.first..=self.last).contains(&stones)
     }
@@ -85,7 +94,7 @@ impl FromStr for StoneRange {
                 .map_err(|_| format!("bad disc count `{x}`"))
         };
         let (first, last) = (parse(a)?, parse(b)?);
-        // 64 discs would share phase 59 with 63.
+        // 64 石の盤面は空きマス 0 の終局であり、63 石と同じフェーズ 59 に属するため除外する。
         if !(4..=63).contains(&first) || !(first..=63).contains(&last) {
             return Err(format!("disc counts must be within 4..=63: {s}"));
         }
@@ -93,8 +102,8 @@ impl FromStr for StoneRange {
     }
 }
 
-/// Runs `f` on every item with up to `threads` threads, taking items in
-/// order. Stops at the first error and returns it.
+/// `items` の各要素に対して最大 `threads` スレッドで `f` を並列実行する。
+/// いずれかの要素でエラーが起きた場合は最初のエラーを返し、残りの要素は処理しない。
 pub fn for_each_parallel<T: Sync>(
     items: &[T],
     threads: usize,

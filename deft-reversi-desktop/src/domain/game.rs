@@ -1,24 +1,26 @@
-//! A game's identity: an id for its autosave file and when it began.
+//! 対局の識別情報（自動保存ファイル用の ID と開始日時）を扱うモジュール。
 use std::{
     hash::{BuildHasher, RandomState},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// 1 局ごとの一意な識別情報。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameInfo {
-    /// Hex digits only, so it is safe as a file name.
+    /// 16 進数文字列のみで構成された ID（ファイル名として安全に使用可能）。
     pub id: String,
-    /// RFC 3339 in UTC.
+    /// 対局開始日時（UTC の RFC 3339 形式）。
     pub created_at: String,
 }
 
 impl GameInfo {
+    /// 現在時刻とランダムソルトから新しい [`GameInfo`] を生成する。
     pub fn new() -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
         let millis = now.as_millis() as u64;
-        // Two games started in the same millisecond still differ.
+        // 同一ミリ秒内に開始された対局同士でも ID が衝突しないようソルトを付与する。
         let salt = RandomState::new().hash_one(millis) as u16;
         Self {
             id: format!("{millis:012x}{salt:04x}"),
@@ -26,13 +28,15 @@ impl GameInfo {
         }
     }
 
-    /// Whether `id` could have come from `new`; ids from files are checked
-    /// before they become paths.
+    /// `id` が [`GameInfo::new`] で生成され得る安全な形式かを検証する。
+    ///
+    /// ファイルから読み込んだ ID をパスへ組み込む前のパストラバーサル対策として使用する。
     pub fn valid_id(id: &str) -> bool {
         (1..=32).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit())
     }
 }
 
+/// 現在時刻を UTC の RFC 3339 文字列（`YYYY-MM-DDThh:mm:ssZ`）として返す。
 pub fn now_rfc3339() -> String {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -40,11 +44,11 @@ pub fn now_rfc3339() -> String {
     rfc3339(seconds)
 }
 
-/// Seconds since 1970 as `YYYY-MM-DDThh:mm:ssZ`.
+/// UNIX エポックからの経過秒数を UTC の `YYYY-MM-DDThh:mm:ssZ` 形式へ変換する。
 fn rfc3339(seconds: u64) -> String {
     let days = (seconds / 86_400) as i64;
     let time = seconds % 86_400;
-    // Howard Hinnant's days-to-civil algorithm.
+    // Howard Hinnant の days-to-civil アルゴリズムで西暦年月日を求める。
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);

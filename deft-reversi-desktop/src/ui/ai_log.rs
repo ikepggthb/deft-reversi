@@ -1,4 +1,5 @@
-//! Every AI move of the game: when, how strong, what it read and how fast.
+//! 現在の対局で AI が打った全手の探索ログ（手数・強さ・着手・評価値・読み・時間・ノード数・NPS・読み筋）を
+//! 一覧表示するモーダルダイアログの描画モジュール。
 use super::{
     analysis_panel::disc,
     format::{action_text, nodes_text, pv_tail, reading_text, signed, strength_label},
@@ -7,7 +8,7 @@ use super::{
 };
 use gpui::{Context, Div, FontWeight, SharedString, div, prelude::*, px, relative};
 
-/// Column widths; the line takes the rest.
+/// テーブル各列の固定幅（論理ピクセル）。残りの幅は読み筋（PV）列に割り当てる。
 const NUMBER: f32 = 36.;
 const COLOR: f32 = 26.;
 const STRENGTH: f32 = 74.;
@@ -18,11 +19,13 @@ const TIME: f32 = 56.;
 const NODES: f32 = 64.;
 const NPS: f32 = 64.;
 
+/// 固定幅のテーブルセル要素を生成する。
 fn cell(width: f32) -> Div {
     div().w(px(width)).flex_none().whitespace_nowrap()
 }
 
 impl RootView {
+    /// AI ログモーダルダイアログを描画する。
     pub(super) fn render_ai_log(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
         let log = self.controller.ai_log();
@@ -95,7 +98,7 @@ impl RootView {
                                 .child(report.reading.map_or("–".into(), |r| reading_text(s, r))),
                         )
                         .child(cell(TIME).child(format!("{seconds:.2} s")))
-                        // A book move reads nothing.
+                        // Book から即答した手は探索ノード数が 0 のためハイフン表示にする。
                         .child(cell(NODES).child(if report.nodes == 0 {
                             "–".into()
                         } else {

@@ -1,5 +1,4 @@
-//! The record as text: copied to the clipboard, typed or pasted back in.
-//! Also the short "Black passes" over the board.
+//! 棋譜文字列（例: `f5d6c3`）のコピー・入力ダイアログ、および盤面上の「パス」通知オーバーレイを担うモジュール。
 use super::{
     analysis_panel::disc,
     root::{Dialog, RootView},
@@ -17,9 +16,9 @@ use gpui::{
 };
 use std::time::Duration;
 
-/// Only letters and digits make a record, so anything else is dropped;
-/// full-width ones, as a Japanese keyboard may type them, count as the
-/// plain ones.
+/// 棋譜として有効な英数字のみを抽出する。
+///
+/// 日本語キーボード入力時の全角英数字（`０`〜`９`, `ａ`〜`ｚ`, `Ａ`〜`Ｚ`）も半角小文字へ正規化する。
 fn record_chars(text: &str) -> impl Iterator<Item = char> + '_ {
     text.chars()
         .map(|c| match c {
@@ -33,7 +32,7 @@ fn record_chars(text: &str) -> impl Iterator<Item = char> + '_ {
 }
 
 impl RootView {
-    /// The whole record, passes left out, such as `f5d6c3`.
+    /// 現在の棋譜（パス除く）をクリップボードへコピーし、コピー完了表示タイマーを開始する。
     pub(super) fn copy_record(&mut self, cx: &mut Context<Self>) {
         self.menu_open = false;
         let text = transcript::to_text(self.controller.history().actions());
@@ -56,7 +55,7 @@ impl RootView {
         cx.notify();
     }
 
-    /// Opens the record dialog for where a book grows from.
+    /// Book 生成の起点手順を指定するために棋譜入力ダイアログを開く。
     pub(super) fn enter_book_record(&mut self, cx: &mut Context<Self>) {
         self.enter_record(false, cx);
         self.record_for_book = true;
@@ -66,7 +65,7 @@ impl RootView {
         }
     }
 
-    /// Opens the record dialog, with the clipboard's text when pasting.
+    /// 棋譜入力ダイアログを開く（`paste` が `true` ならクリップボード内容を初期挿入する）。
     pub(super) fn enter_record(&mut self, paste: bool, cx: &mut Context<Self>) {
         self.record_for_book = false;
         self.record_input.clear();
@@ -90,9 +89,10 @@ impl RootView {
         self.record_pending = None;
     }
 
-    /// Types `text` at the caret, in place of everything when it is all
-    /// selected. Characters pair up into moves, so the moves after the
-    /// caret keep their places; an odd one out waits for its pair.
+    /// キャレット位置へ文字列を挿入する（全選択中なら置換）。
+    ///
+    /// 2 文字で 1 手を構成するため、奇数の 1 文字目は `record_pending` に保留し、
+    /// 2 文字目が揃った時点で手単位の位置へ挿入する。
     fn record_insert(&mut self, text: &str) {
         if self.record_all {
             self.record_clear();
@@ -110,8 +110,7 @@ impl RootView {
         }
     }
 
-    /// Takes out the selection, the half-typed move, or the whole move
-    /// before or after the caret.
+    /// 全選択、入力途中の 1 文字、またはキャレット前後の 1 手を削除する。
     fn record_delete(&mut self, forward: bool) {
         if self.record_all {
             self.record_clear();
@@ -128,13 +127,14 @@ impl RootView {
         }
     }
 
+    /// 棋譜入力ダイアログ表示中のキー入力を処理する。
     pub(super) fn record_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         let key = &event.keystroke;
         let moves = self.record_moves();
         let ctrl = key.modifiers.control || key.modifiers.platform;
         match key.key.as_str() {
             "left" | "right" | "home" | "end" => {
-                // Moving drops a half-typed move.
+                // カーソル移動時は入力途中の半端な 1 文字を破棄する。
                 self.record_pending = None;
                 self.record_caret = match key.key.as_str() {
                     "home" => 0,
@@ -174,7 +174,7 @@ impl RootView {
         cx.notify();
     }
 
-    /// A click on a move puts the caret after it.
+    /// 棋譜チップクリック時にキャレットをその手の直後へ移動する。
     fn record_click(&mut self, caret: usize, cx: &mut Context<Self>) {
         self.record_caret = caret.min(self.record_moves());
         self.record_all = false;
@@ -182,8 +182,7 @@ impl RootView {
         cx.notify();
     }
 
-    /// The typed record replaces the game, with the same players; like any
-    /// loaded game it opens paused.
+    /// 入力された棋譜を読み込む（Book 起点入力時は Book ダイアログへ反映、通常時は一時停止状態で対局を置換）。
     pub(super) fn load_record(&mut self, cx: &mut Context<Self>) {
         if self.record_pending.is_some() {
             return;
@@ -214,13 +213,14 @@ impl RootView {
         self.run(Command::Load(Box::new(game)), cx);
     }
 
+    /// 棋譜入力モーダルダイアログを描画する。
     pub(super) fn render_record_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
         let parsed = transcript::parse(&self.record_input);
         let failed = parsed.as_ref().err().map(|&number| number - 1);
         let caret = self.record_caret;
         let all = self.record_all;
-        // The caret, with the half-typed move before it.
+        // 入力途中の 1 文字（存在する場合）とキャレット縦線を描画するクロージャ。
         let typing = || {
             div()
                 .flex()
@@ -235,8 +235,8 @@ impl RootView {
                 }))
                 .child(div().w(px(2.)).h(px(18.)).bg(theme::text()))
         };
-        // One chip a move, so a long record wraps between moves; the first
-        // move that cannot be played is red and the rest are faint.
+        // 1 手ごとにチップ化し、長い棋譜が手の中で折り返されないようにする。
+        // 打てない最初の手は赤色表示し、それ以降の手は薄く表示する。
         let chars: Vec<char> = self.record_input.chars().collect();
         let chips = chars.chunks(2).enumerate().map(|(i, pair)| {
             let color = match failed {
@@ -309,7 +309,7 @@ impl RootView {
                     .items_center()
                     .gap(px(4.))
                     .font_family("Consolas")
-                    // A click past the last move puts the caret at the end.
+                    // 最後の手より右側の余白をクリックした場合は、キャレットを末尾へ移動する。
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _: &MouseDownEvent, _, cx| {
@@ -355,8 +355,7 @@ impl RootView {
             )
     }
 
-    /// "Black passes" in the middle of the window; a click anywhere or a
-    /// moment ends it.
+    /// 画面中央に「黒パス」「白パス」の通知オーバーレイを描画する（クリックまたは一定時間で消える）。
     pub(super) fn render_pass_notice(&self, color: Color, cx: &mut Context<Self>) -> AnyElement {
         let s = self.settings.lang.strings();
         div()

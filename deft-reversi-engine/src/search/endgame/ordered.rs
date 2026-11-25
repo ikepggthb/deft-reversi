@@ -1,10 +1,13 @@
-//! Ordered null-window endgame search for seven to thirteen empties.
+//! 空き 7〜13 マス向けの、ムーブオーダリング（候補手の並び替え）付き Null-Window 終盤探索モジュールです。
 use super::local_tt::EndProbe;
 use super::parity::odd_regions;
 use super::{Aborted, Board, Context, EvalState, LOCAL_END_MAX};
 use crate::board::CORNERS;
 
 impl Context {
+    /// 空き 7〜13 マスの局面を探索します。
+    /// 確定石による上界枝刈り、終盤 ProbCut、ローカル置換表の最善手先行、相手モビリティ 1 以下の即座探索、
+    /// および高速終盤オーダリングによる候補手の並び替えを行います。
     pub(super) fn ordered_endgame(
         &mut self,
         board: Board,
@@ -186,10 +189,10 @@ impl Context {
     }
 }
 
-/// Reference fast endgame ordering: the opponent's corner-weighted mobility
-/// dominates, then the mover's stable corner discs; square value and quadrant
-/// parity only break ties. (The reference's potential-mobility term was not
-/// worth its cost here.)
+/// 参照エンジン由来の高速な終盤ムーブオーダリングスコアを計算します。
+/// 相手の隅重み付き合法手数（少ないほど良い）を最も重視し、次いで自石の隅および隅に隣接する確定辺石、
+/// 同点時のタイブレークとしてマス価値と象限パリティ（奇数個空き領域の優先）を用います。
+/// （参照エンジンにあった開放度／潜在合法手項は計算コストに見合わないため省略しています。）
 pub(in crate::search) fn endgame_ordering(child: Board, legal: u64, bit: u64, odd: u64) -> i32 {
     const SQUARE_VALUE: [i32; 64] = [
         18, 4, 16, 12, 12, 16, 4, 18, 4, 2, 6, 8, 8, 6, 2, 4, 16, 6, 14, 10, 10, 14, 6, 16, 12, 8,
@@ -197,7 +200,8 @@ pub(in crate::search) fn endgame_ordering(child: Board, legal: u64, bit: u64, od
         8, 6, 2, 4, 18, 4, 16, 12, 12, 16, 4, 18,
     ];
     let mobility = (legal.count_ones() + (legal & CORNERS).count_ones()) as i32;
-    // The mover's discs on corners and on edge squares next to its own corners.
+    // 子局面 `child` では手番が入れ替わっているため、着手者（親の手番側）の石は `opponent_bits` 側にあります。
+    // 隅および自分の隅に隣接する辺上のマス（確定石になりやすいマス）を数えます。
     let mover = child.opponent_bits();
     let corner = mover
         & (((mover & 0x0100000000000001) << 1)
@@ -212,6 +216,7 @@ pub(in crate::search) fn endgame_ordering(child: Board, legal: u64, bit: u64, od
         + if bit & odd != 0 { parity } else { 0 }
 }
 
+/// オーダリング済みの終盤候補手 1 手分の作業データです。
 #[derive(Clone, Copy)]
 pub(super) struct EndMove {
     square: u8,

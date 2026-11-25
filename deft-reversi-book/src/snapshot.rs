@@ -1,8 +1,9 @@
-//! 対局用Bookへの変換と、盤面からの読取参照。
+//! 対局用 Book（`.dbook`）への書き出し用変換と、盤面からの高速な参照を提供するモジュール。
 //!
-//! 局面一覧と候補一覧を連続配列へ置き、Record.start/lenで対応付ける。
-//! 編集用の親一覧・仕事一覧は持たない。通常の参照はprobe→BookEntry::moves。
-//! 保存形式の一時一覧を経由せず、現在使うEvaluationを共有一覧へ移す。
+//! 対局中は高速に局面を引けるよう、局面一覧と候補手一覧をそれぞれ連続した配列に並べ、
+//! `Record.start` と `Record.len` で対応付けている。編集用の親リンクや生成ジョブ一覧は持たない。
+//! 通常の対局参照では `Book::probe` から `BookEntry::moves` を辿って候補手を読む。
+//! 一旦別の中間配列にコピーすることはせず、現在採用されている `Evaluation` だけを共有ストアへ移す。
 use super::*;
 #[derive(Clone, Copy, Debug)]
 pub(super) struct StoredCandidate {
@@ -25,7 +26,8 @@ pub(super) struct SnapshotMetadata {
     pub catalog: catalog::Catalog,
     pub producer: String,
 }
-/// Immutable, compact play snapshot. No mutable graph, reverse links, or jobs.
+/// 対局時に高速に読み取るための、不変かつコンパクトな Book スナップショット（`.dbook`）。
+/// 編集用ワークスペース（[`BookEditor`] / `.dbook-work`）と異なり、可変グラフ・親への逆リンク・生成ジョブは持たない。
 pub struct Book {
     pub(super) identity: AnalysisIdentity,
     pub(super) catalog: catalog::Catalog,
@@ -51,7 +53,7 @@ pub struct BookCandidate {
     pub value: Option<Evaluation>,
     pub final_score: Option<Evaluation>,
 }
-/// Normal play view: detailed search metadata remains in the shared store.
+/// 通常対局向け候補手ビュー。詳細な探索メタデータは共有ストアに保持されたままとなる。
 #[derive(Clone, Copy, Debug)]
 pub struct BookMove<'a> {
     pub action: Action,
@@ -59,15 +61,15 @@ pub struct BookMove<'a> {
     pub value: Option<EvaluationRef<'a>>,
     pub final_score: Option<EvaluationRef<'a>>,
 }
-/// Borrowed lookup view; iteration restores coordinates without allocation.
+/// 盤面照合結果の借用ビュー。イテレーション時にメモリ確保なしで着手座標を元の向きへ復元する。
 pub struct BookEntry<'a> {
     book: &'a Book,
     record: &'a Record,
     transform: Symmetry,
 }
 impl<'a> BookEntry<'a> {
-    /// 通常の対局向け。着手は問い合わせ時の座標へ戻すが、評価内の盤面は正規化座標。
-    /// 評価は借用参照なので、各手の詳しい探索記録をコピーせずに点数・品質を読める。
+    /// 通常の対局向け参照。着手座標は問い合わせ時の盤面の向きへ戻すが、評価レコード内の盤面は正規化座標のまま。
+    /// 評価は借用参照（[`EvaluationRef`]）で返すため、詳しい探索記録をコピーせずに点数と品質を確認できる。
     pub fn moves(&self) -> impl Iterator<Item = BookMove<'a>> + '_ {
         self.book.candidates[self.record.start..self.record.start + self.record.len]
             .iter()
@@ -89,7 +91,8 @@ impl<'a> BookEntry<'a> {
                 final_score: c.final_score.map(|v| self.book.values.at(v as usize)),
             })
     }
-    /// 全合法手が点評価を持つか。最良手と他手の上限だけで局面値が分かってもfalse。
+    /// 全合法手が点評価（`Bound::Point`）を持っているか。
+    /// 最善手の点評価と他手の上界（`Bound::Upper`）だけで局面全体の値が決まっている場合でも `false` になる。
     pub fn all_moves_evaluated(&self) -> bool {
         self.record.complete
     }

@@ -1,4 +1,4 @@
-//! Small controls shared by the dialogs.
+//! ダイアログや設定画面・パネル間で共有する汎用 UI 部品（ボタン、トグル、ステッパー、スクロール領域等）を定義するモジュール。
 use super::{root::RootView, theme};
 use gpui::{
     ClickEvent, Context, Div, ElementId, FontWeight, MouseButton, MouseDownEvent, Pixels,
@@ -6,8 +6,10 @@ use gpui::{
 };
 use std::rc::Rc;
 
+/// `RootView` に対するクリック等のイベントハンドラ型。
 pub(super) type Handler = Rc<dyn Fn(&mut RootView, &mut Context<RootView>)>;
 
+/// クロージャを [`Handler`] へラップするヘルパー関数。
 pub(super) fn handler(f: impl Fn(&mut RootView, &mut Context<RootView>) + 'static) -> Handler {
     Rc::new(f)
 }
@@ -19,7 +21,7 @@ fn on_click(el: Stateful<Div>, f: Handler, cx: &mut Context<RootView>) -> Statef
     }))
 }
 
-/// A two-choice segmented control backed by a boolean.
+/// 真偽値を切り替える 2 択のセグメントコントロールを生成する。
 pub(super) fn toggle(
     id: &'static str,
     on_label: &'static str,
@@ -48,7 +50,7 @@ pub(super) fn toggle(
     )
 }
 
-/// A framed row of choices with the chosen one filled.
+/// 選択中の項目を塗りつぶして表示する枠付きセグメントコントロールを生成する。
 pub(super) fn segmented(
     id: &'static str,
     items: Vec<(SharedString, bool, Handler)>,
@@ -87,7 +89,7 @@ pub(super) fn segmented(
         }))
 }
 
-/// Plain text that acts on click.
+/// クリック可能なテキストリンク要素を生成する。
 pub(super) fn link(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -109,7 +111,7 @@ pub(super) fn link(
     .child(label.into())
 }
 
-/// A framed button, the same size as `primary`.
+/// `primary` と同じサイズの枠付き標準ボタンを生成する。
 pub(super) fn button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -135,7 +137,7 @@ pub(super) fn button(
     .child(label.into())
 }
 
-/// The one filled button of a dialog.
+/// ダイアログ内の主要な確定アクション用の塗りつぶしボタンを生成する。
 pub(super) fn primary(
     id: &'static str,
     label: impl Into<SharedString>,
@@ -162,7 +164,7 @@ pub(super) fn primary(
     .child(label.into())
 }
 
-/// A number with − and + on either side.
+/// 左右に `−` / `+` ボタンを備えた数値ステッパーを生成する。
 pub(super) fn stepper(
     id: &'static str,
     value: impl Into<SharedString>,
@@ -205,7 +207,7 @@ pub(super) fn stepper(
         .child(button(1, "+", up, cx))
 }
 
-/// A light frame around one block of the page.
+/// 薄い枠線と背景色を持つカードコンテナを生成する。
 pub(super) fn card() -> Div {
     div()
         .flex()
@@ -217,7 +219,7 @@ pub(super) fn card() -> Div {
         .rounded(px(8.))
 }
 
-/// A small heading inside a card.
+/// カード内の小見出しを生成する。
 pub(super) fn heading(text: impl Into<SharedString>) -> Div {
     div()
         .text_xs()
@@ -226,7 +228,7 @@ pub(super) fn heading(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// A short line saying what something means.
+/// 補足説明用の 1 行キャプションを生成する。
 pub(super) fn caption(text: impl Into<SharedString>) -> Div {
     div()
         .text_xs()
@@ -234,7 +236,7 @@ pub(super) fn caption(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// A labelled row inside a settings or builder dialog.
+/// 設定画面やダイアログ内の「ラベル＋コントロール＋任意注記」の 1 行を生成する。
 pub(super) fn form_row(
     label_width: f32,
     label: &'static str,
@@ -252,7 +254,7 @@ pub(super) fn form_row(
         .children(note.map(|n| caption(n).whitespace_nowrap()))
 }
 
-/// The common outer frame of a modal dialog.
+/// モーダルダイアログ共通の外枠コンテナを生成する。
 pub(super) fn dialog_box(width: f32) -> Div {
     div()
         .w(px(width))
@@ -266,7 +268,7 @@ pub(super) fn dialog_box(width: f32) -> Div {
         .rounded(px(10.))
 }
 
-/// The title bar of a modal dialog, with an optional close link on the right.
+/// モーダルダイアログのタイトルバー（右端に任意の閉じるリンク付き）を生成する。
 pub(super) fn dialog_header(
     title: &'static str,
     close: Option<(&'static str, &'static str)>,
@@ -289,24 +291,23 @@ pub(super) fn dialog_header(
         )
 }
 
-/// The scroll bar being dragged: where the pointer and the list were when
-/// the drag began.
+/// スクロールバーのつまみドラッグ中に保持する開始位置状態。
 pub(super) struct ScrollDrag {
     handle: ScrollHandle,
     start_y: Pixels,
     start_offset: f32,
 }
 
-/// The thumb's height and how far it can move, for a list of `view` shown
-/// out of `view + max`.
+/// 表示領域 `view` と全体長 `view + max` から、スクロールバーつまみの高さと移動可能範囲を計算する。
 fn thumb(view: f32, max: f32) -> (f32, f32) {
     let height = (view * view / (view + max)).max(24.).min(view);
     (height, view - height)
 }
 
-/// A scrolling column with a bar on its right: it shows where the list is,
-/// and it can be dragged or clicked. The bar knows the sizes from the last
-/// frame, so it appears from the second.
+/// 右端にドラッグ／クリック可能なカスタムスクロールバーを備えた縦スクロール領域を生成する。
+///
+/// GPUI の `ScrollHandle` は「直前の描画フレームでレイアウトされた領域サイズ」を保持するため、
+/// ダイアログを開いた最初のフレームではスクロールバーの長さが確定せず、2 フレーム目から表示される。
 pub(super) fn scroll_area(
     id: &'static str,
     handle: &ScrollHandle,
@@ -331,7 +332,7 @@ pub(super) fn scroll_area(
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_, event: &MouseDownEvent, _, cx| {
-                    // A click on the track centres the thumb there.
+                    // トラック上のクリック位置が つまみの中央になるようスクロール位置を移動する。
                     let bounds = track_handle.bounds();
                     let view = f32::from(bounds.size.height);
                     let max = f32::from(track_handle.max_offset().y);
@@ -373,8 +374,8 @@ pub(super) fn scroll_area(
         .min_h_0()
         .flex()
         .flex_col()
-        // The content keeps its own height inside the scrolling box, so its
-        // rows are never squeezed into each other.
+        // 内部コンテンツに flex_none() を指定し、内容がはみ出すときに縮んで潰れるのではなく
+        // 正しくスクロール領域として溢れるようにする。
         .child(
             div()
                 .id(id)
@@ -391,7 +392,7 @@ pub(super) fn scroll_area(
 }
 
 impl RootView {
-    /// Follows the pointer while the scroll bar is held.
+    /// スクロールバーつまみのドラッグ中にポインタの Y 座標へ追従してスクロール位置を更新する。
     pub(super) fn drag_scroll(&mut self, y: Pixels, cx: &mut Context<Self>) {
         let Some(drag) = &self.scroll_drag else {
             return;

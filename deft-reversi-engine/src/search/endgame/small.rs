@@ -1,14 +1,17 @@
-//! Score-only last-four solver: enumerate empty squares, without move generation.
+//! 空き 3 マス以下向けのスコア専用高速ソルバです。
+//! 合法手生成を行わず、空きマスを直接列挙して隣接する相手石の有無と裏返る石数で判定します。
 use super::last_square_bound;
 use super::parity::QUADRANT_MASKS as REGIONS;
 use super::*;
 
+/// 残り 3 マス以下の探索で引き回す局面状態です。
 pub(super) struct SmallPosition {
     pub(super) board: Board,
     pub(super) empty: u64,
     pub(super) odd: u64,
     pub(super) count: u8,
 }
+/// 各マスの周囲 8 近傍のマスクテーブルです（隣接する相手石が 0 なら着手不可として枝刈りするために使います）。
 const NEIGHBORS: [u64; 64] = neighbors();
 const fn neighbors() -> [u64; 64] {
     let mut out = [0; 64];
@@ -22,6 +25,7 @@ const fn neighbors() -> [u64; 64] {
     out
 }
 impl Context {
+    /// 空き 3 マス以下の局面を奇数領域優先で探索し、厳密スコア（石差）を返します。
     pub(super) fn small_score(
         &mut self,
         position: SmallPosition,

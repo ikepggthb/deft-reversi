@@ -1,5 +1,5 @@
-//! Saving and opening: autosave, settings, the file menu, open and export
-//! through the OS dialogs, and the list of saved games.
+//! 棋譜・設定の保存・読み込み、ファイルメニュー、OS ダイアログによる開く／エクスポート、
+//! および保存済み対局一覧ダイアログを担当するモジュール。
 use super::{
     format::strength_label,
     root::{Dialog, RootView},
@@ -18,6 +18,7 @@ use crate::{
 use gpui::{AnyElement, ClickEvent, Context, PathPromptOptions, SharedString, div, prelude::*, px};
 
 impl RootView {
+    /// ストレージスレッドへコマンドを送信する（データフォルダ未構成時は何もしない）。
     pub(super) fn send_storage(&self, command: StorageCommand) {
         if let Some(storage) = &self.storage {
             storage.send(command);
@@ -37,8 +38,11 @@ impl RootView {
         )
     }
 
-    /// Sends what changed since the last call; storage debounces the game.
-    /// Called on every render, which follows every change.
+    /// 前回保存時から変化した棋譜（リビジョン）および設定をストレージスレッドへ送信する。
+    ///
+    /// 毎フレームの描画処理の先頭から呼び出されるが、実際に送信されるのは
+    /// リビジョン番号や設定値が前回保存時から変わったときだけである。
+    /// また、実際のディスク書き込みはストレージスレッド側でデバウンス（連続変更のまとめ処理）される。
     pub(super) fn persist(&mut self) {
         if self.storage.is_none() {
             return;
@@ -56,11 +60,12 @@ impl RootView {
         }
     }
 
+    /// ストレージスレッドからのイベント（起動時復元・保存エラー・読み込み・一覧取得等）を処理する。
     pub(super) fn on_storage(&mut self, event: StorageEvent, cx: &mut Context<Self>) {
         let s = self.settings.lang.strings();
         match event {
             StorageEvent::Restored(Some(game)) => {
-                // Only an untouched start gives way to the last game.
+                // 起動直後にユーザーがまだ何も操作していない（リビジョン 0）場合のみ前回対局を復元する。
                 if self.controller.revision() == 0 {
                     self.run(Command::Load(Box::new(game)), cx);
                     self.saved_revision = self.controller.revision();
@@ -90,6 +95,7 @@ impl RootView {
         cx.notify();
     }
 
+    /// ファイル選択ダイアログを開き、選択された `.dreversi` ファイルを新規コピーとしてインポートする。
     pub(super) fn open_file(&mut self, cx: &mut Context<Self>) {
         self.menu_open = false;
         let paths = cx.prompt_for_paths(PathPromptOptions {
@@ -111,7 +117,7 @@ impl RootView {
                     this.notice = Some(s.load_failed(&error.to_string()).into());
                     cx.notify();
                 }
-                // Cancelled.
+                // ダイアログがキャンセルされた場合は何もしない。
                 _ => {}
             })
             .ok();
@@ -120,6 +126,7 @@ impl RootView {
         cx.notify();
     }
 
+    /// 保存先選択ダイアログを開き、現在の本譜を指定パスへエクスポートする。
     pub(super) fn export_file(&mut self, cx: &mut Context<Self>) {
         self.menu_open = false;
         let record = self.record();
@@ -149,7 +156,7 @@ impl RootView {
         cx.notify();
     }
 
-    /// Opens under the toolbar's File item; a click elsewhere closes it.
+    /// ツールバーの「ファイル」項目の下にドロップダウンメニューを描画する（領域外クリックで閉じる）。
     pub(super) fn render_file_menu(&self, cx: &mut Context<Self>) -> AnyElement {
         let s = self.settings.lang.strings();
         let item = |id: &'static str,
@@ -203,7 +210,7 @@ impl RootView {
                     .border_1()
                     .border_color(theme::border())
                     .rounded(px(6.))
-                    // Clicks inside the menu do not reach the backdrop.
+                    // メニュー内のクリックが背景バックドロップへ伝播して即閉じないようにする。
                     .on_click(|_, _, cx| cx.stop_propagation())
                     .child(item(
                         "menu-open",
@@ -244,6 +251,7 @@ impl RootView {
             .into_any_element()
     }
 
+    /// 保存済み対局一覧（読み込み・削除確認付き）モーダルダイアログを描画する。
     pub(super) fn render_games(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
         let current = self.controller.game().id.clone();
@@ -368,8 +376,7 @@ impl RootView {
     }
 }
 
-/// "2026-11-03T09:25:05Z" in the local time zone, such as
-/// "2026-11-03 18:25".
+/// UTC の RFC 3339 文字列（例: `"2026-11-03T09:25:05Z"`）をローカルタイムゾーンの `"YYYY-MM-DD HH:MM"` へ整形する。
 fn local_time(rfc3339: &str) -> String {
     match chrono::DateTime::parse_from_rfc3339(rfc3339) {
         Ok(time) => time

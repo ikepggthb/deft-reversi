@@ -1,20 +1,27 @@
-//! Game history: the positions played so far, undo and redo.
+//! 対局の局面履歴を管理し、待った（undo）とやり直し（redo）を提供するモジュール。
+//!
+//! 強制パスは直前の着手とまとめて記録・巻き戻しされるため、
+//! 対局者や呼び出し側は石を置く手だけを意識すればよい。
+
 use deft_reversi_engine::{Action, MoveError, Position};
 
+/// 1 局分の局面履歴と待った／やり直し用の着手履歴を保持する構造体。
 pub struct Game {
-    /// Every position from the start, including those after a pass.
+    /// 開始局面から現在までの全局面（パス後の局面も含む）。
     positions: Vec<Position>,
-    /// `actions[i]` leads from `positions[i]` to `positions[i + 1]`.
+    /// `actions[i]` を進めると `positions[i]` から `positions[i + 1]` へ遷移する。
     actions: Vec<Action>,
-    /// Undone placements, most recent last.
+    /// 取り消された着手の履歴（最後に待ったをした手が末尾）。
     redo: Vec<Action>,
 }
 
 impl Game {
+    /// 平手初期局面から始まる新しい対局履歴を作成する。
     pub fn new() -> Self {
         Self::from_position(Position::initial())
     }
 
+    /// 指定された開始局面 `position` から始まる対局履歴を作成する。
     pub fn from_position(position: Position) -> Self {
         Self {
             positions: vec![position],
@@ -23,21 +30,26 @@ impl Game {
         }
     }
 
+    /// 対局の開始局面を返す。
     pub fn start(&self) -> Position {
         self.positions[0]
     }
 
+    /// 現在の局面を返す。
     pub fn current(&self) -> Position {
         *self.positions.last().unwrap()
     }
 
-    /// Plays `action` and any pass forced after it.
+    /// `action` を進め、その直後に強制パスが必要なら自動でパスも進める。
+    ///
+    /// 新しい着手を指したため、やり直し履歴（`redo`）は消去される。
     pub fn play(&mut self, action: Action) -> Result<(), MoveError> {
         self.push(action)?;
         self.redo.clear();
         Ok(())
     }
 
+    /// `action` と、直後に発生する強制パスを履歴へ積む内部ヘルパー。
     fn push(&mut self, action: Action) -> Result<(), MoveError> {
         let next = self.current().play(action)?;
         self.positions.push(next);
@@ -49,8 +61,9 @@ impl Game {
         Ok(())
     }
 
-    /// Plays a record such as `f5d6c3`. On an illegal move the game is left
-    /// as it was.
+    /// `f5d6c3` のような連続座標文字列の棋譜を順に再生する。
+    ///
+    /// 途中に不正な手が含まれていた場合は、エラーを返して再生前の状態へ完全に戻す。
     pub fn play_record(&mut self, record: &str) -> Result<(), String> {
         let bytes = record.as_bytes();
         if !bytes.len().is_multiple_of(2) || !record.is_ascii() {
@@ -64,6 +77,7 @@ impl Game {
                 .map_err(|e| format!("{text}: {e}"))
                 .and_then(|a| self.play(a).map_err(|e| format!("{text}: {e}")));
             if let Err(e) = played {
+                // 途中まで積んだ局面と着手、および消去されたやり直し履歴を元に戻す。
                 self.positions.truncate(saved.0);
                 self.actions.truncate(saved.0 - 1);
                 self.redo = saved.1;
@@ -73,11 +87,12 @@ impl Game {
         Ok(())
     }
 
-    /// Takes back the last placement and the passes around it.
+    /// 直前の着手と、その前後に含まれる強制パスをまとめて 1 手分取り消す。
     pub fn undo(&mut self) -> bool {
         if self.actions.iter().all(|a| *a == Action::Pass) {
             return false;
         }
+        // 着手後に自動追加された強制パスを先に取り除く。
         while self.actions.last() == Some(&Action::Pass) {
             self.pop();
         }
@@ -90,6 +105,7 @@ impl Game {
         }
     }
 
+    /// 直前に取り消した着手を 1 手分やり直す。
     pub fn redo(&mut self) -> bool {
         match self.redo.pop() {
             Some(action) => self.push(action).is_ok(),
@@ -97,12 +113,14 @@ impl Game {
         }
     }
 
+    /// 履歴の末尾から 1 手分（局面と行動）を取り出す内部ヘルパー。
     fn pop(&mut self) -> Option<Action> {
         let action = self.actions.pop()?;
         self.positions.pop();
         Some(action)
     }
 
+    /// 開始局面から現在までの `(着手前の局面, 行動)` を順番に返すイテレータ。
     pub fn steps(&self) -> impl Iterator<Item = (Position, Action)> + '_ {
         self.positions
             .iter()
@@ -110,7 +128,7 @@ impl Game {
             .zip(self.actions.iter().copied())
     }
 
-    /// The placements so far, such as `f5d6c3`.
+    /// これまでの着手をパスを除いた小文字の連続座標文字列（例: `f5d6c3`）で返す。
     pub fn record(&self) -> String {
         self.actions
             .iter()
@@ -119,6 +137,7 @@ impl Game {
             .collect()
     }
 
+    /// これまでに打たれた着手数（パスを除く）を返す。
     pub fn placements(&self) -> usize {
         self.actions.iter().filter(|a| **a != Action::Pass).count()
     }

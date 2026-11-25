@@ -1,9 +1,11 @@
-//! Single generation strategy: retained registered evidence plus the best
-//! remaining root move and upper coverage for the rest. No all-move scan mode.
+//! Book 自動生成の探索ループを実行するモジュール。
 //!
-//! 一巡の流れはprepare（対象手集合を決める）→BatchPool::run（探索）→publish
-//! （完了結果を反映）→expand_and_schedule（登録と次の仕事）。
-//! 仕事一覧・損失条件はgenerate.rs、採用する候補値と親への更新はeditor.rsを参照。
+//! 登録済みの子局面から得られた評価を再利用しつつ、残りの未登録候補（フロンティア）については
+//! 最善手とその上界（`Bound::Upper`）だけをまとめて調べる集合探索で維持する（全手を個別に総当たりはしない）。
+//!
+//! 1 サイクルの流れは `prepare`（調べる対象の手の集合を決める）→ `BatchPool::run`（エンジンで並列探索）→
+//! `publish`（探索結果をエディタへ反映）→ `expand_and_schedule`（損失条件を満たす手の登録と次の仕事投入）となる。
+//! 仕事一覧や損失条件は `generate.rs`、採用する候補値や親へのバックアップは `editor.rs` を参照。
 use super::editor::{MoveSearch, dominates};
 use super::generate::*;
 use super::*;
@@ -57,9 +59,10 @@ fn quality_ok(
             && v.selectivity() >= target.selectivity
 }
 
-// 登録した子の評価を再利用し、足りない候補を一回の集合探索にまとめる。
-// Noneは「新しい探索は不要」であって「全候補の点数を個別に求めた」ではない。
-// 品質が足りる点評価と残りの上限で最良手が決まれば、劣る全候補を個別探索しない。
+// すでに登録されている子局面の評価を再利用し、まだ評価が足りない候補だけを一回の集合探索にまとめる。
+// 戻り値が None なのは「新しい探索は不要」という意味であり、「全候補の点数を個別に求めた」という意味ではない。
+// 必要な品質を満たす最善手の点評価と、残りの手の上界（Bound::Upper）だけで最善手が確定できれば、
+// それ以上劣る候補を 1 つずつ個別探索することはしない。
 fn prepare(
     engine: &Engine,
     editor: &BookEditor,
@@ -94,10 +97,9 @@ fn prepare(
         candidate_plan(engine, board, action, &state.config, stage)?.1
     };
     let mut target = original_target;
-    // A retained registered child can lie outside a newly reduced placement
-    // boundary. It has no scheduled analysis job there. Include missing or
-    // insufficient coverage for those links in the root subset, otherwise a
-    // retargeted root could remain unevaluable forever.
+    // 保持中の登録済み子局面が、新たに縮小された手数境界の外側に位置する場合がある。
+    // そこにはスケジュール済みの解析ジョブが存在しないため、それらのリンクに対する不足カバレッジを
+    // ルート部分集合に含める（さもないと再目標化されたルートが永遠に評価不能になりうる）。
     let boundary_link = |e: &super::editor::Edge| {
         e.registered
             && !state.config.unregistered_only
@@ -113,8 +115,8 @@ fn prepare(
     {
         if let Some(v) = editor.values.opt(edge.direct()) {
             if v.is_final() && v.bound() != Bound::Point {
-                // A final-score bound cannot be replaced by a finite-horizon
-                // point. Complete the subset at Full to refine it safely.
+                // 最終石差の境界（上下限）は有限深さの点評価で置き換えられないため、
+                // 安全に精密化するには Full 選択率で完全読みする必要がある。
                 target.depth = board.empty_count();
                 target.selectivity = Selectivity::Full;
             } else if !v.is_final() {
@@ -127,8 +129,8 @@ fn prepare(
     }
     if let Some(f) = &node.move_search {
         if editor.values.get(f.value).is_final() {
-            // Its non-best moves are final-score certificates too. Refining
-            // the remaining subset must not replace them with horizon values.
+            // 非最善手も最終石差の確定情報であるため、残余部分集合の再探索で
+            // 有限深さの推定値へ退行させないよう完全読みに引き上げる。
             target.depth = target.depth.max(board.empty_count());
             target.selectivity = Selectivity::Full;
         } else {
@@ -219,8 +221,7 @@ fn prepare(
     if reuse && !repair_registered && ready && best_point.is_some_and(|v| v >= max_upper) {
         return Ok(None);
     }
-    // The threshold uses the most permissive remaining loss budget of any
-    // active path. Equality is admissible and must survive the probe.
+    // 閾値には有効パスのうち最も許容度の高い残り損失予算を用いる。同値は許容されプローブを通過する必要がある。
     let mut minimum_score = None;
     if reuse
         && !repair_registered
@@ -275,10 +276,8 @@ fn prepare(
         .as_ref()
         .filter(|f| editor.values.get(f.value).is_final())
     {
-        // A direct certified lower and this aggregate's upper are independent
-        // certificates. One direct slot cannot store both. Keep such moves in
-        // the new Full subset so retiring the old aggregate cannot lose their
-        // upper coverage, even when those moves are already registered.
+        // 直接の確定下限と集約探索の上限は独立した確定情報であり、1 つの直接スロットに両方格納できない。
+        // 古い集約結果を退役させても上限カバレッジを失わないよう、既登録手であっても新しい Full 部分集合に含める。
         for (i, edge) in node.edges.iter().enumerate() {
             if f.mask & (1u64 << i) != 0
                 && editor
@@ -346,9 +345,10 @@ fn prepare(
     }))
 }
 
-// バッチ内でも先行結果が他局面を更新し得る。編集世代が変わった仕事は採用せず再投入。
-// 採用時は最良手にだけ点評価を付け、残りはMoveSearch経由の上限として扱う。
-// 手の登録はここで行わず、expand側で損失・手数・予算を確認してから行う。
+// 並列バッチ内では、先行して終わった探索結果が他の局面を更新していることがある。
+// そのため開始時の編集世代（revision）が変わっていた場合は結果を採用せず、仕事をキューへ戻す。
+// 採用時は、見つかった最善手にだけ点評価を付け、残りの手には MoveSearch 経由の上界（Bound::Upper）を付ける。
+// 実際に手を Book へ登録するかどうかはここでは決めず、expand 側で損失条件・手数・予算を確認してから行う。
 fn publish(
     editor: &mut BookEditor,
     state: &mut GenerationState,
@@ -852,8 +852,7 @@ pub(super) fn generate(
                         reason,
                         nodes: result.stats.nodes,
                     });
-                    // Only the final batch can be interrupted. Bound metadata
-                    // by the total worker count rather than retaining a log.
+                    // 中断されうるのは最終バッチのみ。ログ肥大化を防ぐため総ワーカー数程度で上限を抑える。
                     if run.interrupted.len() > 256 {
                         run.interrupted.remove(0);
                     }
@@ -953,8 +952,7 @@ impl BatchPool {
     }
     fn width(&self, configured: u16, nodes: Option<u64>) -> usize {
         let cap = if configured == 0 {
-            // Favor a few workers per search. With 18 threads this gives
-            // six jobs rather than saturating the batch with single searches.
+            // 1 探索あたり数スレッドを割り当てる（例：18 スレッド時は単発探索で埋め尽くさず 6 ジョブ並列）。
             self.total.threads.div_ceil(3)
         } else {
             usize::from(configured).min(self.total.threads)
@@ -974,9 +972,8 @@ impl BatchPool {
     ) -> Result<Vec<std::result::Result<SearchResult, deft_reversi_engine::EngineError>>> {
         let setup = Instant::now();
         let count = jobs.len();
-        // Keep tables when a short wave follows a full one. Idle engines
-        // retain their tables but release helpers so the active jobs can use
-        // the available threads. A new peak repartitions the fixed TT budget.
+        // フルバッチの後に短いウェーブが続いても置換表を保持する。遊休エンジンは置換表を残したまま
+        // ヘルパースレッドを解放し、稼働中ジョブへスレッドを譲る。新たなピーク時にのみ固定 TT 予算を再配分する。
         let slots = count.max(self.others.len() + 1);
         let options = |i: usize| {
             let threads = if i < count {
@@ -988,7 +985,7 @@ impl BatchPool {
                 .threads(threads)
                 .tt_mib(self.total.tt_mib / slots + usize::from(i < self.total.tt_mib % slots))
         };
-        // Shrink every existing allocation before increasing any of them.
+        // どのエンジンの割り当てを増やす前にも、まず縮小する側の既存割り当てをすべて縮小する。
         for (i, engine) in std::iter::once(&mut *main)
             .chain(self.others.iter_mut())
             .enumerate()

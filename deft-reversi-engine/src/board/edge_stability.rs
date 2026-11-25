@@ -1,10 +1,11 @@
-//! Edge stability table and enumeration ported from the reference engine.
+//! 盤面の辺（エッジ）にある確定石（今後ゲーム終了まで裏返ることのない石）を高速に引くための
+//! テーブルと、そのコンパイル時構築処理を提供します。
 
-/// Built at compile time so no search pays for its initialization.
+/// 探索実行時の初期化コストをなくすため、コンパイル時に事前計算しておく 65,536 エントリの辺確定石テーブルです。
+/// 自分の石配置（8 ビット）と相手の石配置（8 ビット）の組をインデックスとして、確定石のビットマスクを返します。
 static EDGE_STABILITY: [u8; 256 * 256] = edge_stability_table();
 
-/// One edge move by the player (`by_player`) or the opponent, with the
-/// reference engine's one-dimensional flips.
+/// 1 次元の辺（8 マス）において、自分（`by_player == true`）または相手が座標 `x` に打った後の石配置を返します。
 const fn edge_move(mut p: u32, mut o: u32, x: u32, by_player: bool) -> (u32, u32) {
     let (mover, other) = if by_player {
         (&mut p, &mut o)
@@ -43,10 +44,9 @@ const fn edge_move(mut p: u32, mut o: u32, x: u32, by_player: bool) -> (u32, u32
     (p, o)
 }
 
-/// A player disc is stable when it stays the player's after every sequence
-/// of edge moves. Children have one empty fewer, so filling the table in
-/// order of empties computes the reference recursion's intersection once
-/// per edge position.
+/// 辺上の空きマスを自分・相手問わずどのような順番で埋めていっても最後まで自分の石のまま残る石を「確定石」とし、
+/// 空きマス数が 0 から 8 の順に動的計画法でテーブルを構築します。
+/// （辺の石が裏返るのは同じ辺上の空きマスに打たれたときだけなので、辺単体で確定石を正確に判定できます。）
 const fn edge_stability_table() -> [u8; 256 * 256] {
     let mut table = [0u8; 256 * 256];
     let mut empties = 0;
@@ -171,26 +171,31 @@ fn find_edge_stable(old_p: i32, old_o: i32, mut stable: i32) -> i32 {
     stable
 }
 
+/// A2..A7 の 6 ビット（`x` の bit1..bit6）を A 列のビットボード位置へ展開します。
 #[inline(always)]
 fn unpack_a2a7(x: u8) -> u64 {
     ((x as u64) & 0x7e).wrapping_mul(0x0000_0408_1020_4080) & 0x0001_0101_0101_0100
 }
 
+/// H2..H7 の 6 ビット（`x` の bit1..bit6）を H 列のビットボード位置へ展開します。
 #[inline(always)]
 fn unpack_h2h7(x: u8) -> u64 {
     ((x as u64) & 0x7e).wrapping_mul(0x0002_0408_1020_4000) & 0x0080_8080_8080_8000
 }
 
+/// A1..A8 列の 8 ビットを 1 バイトのインデックス（0..256）へ詰めます。
 #[inline(always)]
 fn pack_a1a8(x: u64) -> usize {
     ((x & 0x0101_0101_0101_0101).wrapping_mul(0x0102_0408_1020_4080) >> 56) as usize
 }
 
+/// H1..H8 列の 8 ビットを 1 バイトのインデックス（0..256）へ詰めます。
 #[inline(always)]
 fn pack_h1h8(x: u64) -> usize {
     ((x & 0x8080_8080_8080_8080).wrapping_mul(0x0002_0408_1020_4081) >> 56) as usize
 }
 
+/// 上下左右 4 辺の確定石を `EDGE_STABILITY` テーブルから引き、1 つのビットボードに合成して返します。
 pub(super) fn get_stable_edge(player: u64, opponent: u64) -> u64 {
     let table = &EDGE_STABILITY;
     table[((player & 0xff) * 256 + (opponent & 0xff)) as usize] as u64

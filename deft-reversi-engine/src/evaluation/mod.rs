@@ -1,3 +1,10 @@
+//! 局面の静的評価（パターン評価関数・差分特徴更新 [`EvalState`]・補助ニューラルネット）を統合するモジュールです。
+//!
+//! 盤面を辺や角・斜めなどの「パターン（決まった位置のマス群）」に分解し、各マスを
+//! 空き(0)・相手石(1)・自分石(2) の 3 値で表した 3 進数インデックスで重みテーブルを引きます。
+//! さらに合法手数の差（モビリティ）と、必要に応じて小型ニューラルネットワークの出力を加算して、
+//! 手番側から見た予想石差を算出します。
+
 #[cfg(feature = "endgame-pattern-ordering")]
 mod end_ordering;
 mod pattern;
@@ -13,33 +20,36 @@ use std::{
     sync::Arc,
 };
 
+/// 評価に使うパターンの種類数（11 種類）です。
 pub const PATTERN_COUNT: usize = 11;
+/// ゲーム進行度を表すフェーズ数（60：空きマス 60..=1 に対応し、空き 0 マスもフェーズ 59 に丸めます）です。
 pub const PHASE_COUNT: usize = 60;
-/// Pattern weights in one phase, all tables back to back.
+/// 1 フェーズあたりのパターン重み数（全パターンテーブルを連結した合計要素数）です。
 pub const PATTERN_WEIGHT_COUNT: usize = TOTAL_PATTERN_WEIGHTS;
-/// Mobility weights in one phase, indexed by 64 + own moves - opponent moves.
+/// 1 フェーズあたりの着手可能数（モビリティ）重み数です（`64 + 自分の合法手数 - 相手の合法手数` で索引付けします）。
 pub const MOBILITY_WEIGHT_COUNT: usize = 128;
-/// Pattern lookups per evaluation: every pattern in four orientations.
+/// 1 回の評価で参照するパターン特徴量の総数（11 パターン × 4 回転方向 = 44 個）です。
 pub const FEATURE_COUNT: usize = PATTERN_COUNT * 4;
 
-/// The linear weights one evaluation reads, for training the model. For a
-/// model without pattern embedding networks the score is
-/// `bias + Σ patterns[i] + mobility[mobility]` of phase `phase`, divided
-/// by 128 and rounded as `PatternModel::evaluate` does; with networks,
-/// `evaluate` adds their output to that sum before rounding.
+/// 1 回の評価で参照する線形特徴量（学習・チューニング用）です。
+///
+/// 補助ニューラルネットを持たないモデルでは、フェーズ `phase` の `bias + Σ patterns[i] + mobility[mobility]` を
+/// 128 で割って四捨五入した値が [`PatternModel::evaluate`] の評価値になります（重みが 1/128 石単位で学習されているためです）。
+/// 補助ニューラルネットを持つモデルでは、128 で割る前にその出力を加算します。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Features {
-    /// 0..60; 60 minus the empty squares, with a full board in phase 59.
+    /// 0..60 のフェーズ番号（`60 - 空きマス数`、満盤時は 59）です。
     pub phase: usize,
-    /// Indices into the phase's `PATTERN_WEIGHT_COUNT` pattern weights.
+    /// このフェーズにおける `PATTERN_WEIGHT_COUNT` 個のパターン重み配列へのインデックス列です。
     pub patterns: [u32; FEATURE_COUNT],
-    /// Index into the phase's `MOBILITY_WEIGHT_COUNT` mobility weights.
+    /// このフェーズにおける `MOBILITY_WEIGHT_COUNT` 個のモビリティ重み配列へのインデックスです。
     pub mobility: usize,
 }
 impl Features {
+    /// 指定盤面から線形特徴量インデックスを抽出します。
     pub fn of(board: &Board) -> Self {
-        // As `EvalState::from_board` reads `current`, without the opponent's
-        // view and without branches: the trainer calls this for every sample.
+        // 学習トレーナーが全学習サンプルに対して高速に呼び出せるよう、
+        // `EvalState::from_board` の `current` 側と同じ計算を相手視点なし・分岐なしで行います。
         let (player, opponent) = (board.player_bits(), board.opponent_bits());
         let mut patterns = [0; FEATURE_COUNT];
         let mut offset = 0;
@@ -61,24 +71,26 @@ impl Features {
         }
     }
 }
+/// 空きマス数から 0..60 のフェーズインデックスを返します。
 fn phase_of(board: &Board) -> usize {
     usize::from(60u8.saturating_sub(board.empty_count())).min(59)
 }
+/// 合法手数差から 0..128 のモビリティ重みインデックスを返します。
 fn mobility_index(moves: u64, board: &Board) -> usize {
     64 + moves.count_ones() as usize - board.get_opponent_moves().count_ones() as usize
 }
 
-/// The sizes of the pattern tables, in the order `Features` indexes them.
+/// [`Features`] が索引付けする順で各パターンテーブルのサイズを返します。
 #[cfg_attr(not(feature = "tuning"), allow(dead_code))]
 pub fn pattern_table_sizes() -> [usize; PATTERN_COUNT] {
     PATTERN_TABLE_SIZES
 }
 
-/// For every pattern weight, the weight that reads the mirror image of its
-/// squares. The four orientations of a pattern share one table, so the
-/// model is the same for a position and its rotations; it is the same for
-/// its mirror image when every weight equals its mirror's. A pattern whose
-/// squares no reflection maps onto one of its orientations maps to itself.
+/// 各パターン重みインデックスに対して、左右反転（鏡像）盤面に対応する重みインデックスを返します。
+///
+/// 1 つのパターンの 4 回転は同じテーブルを共有するため、回転に対する対称性は構造上保証されます。
+/// さらにすべての重みが自身の鏡像先重みと等しければ、左右反転に対する対称性も成り立ちます。
+/// どの鏡像変換も自身の回転に一致しないパターン（長対角線など）は自分自身に写像されます。
 #[cfg_attr(not(feature = "tuning"), allow(dead_code))]
 pub fn mirror_weights() -> Vec<u32> {
     let mut mirror: Vec<u32> = (0..TOTAL_PATTERN_WEIGHTS as u32).collect();
@@ -87,9 +99,8 @@ pub fn mirror_weights() -> Vec<u32> {
     for (pattern, size) in FEATURE_COORD.iter().zip(PATTERN_TABLE_SIZES) {
         let n = usize::from(pattern.n_squares);
         let coords = |r: usize| &pattern.feature_coord[r][..n];
-        // `to[i]` is the digit of the mirror's state that square `i` of
-        // orientation `k` lands on: orientation `r` reads the mirror image
-        // of the squares orientation `k` reads.
+        // `to[i]` は、向き `k` のマス `i` が左右反転後に向き `r` のどの位置へ移るかを表します。
+        // すなわち、向き `r` は向き `k` が読むマスの鏡像を読みます。
         let to = (0..4)
             .flat_map(|k| (0..4).map(move |r| (k, r)))
             .find_map(|(k, r)| {
@@ -114,13 +125,14 @@ pub fn mirror_weights() -> Vec<u32> {
     mirror
 }
 
-/// Runtime model: tables in pattern order, weights shared across rotations.
+/// 実行時に使う評価モデルです（パターン順の重みテーブルを持ち、4 回転方向で重みを共有します）。
 #[derive(Clone)]
 pub struct PatternModel {
     phases: Arc<[PatternPhase]>,
-    /// The pattern embedding network of every phase, if the model has one.
+    /// 各フェーズの補助ニューラルネットパラメータ（存在する場合）。
     pen: Option<Arc<[PenPhase]>>,
 }
+/// 1 フェーズ分の線形評価パラメータ（パターン重み・モビリティ重み・バイアス）です。
 #[derive(Clone)]
 pub struct PatternPhase {
     weights: Box<[i16]>,
@@ -128,6 +140,7 @@ pub struct PatternPhase {
     bias: i16,
 }
 impl PatternPhase {
+    /// パターン種別ごとの重み配列・モビリティ重み・バイアスから [`PatternPhase`] を構築します。
     pub fn new(
         patterns: Vec<Vec<i16>>,
         mobility: [i16; 128],
@@ -147,8 +160,7 @@ impl PatternPhase {
             bias,
         })
     }
-    /// Like `new`, with the pattern tables back to back as `Features` indexes
-    /// them.
+    /// [`Features`] が索引付けするのと同じ連結済みフラット配列から [`PatternPhase`] を構築します。
     pub fn from_flat(
         patterns: Vec<i16>,
         mobility: [i16; 128],
@@ -165,6 +177,7 @@ impl PatternPhase {
     }
 }
 impl PatternModel {
+    /// 60 フェーズ分の [`PatternPhase`] から [`PatternModel`] を構築します。
     pub fn new(phases: Vec<PatternPhase>) -> Result<Self, &'static str> {
         if phases.len() != PHASE_COUNT {
             return Err("model requires 60 phases");
@@ -174,7 +187,7 @@ impl PatternModel {
             pen: None,
         })
     }
-    /// The model with a pattern embedding network, one per phase.
+    /// 60 フェーズ分の補助ニューラルネットをモデルに付加します。
     pub fn with_pen(mut self, pen: Vec<PenPhase>) -> Result<Self, &'static str> {
         if pen.len() != PHASE_COUNT {
             return Err("PEN requires 60 phases");
@@ -182,10 +195,11 @@ impl PatternModel {
         self.pen = Some(pen.into());
         Ok(self)
     }
+    /// 補助ニューラルネットを保持しているかを返します。
     pub fn has_pen(&self) -> bool {
         self.pen.is_some()
     }
-    /// Explicitly zero weights, useful for rule/search tests. Not a trained AI.
+    /// 全重みが 0 のダミーモデルを返します（ルール検証や探索テスト用であり、学習済み AI ではありません）。
     pub fn zero() -> Self {
         Self::new(
             (0..PHASE_COUNT)
@@ -198,9 +212,8 @@ impl PatternModel {
         )
         .unwrap()
     }
-    /// The model's value of `board` for the side to move, in discs. A
-    /// finished game is valued like any other position; the search uses
-    /// the final score at its leaves instead.
+    /// 手番側から見た `board` の静的評価値（石差単位、-64..=64）を返します。
+    /// 終局局面でも通常と同じ評価式を適用します（探索の末端では終局スコアを別途使います）。
     pub fn evaluate(&self, board: &Board) -> i32 {
         self.evaluate_state(board, &EvalState::from_board(*board))
     }
@@ -225,7 +238,7 @@ impl PatternModel {
     pub(crate) fn evaluate_state(&self, board: &Board, state: &EvalState) -> i32 {
         self.evaluate_state_and_moves(board, state).0
     }
-    /// Return the legal moves already computed for the model's mobility term.
+    /// 差分更新された [`EvalState`] を用いて評価値を計算し、同時にモビリティ計算で求めた合法手マスクも返します。
     pub(crate) fn evaluate_state_and_moves(&self, board: &Board, state: &EvalState) -> (i32, u64) {
         let weights = &self.phases[phase_of(board)];
         let mut raw = i32::from(weights.bias);
@@ -252,10 +265,10 @@ impl PatternModel {
         }
         (((raw + raw.signum() * 64) / 128).clamp(-64, 64), moves)
     }
-    /// The DPR2 version of the weights: 4 with networks that read the
-    /// disc input (`PEN2`), 3 with other networks (`PEN1`), and
-    /// 1 without networks. `Model::write_to` writes a calibration after
-    /// them, which turns version 1 into version 2.
+    /// この評価重みが対応する DPR2 バージョンを返します。
+    /// 石数入力を読むネットワーク（`PEN2`）を持つ場合は 4、それ以外のネットワーク（`PEN1`）を持つ場合は 3、
+    /// ネットワークを持たない場合は 1 です。[`Model::write_to`](crate::Model::write_to) で較正データを末尾に書くと
+    /// バージョン 1 はバージョン 2 になります。
     pub(crate) fn version(&self) -> u32 {
         match &self.pen {
             Some(pen) if pen.iter().any(PenPhase::needs_pen2) => 4,
@@ -263,9 +276,8 @@ impl PatternModel {
             None => 1,
         }
     }
-    /// The whole evaluation without a calibration: DPR2 version 4 or 3 with
-    /// the pattern embedding networks, else version 1. `Model::write_to`
-    /// also writes the calibration; see `model.rs` for the layout.
+    /// 較正データを除いた評価モデル全体を書き出します（補助ニューラルネットを持つ場合は DPR2 バージョン 4 または 3、なければバージョン 1）。
+    /// 較正データも含めた書き出しは [`Model::write_to`](crate::Model::write_to) を使用してください（レイアウトは `model.rs` 参照）。
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
         let version = self.version();
         if version >= 3 {
@@ -278,7 +290,7 @@ impl PatternModel {
             self.write_phases(&mut out)
         }
     }
-    /// Reads DPR2 version 1. `Model::from_file` reads every version.
+    /// DPR2 バージョン 1 を読み込みます。全バージョンを読み込むには [`Model::from_file`](crate::Model::from_file) を使ってください。
     pub fn read_from(mut input: impl Read) -> io::Result<Self> {
         let mut magic = [0; 8];
         input.read_exact(&mut magic)?;
@@ -298,7 +310,7 @@ impl PatternModel {
         }
         Ok(model)
     }
-    /// The 60 phases: LE i16 pattern tables, mobility, bias.
+    /// 60 フェーズ分の重み（リトルエンディアン `i16` のパターンテーブル、モビリティ、バイアス）を書き出します。
     pub(crate) fn write_phases(&self, mut out: impl Write) -> io::Result<()> {
         let mut bytes = Vec::with_capacity((TOTAL_PATTERN_WEIGHTS + 129) * 2);
         for phase in self.phases.iter() {
@@ -315,8 +327,7 @@ impl PatternModel {
         }
         Ok(())
     }
-    /// The tag of the networks' format (`PEN1` in version 3, `PEN2` in
-    /// version 4) and the 60 phases' networks; see `pen.rs`.
+    /// ネットワーク形式のタグ（バージョン 3 では `PEN1`、バージョン 4 では `PEN2`）と 60 フェーズ分のネットワークを書き出します（`pen.rs` 参照）。
     pub(crate) fn write_pen(&self, mut out: impl Write) -> io::Result<()> {
         let (tag, inputs) = if self.version() == 4 {
             (b"PEN2", PEN_INPUTS)
@@ -329,8 +340,7 @@ impl PatternModel {
         }
         Ok(())
     }
-    /// Reads the networks after their tag, `PEN1` in DPR2 version 3 and
-    /// `PEN2` in version 4.
+    /// タグに続く 60 フェーズ分のネットワークを読み込みます（DPR2 バージョン 3 では `PEN1`、バージョン 4 では `PEN2`）。
     pub(crate) fn read_pen(mut self, mut input: impl Read, version: u32) -> io::Result<Self> {
         let (expected, inputs) = if version == 4 {
             (b"PEN2", PEN_INPUTS)
@@ -374,10 +384,10 @@ impl PatternModel {
     }
 }
 
-/// Feature lanes rounded up so differential updates are whole vector adds.
+/// ベクトル加算で一括差分更新できるよう、44 レーンを 48 に切り上げたレーン数です。
 const LANES: usize = 48;
 
-/// `SQUARE_DELTA[sq][f]` is the base-3 weight of `sq` in feature `f`, or 0.
+/// `SQUARE_DELTA[sq][f]` はマス `sq` が特徴量 `f` に持つ 3 進重みです（無関係な場合は 0）。
 static SQUARE_DELTA: [[u16; LANES]; 64] = {
     let mut table = [[0u16; LANES]; 64];
     let mut sq = 0;
@@ -394,13 +404,18 @@ static SQUARE_DELTA: [[u16; LANES]; 64] = {
     table
 };
 
-/// Both viewpoints avoid a base-3 digit swap on every move.
+/// 差分評価用の 3 進パターンインデックスを保持する状態です。
+///
+/// 1 手進めるたびに 44 個の特徴量を盤面全体から計算し直すと重いため、変化したマス分だけ加減算します。
+/// さらに手番側視点（`current`）と相手側視点（`swapped`）の両方をあらかじめ保持しておくことで、
+/// 手番交代時に 3 進数の各桁（1 ↔ 2）を反転させる手間をなくしています。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EvalState {
     current: [u16; LANES],
     swapped: [u16; LANES],
 }
 impl EvalState {
+    /// 盤面全体から 44 特徴量（両視点分）の 3 進インデックスを初期化します。
     pub(crate) fn from_board(board: Board) -> Self {
         let mut state = Self {
             current: [0; LANES],
@@ -425,14 +440,17 @@ impl EvalState {
         }
         state
     }
+    /// パス時に手番側と相手側の視点を入れ替えます。
     pub(crate) fn passed(self) -> Self {
         Self {
             current: self.swapped,
             swapped: self.current,
         }
     }
-    /// The mover's digit goes 0 -> 2 on the placed square and 1 -> 2 on flips
-    /// (opponent's view: 0 -> 1 and 2 -> 1); then the viewpoints swap.
+    /// 着手（`bit` に石を置き、`flips` を裏返す）後の差分インデックスを計算します。
+    ///
+    /// 着手マスは手番側で 0→2（相手視点で 0→1）、裏返ったマスは手番側で 1→2（相手視点で 2→1）へ
+    /// 変化するため、それに対応する 3 進重みを加減算したうえで両視点を入れ替えます。
     #[inline]
     pub(crate) fn played(self, bit: u64, mut flips: u64) -> Self {
         let mut flipped = [0u16; LANES];
@@ -499,8 +517,8 @@ mod tests {
         for (i, &m) in mirror.iter().enumerate() {
             assert_eq!(mirror[m as usize] as usize, i);
         }
-        // Only the long diagonal's orientations already read its mirror
-        // image square by square; every other table pairs states.
+        // 長対角線だけは回転のなかに自身の鏡像が含まれるため不変になりますが、
+        // それ以外のすべてのテーブルでは状態同士が鏡像のペアを作ります。
         let mut offset = 0;
         for (p, size) in PATTERN_TABLE_SIZES.into_iter().enumerate() {
             let moved = (offset..offset + size).any(|i| mirror[i] as usize != i);

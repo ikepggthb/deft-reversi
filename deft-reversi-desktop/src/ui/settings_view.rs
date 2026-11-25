@@ -1,4 +1,4 @@
-//! The settings screen (§9.6).
+//! アプリケーション設定モーダルダイアログ（盤面・解析・外観・Book・エンジン・バージョン情報）の描画モジュール。
 use super::{root::RootView, theme, widgets};
 use crate::{
     app::{AnalysisSettings, Command},
@@ -10,6 +10,7 @@ use deft_reversi_book::AnalysisIdentity;
 use gpui::{Context, Div, FontWeight, IntoElement, SharedString, div, prelude::*, px};
 
 impl RootView {
+    /// 設定モーダルダイアログを描画する。
     pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
         let settings = self.settings.clone();
@@ -28,7 +29,7 @@ impl RootView {
                 .child(title)
         };
         let row = |label: &'static str, control: Div, note: Option<SharedString>| {
-            // Indented under the group title.
+            // グループ見出し配下であることを示すため左側にインデントを付ける。
             widgets::form_row(170., label, control, note).pl(px(14.))
         };
         let resources = move |change: fn(&mut Resources)| {
@@ -290,9 +291,9 @@ impl RootView {
                 .child(group(s.version_group))
                 .children(self.version_rows());
 
-        // The title stays; the rest scrolls when the window is short.
+        // ウィンドウ高さが小さい場合でもヘッダを固定したまま本文だけをスクロールできるようにする。
         widgets::dialog_box(680.)
-            // The window size from the last frame; the title stays on screen.
+            // 前フレームのビューポート高さから最大高さを算出し、ヘッダが画面外にはみ出さないようにする。
             .max_h(px(self.viewport.map_or(900., |(_, h)| h as f32 - 60.)))
             .child(widgets::dialog_header(
                 s.settings,
@@ -307,8 +308,8 @@ impl RootView {
             ))
     }
 
-    /// The app, the engine, the book library, the evaluation model and the
-    /// book in use, each with what tells one build or file from another.
+    /// アプリ・エンジン・Book ライブラリ・評価モデル・使用中 Book の各バージョンおよび
+    /// 解析同一性 ID（ビルドやモデルの違いを判別するための情報）の行を生成する。
     fn version_rows(&self) -> Vec<Div> {
         let s = self.settings.lang.strings();
         let id = |identity: &AnalysisIdentity| {

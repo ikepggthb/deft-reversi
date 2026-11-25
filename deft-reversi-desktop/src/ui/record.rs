@@ -1,5 +1,7 @@
-//! The left column: disc counts with the side to move, the move number or
-//! the result, and the record.
+//! 左カラムの描画を担うモジュール。
+//!
+//! 黒・白の石数と手番インジケータ、現在の手数または終局結果、定跡名、
+//! 検討モードバナー、およびクリック可能な棋譜一覧（悪手マーク付き）を表示する。
 use super::{
     analysis_panel::disc,
     format::strength_label,
@@ -14,14 +16,16 @@ use crate::{
 use deft_reversi_engine::{Action, Color, Position};
 use gpui::{ClickEvent, Context, Div, FontWeight, SharedString, div, prelude::*, px};
 
-/// The number of the move that leads to `position`'s next disc; it counts
-/// discs, so it also works from an edited start.
+/// `position` の次の石が打たれる手数（1 始まり）を盤上の石数から算出する。
+///
+/// 編集開始局面でも手数が破綻しないよう、石数ベースで計算している。
 pub(super) fn move_number(position: Position) -> usize {
     let discs = position.disc_count(Color::Black) + position.disc_count(Color::White);
     discs.saturating_sub(3) as usize
 }
 
 impl RootView {
+    /// 左カラム（プレイヤー情報・局面状態・定跡名・棋譜カード）を描画する。
     pub(super) fn render_record(&self, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let history = self.controller.history();
@@ -29,8 +33,7 @@ impl RootView {
         let finished = position.is_terminal();
 
         let players = self.controller.players();
-        // One row per side: disc, count and who plays it. The side to move is
-        // marked by a bar on the left and the brighter count.
+        // 黒・白それぞれの行（石・石数・プレイヤー種別）。手番側は左端バーと明るい石数で強調する。
         let row = |color: Color| {
             let to_move = !finished && position.side_to_move() == color;
             let name: SharedString = match players[if color == Color::Black { 0 } else { 1 }] {
@@ -84,11 +87,11 @@ impl RootView {
         };
 
         let cursor = history.cursor();
-        // Only a game from the standard start can follow a named opening.
+        // 定跡名は通常の初期局面から始まった対局に対してのみ判定する。
         let opening = (history.position(0) == Position::initial())
             .then(|| openings::name(&history.actions()[..cursor]))
             .flatten();
-        // In analysis mode, moves that lost enough are marked with the loss.
+        // 解析モード中は設定閾値以上の損失がある着手にマイナス石数マークを付ける。
         let analyzer = self.controller.analyzer();
         let threshold = self.settings.analysis.loss_threshold;
         let analyzing = self.controller.analyzing();
@@ -103,7 +106,7 @@ impl RootView {
             cx,
         )
         .text_xs();
-        // In study mode the record shown is the line studied.
+        // 検討モード中は本譜ではなく検討手順が表示されていることを示すバナーを出す。
         let banner = self.controller.studying().then(|| {
             div()
                 .mb(px(12.))
@@ -127,8 +130,7 @@ impl RootView {
                     cx,
                 )))
         });
-        // The move about to be played is marked, and the board shows where;
-        // at the end of the record, the last move played.
+        // これから指される手（末尾にいる場合は直前の最後の手）を強調表示対象とする。
         let marked = if cursor < history.actions().len() {
             Some(cursor)
         } else {

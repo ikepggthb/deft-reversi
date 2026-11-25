@@ -1,6 +1,5 @@
-//! Analysis mode (§9.2): on the right, the shown position's value for the
-//! side to move, the best move and line, and every move's value; under the
-//! board, the values over the record.
+//! 解析モードの UI（右カラムの局面評価・最善手・読み筋・候補手・Book 一覧と、
+//! 盤面下部の評価値推移グラフおよびリサイズグリップ）を描画するモジュール。
 use super::{
     format::{action_text, reading_mark, reading_text, signed},
     record::move_number,
@@ -21,27 +20,27 @@ use gpui::{
     prelude::*, px, rgb, size,
 };
 
-/// The scale on the graph's left.
+/// グラフ左側の縦軸目盛領域の幅（論理ピクセル）。
 const GRAPH_SCALE: f32 = 40.;
-/// The line of move numbers under the graph.
+/// グラフ下部の手数横軸領域の高さ（論理ピクセル）。
 const GRAPH_AXIS: f32 = 14.;
-/// The value shown large, and the height of its line.
+/// 大きな評価値表示に使用するフォントおよび行高さ。
 const VALUE_FONT: &str = "Segoe UI";
 const VALUE_LINE: f32 = 36.;
-/// Below this width the graph's heading leaves out the legend.
+/// 凡例を省略するグラフ幅の閾値。
 const GRAPH_LEGEND_WIDTH: f32 = 680.;
-/// The graph's card around its plot: padding, heading and axis.
+/// グラフカードの上下パディング・ヘッダ・横軸を含む固定高さ。
 pub(super) const GRAPH_CHROME: f32 = 85. + GRAPH_READOUT + 6.;
-/// The line under the heading: the position pointed at and its value.
+/// グラフ見出し下の「指している手・評価値・読み深さ」行の高さ。
 const GRAPH_READOUT: f32 = 16.;
-/// The smallest square the graph leaves the board when dragged.
+/// グラフを最大まで広げたときでも盤面 1 マスに残す最小サイズ。
 const MIN_CELL: f32 = 28.;
-/// The grab above the graph that sizes it.
+/// グラフ上端のリサイズグリップの高さ。
 pub(super) const GRAPH_GRIP: f32 = 12.;
 
-/// The value at the graph's top and bottom, and how far apart its lines
-/// are: it zooms in on a close game down to ±4, and the lines always fall
-/// on even values.
+/// 評価値グラフの上下端レンジと目盛線の間隔を計算する。
+///
+/// 接戦時は ±4 まで自動拡大し、目盛線は常に偶数値になるよう調整する。
 fn graph_scale(largest: i32) -> (i32, i32) {
     let largest = largest.max(1);
     let step = match largest {
@@ -54,16 +53,14 @@ fn graph_scale(largest: i32) -> (i32, i32) {
     (range, step)
 }
 
-/// One line on the graph: the value after each action, from `from` on.
+/// グラフ上に描画する 1 本の折れ線系列（検討モード時は本譜と検討手順の 2 本を描画する）。
 pub(super) struct GraphLine {
     values: Vec<Option<i32>>,
     from: usize,
     color: Rgba,
 }
 
-/// The value lines, a faint mark every ten moves, each line of values
-/// (broken where a value is missing) with a dot on every move, and larger
-/// dots on the marked positions.
+/// GPUI キャンバス上に評価値グラフのグリッド線・折れ線・各手ドット・強調ドットを描画する。
 fn paint_graph(
     bounds: Bounds<Pixels>,
     slots: usize,
@@ -128,7 +125,7 @@ fn paint_graph(
         if any && let Ok(path) = path.build() {
             window.paint_path(path, line.color);
         }
-        // Every move played is a point, so a lone value shows too.
+        // 1 手のみの単独ポイントでも視認できるよう各点に小さなドットを描画する。
         for (k, value) in line.values.iter().enumerate().skip(line.from) {
             if let Some(v) = value {
                 dot(window, k, *v, px(2.5), line.color);
@@ -140,9 +137,9 @@ fn paint_graph(
     }
 }
 
-/// A disc on the page, lit from the top left like a stone. The light side
-/// keeps black readable on the dark page, and the shaded side keeps white
-/// readable on the light one, without an outline.
+/// 左上から光が当たった立体的な石アイコンを描画する。
+///
+/// 枠線を使わずに、暗い背景上の黒石・明るい背景上の白石双方の視認性を保つためのグラデーション。
 pub(super) fn disc(size: f32, color: Color) -> Div {
     let (light, dark) = match color {
         Color::Black => (rgb(0x5a5a5a), rgb(0x0a0a0a)),
@@ -160,6 +157,7 @@ pub(super) fn disc(size: f32, color: Color) -> Div {
 }
 
 impl RootView {
+    /// 右カラムの局面解析カードを描画する。
     pub(super) fn render_analysis(&self, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let c = &self.controller;
@@ -181,7 +179,7 @@ impl RootView {
                     .font_weight(FontWeight::MEDIUM)
                     .child(s.analysis_heading),
             )
-            // Once a search is stopped, or to read it all again.
+            // 解析を途中で止めたあとや、やり直したいときに再解析できるようボタンを出す。
             .when(
                 !searching && analyzer.get(position).is_some() && !position.must_pass(),
                 |el| {
@@ -208,7 +206,7 @@ impl RootView {
                 .child(caption(s.game_finished));
         }
 
-        // The value for the side to move.
+        // 現在手番側から見た評価値を表示する（候補手探索の完了結果がなければ一括解析キャッシュから補う）。
         let value = report.and_then(|r| r.score).or_else(|| {
             analyzer
                 .black_value(history, history.cursor())
@@ -231,9 +229,7 @@ impl RootView {
                     .h(px(VALUE_LINE))
                     .child(disc(20., side))
                     .child(
-                        // One font with every sign, and a line of a set
-                        // height: a sign taken from a fallback font would
-                        // move the digits up or down against the disc.
+                        // 符号（+ / −）と数字でベースラインがずれないよう、全記号を含む単一フォントと固定行高を指定する。
                         div()
                             .font_family(VALUE_FONT)
                             .line_height(px(VALUE_LINE))
@@ -295,9 +291,8 @@ impl RootView {
                 })
         });
 
-        // Each move's value appears as soon as it is read, with how it was
-        // read; one still being read shows its last finished iteration.
-        // Values from the level before are faint until read again.
+        // 各手の評価値は読み終わり次第すぐに表示する。
+        // いま読んでいる手は直前の反復イテレーションの暫定値を表示し、前のレベルの古い値は読み直されるまで薄く表示する。
         let shown = analyzer.moves(position);
         let any_value = shown.iter().any(|m| m.value.is_some());
         let candidates = (any_value || searching).then(|| {
@@ -357,8 +352,7 @@ impl RootView {
                 .child(div().mt(px(4.)).flex().flex_col().children(rows))
         });
 
-        // The book's moves, when the position is in it; values the AI would
-        // not play are faint.
+        // 現在の局面が Book に登録されていれば候補手を表示する（AI の使用条件を満たさない手は薄く表示する）。
         let book = self
             .book_lines(position)
             .filter(|lines| !lines.is_empty())
@@ -424,7 +418,7 @@ impl RootView {
             .children(book)
     }
 
-    /// The plot's height: as it is being dragged, or as it was left.
+    /// ドラッグ中または保存済みの評価値グラフ高さを返す（ウィンドウサイズに応じてクランプ）。
     pub(super) fn graph_height(&self) -> f32 {
         let height = f32::from(self.graph_live.unwrap_or(self.settings.graph_height));
         height
@@ -432,8 +426,7 @@ impl RootView {
             .max(f32::from(*GRAPH_HEIGHTS.start()))
     }
 
-    /// The tallest the graph may be in this window: the board keeps squares
-    /// large enough for the buttons under it.
+    /// 現在のウィンドウ高さで盤面が最小サイズを保てる範囲内のグラフ最大高さを返す。
     fn graph_most(&self) -> f32 {
         let window = self.viewport.map_or(900., |(_, h)| h as f32);
         let board = 8. * MIN_CELL + 11.;
@@ -441,9 +434,9 @@ impl RootView {
         most.min(f32::from(*GRAPH_HEIGHTS.end()))
     }
 
-    /// The values over the record, under the board and as wide as it, with
-    /// a grip above it to size it. In study mode the line studied is drawn
-    /// over the record from where it leaves it.
+    /// 盤面下部に配置する評価値推移グラフ（リサイズグリップ付き）を描画する。
+    ///
+    /// 検討モード時は本譜の線に加えて分岐地点から検討手順の線を重ねて描画する。
     pub(super) fn render_graph(&self, width: Pixels, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let c = &self.controller;
@@ -455,7 +448,7 @@ impl RootView {
                 .collect()
         };
         let shown_values = values_of(history);
-        // The record, and where the study line leaves it.
+        // 検討モード中は本譜の評価値列と、本譜から枝分かれした開始手数の位置を求める。
         let main = c.main_line().map(|main| {
             let shared = (0..=main.actions().len().min(history.actions().len()))
                 .take_while(|&k| main.position(k) == history.position(k))
@@ -466,11 +459,11 @@ impl RootView {
         let count = shown_values
             .len()
             .max(main.as_ref().map_or(0, |(values, _)| values.len()));
-        // The axis spans a whole game from the start, so the line grows
-        // as it is played; a longer record with passes widens it.
+        // 横軸は初手から終局（60 手）までを基準に確保し、対局が進むにつれて折れ線が右へ伸びる
+        // （パスが多く 60 手を超える棋譜では自動で広がる）。
         let slots = count.max(61);
         let height = self.graph_height();
-        // The card's padding and border, and the scale on the left.
+        // カード左右の余白・枠線と左端の縦軸目盛の幅を引いてプロット領域の幅を求める。
         let plot = width - px(26. + GRAPH_SCALE);
         let slot = plot / slots as f32;
         let shown_count = shown_values.len();
@@ -511,7 +504,7 @@ impl RootView {
             })
             .collect::<Vec<_>>();
 
-        // The scale: Black ahead above the line, White below.
+        // 縦軸は中央の 0 を基準に、上側が黒有利、下側が白有利を表す。
         let scale_mark = |color: Color| {
             div()
                 .flex()
@@ -594,7 +587,7 @@ impl RootView {
                     .child(k.to_string())
             }));
 
-        // What the pointer is over, or else the shown position.
+        // マウスが乗っている手（乗っていなければ現在表示中の手）の情報を上に表示する。
         let k = shown.unwrap_or(history.cursor());
         let which: SharedString = match k.checked_sub(1).map(|i| history.actions()[i]) {
             None => s.start_label.into(),
@@ -611,8 +604,7 @@ impl RootView {
             s.value_label,
             shown_values[k].map_or("–".into(), signed)
         );
-        // How that value was read: the level, the depth and the probability,
-        // on the right of the line above the plot.
+        // その評価値がどのレベル・深さ・選択率で読まれたかをグラフ右上に添える。
         let how = analyzer
             .analysis_at(history, k)
             .filter(|_| !history.position(k).is_terminal())
@@ -629,7 +621,7 @@ impl RootView {
                     .text_color(theme::text_muted())
                     .child(text)
             });
-        // Its own line, so a narrow graph still shows the value.
+        // グラフ幅が狭いときでも評価値が隠れないよう専用の 1 行に配置する。
         let readout = div()
             .flex()
             .flex_row()
@@ -669,7 +661,7 @@ impl RootView {
                     widgets::handler(|this, cx| this.run(Command::StopAnalysis, cx)),
                     cx,
                 )),
-            // Once every value is there, the record can be read again.
+            // 全手数の評価値が埋まったあとは、再解析（redo: true）ボタンとして機能する。
             None => {
                 let missing = shown_values.iter().any(Option::is_none);
                 div().child(widgets::button(
@@ -683,8 +675,7 @@ impl RootView {
             }
         };
 
-        // On a narrow window the legend gives way first, then the readout
-        // is cut short; the button always keeps its room.
+        // ウィンドウ幅が狭いときは凡例を先に隠し、次に読み上げ行を切り詰め、操作ボタンだけは常に残す。
         let swatch = |color: Rgba, label: &'static str| {
             div()
                 .flex()
@@ -759,7 +750,7 @@ impl RootView {
                     )
                     .child(axis),
             );
-        // Dragged up, the graph grows and the board gives it room.
+        // 上にドラッグするとグラフが広がり、そのぶん盤面が自動で縮んで収まる。
         let grip = div()
             .id("graph-grip")
             .w(width)
@@ -787,7 +778,7 @@ impl RootView {
         div().flex().flex_col().child(grip).child(card)
     }
 
-    /// Follows the pointer while the graph's grip is held.
+    /// グラフ上端のリサイズグリップをドラッグ中にポインタ位置に合わせて高さを更新する。
     pub(super) fn drag_graph(&mut self, y: Pixels, cx: &mut Context<Self>) {
         let Some((start, height)) = self.graph_drag else {
             return;
@@ -801,7 +792,7 @@ impl RootView {
         cx.notify();
     }
 
-    /// The graph keeps the height it was dragged to.
+    /// グラフのリサイズドラッグを終了し、確定した高さを設定へ保存する。
     pub(super) fn end_graph_drag(&mut self, cx: &mut Context<Self>) {
         if self.graph_drag.take().is_some()
             && let Some(height) = self.graph_live.take()

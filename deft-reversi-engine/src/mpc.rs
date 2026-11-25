@@ -1,22 +1,25 @@
-//! The ProbCut rules of the legacy main branch, for models converted from
-//! it. Every other model carries its own calibration in its DPR2 file.
+//! 旧メインブランチと互換性のある ProbCut ルール定義を提供するモジュールです（旧形式モデルからの変換用です）。
+//!
+//! ProbCut（確率的枝刈り）は、浅い探索の評価値から深い探索の結果を統計的に予測し、
+//! 見込みの薄い枝を早い段階で打ち切る手法です。
+//! 新しい形式のモデルは各 DPR2 ファイル内に自身の較正データを保持するため、このテーブルは旧形式モデルの変換時にだけ使います。
 use crate::search::ProbCutRule;
 
-/// Shallow depth for each midgame depth, from the reference engine.
+/// 参照エンジンにおいて中盤の探索深さごとに使う「浅い探索の深さ」を定めたテーブルです。
 const SHALLOW_BY_DEPTH: [u8; 61] = [
     0, 0, 0, 0, 0, 1, 2, 1, 2, 1, 2, 3, 4, 3, 4, 5, 6, 5, 6, 5, 6, 5, 6, 5, 6, 7, 8, 7, 8, 7, 8, 7,
     8, 7, 8, 7, 8, 7, 8, 7, 8, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9,
     10,
 ];
 
-/// `c[0] + c[1]·empties + c[2]·depth + c[3]·shallow depth`, the reference
-/// engine's midgame regression.
+/// 参照エンジンの中盤向け線形回帰式 `c[0] + c[1]*empties + c[2]*depth + c[3]*shallow_depth` を計算します。
+/// 浅い探索の結果から深い探索の期待スコアやばらつき（標準偏差）を推定するために使います。
 fn linear(c: [f64; 4], empties: f64, depth: f64, shallow: f64) -> f64 {
     c[0] + c[1] * empties + c[2] * depth + c[3] * shallow
 }
 
-/// The midgame regression of the reference engine and the discrete
-/// final-search table from main at 5a17bdce.
+/// 参照エンジン（main @ 5a17bdce）の中盤用線形回帰モデルと終盤完全読み用の離散テーブルから、
+/// ProbCut ルール一式を生成します。
 pub(crate) fn legacy_main_rules() -> Vec<ProbCutRule> {
     const SLOPE: [f64; 4] = [0.997868, -0.000399, -0.000590, 0.003595];
     const INTERCEPT: [f64; 4] = [-0.345286, -0.000993, -0.097065, 0.264205];

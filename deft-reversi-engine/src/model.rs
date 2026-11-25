@@ -1,22 +1,21 @@
-//! Model files: DPR2 pattern weights and, from version 2, their ProbCut
-//! calibration.
+//! 評価モデルファイル（DPR2 形式）の読み書きを行うモジュールです。
 //!
-//! Layout, little endian:
-//! - `DPR2`, then the version as u32 (1 to 4)
-//! - 60 phases of i16 weights: every pattern table back to back, 128
-//!   mobility weights, the bias
-//! - version 2 only: `MPC2`, the number of selective stages (u8) and for
-//!   every stage its probability in percent (u8) and its deviation multiples
-//!   for midgame and for exact rules (f64); then the rule count as u32, and
-//!   every rule as exact (u8), depth (u8), empties (u8), shallow depth (u8),
-//!   slope, intercept and deviation (f64). The stages must be the engine's
-//!   (`ProbCutSigmas::STAGES`). `MPC1` held the multiples of the stages of
-//!   earlier engines and is not read.
-//! - version 3: the phases, `PEN1` and the 60 phases' pattern embedding
-//!   networks (see `evaluation/pen.rs`), then optionally the calibration as
-//!   in version 2
-//! - version 4: as version 3 with `PEN2`, networks with the disc input
-//!   (`PEN_INPUTS` weights per hidden unit instead of `PEN1`'s)
+//! DPR2（Deft Pattern Reversi v2）はこのエンジン専用のバイナリ形式で、
+//! 局面の評価重み、補助ニューラルネット（盤面パターンと局面指標から評価を補正する小型ニューラルネットワーク）、
+//! および ProbCut（浅い探索の結果から深い探索での枝刈り可否を統計的に予測する手法）の較正データを格納します。
+//!
+//! バイナリレイアウト（リトルエンディアン）:
+//! - 先頭にマジックナンバー `DPR2`、続いてバージョン番号 `u32`（1〜4）
+//! - 60 フェーズ（空きマス数ごとの段階）分の `i16` 重み（パターンごとの重み表、128 個の着手可能数重み、バイアス）
+//! - バージョン 2 のみ：`MPC2` タグ、選択率ステージ数（`u8`）、各ステージのパーセント値（`u8`）と
+//!   中盤用・終盤完全読み用の標準偏差倍率（`f64` × 2）、続いてルール数（`u32`）と各ルール
+//!   （`exact: u8`, `depth: u8`, `empties: u8`, `shallow_depth: u8`, `slope/intercept/deviation: f64`）。
+//!   ステージ列はエンジンの [`ProbCutSigmas::STAGES`] と一致していなければなりません。
+//!   旧形式の `MPC1` は過去エンジンのステージ構成用であり、このバージョンでは読み込みません。
+//! - バージョン 3：60 フェーズ重みに続き、`PEN1` タグと 60 フェーズ分の補助ニューラルネットパラメータ
+//!   （`evaluation/pen.rs` 参照）、その後ろに任意でバージョン 2 と同じ ProbCut 較正データが続きます。
+//! - バージョン 4：バージョン 3 と同様ですが `PEN2` タグを使用し、石数差入力を含むネットワーク
+//!   （隠れユニットあたり `PEN_INPUTS` 個の重み）を格納します。
 use crate::{
     evaluation::PatternModel,
     search::{ProbCutRule, ProbCutSigmas, validate_calibration},
@@ -26,29 +25,36 @@ use std::{
     path::Path,
 };
 
+/// `InvalidData` 種別の `io::Error` を生成するヘルパー関数です。
 pub(crate) fn invalid_data(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
 
-/// The ProbCut rules of a model and the deviation multiple of each stage.
+/// モデルに付随する ProbCut ルール群と各選択率ステージの偏差倍率です。
 #[derive(Clone, Debug)]
 pub(crate) struct Calibration {
+    /// 適用条件（探索深さ・空きマス数・完全読みフラグ）ごとの線形回帰パラメータです。
     pub rules: Vec<ProbCutRule>,
+    /// 各選択率ステージにおける中盤・終盤用の偏差倍率（標準偏差 σ の倍率）です。
     pub sigmas: ProbCutSigmas,
 }
 
-/// Evaluation weights with their ProbCut calibration, if the file has one.
-/// Without a calibration the engine searches selectively only after rules
-/// are installed (`tuning`); full-width searches work either way.
+/// 評価関数の重みと、含まれる場合は ProbCut 較正データを保持するモデルです。
+///
+/// 較正データを持たないモデルでは、そのままでは枝刈りなしの全幅探索のみが動作します。
+/// 選択探索（ProbCut による枝刈り）を有効にするには、較正済みモデルを使うか、
+/// `tuning` 機能を有効にしてルールを組み込む必要があります。
 #[derive(Clone)]
 pub struct Model {
     pub(crate) pattern: PatternModel,
     pub(crate) calibration: Option<Calibration>,
 }
 impl Model {
+    /// 指定パスの DPR2 モデルファイルを読み込みます。
     pub fn from_file(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::from_bytes(&std::fs::read(path)?)
     }
+    /// メモリ上のバイト列から DPR2 モデルをデコードします。
     pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
         let (pattern, mut rest, calibrated) = read_weights(bytes)?;
         let calibration = if calibrated {
@@ -64,21 +70,21 @@ impl Model {
             calibration,
         })
     }
-    /// The weights of a model file without its calibration, which is not
-    /// read: to fit a calibration again, also one an earlier engine wrote.
+    /// モデルファイルから ProbCut 較正部分を無視して評価重みだけを読み込みます。
+    /// 旧エンジンの較正を含むモデルに対して、新しいルールで較正をやり直す用途で使います。
     #[cfg(feature = "tuning")]
     pub fn weights_from_file(path: impl AsRef<Path>) -> io::Result<Self> {
         let bytes = std::fs::read(path)?;
         let (pattern, _, _) = read_weights(&bytes)?;
         Ok(Self::from_pattern(pattern))
     }
-    /// Whether the file carried a ProbCut calibration.
+    /// モデルが ProbCut 較正データを保持しているかを返します。
     pub fn has_calibration(&self) -> bool {
         self.calibration.is_some()
     }
-    /// Writes the model: version 4 or 3 with a pattern embedding network
-    /// (see `PatternModel::version`), else version 2 with its calibration
-    /// and version 1 without.
+    /// モデルを DPR2 形式で書き出します。
+    /// 補助ニューラルネットを持つ場合はバージョン 3 または 4（`PatternModel::version` に準拠）として、
+    /// 持たない場合は較正の有無に応じてバージョン 2 または 1 として書き出します。
     pub fn write_to(&self, mut out: impl Write) -> io::Result<()> {
         let version = match self.pattern.version() {
             1 if self.calibration.is_some() => 2,
@@ -108,7 +114,7 @@ impl Model {
         }
         Ok(())
     }
-    /// Weights alone, without a calibration.
+    /// 較正データを持たない評価パターンモデルだけから [`Model`] を構築します。
     #[cfg(feature = "tuning")]
     pub fn from_pattern(pattern: PatternModel) -> Self {
         Self {
@@ -116,11 +122,12 @@ impl Model {
             calibration: None,
         }
     }
+    /// 内部の [`PatternModel`] への参照を返します。
     #[cfg(feature = "tuning")]
     pub fn pattern(&self) -> &PatternModel {
         &self.pattern
     }
-    /// The model with this calibration, checked as `Engine` checks rules.
+    /// 指定した ProbCut 較正データを検証のうえモデルへ組み込みます（[`Engine`](crate::Engine) と同じ検証を行います）。
     #[cfg(feature = "tuning")]
     pub fn with_calibration(
         mut self,
@@ -131,14 +138,14 @@ impl Model {
         self.calibration = Some(Calibration { rules, sigmas });
         Ok(self)
     }
-    /// The calibration's rules and multiples, if the model has one.
+    /// モデルが持つ ProbCut ルールと偏差倍率を返します（未較正なら `None`）。
     #[cfg(feature = "tuning")]
     pub fn calibration(&self) -> Option<(&[ProbCutRule], ProbCutSigmas)> {
         self.calibration.as_ref().map(|c| (&c.rules[..], c.sigmas))
     }
 }
 
-/// The weights, the bytes after them and whether those are a calibration.
+/// 評価重み（および v3/v4 の補助ニューラルネット）を読み込み、残りのバイト列と較正データの有無フラグを返します。
 fn read_weights(mut bytes: &[u8]) -> io::Result<(PatternModel, &[u8], bool)> {
     let mut header = [0; 8];
     bytes.read_exact(&mut header)?;
@@ -153,10 +160,12 @@ fn read_weights(mut bytes: &[u8]) -> io::Result<(PatternModel, &[u8], bool)> {
     if version >= 3 {
         pattern = pattern.read_pen(&mut bytes, version)?;
     }
+    // v2 は較正必須、v3 以降は末尾にデータが残っていれば較正ありとみなす。
     let calibrated = version == 2 || (version >= 3 && !bytes.is_empty());
     Ok((pattern, bytes, calibrated))
 }
 
+/// `MPC2` ブロックから ProbCut ステージ倍率とルール群を読み込んで検証します。
 fn read_calibration(input: &mut &[u8]) -> io::Result<Calibration> {
     const REFIT: &str = "fit the calibration again (`train mpc --fit-only`)";
     let mut tag = [0; 4];
@@ -194,7 +203,7 @@ fn read_calibration(input: &mut &[u8]) -> io::Result<Calibration> {
     let mut count = [0; 4];
     input.read_exact(&mut count)?;
     let count = u32::from_le_bytes(count) as usize;
-    // Every (exact, depth, empties) triple at most once.
+    // 各 (exact, depth, empties) の組み合わせは最大 1 回だけ現れます。
     if count > 2 * 61 * 61 {
         return Err(invalid_data("too many ProbCut rules"));
     }
@@ -280,7 +289,7 @@ mod tests {
             && a.intercept.to_bits() == b.intercept.to_bits()
             && a.deviation.to_bits() == b.deviation.to_bits()));
 
-        // Truncated, trailing, unknown and inconsistent files are rejected.
+        // 途中で切れたデータ、末尾に余分なバイトがあるデータ、未知のバージョン、不整合なデータは拒否します。
         assert!(Model::from_bytes(&v2[..v2.len() - 1]).is_err());
         let mut longer = v2.clone();
         longer.push(0);
@@ -289,14 +298,12 @@ mod tests {
         v9[4] = 9;
         assert!(Model::from_bytes(&v9).is_err());
         assert!(Model::from_bytes(b"{\"format_version\":4}").is_err());
-        // After the weights: the tag, the stage count, then every stage as
-        // its percent and two multiples.
+        // 重みデータの後ろには、タグ、ステージ数、そして各ステージのパーセント値と 2 つの倍率が並びます。
         let stages = v1.len() + 5;
         let mut bad_sigma = v2.clone();
         bad_sigma[stages + 1..stages + 9].copy_from_slice(&f64::NAN.to_le_bytes());
         assert!(Model::from_bytes(&bad_sigma).is_err());
-        // A calibration says which stages its multiples are for; only the
-        // engine's own are read.
+        // 較正データには対象ステージ列が記録されており、現在のエンジンのステージと一致するものだけを読み込みます。
         assert_eq!(v2[stages], 83);
         let mut other_stage = v2.clone();
         other_stage[stages] = 77;
@@ -306,7 +313,7 @@ mod tests {
         earlier[v1.len()..v1.len() + 4].copy_from_slice(b"MPC1");
         let error = Model::from_bytes(&earlier).err().unwrap().to_string();
         assert!(error.contains("earlier engine"), "{error}");
-        // Its weights can still be read, to fit the calibration again.
+        // 旧形式の較正が含まれていても、評価重みだけは読み込んで較正をやり直せます。
         #[cfg(feature = "tuning")]
         {
             let path = std::env::temp_dir().join(format!("deft-mpc1-{}.dpr2", std::process::id()));

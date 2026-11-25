@@ -1,18 +1,23 @@
+//! 棋譜の各手をエンジン探索と Book で検証し、最善手との評価値差（悪手度）を報告する `review` コマンド。
+//!
+//! 強制パスは棋譜文字列から自動補完し、実戦手と最善手の両方の評価値が揃った手だけを集計対象とする。
+
 use crate::{EngineArgs, GoalArgs, Result, book_view, display, game::Game, settings, stop};
 use clap::Args;
 use deft_reversi_book::{BookPlayer, MovePolicy};
 use deft_reversi_engine::{Action, Engine, Goal, Position, SearchRequest, StopReason};
 use std::{path::PathBuf, time::Duration};
 
+/// `review` サブコマンドの引数。
 #[derive(Args, Debug)]
 pub struct ReviewArgs {
-    /// Record such as f5d6c3 (passes are inferred).
+    /// 棋譜文字列（例: `f5d6c3`。パスは自動補完される）。
     #[arg(required_unless_present = "file", conflicts_with = "file")]
     record: Option<String>,
-    /// One record per line; blanks and # comments are ignored.
+    /// 1 行 1 棋譜のテキストファイル（空行と `#` コメント行は無視する）。
     #[arg(long)]
     file: Option<PathBuf>,
-    /// Compare each played move with the opening book alongside the search.
+    /// 探索と併せて Book との比較も行う `.dbook` ファイル。
     #[arg(long)]
     book: Option<PathBuf>,
     #[command(flatten)]
@@ -21,11 +26,12 @@ pub struct ReviewArgs {
     goal: GoalArgs,
 }
 
+/// 開始局面 `start` から棋譜 `record` を再生し、パスを除いた `(着手前局面, 着手)` の一覧を返す。
 pub fn positions(start: Position, record: &str) -> Result<Vec<(Position, Action)>> {
     if record.is_empty() {
         return Err("no moves to review".into());
     }
-    // Validate the entire record before performing or printing any searches.
+    // 探索や出力を始める前に、棋譜全体の合法性を先に検証しておく。
     let mut game = Game::from_position(start);
     if game.current().must_pass() {
         game.play(Action::Pass)?;
@@ -34,14 +40,20 @@ pub fn positions(start: Position, record: &str) -> Result<Vec<(Position, Action)
     Ok(game.steps().filter(|&(_, a)| a != Action::Pass).collect())
 }
 
+/// 1 局分の棋譜検討の集計結果。
 #[derive(Default, Debug)]
 pub struct ReviewSummary {
+    /// 実戦手と最善手の両方の評価値が得られた手数。
     pub scored: usize,
+    /// 探索が中断されたなどの理由で評価値が揃わなかった手数。
     pub unscored: usize,
+    /// 評価済み手の中での最大損失石数。
     pub worst_loss: i32,
+    /// Ctrl-C などにより途中で検討を打ち切ったかどうか。
     pub stopped: bool,
 }
 
+/// 1 局分の棋譜 `record` を `start` から順に検討し、各手の評価表と要約を標準出力へ出す。
 pub fn review(
     engine: &mut Engine,
     start: Position,
@@ -155,7 +167,9 @@ pub fn review(
     Ok(summary)
 }
 
-/// Return whether the played edge is absent from the registered Book.
+/// 実戦手 `played` が Book に登録されているかを調べ、比較結果を 1 行出力する。
+///
+/// 登録済みの Book 手から外れていた場合（局面自体が未登録のときも含む）に `true` を返す。
 fn review_book_move(book: &BookPlayer, pos: Position, played: Action) -> bool {
     let Some(entry) = book.probe(pos) else {
         println!("     Book: position absent");
@@ -191,6 +205,7 @@ fn review_book_move(book: &BookPlayer, pos: Position, played: Action) -> bool {
     !actual.is_some_and(|m| m.registered)
 }
 
+/// `review` サブコマンドのエントリーポイント。全棋譜の事前検証後に 1 局ずつ検討する。
 pub fn run(args: ReviewArgs) -> Result<()> {
     let records = if let Some(file) = &args.file {
         let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;

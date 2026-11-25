@@ -1,13 +1,13 @@
-//! リバーシのbookの編集・生成・対局利用。
+//! リバーシの Book の編集・自動生成・対局利用を担うクレート。
 //!
-//! [`BookEditor`]が局面・評価・生成の再開状態を所有し、[`Book`]は対局用に
-//! 読み取るデータを持つ。[`BookPlayer`]は利用条件を満たす登録手を選ぶ。
-//! 手が選べないときの通常探索は呼出し側が行い、Engineの探索中はbookを読まない。
+//! 用途に応じて大きく 3 つの型に分かれています：
+//! - [`BookEditor`]：Book の作成・編集・生成の途中状態を管理する作業用ワークスペース（`.dbook-work`）。
+//! - [`Book`]：対局時に高速に読み取るためのコンパクトな読み取り専用スナップショット（`.dbook`）。
+//! - [`BookPlayer`]：[`Book`] を参照し、設定された品質条件（深さ・選択率など）を満たす登録手を選ぶ。
+//!   条件を満たす手がないときは `None` を返し、通常の探索（`Engine`）へフォールバックする設計になっており、
+//!   `Engine` の探索自体は内部で Book を読みません。
 //!
-//! ソースの読む順序と確認事項はリポジトリの `docs/book-v2/source-review.md`、
-//! 評価の意味は `docs/book-v2/value-model.md` を参照。
-//!
-//! 探索結果を登録して読む最小例：
+//! 探索結果を登録して読み取る最小例：
 //! ```
 //! use deft_reversi_book::{BookEditor, RequestedAnalysis, SearchKind};
 //! use deft_reversi_engine::{Board, Engine, EngineOptions, Goal, Model, PatternModel, SearchRequest, Selectivity};
@@ -65,16 +65,21 @@ pub use snapshot::{Book, BookCandidate, BookEntry, BookMove, BookStats};
 pub use stats::{QualityBucket, ValueKindBucket, WorkspaceStats};
 pub use symmetry::Symmetry;
 
-/// Version of the Book library shipped in the Deft Reversi workspace.
+/// デフト・リバーシのワークスペースに含まれる Book ライブラリのバージョン。
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 評価モデル・校正・探索仕様の識別値。推定値を再利用できるかの照合に使う。
 pub type AnalysisIdentity = [u8; 32];
+/// Book 操作・読込・探索で発生しうるエラー。
 #[derive(Debug)]
 pub enum BookError {
+    /// ファイル入出力エラー。
     Io(io::Error),
+    /// エンジン探索エラー。
     Search(EngineError),
+    /// データ形式や引数・不変条件の不正。
     Invalid(String),
+    /// 読み込みサイズ・件数等の制限超過。
     Limit(&'static str),
 }
 impl fmt::Display for BookError {
@@ -104,7 +109,8 @@ fn invalid(s: impl Into<String>) -> BookError {
 }
 
 #[derive(Clone, Copy, Debug)]
-/// ファイル読込の件数・割当制限。生成中のbook全体やEngineの資源予算とは別。
+/// `.dbook` / `.dbook-work` ファイル読み込み時のサイズ・件数上限。
+/// 生成中の Book 全体や `Engine` のメモリ予算とは独立して、破損・巨大ファイルによる過剰確保を防ぐ。
 pub struct ReadLimits {
     pub max_bytes: u64,
     pub max_positions: u64,
@@ -119,8 +125,8 @@ impl Default for ReadLimits {
         }
     }
 }
-// Keyは「手番側の石、相手側の石」を回転・反転で正規化した局面。
-// 黒白の絶対色は含まない。生成の色別損失条件にはgenerate::Contextを使う。
+// Key は「手番側の石」と「相手側の石」を回転・反転で正規化した盤面を表す。
+// 同じ形の盤面を 1 つにまとめるため黒白の絶対色は持たず、生成時の黒番・白番ごとの損失条件には `generate::Context` を使う。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Key(u64, u64);
 impl Key {
@@ -150,8 +156,8 @@ fn action_from(c: u8) -> Result<Action> {
             .ok_or_else(|| invalid("action"))
     }
 }
-/// Legal actions from A1 towards H8, or a lone pass. The stored candidate
-/// order depends on this.
+/// A1 から H8 方向の合法手一覧（パス必須時はパスのみ）を返す。
+/// 格納される候補手順序はこの並び順に依存する。
 fn legal_actions(b: Board) -> Vec<Action> {
     let mut out: Vec<_> = b.legal_moves().map(Action::Place).collect();
     if b.must_pass() {
@@ -177,7 +183,7 @@ fn selectivity(code: u8) -> Result<Selectivity> {
     }
 }
 
-// Cold opaque optional sections survive a load/save by an older compatible reader.
+// 古い互換リーダーで読み書きしても失われないよう保持する未解釈の拡張セクション。
 #[derive(Clone, Debug)]
 struct Extension {
     kind: u32,
@@ -187,9 +193,9 @@ fn extension_bytes(es: &[Extension]) -> u64 {
     es.iter().map(|e| e.bytes.capacity() as u64).sum::<u64>() + std::mem::size_of_val(es) as u64
 }
 
-/// Identifies evaluation weights, calibration and search semantics. Estimated
-/// values are comparable only under the same identity. Older identities require
-/// explicit retarget/reanalysis; proven game results remain reusable.
+/// 評価重み・校正パラメータ・探索仕様を識別するハッシュ値（[`AnalysisIdentity`]）を計算する。
+/// 推定値は同一識別値の下でのみ比較可能であり、異なる識別値の結果を再利用するには
+/// 明示的な再目標化・再解析が必要となる（確定した終局結果は常に再利用可能）。
 pub fn analysis_identity(engine: &Engine) -> std::io::Result<AnalysisIdentity> {
     use sha2::{Digest, Sha256};
     struct HashWriter(Sha256);
@@ -213,11 +219,13 @@ pub fn analysis_identity(engine: &Engine) -> std::io::Result<AnalysisIdentity> {
     Ok(writer.0.finalize().into())
 }
 
-/// 候補の値から局面全体の最大値を求める。
-/// 例：A=+4、B<=+2なら局面=+4と分かるが、全候補に点評価があるわけではない。
-/// 戻り値のboolは後者の「全候補が点評価」であり、局面値の有無とは独立する。
-/// 下限だけの候補や不明な候補があれば、その候補が最大かもしれず推定値を決めない。
-/// 全候補が最終石差の区間を持つ場合は、区間の最大値として別に計算する。
+/// 候補手ごとの評価値から、その局面全体で期待できる最大スコアを求める。
+///
+/// たとえば候補 A が `+4`、候補 B が「`+2` 以下（上界）」と分かっていれば、
+/// 局面の最善スコアは `+4` と確定できる（ただし全候補に点評価が揃っているわけではない）。
+/// 戻り値の `bool` は後者の「全候補が点評価を持っているか」を表し、局面値が決まるかどうかとは独立している。
+/// 下界（`Bound::Lower`）しか分からない候補や未評価の候補がある場合は、その手が最善になる可能性が残るため局面値は決めない。
+/// 全候補が終局までの確定石差区間（`Score::Final`）を持つ場合は、それらを統合した石差区間として計算する。
 fn combine_values(
     values: impl IntoIterator<Item = Option<Evaluation>>,
     identity: AnalysisIdentity,

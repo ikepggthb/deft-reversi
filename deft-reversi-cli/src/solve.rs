@@ -1,36 +1,42 @@
+//! 問題集ファイル（OBF 形式）を読み込み、各局面を探索して正答一致や探索性能を検証する `solve` コマンド。
+//!
+//! 人間向けの整形テーブル出力と、ベンチマーク計測向けの TSV（タブ区切り）出力の両方に対応する。
+
 use crate::{EngineArgs, GoalArgs, Result, display, stop};
 use clap::Args;
 use deft_reversi_engine::{Action, Engine, Goal, Position, ResultKind, SearchResult, Selectivity};
 use std::{path::PathBuf, time::Instant};
 
+/// `solve` サブコマンドの引数。
 #[derive(Args, Debug)]
 pub struct SolveArgs {
-    /// One position per line: 64 squares and the side to move, optionally
-    /// followed by `; A2:+38; C7:+36; ...` answers, best first.
+    /// 問題集ファイル（1 行 1 局面: 64 マスと手番、続けて任意の正解例 `; A2:+38; C7:+36; ...`）。
     file: PathBuf,
     #[command(flatten)]
     engine: EngineArgs,
-    /// Searches read to the end of the game without pruning unless a level
-    /// or depth is given.
+    /// 探索レベルや深さの指定（省略時は終局まで枝刈りなしの完全読み）。
     #[command(flatten)]
     pub(super) goal: GoalArgs,
-    /// Clear the transposition table before each position.
+    /// 各局面を探索する前に置換表（探索済み局面のハッシュ表）を消去する。
     #[arg(long)]
     clear_tt: bool,
-    /// Show the full PV and try to recover missing selective endgame moves.
+    /// PV（予想手順）を省略せず全文表示し、選択的終盤探索で欠けた PV の復元も試みる。
     #[arg(long, conflicts_with = "tsv")]
     full_pv: bool,
-    /// Emit precise tab-separated results for benchmark tools.
+    /// ベンチマーク集計向けにタブ区切り（TSV）で詳細結果を出力する。
     #[arg(long)]
     tsv: bool,
 }
 
+/// 問題集 1 問分のデータ。
 pub struct Problem {
+    /// 探索対象の局面。
     pub position: Position,
-    /// Scores of the moves the file lists, best first.
+    /// ファイルに記載された候補手と期待石差の組（通常は最善手順）。
     pub answers: Vec<(Action, i32)>,
 }
 
+/// 問題集の 1 行を解析して [`Problem`] を返す。
 pub fn parse(line: &str) -> std::result::Result<Problem, String> {
     let mut fields = line.split(';');
     let mut header = fields.next().ok_or("empty line")?.split_whitespace();
@@ -39,7 +45,7 @@ pub fn parse(line: &str) -> std::result::Result<Problem, String> {
     let position = format!("{cells} {side}")
         .parse::<Position>()
         .map_err(|e| e.to_string())?;
-    // Old bundled files separate answers with spaces, newer OBFs with `;`.
+    // 旧形式の同梱ファイルは正解例を空白区切り、新しい OBF 形式は `;` 区切りで持つため両方を読み取る。
     let answers = header
         .chain(fields.map(str::trim).filter(|f| !f.is_empty()))
         .map(|field| {
@@ -54,6 +60,7 @@ pub fn parse(line: &str) -> std::result::Result<Problem, String> {
     Ok(Problem { position, answers })
 }
 
+/// 問題集ファイルを読み込み、空行と `#` コメント行を除いた [`Problem`] 一覧を返す。
 pub fn read(path: &PathBuf) -> Result<Vec<Problem>> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     text.lines()
@@ -63,8 +70,9 @@ pub fn read(path: &PathBuf) -> Result<Vec<Problem>> {
         .collect()
 }
 
-/// Whether `result` agrees with the answers: the best score, and a move that
-/// reaches it. None when the file has no answers.
+/// 探索結果 `result` が問題の正解（最高石差と、その石差に達する手のいずれか）と一致するかを返す。
+///
+/// 問題に正解が記載されていない場合は `None` を返す。
 pub fn check(problem: &Problem, result: &SearchResult) -> Option<bool> {
     let best = problem.answers.iter().map(|a| a.1).max()?;
     let move_ok = problem
@@ -74,6 +82,7 @@ pub fn check(problem: &Problem, result: &SearchResult) -> Option<bool> {
     Some(result.score == Some(best) && move_ok)
 }
 
+/// 問題集を順に探索し、結果表または TSV を標準出力へ出す。正解と食い違いがあればエラーを返す。
 pub fn run(args: SolveArgs) -> Result<()> {
     let problems = read(&args.file)?;
     let mut engine = args.engine.engine()?;
@@ -200,6 +209,7 @@ pub fn run(args: SolveArgs) -> Result<()> {
     Ok(())
 }
 
+/// ベンチマーク比較用に 1 問分の探索統計を TSV 形式で出力する。
 fn print_tsv(index: usize, position: Position, result: &SearchResult) {
     let (mode, depth) = match result.kind {
         None => ("Depth(0)".into(), 0),
@@ -233,6 +243,7 @@ fn print_tsv(index: usize, position: Position, result: &SearchResult) {
     );
 }
 
+/// Ctrl-C 停止を有効にしたうえで 1 局面を探索する。
 fn search(
     engine: &mut Engine,
     position: Position,

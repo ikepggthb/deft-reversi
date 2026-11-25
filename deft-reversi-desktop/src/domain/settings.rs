@@ -1,21 +1,24 @@
-//! What the settings screen changes, and the new game dialog's last choices.
+//! 設定画面で変更されるアプリケーション設定と、新規対局ダイアログの前回入力値を保持するモジュール。
 use super::{Player, Preset, Strength, player::MOVE_TIMES};
 use crate::{engine_loader, i18n::Lang};
 use deft_reversi_engine::Square;
 use std::{path::PathBuf, time::Duration};
 
+/// 探索エンジンに割り当てる計算リソース。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Resources {
+    /// 探索に使う CPU スレッド数。
     pub threads: usize,
+    /// 置換表（計算済み局面のキャッシュ）に割り当てるメモリ容量（MiB）。
     pub tt_mib: usize,
 }
 
+/// 局面解析モードの設定。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnalysisSettings {
-    /// For the shown position, which also scores every move, and for each
-    /// position of the whole record.
+    /// 表示中局面の全合法手評価および棋譜全体解析で使用する探索レベル。
     pub level: u8,
-    /// A move that loses this many discs or more is marked in the record.
+    /// この石数以上の損失がある手を棋譜上で悪手としてマークする閾値。
     pub loss_threshold: i32,
 }
 
@@ -28,58 +31,73 @@ impl Default for AnalysisSettings {
     }
 }
 
+/// アプリケーション全体の設定。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
+    /// 表示言語。
     pub lang: Lang,
+    /// 盤面上に合法手マーカーを表示するか。
     pub show_legal_moves: bool,
+    /// エンジンのスレッド数・置換表サイズ設定。
     pub resources: Resources,
+    /// 解析モードの探索レベル・悪手閾値設定。
     pub analysis: AnalysisSettings,
-    /// In analysis mode, the candidate moves show their values or dots.
+    /// 解析モード中に合法手上に評価値（またはドット）を表示するか。
     pub candidate_values: bool,
+    /// UI テーマ設定。
     pub theme: ThemeChoice,
+    /// 石の反転アニメーション速度設定。
     pub animation: Animation,
+    /// 着手音などの効果音を有効にするか。
     pub sound: bool,
-    /// 0 to 100.
+    /// 効果音の音量（0〜100）。
     pub volume: u8,
-    /// The window's last size, in logical pixels.
+    /// 前回終了時のウィンドウサイズ（論理ピクセル）。
     pub window_size: Option<(u32, u32)>,
-    /// Kept between games, so the dialog opens with the last choices.
+    /// 次回ダイアログを開いたときに引き継ぐ新規対局フォームの状態。
     pub new_game: NewGameForm,
+    /// 盤面の回転・左右反転状態。
     pub board_view: BoardView,
+    /// AI が参照する Book（`.dbook`）設定。
     pub book: BookSettings,
-    /// The plot of the value graph, in logical pixels; dragged to size.
+    /// 評価値グラフ領域の高さ（論理ピクセル、ドラッグでリサイズ可能）。
     pub graph_height: u16,
 }
 
-/// How tall the value graph may be dragged.
+/// 評価値グラフのドラッグ可能な高さ範囲（論理ピクセル）。
 pub const GRAPH_HEIGHTS: std::ops::RangeInclusive<u16> = 60..=400;
 
-/// The opening book the AI plays from (§24).
+/// AI 対局で使用する Book（`.dbook`）の設定。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BookSettings {
-    /// A `.dbook`; none by default.
+    /// 選択された `.dbook` ファイルパス（未選択時は `None`）。
     pub path: Option<PathBuf>,
-    /// Off keeps the file chosen but plays no book moves.
+    /// 無効化時はファイル選択を維持したままブック参照をスキップする。
     pub enabled: bool,
 }
 
 impl BookSettings {
-    /// Whether AI moves may come from the book.
+    /// AI の着手に Book を利用すべきかどうかを返す。
     pub fn use_for_ai(&self) -> bool {
         self.enabled && self.path.is_some()
     }
 }
 
-/// How the board is turned on screen: mirrored left to right, then turned
-/// clockwise a quarter at a time.
+/// 画面上の盤面表示向き（左右反転および時計回り 90 度単位の回転）。
+///
+/// 「左右反転してから時計回りに回転する」という順序で固定しており、
+/// 画面座標と盤面座標の相互変換（[`BoardView::square_at`] と [`BoardView::place_of`]）が
+/// 常に互いに逆変換になるようにしている。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BoardView {
-    /// Quarter turns clockwise, 0..4.
+    /// 時計回りの 90 度回転回数（`0..4`）。
     turns: u8,
+    /// 左右反転の有無。
     pub mirrored: bool,
 }
 
 impl BoardView {
+    /// 回転回数と左右反転フラグから [`BoardView`] を生成する。
     pub fn new(turns: u8, mirrored: bool) -> Self {
         Self {
             turns: turns % 4,
@@ -87,10 +105,12 @@ impl BoardView {
         }
     }
 
+    /// 時計回りの 90 度回転回数（`0..4`）を返す。
     pub fn turns(self) -> u8 {
         self.turns
     }
 
+    /// 時計回りに 90 度回転した新しい [`BoardView`] を返す。
     pub fn turned(self) -> Self {
         Self {
             turns: (self.turns + 1) % 4,
@@ -98,6 +118,7 @@ impl BoardView {
         }
     }
 
+    /// 左右反転を切り替えた新しい [`BoardView`] を返す。
     pub fn mirrored(self) -> Self {
         Self {
             mirrored: !self.mirrored,
@@ -105,11 +126,11 @@ impl BoardView {
         }
     }
 
-    /// The square shown in column `x` and row `y` (0..8, from the top left).
+    /// 画面上の列 `x`・行 `y`（左上原点 `0..8`）に対応する盤面上の [`Square`] を返す。
     pub fn square_at(self, x: u8, y: u8) -> Square {
         debug_assert!(x < 8 && y < 8);
         let (mut x, mut y) = (x, y);
-        // A clockwise turn shows board (x, y) at (7 - y, x); undo the turns.
+        // 時計回り 90 度回転は盤面 (x, y) を画面 (7 - y, x) に写すため、その逆変換を適用する。
         for _ in 0..self.turns % 4 {
             (x, y) = (y, 7 - x);
         }
@@ -119,7 +140,7 @@ impl BoardView {
         Square::from_xy(x, y).expect("x and y are 0..8")
     }
 
-    /// Where `square` is shown: its column and row.
+    /// 盤面上の [`Square`] が画面上のどの列・行（左上原点 `0..8`）に表示されるかを返す。
     pub fn place_of(self, square: Square) -> (u8, u8) {
         let (mut x, mut y) = (square.x(), square.y());
         if self.mirrored {
@@ -156,50 +177,68 @@ impl Default for Settings {
     }
 }
 
+/// アプリケーションのテーマ選択。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemeChoice {
+    /// OS の外観設定に追従する。
     System,
+    /// ライトテーマ。
     Light,
+    /// ダークテーマ。
     Dark,
 }
 
-/// How discs turn over (§9.3).
+/// 石の反転アニメーション速度。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Animation {
+    /// 標準速度。
     Normal,
-    /// Half as long.
+    /// 半分の時間（高速）。
     Short,
+    /// アニメーションなし。
     Off,
 }
 
-/// The table sizes the settings screen offers.
+/// 設定画面で選択可能な置換表サイズ候補（MiB）。
 pub const TT_SIZES_MIB: [usize; 6] = [32, 64, 128, 256, 512, 1024];
 
+/// 新規対局ダイアログでの AI 強さ指定方式。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AiChoice {
+    /// プリセットを使用。
     Preset(Preset),
+    /// 手動（レベルまたは思考時間）で指定。
     Manual,
 }
 
+/// 手動指定時のモード。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ManualMode {
+    /// 探索レベル指定。
     Level,
+    /// 1 手あたりの思考時間指定。
     Time,
 }
 
-/// One colour in the new game dialog. The manual values stay while a
-/// preset is chosen, so switching back keeps them.
+/// 新規対局ダイアログにおける片側（黒または白）の設定フォーム状態。
+///
+/// プリセット選択中も手動設定値（`level` / `time`）を保持し、手動に戻したときに復元できるようにする。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SideForm {
+    /// AI が担当する場合は `true`、人間なら `false`。
     pub ai: bool,
+    /// プリセットか手動かの選択。
     pub choice: AiChoice,
+    /// 手動時のモード（レベル / 思考時間）。
     pub mode: ManualMode,
+    /// 手動時の探索レベル。
     pub level: u8,
-    /// An index into `MOVE_TIMES`.
+    /// 手動時の思考時間（`MOVE_TIMES` 配列のインデックス）。
     pub time: usize,
 }
 
 impl SideForm {
+    /// 人間プレイヤーを既定値としたフォーム状態を返す。
     pub fn human() -> Self {
         Self {
             ai: false,
@@ -210,10 +249,12 @@ impl SideForm {
         }
     }
 
+    /// 選択されている思考時間インデックスに対応する [`Duration`] を返す。
     pub fn time_duration(&self) -> Duration {
         MOVE_TIMES[self.time.min(MOVE_TIMES.len() - 1)]
     }
 
+    /// 現在のフォーム設定から [`Strength`] を構築する。
     pub fn strength(&self) -> Strength {
         match (self.choice, self.mode) {
             (AiChoice::Preset(preset), _) => Strength::Preset(preset),
@@ -222,6 +263,7 @@ impl SideForm {
         }
     }
 
+    /// 現在のフォーム設定から [`Player`] を構築する。
     pub fn player(&self) -> Player {
         if self.ai {
             Player::Ai(self.strength())
@@ -231,10 +273,12 @@ impl SideForm {
     }
 }
 
+/// 新規対局ダイアログ全体の入力状態。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NewGameForm {
-    /// Black, then White.
+    /// 黒番（インデックス 0）・白番（インデックス 1）の設定。
     pub sides: [SideForm; 2],
+    /// 現在の局面から対局を開始する場合は `true`、初期局面からなら `false`。
     pub from_current: bool,
 }
 

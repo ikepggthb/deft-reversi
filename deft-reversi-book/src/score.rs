@@ -1,17 +1,25 @@
-//! 推定の点数・上下限と、最終石差の確定範囲。
+//! 評価スコアの種類（点評価・上界・下界）と、終局までの確定石差区間を表すモジュール。
 use super::*;
-/// 推定の点数が一点か、下限か、上限か。
+/// スコアが「ちょうどその値（点評価）」か、「その値以上（下界）」か、「その値以下（上界）」かを表す。
+///
+/// α-β 探索や部分的な枝刈りでは、正確な点数の代わりに上界や下界が得られることがある。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Bound {
+    /// 正確な 1 点のスコア。
     Point,
+    /// 少なくともこの値以上である（下界）。
     Lower,
+    /// 多くともこの値以下である（上界）。
     Upper,
 }
 
-/// 点数の意味を一か所で表す。Finalも、範囲なら一点の読み切り結果ではない。
+/// 評価スコアの意味を一か所で表現する型。
+/// 終局まで読み切った結果（`Final`）であっても、幅のある区間なら 1 点の完全読み切りではない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Score {
+    /// 探索による推定スコア（点評価または上下界）。
     Estimate { score: i16, bound: Bound },
+    /// 終局までの完全読みで保証された最終石差の区間。
     Final(ScoreInterval),
 }
 impl Score {
@@ -21,7 +29,8 @@ impl Score {
             bound: Bound::Point,
         }
     }
-    /// 点評価なら点数、区間なら上限（なければ下限）。着手選択にはpoint_valueも確認する。
+    /// 点評価ならその点数、区間なら上界（上界がなければ下界）を返す。
+    /// 実際に着手として選ぶ際は、点評価であることを確かめるため `point_value` も確認する。
     pub fn value(self) -> i16 {
         match self {
             Self::Estimate { score, .. } => score,
@@ -62,8 +71,9 @@ impl Score {
         }
     }
 }
-/// 最終石差の確定した範囲。Noneの側は不明で、両端が同じなら石差が確定する。
-/// 点数の規約はEngineに合わせ、-64..=64の偶数だけを受け付ける。
+/// 完全読みで保証された最終石差の範囲。
+/// `None` の側は限界が不明であることを表し、上下が同じ値なら石差が 1 点に確定する。
+/// 点数の規約は `Engine` に合わせ、`-64..=64` の偶数だけを受け付ける。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ScoreInterval {
     lower: Option<i16>,

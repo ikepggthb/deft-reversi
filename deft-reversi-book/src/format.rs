@@ -1,9 +1,12 @@
-//! Versioned, bounded streaming codec. No Rust layout or unbounded serde vectors.
+//! Book ファイル（`.dbook` / `.dbook-work`）のバイナリ読み書きを行うストリーミングコーデック。
 //!
-//! 集合全体の上限があるときはwork v9 / play v5。従来形式も読み書きする。
-//! メモリの共有一覧はvalues.rs、バイト表現と旧分類の検査はlegacy内を使う。
-//! 手数や盤面の検査に加え、旧形式の入力関係はlegacy::validate_catalogで検査してから捨てる。
-//! 形式を追う順序と保存項目はdocs/book-v2/source-review.mdにまとめている。
+//! 安全性と互換性のため、Rust 構造体のメモリレイアウトへの依存や無制限の `serde` デシリアライズは使わず、
+//! バージョン管理された形式と [`ReadLimits`] によるサイズ・件数上限付きで読み書きする。
+//!
+//! 集合探索の上界（`MoveSearch`）を保存できる最新形式は work v9（`.dbook-work`）と play v5（`.dbook`）で、
+//! 従来の旧バージョンも読み書きできる。
+//! メモリ上の共有評価ストアは `values.rs`、バイト表現と旧分類の検証は `legacy` モジュールを使う。
+//! 手数や盤面の整合性に加え、旧形式の入力関係は `legacy::validate_catalog` で検証してから取り込む。
 use super::*;
 use crate::legacy::{
     AnalysisQuality, Assessment, Bound, Derivation, ImportedValue, PropagationPolicy,
@@ -232,8 +235,9 @@ fn atomic_save(
     File::open(parent)?.sync_all()?;
     Ok(())
 }
-// 本文の構造を読む前に、種類・版・全体長・ハッシュを検査する。
-// 正しいハッシュでも意味の正しさは保証しない。後段で件数・参照先・評価の意味を検査する。
+// 本文の構造を読み始める前に、ファイルの識別子・バージョン・本文長・SHA-256 ハッシュを検査する。
+// ただしハッシュが一致しても「データの中身が盤面ルールとして正しいか」までは保証されないため、
+// 後段で件数・参照先インデックス・各評価値の意味を個別に検証する。
 fn open(path: &Path, magic: &[u8; 8], limits: ReadLimits) -> Result<(BufReader<File>, u32)> {
     let mut file = BufReader::new(File::open(path)?);
     let len = file.get_ref().metadata()?.len();
@@ -587,8 +591,7 @@ fn poolw(w: &mut dyn Write, values: &[Assessment]) -> Result<()> {
     }
     store.write(w)
 }
-// Include the pool, its construction index, the validation graph, and the
-// editor's retained facts in the decoding allowance; not just file bytes.
+// デコード時のメモリ制限にはファイルバイト数だけでなく、値プール・構築用索引・検証グラフ・エディタが保持する事実も含める。
 const VALUE_READ_BYTES: u64 = 3 * std::mem::size_of::<Assessment>() as u64 + 256;
 fn remaining_limits(limits: ReadLimits, used: u64) -> ReadLimits {
     ReadLimits {
@@ -716,8 +719,7 @@ fn reserve<T>(v: &mut Vec<T>, n: usize) -> Result<()> {
         .map_err(|_| BookError::Limit("allocation"))
 }
 pub(super) fn save_book(book: &Book, path: &Path) -> Result<()> {
-    // Older readers allow a search upper bound only on the non-best
-    // moves. The representative of an all-upper subset can also carry it.
+    // 旧リーダーは非最善手に対してのみ探索上限を許すが、全手が上限のサブセットの代表手もそれを保持しうる。
     let has_upper_representative = book.candidates.iter().any(|candidate| {
         candidate.value.is_some_and(|id| {
             let value = book.values.at(id as usize);
@@ -1116,8 +1118,7 @@ type ComparedValue = (ValueClaim, QualitySummary, ValueOrigin);
 fn compared(v: Option<Assessment>) -> Option<ComparedValue> {
     v.map(|v| (v.claim(), v.analysis().summary(), v.origin()))
 }
-// This adapter is only for old-file conversion reports. New editing and
-// generation have one child-first rule and never call the old quality choice.
+// このアダプタは旧ファイル変換レポート専用。新規の編集・生成は単一の子優先ルールを用い、旧品質選択を呼ばない。
 fn legacy_values(
     editor: &BookEditor,
     policy: PropagationPolicy,
@@ -1545,8 +1546,8 @@ pub(super) fn load_editor(path: &Path, limits: ReadLimits) -> Result<BookEditor>
             || changed_candidate_values > 0;
         let mut jobs_rebuilt = false;
         if changes_rules {
-            // Old quality-based queues can omit a branch that becomes useful
-            // under child-first values. Rebuild work, retaining completed data.
+            // 旧品質ベースのキューでは、子優先の評価値の下で有用になる枝を取りこぼすことがあるため、
+            // 完了済みデータを保持したまま作業キューを再構築する。
             editor.extensions.clear();
             if let Some(g) = editor.generation.take() {
                 let roots: Vec<_> = g

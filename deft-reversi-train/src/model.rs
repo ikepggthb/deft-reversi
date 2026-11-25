@@ -1,9 +1,16 @@
+//! 学習済みのフェーズごとの重みをまとめ、エンジンが読み込める DPR2 形式のモデルバイト列に変換するモジュール。
+//!
+//! リバーシでは盤面の進行度（石数）によって石の価値が変わるため、石数ごとにフェーズを分けて重みを学習する。
+//! データセットに局面が存在せず未学習となったフェーズについては、最も近い学習済みフェーズの重み（および補助ニューラルネット）を
+//! コピーして補完する。
+
 use deft_reversi_engine::{Model, PHASE_COUNT, PatternModel, PatternPhase, PenPhase};
 use std::io;
 
-/// A DPR2 model from the phases `phase` returns. A phase it has no weights
-/// for (the dataset has no positions with that many discs) copies the
-/// nearest phase that has them, the earlier one on a tie.
+/// `phase` が返す各フェーズの重みから DPR2 形式のモデルを組み立てる。
+///
+/// 重みが存在しないフェーズ（データセットに該当石数の局面がない場合など）は、
+/// 最も近い学習済みフェーズの重みをコピーして補完する（同距離なら手前のフェーズを優先）。
 pub fn assemble(phase: &mut dyn FnMut(usize) -> Option<PatternPhase>) -> io::Result<Vec<u8>> {
     let trained: Vec<Option<PatternPhase>> = (0..PHASE_COUNT).map(phase).collect();
     if trained.iter().all(Option::is_none) {
@@ -24,9 +31,9 @@ pub fn assemble(phase: &mut dyn FnMut(usize) -> Option<PatternPhase>) -> io::Res
     Ok(bytes)
 }
 
-/// A DPR2 version 4 model (version 3 when no network reads the stable or
-/// disc inputs): linear phases with their networks. Missing
-/// phases copy the nearest trained one, as in `assemble`.
+/// 線形フェーズ重みと補助ニューラルネットから DPR2 モデルを組み立てる（version 4、石数などの全体入力を使わない場合は version 3）。
+///
+/// 未学習フェーズは [`assemble`] と同様に最も近い学習済みフェーズをコピーして補完する。
 pub fn assemble_pen(
     linear: &[Option<PatternPhase>],
     networks: &[Option<PenPhase>],

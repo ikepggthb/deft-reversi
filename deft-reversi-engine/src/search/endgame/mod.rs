@@ -1,4 +1,9 @@
-//! Exact endgame dispatch; move ordering, shallow kernels and TT storage are separate.
+//! 終盤完全読みおよび終盤ローカル探索のディスパッチャ（振り分け役）です。
+//!
+//! 終盤の残り空きマス数が少なくなると、汎用探索木と共有置換表のオーバーヘッドが大きくなるため、
+//! 空きマス数に応じて 4 マス以下（`last_four` / `small`）・5〜6 マス（`shallow`）・7〜13 マス（`ordered`）の
+//! 専用カーネルへ振り分けます。
+//! ムーブオーダリング・浅いカーネル・スレッドローカル置換表はそれぞれ別サブモジュールに分離しています。
 use super::{Aborted, Action, Board, Context, EvalState, Line, Ordering, Square};
 mod last_four;
 mod local_tt;
@@ -13,15 +18,18 @@ use ordered::EndMove;
 #[cfg(test)]
 use parity::{PARITY_REGIONS, SQUARE_PARITY};
 use parity::{odd_regions, tail_parity};
+/// 浅い専用カーネル（5〜6 マス）の上限空きマス数です。
 pub(in crate::search) const TAIL_EMPTIES: u8 = 6;
+/// スレッドローカル終盤ソルバが担当する最大空きマス数です（これを超えると汎用探索木と共有置換表を使います）。
 pub(in crate::search) const LOCAL_END_MAX: u8 = 13;
-/// Selective endgame searches try ProbCut from this many empties.
+/// 選択的終盤探索（MPC）が終盤 ProbCut を試行する最小空きマス数です。
 pub(in crate::search) const PROBCUT_MIN_EMPTIES: u8 = 12;
-/// The selective stages before an exact solve stop ProbCut one empty earlier,
-/// so more of their local results are exact and survive into the final stage.
+/// 完全読み直前の選択的準備ステージでは 1 マス手前（13 マス）で終盤 ProbCut を打ち切ります。
+/// これにより 12 マス以下のローカルキャッシュ結果が完全読み扱いになり、最終完全読みステージへそのまま持ち越せます。
 pub(in crate::search) const EXACT_PREPARATION_PROBCUT_MIN: u8 = 13;
 
 impl Context {
+    /// PV（最善応手手順）の取得を伴う終盤末尾探索のエントリポイントです（全幅ウィンドウやルート付近で使います）。
     pub(super) fn tail_entered(
         &mut self,
         board: Board,
@@ -73,6 +81,7 @@ impl Context {
         }
         Ok(best)
     }
+    /// スコアだけを返す Null-Window 終盤探索のエントリポイントです（呼び出し元で既に `enter()` 済み）。
     pub(super) fn tail_score_entered(
         &mut self,
         board: Board,
@@ -81,6 +90,7 @@ impl Context {
     ) -> Result<i32, Aborted> {
         self.endgame_score_entered(board, alpha, beta, None, None)
     }
+    /// ローカル終盤置換表を参照・更新しつつ、空きマス数に応じた専用カーネルへ振り分けます。
     fn endgame_score_entered(
         &mut self,
         board: Board,
@@ -96,9 +106,8 @@ impl Context {
         debug_assert!(empties <= LOCAL_END_MAX);
         self.end_cache.prepare(empties);
         let quality = self.end_quality(empties);
-        // A parent's snapshot remains a valid bound even if a sibling has since
-        // replaced the slot. This cache is owned by this Context, and quality is
-        // fixed until the search stage has joined all workers.
+        // 親ノードで取得したスナップショットは、その後兄弟探索でスロットが上書きされても妥当な境界を保ちます。
+        // キャッシュはこの `Context` 専有であり、`quality` も現ステージの全ワーカー合流まで変わりません。
         let probe = known_probe.unwrap_or_else(|| self.end_cache.probe(board, quality));
         if probe.matched {
             if known_probe.is_none() {
@@ -128,8 +137,8 @@ impl Context {
             .store(board, quality, probe, score, beta, best_move);
         Ok(score)
     }
-    /// Below the ProbCut range a local result is exact even inside a
-    /// selective stage, so it is cached as exact (quality 0).
+    /// ProbCut 適用下限より少ない空きマス数では選択ステージ内でも結果が厳密になるため、
+    /// 完全読みタグ（quality 0）としてキャッシュします。
     fn end_quality(&self, empties: u8) -> u8 {
         if empties < self.runtime.endgame_probcut_min {
             0
@@ -137,6 +146,7 @@ impl Context {
             self.runtime.quality.load(Ordering::Relaxed)
         }
     }
+    /// 空き 5 マス以下のスコア専用ディスパッチです。
     fn tail_score_impl(&mut self, board: Board, alpha: i32, beta: i32) -> Result<i32, Aborted> {
         let empty = !(board.player_bits() | board.opponent_bits());
         let count = empty.count_ones() as u8;
@@ -162,6 +172,9 @@ impl Context {
     }
 }
 
+/// 残り 1 マス（`empty` の単一ビット）を葉として即座に評価します（または上界カットオフを返します）。
+/// 自分が打てる場合は `base + doubled_flips - 62`、打てない場合は「相手が打つ」前に
+/// 自分の石数だけから求まる上界 `upper <= alpha` で早期リターンします。
 #[inline(always)]
 pub(super) fn last_square_bound(board: Board, empty: u64, alpha: i32) -> i32 {
     if empty == 0 {
@@ -297,10 +310,10 @@ mod tests {
             .tail_score_entered(board, expected - 1, expected)
             .unwrap();
         assert!(score >= expected);
-        // Seven empties never use ProbCut: the bound is exact for any stage.
+        // 空き 7 マスは ProbCut を使わないため、どのステージでも境界値は厳密です。
         assert!(context.end_cache.probe(board, 0).matched);
         assert!(!context.end_cache.probe(board, 3).matched);
-        // A position inside the ProbCut range keeps the stage's tag.
+        // ProbCut の適用範囲内の局面は現在のステージのタグを保持します。
         let deep = random_board(5, PROBCUT_MIN_EMPTIES);
         assert_eq!(deep.empty_count(), PROBCUT_MIN_EMPTIES);
         context.tail_score_entered(deep, 0, 1).unwrap();

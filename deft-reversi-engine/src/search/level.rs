@@ -1,7 +1,8 @@
+//! 強さレベル（`Goal::Level(1..=60)`）に対応する中盤探索深さと終盤選択探索のスケジュールを定義します。
 use super::*;
 
-/// The plan of a level (1..=60): the midgame to the level's depth at 83%,
-/// and the endgame stages of `endgame_limits`.
+/// レベル（1..=60）に対応する [`SearchPlan`] を構築します。
+/// 中盤は 83% 選択率でレベルと同じ深さまで読み、終盤は `endgame_limits` に従って段階的に完全読みへ移行します。
 pub(super) fn plan(level: u8) -> SearchPlan {
     let limits = endgame_limits(i32::from(level));
     [
@@ -18,32 +19,23 @@ pub(super) fn plan(level: u8) -> SearchPlan {
         |plan, (stage, limit)| plan.endgame(stage, limit as u8),
     )
 }
-/// The limits of the levels 11..=20, measured in one thread: a stage is used
-/// where its time for each disc it saves is at most the time for each disc
-/// that the next level gains.
+/// レベル 11..=20 の終盤切り替え空きマス数テーブル（1 スレッド実測ベース）です。
+/// 1 石あたりの所要時間が次のレベルで得られる利得を下回る境界で各ステージを採用しています。
 #[rustfmt::skip]
 const ENDGAME_LIMITS_11_20: [[i32; 5]; 10] = [
     [16, 16, 17, 17, 19], [16, 16, 18, 18, 20], [16, 16, 18, 19, 21], [17, 17, 19, 20, 22], [17, 17, 19, 21, 22], // 11..=15
     [18, 18, 20, 22, 23], [18, 18, 20, 22, 23], [19, 19, 20, 22, 23], [19, 19, 23, 23, 24], [19, 19, 24, 24, 25], // 16..=20
 ];
-/// The most empties with which a level (1..=60) searches each endgame stage:
-/// 100% (exact), 99%, 98%, 95%, 85%. A stage with the limit of the one before
-/// it is not used; with more empties than the last limit the level searches
-/// the midgame to its own depth.
+/// 各レベル（1..=60）が終盤ステージ（100% 完全読み, 99%, 98%, 95%, 85%）を適用する最大空きマス数です。
 ///
-/// - 1..=10: exact up to level + 6, 85% up to level + 9 (the best of the
-///   forms played against each other over 1,000 games a level).
-/// - 11..=20: the measured table.
-/// - 21..=30: exact up to level - 1, then 99%, 98%, 95%, 85% up to level
-///   plus 2, 3, 4, 6. From here on a wrong move mostly loses the game, and the
-///   endgame search finds the best move more often than a deeper midgame.
-/// - 31..=50: one empty more every two levels (the selective stages on the
-///   odd level, the exact search on the even one).
-/// - 51..=60: two empties more every level, up to the exact search of the
-///   whole game at level 60.
-///
-/// The measurements and matches behind the table are in
-/// deft-reversi-notes/benchmarks/2026-11-15-level-table.
+/// 1 つ前のステージと同じ上限値を持つステージはスキップします。
+/// 最後の上限を超える空きマス数では、中盤探索（深さ = レベル、選択率 83%）を行います。
+/// - 1..=10: `level + 6` まで完全読み、`level + 9` まで 85%（各レベル 1,000 局の対戦実験で選定しました）。
+/// - 11..=20: 実測テーブルを使います。
+/// - 21..=30: `level - 1` まで完全読み、以降 `level + 2, 3, 4, 6` まで 99%, 98%, 95%, 85% とします。
+///   この領域からは 1 度の悪手が即敗北に繋がるため、深い中盤読みより終盤選択読みを優先します。
+/// - 31..=50: 2 レベルごとに空きマス上限が 1 増えます（奇数レベルで選択ステージ、偶数レベルで完全読みが上昇します）。
+/// - 51..=60: 1 レベルごとに空きマス上限が 2 増え、レベル 60 で初手（空き 60）から完全読みに到達します。
 fn endgame_limits(level: i32) -> [i32; 5] {
     match level {
         ..=10 => [level + 6, level + 6, level + 6, level + 6, level + 9],
@@ -58,9 +50,8 @@ fn endgame_limits(level: i32) -> [i32; 5] {
         }
     }
 }
-/// What `Goal::Level(level)` reads from a position with `empties` empty
-/// squares, as its final iteration would report it; for showing a level's
-/// plan without searching. `level` must be 1..=60.
+/// 探索を実行せずに、`Goal::Level(level)` が空きマス数 `empties` の局面に対して
+/// 最終イテレーションで到達する予定の探索種別（[`ResultKind`]）を返します。`level` は 1..=60 です。
 pub fn level_reading(level: u8, empties: u8) -> ResultKind {
     match plan(level).at(empties) {
         (SearchMode::Depth(depth), selectivity) => ResultKind::Depth {
@@ -88,8 +79,7 @@ mod tests {
         assert_eq!(level_reading(60, 60), endgame(Selectivity::Full));
     }
     use super::*;
-    /// The midgame depth, if the level searches the midgame there, and the
-    /// selectivity in percent (100 is exact).
+    /// その空きマス数で中盤探索を行う場合は中盤深さと選択率（%・完全読みは 100）を返します。
     fn config(empties: i32, level: i32) -> (Option<i32>, i32) {
         let (mode, selectivity) = plan(level as u8).at(empties.min(61) as u8);
         let percent = i32::from(selectivity.percent());
@@ -98,8 +88,7 @@ mod tests {
             _ => (None, percent),
         }
     }
-    /// The endgame selectivity of a level in percent, or 0 for its midgame
-    /// search.
+    /// 終盤探索の選択率（%）を返します。中盤探索の場合は 0 を返します。
     fn stage(empties: i32, level: i32) -> i32 {
         match config(empties, level) {
             (Some(depth), percent) => {

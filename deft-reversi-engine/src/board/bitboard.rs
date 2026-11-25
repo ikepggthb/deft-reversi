@@ -1,13 +1,22 @@
+//! 手番側から見たビットボード表現 [`Board`] と、対称変換・着手処理を提供します。
+
 use crate::board::{flip, moves};
 use crate::{Action, Moves, Square};
 
-/// A rejected action leaves the board unchanged.
+/// 着手の正当性チェックに失敗したときのエラーです（盤面は変更されません）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoveError {
+    /// 指定されたマスに石を置くことができません（既に石があるか、相手の石を 1 つも挟めません）。
     IllegalMove,
+    /// 合法手が残っているか、両者とも打てず終局しているためパスできません。
     IllegalPass,
 }
 
+/// 手番側（`player`）と相手側（`opponent`）の石配置を 64 ビット整数で表すビットボード表現です。
+///
+/// 黒・白の区別を持たず常に「現在の手番側から見た配置」として保持するため、
+/// 探索や評価の処理を先手・後手で共通化できます。
+/// A1 が最下位ビット（LSB）、H8 が最上位ビット（MSB）に対応します。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Board {
     pub(crate) player: u64,
@@ -33,12 +42,13 @@ impl Default for Board {
 }
 
 impl Board {
-    /// Constructs a position with disjoint player and opponent stones.
+    /// 重複しない手番石・相手石のビットマスクから [`Board`] を構築します。
+    /// 同じマスに両者のビットが立っている場合は `None` を返します。
     pub fn from_bits(player: u64, opponent: u64) -> Option<Self> {
         (player & opponent == 0).then_some(Self { player, opponent })
     }
 
-    /// Validates a single-square move and advances to the opponent's turn.
+    /// 単一マスの着手を検証し、合法手であれば石を置いて相手番へ進めます。
     fn try_play(&mut self, move_mask: u64) -> Result<(), MoveError> {
         if move_mask.count_ones() != 1 || self.get_moves() & move_mask == 0 {
             return Err(MoveError::IllegalMove);
@@ -47,7 +57,7 @@ impl Board {
         Ok(())
     }
 
-    /// Passes only when this player has no move and the opponent does.
+    /// 自分に合法手がなく、かつ相手に合法手がある場合に限りパスを実行します。
     fn try_pass(&mut self) -> Result<(), MoveError> {
         if self.get_moves() != 0 || self.get_opponent_moves() == 0 {
             return Err(MoveError::IllegalPass);
@@ -56,25 +66,29 @@ impl Board {
         Ok(())
     }
 
+    /// 両者ともに合法手がなく終局しているかを返します。
     pub fn is_terminal(&self) -> bool {
         self.get_moves() == 0 && self.get_opponent_moves() == 0
     }
 
+    /// 手番側の石配置ビットマスクを返します。
     pub fn player_bits(&self) -> u64 {
         self.player
     }
+    /// 相手側の石配置ビットマスクを返します。
     pub fn opponent_bits(&self) -> u64 {
         self.opponent
     }
+    /// 盤面上の空きマス数を返します。
     pub fn empty_count(&self) -> u8 {
         (!(self.player | self.opponent)).count_ones() as u8
     }
-    /// Terminal disc difference, awarding unoccupied squares to the winner.
+    /// 終局時の石差スコア（空きマスを勝者に加算するリバーシ標準ルール）を返します。
     pub fn final_score(&self) -> i32 {
         let difference = self.player.count_ones() as i32 - self.opponent.count_ones() as i32;
         difference + difference.signum() * i32::from(self.empty_count())
     }
-    /// The position after `action`, with the opponent to move.
+    /// `action` を検証したうえで実行し、相手番となった新しい [`Board`] を返します。
     pub fn play(&self, action: Action) -> Result<Self, MoveError> {
         let mut next = *self;
         match action {
@@ -83,14 +97,15 @@ impl Board {
         }
         Ok(next)
     }
+    /// 現在の手番の合法手集合を返します。
     pub fn legal_moves(&self) -> Moves {
         Moves(self.get_moves())
     }
-    /// Whether the player to move must pass: no move here, but one for the opponent.
+    /// 現在の手番がパスしなければならないか（自分に合法手はなく、相手に合法手がある状態か）を返します。
     pub fn must_pass(&self) -> bool {
         self.get_moves() == 0 && self.get_opponent_moves() != 0
     }
-    /// The discs that a move on `square` turns over; zero if it is illegal.
+    /// `square` に着手したときに反転する相手石のビットマスクを返します（非合法手なら 0）。
     pub fn flips(&self, square: Square) -> u64 {
         if self.get_moves() & square.bit() == 0 {
             0
@@ -98,6 +113,7 @@ impl Board {
             self.flip_mask(square.bit())
         }
     }
+    /// 既に計算済みの着手ビット `bit` と反転マスク `flips` を使って、検証や反転計算を省いて次局面を生成します。
     pub(crate) fn after_known_move(&self, bit: u64, flips: u64) -> Self {
         Self {
             player: self.opponent ^ flips,
@@ -105,26 +121,30 @@ impl Board {
         }
     }
 
+    /// 標準初期配置の [`Board`] を生成します。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 手番側の合法手ビットマスクを計算します。
     pub(crate) fn get_moves(&self) -> u64 {
         moves::get_moves(self.player, self.opponent)
     }
 
+    /// 相手側の合法手ビットマスクを計算します。
     #[inline(always)]
     pub(crate) fn get_opponent_moves(&self) -> u64 {
         moves::get_moves(self.opponent, self.player)
     }
 
+    /// 単一ビット `move_mask` への着手による反転石ビットマスクを計算します。
     #[inline(always)]
     pub(crate) fn flip_mask(&self, move_mask: u64) -> u64 {
         flip::flip(move_mask, self.player, self.opponent)
     }
 
+    /// 正当性チェックなしで着手を適用した新しい [`Board`] を返します。呼び出し側は合法手の単一ビットを渡してください。
     #[inline(always)]
-    /// Advances without validation. The caller must supply one legal move bit.
     pub(crate) fn board_after_move(&self, move_mask: u64) -> Board {
         let flip_mask = self.flip_mask(move_mask);
         Board {
@@ -133,8 +153,8 @@ impl Board {
         }
     }
 
+    /// 正当性チェックなしで着手を適用して `self` を更新します。呼び出し側は合法手の単一ビットを渡してください。
     #[inline(always)]
-    /// Advances without validation. The caller must supply one legal move bit.
     pub(crate) fn make_move(&mut self, move_mask: u64) {
         let flip_mask = self.flip_mask(move_mask);
         let player_tmp = self.player;
@@ -142,11 +162,13 @@ impl Board {
         self.opponent = player_tmp ^ (flip_mask | move_mask);
     }
 
+    /// 手番と相手番を入れ替えてパスを適用します。
     #[inline(always)]
     pub(crate) fn make_pass(&mut self) {
         std::mem::swap(&mut self.player, &mut self.opponent);
     }
 
+    /// パス後の新しい [`Board`] を返します。
     #[inline(always)]
     pub(crate) fn board_after_pass(&self) -> Board {
         Board {
@@ -187,7 +209,8 @@ impl Board {
         }
     }
 
-    /// The least of the eight symmetric images, for symmetry-aware lookups.
+    /// 回転・反転を含む 8 通りの対称形のうち辞書順で最小のものを、正規化された代表盤面として返します。
+    /// 対称な局面を同じキーとして扱いたい場合（Book や置換表の参照など）に使います。
     #[inline]
     pub fn canonical(self) -> Self {
         self.symmetries()
@@ -196,7 +219,7 @@ impl Board {
             .unwrap()
     }
 
-    /// Eight geometric symmetries in the same order used by `canonical`.
+    /// 盤面の 8 つの幾何学的対称形（`canonical` と同じ順序）を返します。
     pub fn symmetries(self) -> [Self; 8] {
         let transposed = self.transpose();
 
@@ -213,6 +236,7 @@ impl Board {
     }
 }
 
+/// 8×8 ビットボードを主対角線に関して転置します（デルタスワップ法：ビットマスクとシフトで対角線上のビットを入れ替える手法）。
 #[inline(always)]
 fn transpose(mut bits: u64) -> u64 {
     let t = (bits ^ (bits >> 7)) & 0x00aa_00aa_00aa_00aa;
@@ -229,7 +253,7 @@ fn transpose(mut bits: u64) -> u64 {
 mod tests {
     use super::*;
 
-    // The least-significant bit is A1, and bits proceed toward H8.
+    // 最下位ビットが A1 に対応し、上位ビットへ向かって H8 まで並びます。
     const fn square(file: u8, rank: u8) -> u64 {
         1_u64 << ((rank - 1) * 8 + (file - b'A'))
     }
@@ -357,14 +381,14 @@ mod tests {
                 }
 
                 let (new_file, new_rank) = match symmetry {
-                    0 => (file, rank),         // identity
-                    1 => (7 - rank, file),     // rotate 90 degrees
-                    2 => (7 - file, 7 - rank), // rotate 180 degrees
-                    3 => (rank, 7 - file),     // rotate 270 degrees
-                    4 => (7 - file, rank),     // mirror left-right
-                    5 => (file, 7 - rank),     // mirror top-bottom
-                    6 => (rank, file),         // main-diagonal mirror
-                    7 => (7 - rank, 7 - file), // anti-diagonal mirror
+                    0 => (file, rank),         // 恒等変換（そのまま）
+                    1 => (7 - rank, file),     // 90 度回転
+                    2 => (7 - file, 7 - rank), // 180 度回転
+                    3 => (rank, 7 - file),     // 270 度回転
+                    4 => (7 - file, rank),     // 左右反転
+                    5 => (file, 7 - rank),     // 上下反転
+                    6 => (rank, file),         // 主対角線での反転
+                    7 => (7 - rank, 7 - file), // 副対角線での反転
                     _ => unreachable!(),
                 };
                 transformed |= 1_u64 << (new_rank * 8 + new_file);

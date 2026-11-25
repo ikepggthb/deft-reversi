@@ -1,13 +1,16 @@
-//! 計算した評価に含まれる中盤・終盤・旧評価それぞれの探索条件。
+//! 計算された評価値に含まれる「中盤探索」「終盤探索」「旧データ」それぞれの探索条件を管理するモジュール。
 use super::*;
-/// 合成した値を使うために確認すべき、元の評価の種類と最低の探索条件。
-/// 中盤の深さ・選択率、終盤の選択率、旧データの条件を別々に集計する。
-/// 全体が正しい確率ではない。horizonだけから探索の種類を判断してはいけない。
+/// 親局面や子局面から合成した評価値を使う際に、どの程度信頼できるかを確認するための探索条件の要約。
+///
+/// 中盤探索の深さ・選択率、終盤探索の選択率、旧形式データの条件を混ぜずに別々で集計する。
+/// たとえば「中盤 10 手読み」と「終盤完全読み」を合成した値では、両方の条件をそれぞれ保持する。
+/// 全体の `horizon`（到達深さ）だけを見て探索の種類を推測してはならない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SearchConditions {
     pub(crate) families: u8,
     pub(crate) horizon: u8,
-    // 条件のない種類は255。includeで最小を取る際に混ざらず、validateで整合を検査する。
+    // 該当する探索種別が含まれない欄は 255（番兵値）を入れておく。
+    // `include` で最小値を取るときに他の種別と混ざらず、`validate` で整合性を検査できる。
     pub(crate) mid_depth: u8,
     pub(crate) mid_sel: u8,
     pub(crate) end_sel: u8,
@@ -112,8 +115,8 @@ impl SearchConditions {
         self
     }
     pub(crate) fn include(&mut self, v: Self) {
-        // Manual input has no search-depth requirement. Its display fields must
-        // not lower the recorded quality of real legacy searches in a mixture.
+        // 手動入力は探索深さ要件を持たない。混合時に表示用フィールドが
+        // 既存のレガシー探索の記録済み品質を引き下げないよう区別して扱う。
         let had_legacy = self.has_imported();
         self.families |= v.families;
         self.horizon = self.horizon.min(v.horizon);

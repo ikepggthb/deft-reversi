@@ -1,7 +1,7 @@
-//! Deterministic random positions shared by the unit tests.
+//! ユニットテスト間で共有する、再現性のあるランダム局面生成ユーティリティです。
 use crate::Board;
 
-/// Advances a xorshift64 generator and returns its new state.
+/// xorshift64 擬似乱数生成器を 1 ステップ進め、新しい乱数値を返します。
 pub(crate) fn xorshift(state: &mut u64) -> u64 {
     *state ^= *state << 13;
     *state ^= *state >> 7;
@@ -9,7 +9,7 @@ pub(crate) fn xorshift(state: &mut u64) -> u64 {
     *state
 }
 
-/// Picks one move of a non-empty move mask.
+/// 空でない合法手マスクから 1 手をランダムに選び、そのマスだけを立てたビットマスクを返します。
 pub(crate) fn random_move(mut moves: u64, random: &mut u64) -> u64 {
     for _ in 0..xorshift(random) % u64::from(moves.count_ones()) {
         moves &= moves - 1;
@@ -17,8 +17,8 @@ pub(crate) fn random_move(mut moves: u64, random: &mut u64) -> u64 {
     moves.isolate_lowest_one()
 }
 
-/// Plays random moves from the initial position, passing when needed, until
-/// `empties` remain or the game ends.
+/// 初期局面から必要に応じてパスを挟みながらランダムに着手を進め、
+/// 空きマス数が `empties` 以下になるか終局に達した時点の盤面を返します。
 pub(crate) fn random_board(seed: u64, empties: u8) -> Board {
     let mut board = Board::new();
     let mut random = seed;

@@ -1,28 +1,36 @@
+//! データセットの指定分割（`test` など）を使って、複数モデルの評価誤差（MAE）を計測・比較するサブコマンド。
+//!
+//! モデルの予測スコアと実際の終局石差が平均して何石ずれているかを石数ごとに表示する。
+
 use crate::{Result, StoneRange, for_each_parallel, rd};
 use clap::Args;
 use deft_reversi_engine::{Model, PatternModel};
 use std::{path::PathBuf, sync::Mutex};
 
+/// `eval` サブコマンドの CLI 引数。
 #[derive(Args, Debug)]
 pub struct EvalArgs {
-    /// Models to compare (any format the engine reads).
+    /// 比較対象のモデルファイル（エンジンが読み込める任意の形式）。
     #[arg(short, long, required = true)]
     model: Vec<PathBuf>,
+    /// `.rd` データセットのルートディレクトリ。
     #[arg(long)]
     data: PathBuf,
+    /// 評価に使うデータ分割名（`train` / `valid` / `test`）。
     #[arg(long, default_value = "test")]
     split: String,
+    /// 評価対象とする石数の範囲（両端含む）。
     #[arg(long, default_value = "12..=63")]
     stones: StoneRange,
-    /// At most this many positions per disc count, from the start of each file.
+    /// 各石数ファイルから先頭最大この件数だけを評価する。
     #[arg(long)]
     limit: Option<usize>,
+    /// 並列実行するスレッド数。
     #[arg(short, long)]
     threads: Option<usize>,
 }
 
-/// Mean absolute error of the engine's evaluation, in discs, for each disc
-/// count and model.
+/// 各石数と各モデルについて、予測スコアと正解ラベルの平均絶対誤差（MAE、石単位）を計算して表示する。
 pub fn run(args: EvalArgs) -> Result<()> {
     let models = args
         .model

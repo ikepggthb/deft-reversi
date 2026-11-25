@@ -1,15 +1,18 @@
-//! Last-two/three/four null-window kernels ported from the reference leaf.rs.
-//! The wrapper propagates cancellation before any caller can publish a bound.
+//! 空き 1〜4 マス専用の Null-Window（幅 1 の探索窓）終盤ソルバカーネルです（参照実装 `leaf.rs` からの移植）。
+//! 中断要求やノード上限はラッパーの [`LeafSearch`] 経由で伝播し、境界値が公開される前に確実に中断します。
 use super::parity::QUADRANT_ID;
 use super::*;
 const SCORE_MAX: i32 = 64;
-// All valid quadrant parity values fit in four bits.
+// 有効な 4 象限パリティ（4×4 の各領域の空きマス数が奇数か偶数かを表す値、0..16）は 4 ビットに収まるため、
+// 16 を「未計算」のセンチネル値とします。
 const UNKNOWN_PARITY: u8 = 16;
+/// 空き 2〜4 マスカーネル内でノード予算・中断フラグをチェックするためのアダプタです。
 struct LeafSearch<'a> {
     context: &'a mut Context,
     failed: bool,
 }
 impl LeafSearch<'_> {
+    /// ノード訪問を計上し、中断条件に達した場合は `failed` フラグを立てます。
     fn visit(&mut self) {
         if !self.failed && self.context.enter().is_err() {
             self.failed = true;
@@ -17,9 +20,11 @@ impl LeafSearch<'_> {
     }
 }
 impl Context {
+    /// パリティ未計算の状態で空き 4 マスカーネルを呼び出します。
     pub(super) fn last_four_score(&mut self, board: Board, alpha: i32) -> Result<i32, Aborted> {
         self.last_four_score_with_parity(board, alpha, UNKNOWN_PARITY)
     }
+    /// 引き回した象限パリティ `parity` を用いて空き 4 マスカーネルを実行します。
     pub(super) fn last_four_score_with_parity(
         &mut self,
         board: Board,
@@ -45,6 +50,7 @@ impl Context {
         }
     }
 }
+/// 空き 1 マスの最終局面を Null-Window（`[alpha, alpha + 1]`）で解きます。
 #[inline(always)]
 fn solve_score_1_empties(player: u64, alpha: i32, pos: usize) -> i32 {
     debug_assert!(pos < 64);
@@ -53,7 +59,7 @@ fn solve_score_1_empties(player: u64, alpha: i32, pos: usize) -> i32 {
     let player_count_x2 = 2 * player.count_ones() as i32;
 
     if n_flips != 0 {
-        // プレイヤーが pos に着手し、n_flips/2 枚を反転して終局
+        // プレイヤーが pos に着手し、n_flips/2 枚を裏返して終局します。
         return player_count_x2 - 64 + 2 + n_flips;
     }
 
@@ -74,16 +80,16 @@ fn solve_score_1_empties(player: u64, alpha: i32, pos: usize) -> i32 {
         }
     }
 
-    // どちらも置けない -> 空きマスは未確定。`solve_score` の慣習に揃え、
-    // 勝っている側に空きマス分を加算する。63 マス埋まっているので diff は奇数で 0 にはならない。
+    // どちらも置けないため空きマスは未確定です。`solve_score` の慣習に揃え、
+    // 勝っている側に空きマス分を加算します。63 マス埋まっているので diff は奇数で 0 にはなりません。
     let diff = player_count_x2 - 63;
     if diff > 0 { diff + 1 } else { diff - 1 }
 }
 
-/// `pos` の周囲 1 マス(8 近傍)を立てたビットマスク。
+/// `pos` の周囲 1 マス（8 近傍）を立てたビットマスクです。
 ///
-/// 旧実装からの定数表。空きマスの近傍に相手の石が無ければ着手しても 1 枚も
-/// 反転できないので、`flip_bit` の高コスト計算をスキップする早期判定に使う。
+/// 旧実装からの定数表です。空きマスの周囲に相手の石がなければ着手しても 1 枚も
+/// 裏返せないため、`flip_bit` の計算をスキップする早期判定に使います。
 ///
 /// 参考: <https://eukaryote.hateblo.jp/entry/2020/04/26/031246>
 #[rustfmt::skip]
@@ -115,6 +121,7 @@ fn flip_at(player: u64, opponent: u64, pos: usize) -> u64 {
     Board { player, opponent }.flip_mask(1u64 << pos)
 }
 
+/// 与えられた手番石数と残り空きマス数 `n_empties` から、両者パス終局時の石差スコアを計算します。
 #[inline(always)]
 fn solve_score_bits(player: u64, n_empties: i32) -> i32 {
     let diff = 2 * player.count_ones() as i32 - 64 + n_empties;
@@ -127,6 +134,7 @@ fn solve_score_bits(player: u64, n_empties: i32) -> i32 {
     }
 }
 
+/// 盤面上の空きマスから 4 象限パリティを直接計算します（`UNKNOWN_PARITY` 時のフォールバックです）。
 #[inline(always)]
 fn final_parity(player: u64, opponent: u64) -> i32 {
     let mut empties = !(player | opponent);
@@ -139,10 +147,10 @@ fn final_parity(player: u64, opponent: u64) -> i32 {
     parity
 }
 
-/// 空きマスが 2 マスの盤面を NegaAlpha 1 段で解く。
+/// 空きマスが 2 マスの盤面を NegaAlpha 1 段で解きます。
 ///
-/// 各候補手の後で `solve_score_1_empties` を呼ぶことで完全に解ける。
-/// パスが必要な場合は再帰で対応(2 連続パスで終局)。
+/// 各候補手の後で `solve_score_1_empties` を呼ぶことで完全に解けます。
+/// パスが必要な場合は相手側の 2 マスを直接調べます（2 連続パスで終局）。
 fn solve_score_2_empties(
     player: u64,
     opponent: u64,
@@ -187,7 +195,7 @@ fn solve_score_2_empties(
         return best;
     }
 
-    // pass後も残り2マスだけを直接調べる。汎用moves生成と再帰は不要。
+    // パス後も残り 2 マスだけを直接調べます。汎用の合法手生成と再帰は不要です。
     search.visit();
     let mut passed_best = SCORE_MAX + 1;
 
@@ -224,7 +232,8 @@ fn solve_score_2_empties(
     }
 }
 
-// Keep the reference kernel's scalar arguments for direct algorithm comparison.
+// 参照カーネルとのアルゴリズム直接比較のため、スカラー引数をそのまま維持しています。
+/// 空きマスが 3 マスの盤面を、象限パリティとマス価値で並べ替えて解きます。
 #[allow(clippy::too_many_arguments)]
 fn solve_score_3_empties(
     player: u64,
@@ -298,7 +307,7 @@ fn solve_score_3_empties(
         return best;
     }
 
-    // pass後は、整列済みの3マスを相手側から直接調べる。
+    // パス後は、整列済みの 3 マスを相手側から直接調べます。
     search.visit();
     let mut passed_best = SCORE_MAX + 1;
     for (x, y, z) in [(x1, x2, x3), (x2, x1, x3), (x3, x1, x2)] {
@@ -356,6 +365,7 @@ fn solve3_move(
     ))
 }
 
+/// 空きマスが 4 マスの盤面を、確定石カットと象限パリティソート付きで解きます。
 fn solve_score_4_empties(
     player: u64,
     opponent: u64,
@@ -363,7 +373,7 @@ fn solve_score_4_empties(
     known_parity: u8,
     search: &mut LeafSearch<'_>,
 ) -> i32 {
-    // The caller has already entered this four-empty node.
+    // この 4 マスノードの `enter()` は呼び出し元で既に完了しています。
 
     let board = Board { player, opponent };
     if let Some(score) = crate::board::stability::null_window_upper(board, alpha) {
@@ -451,7 +461,7 @@ fn solve_score_4_empties(
         return best;
     }
 
-    // pass後も空きリストとパリティ順を再利用し、相手側の手を直接調べる。
+    // パス後も空きリストとパリティ順を再利用し、相手側の手を直接調べます。
     search.visit();
     let mut passed_best = SCORE_MAX + 1;
     for (x, y, z, w) in [

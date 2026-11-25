@@ -1,6 +1,8 @@
-//! TT cutoffs need no PV copies. Verify the chosen line after the score is known.
+//! 置換表カットオフで最善手列（PV：互いに最善手を指し続けた場合の予想手順）が省略された後に、
+//! 確定したスコアと一致する手順を置換表や再探索から復元・検証するモジュールです。
 use super::*;
 
+/// 手順 `pv` を最後まで辿って終局する場合、初期局面視点での終局石差を返します。
 pub(super) fn terminal_score(board: Board, pv: &[Action]) -> Option<i32> {
     let board = pv
         .iter()
@@ -17,6 +19,7 @@ pub(super) fn terminal_score(board: Board, pv: &[Action]) -> Option<i32> {
 }
 
 impl Context {
+    /// 確定した評価値 `score` に一致する PV（Principal Variation）をルートから最大 128 手まで復元します。
     pub(super) fn extract_pv(
         &mut self,
         mut board: Board,
@@ -51,8 +54,7 @@ impl Context {
                     .and_then(|entry| Square::new(entry.best))
             });
             let preferred = hint.map_or(0, Square::bit) & moves;
-            // In a selective search, do not change the reported root move
-            // based on a new probe.
+            // 選択探索（ProbCut）時は、新たなプローブ結果によって報告済みのルート最善手が書き換わらないよう固定します。
             if selective && first.is_some() {
                 moves = preferred;
             }
@@ -80,8 +82,8 @@ impl Context {
                         probcut: true,
                     },
                 )?;
-                // At full width the known parent value makes a one-sided
-                // test sufficient. With MPC, require the probe's point score.
+                // 全幅探索では親スコアが厳密に決まっているため片側テスト（`<= -score`）で十分です。
+                // MPC 有効時は確率的変動があるため点スコア一致（`== -score`）を要求します。
                 let matches = if selective {
                     line.score == -score
                 } else {

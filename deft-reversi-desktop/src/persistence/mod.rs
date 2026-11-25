@@ -1,5 +1,6 @@
-//! Files on disk: game records, settings and their folders. Nothing here
-//! touches GPUI.
+//! ディスク上の永続化ファイル（棋譜・設定・パス解決・アトミック読み書き）を扱うモジュール。
+//!
+//! このモジュール配下の処理は GPUI に依存しない。
 pub mod atomic_file;
 pub mod paths;
 pub mod record;

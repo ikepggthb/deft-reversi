@@ -1,14 +1,18 @@
-//! Offline book adapter. No application history, file policy, or signals in search.
+//! Book（`.dbook`）および作業ワークスペース（`.dbook-work`）を扱うオフライン生成アダプタ。
 //!
-//! CLIは引数→GenerationConfig/GenerationLimitsへの変換、モデル・ファイルの読書き、
-//! Ctrl-Cと定期保存を担当する。評価の採否や生成順序の実装はライブラリ側に置く。
-//! run内のコマンド別分岐から、configure_generation_roots / generate_with_checkpoint、
-//! export / save / loadへ進むとCLIと実装の対応を追える。
+//! CLI は引数の解析、`GenerationConfig` / `GenerationLimits` への変換、モデル・ファイルの入出力、
+//! Ctrl-C 停止と定期チェックポイント保存を担当する。評価の採否や生成順序の本体は `deft_reversi_book` 側に置く。
+//! `run` 内のコマンド別分岐から `configure_generation_roots` / `generate_with_checkpoint`、
+//! `export` / `save` / `load` へ進むと CLI とライブラリの対応を追える。
+
 use deft_reversi_book::*;
 use deft_reversi_engine::{Board, Color, Engine, EngineOptions, Model, Selectivity, StopHandle};
 use std::{collections::BTreeMap, error::Error, path::Path, time::Duration};
+
+/// `book` サブコマンドの引数（独自のサブコマンドと `--option` を受け取る）。
 #[derive(clap::Args, Debug)]
 pub struct BookArgs {
+    /// `build` / `extend` / `inspect` などのサブコマンドとオプション列。
     #[arg(
         value_name = "COMMAND",
         trailing_var_arg = true,
@@ -17,6 +21,7 @@ pub struct BookArgs {
     arguments: Vec<String>,
 }
 
+/// `.dbook-work` ワークスペースを読み込み、旧形式からの自動変換があれば標準エラー出力へ報告する。
 fn load_work(path: impl AsRef<Path>, limits: ReadLimits) -> deft_reversi_book::Result<BookEditor> {
     let editor = BookEditor::load(path, limits)?;
     if let Some(m) = editor.migration_report() {
@@ -32,6 +37,8 @@ fn load_work(path: impl AsRef<Path>, limits: ReadLimits) -> deft_reversi_book::R
     }
     Ok(editor)
 }
+
+/// `book` サブコマンドのエントリーポイント。`build` / `extend` / `reanalyze` / `leaves` / `resume` / `repair` / `export` / `inspect` / `verify` を振り分ける。
 pub fn run(args: BookArgs) -> crate::Result<()> {
     let mut args = args.arguments.into_iter();
     let Some(command) = args.next() else {
@@ -470,6 +477,7 @@ pub fn run(args: BookArgs) -> crate::Result<()> {
     );
     Ok(())
 }
+/// `inspect` 出力向けに評価値 1 件分のスコアと出所を表示する。
 fn inspect_value(label: &str, value: Option<Evaluation>) {
     if let Some(value) = value {
         println!(
@@ -479,6 +487,8 @@ fn inspect_value(label: &str, value: Option<Evaluation>) {
         );
     }
 }
+
+/// 指定された局面 `board` について、Book 内の評価値とワークスペース内の各候補根拠を表示する。
 fn inspect_position(book: &Book, editor: Option<&BookEditor>, board: Board) {
     println!(
         "position player={:016x} opponent={:016x}",
@@ -508,6 +518,8 @@ fn inspect_position(book: &Book, editor: Option<&BookEditor>, board: Board) {
         }
     }
 }
+
+/// OBF 形式の位置ファイルから生成開始局面（[`GenerationRoot`]）の一覧を読み込む。
 fn read_positions(path: &str) -> std::result::Result<Vec<GenerationRoot>, Box<dyn Error>> {
     let mut result = Vec::new();
     for (index, line) in std::fs::read_to_string(path)?.lines().enumerate() {
@@ -549,11 +561,14 @@ fn read_positions(path: &str) -> std::result::Result<Vec<GenerationRoot>, Box<dy
     }
     Ok(result)
 }
+
+/// 出力先パスを正規化し、`--work` と `--book` が同じファイルを指していないか比較できるようにする。
 fn destination(path: &str) -> std::io::Result<std::path::PathBuf> {
     let path = Path::new(path);
     if path.exists() {
         return std::fs::canonicalize(path);
     }
+    // 未作成のファイルでも親ディレクトリを正規化してファイル名と結合すれば同一性を判定できる。
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -564,6 +579,8 @@ fn destination(path: &str) -> std::io::Result<std::path::PathBuf> {
         })?),
     )
 }
+
+/// `book` サブコマンドの使い方一覧を標準出力へ表示する。
 fn help() {
     println!(
         "deft-reversi-cli book build|extend|reanalyze|leaves|resume --model MODEL --work FILE [--book FILE]\n  --seconds N --nodes N  (optional; otherwise until done or Ctrl+C)\n  --level 22 | --levels 4,8,12 (alternative to --stages/--selectivity)\n  --record MOVES (build/extend: link the record and train from its endpoint)\n  --positions OBF --stages 12,16,20 --selectivity 95 --loss 2 --max-plies 24\n  --legacy-values reject|recorded\n  --line-plies 8 --jobs 0 (automatic, about three threads per job)\n  --schedule breadth|frontier\n  --cumulative-loss N|none --leaf-loss N|none\n  --black-loss N --white-loss N --new-weight 3 --deepen-weight 1

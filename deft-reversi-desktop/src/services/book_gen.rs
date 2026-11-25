@@ -1,6 +1,8 @@
-//! Growing the opening book from a position (§24, B3). It runs on a thread
-//! of its own with the engine thread's engine, which searches nothing else
-//! meanwhile, and saves the work file as it goes.
+//! 指定局面からの Book 自動生成・修復を専用スレッドで実行するモジュール。
+//!
+//! エンジンスレッドから借り受けた [`EngineWorker`] を占有して探索を行い、
+//! 10 秒ごとのチェックポイントで作業ファイル（`.dbook-work`）を保存しつつ進捗を通知する。
+//! 生成中は他の通常探索（AI 思考や局面解析）は行われない。
 use super::engine::EngineEvent;
 use deft_reversi_book::{
     AnalysisSchedule, BookEditor, BookSide, GenerationConfig, GenerationLimits, GenerationRoot,
@@ -14,53 +16,52 @@ use std::{
     time::Duration,
 };
 
-/// The work file being edited; None until the first generation makes it.
+/// 編集中の作業用ブックエディタ（初回生成前は `None`）。
 pub type SharedEditor = Arc<Mutex<Option<BookEditor>>>;
 
+/// Book 生成または修復ジョブのパラメータ。
 pub struct BookJob {
+    /// 共有中の [`BookEditor`] スロット。
     pub editor: SharedEditor,
-    /// The `.dbook-work` it is saved to; the `.dbook` for play goes next
-    /// to it.
+    /// 保存先の `.dbook-work` ファイルパス（対局用 `.dbook` は同じディレクトリに書き出される）。
     pub work: PathBuf,
-    /// Where the book grows from.
+    /// Book の展開起点となる局面。
     pub root: Position,
-    /// The moves from the start to `root`, linked first so the book reaches
-    /// it; empty when it grows from the position as it is.
+    /// 初期局面から `root` へ至る手順（先にリンク登録してルートへ到達可能にする；現在局面から直接展開する場合は空）。
     pub line: Vec<(Position, Action)>,
-    /// Repairs the book instead of growing it: the values are worked out
-    /// again from the links and what was read. Nothing is searched.
+    /// `true` の場合は新規探索を行わず、既存リンクと保存済み評価値からブックを再計算・修復する。
     pub fix: bool,
+    /// 展開レベル・最大手数・許容損失などの生成設定。
     pub settings: BookSettings,
-    /// It runs until stopped, or until nothing is left within the losses.
+    /// 停止要求を送るためのハンドル（停止または許容損失内の展開完了まで実行する）。
     pub stop: StopHandle,
 }
 
-/// What the book builder sets; the work file keeps it between runs.
+/// Book ビルダーの生成パラメータ（作業ファイル内に保存され、次回開いた際に復元される）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BookSettings {
-    /// Every position is read at this one level.
+    /// すべての局面を探索する固定レベル。
     pub level: u8,
-    /// Moves played from the start position, passes not counted.
+    /// 初期局面からの最大手数（パスは含まない）。
     pub max_plies: u8,
-    /// How many discs worse than the best a move may be and still be
-    /// followed, for each colour.
+    /// 黒番が最善手から何石損まで展開を続けるかの許容損失。
     pub black_loss: u8,
+    /// 白番が最善手から何石損まで展開を続けるかの許容損失。
     pub white_loss: u8,
-    /// The most the losses along one line may add up to.
+    /// 1 本の変化手順に沿った累積損失の上限（`None` で無制限）。
     pub cumulative_loss: Option<u16>,
-    /// The most a move not yet linked may lose and still become a link;
-    /// None leaves it to the losses above.
+    /// 未登録の末端手についてリンク化を許可する最大損失（`None` で上記損失設定に従う）。
     pub leaf_loss: Option<u8>,
 }
 
 impl BookSettings {
-    /// What a work file was last grown with, or the defaults.
+    /// 作業ファイルに保存されている設定、または既定値を返す。
     pub fn of(editor: Option<&BookEditor>) -> Self {
         let config = editor
             .and_then(BookEditor::generation_config)
             .cloned()
             .unwrap_or_default();
-        // A file grown elsewhere in stages opens at its finest level.
+        // CLI 等で段階的に展開されたファイルは最も深い（最後の）レベルを採用する。
         let level = match &config.analysis {
             AnalysisSchedule::Levels(levels) => levels.last().copied(),
             _ => None,
@@ -75,7 +76,7 @@ impl BookSettings {
         }
     }
 
-    /// The most promising lines are always followed first.
+    /// 設定を [`GenerationConfig`] へ反映する（常に有望な変化を優先するスケジュールを使用）。
     fn apply(&self, config: &mut GenerationConfig) {
         config.analysis = AnalysisSchedule::Levels(vec![self.level]);
         config.max_plies = self.max_plies;
@@ -97,43 +98,53 @@ impl std::fmt::Debug for BookJob {
     }
 }
 
-/// Saved so far, at a checkpoint or at the end.
+/// チェックポイントまたは完了時点で保存された Book の進捗情報。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BookProgress {
+    /// 作業ブック内の総局面数。
     pub positions: usize,
+    /// 今回の実行で新たに追加された局面数。
     pub new_positions: u64,
+    /// 探索したノード数。
     pub nodes: u64,
+    /// 経過時間。
     pub elapsed: Duration,
 }
 
+/// Book 生成または修復ジョブの完了結果。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BookDone {
+    /// 最終進捗情報。
     pub progress: BookProgress,
+    /// 終了理由（停止要求、または許容損失内の展開完了など）。
     pub reason: GenerationStop,
-    /// The book for play, written next to the work file.
+    /// 作業ファイルの隣に書き出された対局用 `.dbook` ファイルパス。
     pub book: PathBuf,
 }
 
-/// The book for play that goes with a work file.
+/// 作業用 `.dbook-work` パスに対応する対局用 `.dbook` パスを返す。
 pub fn play_path(work: &std::path::Path) -> PathBuf {
     work.with_extension("dbook")
 }
 
-/// Running handle for a book generation or repair thread.
+/// 実行中の Book 生成・修復スレッドを管理するハンドル。
 pub struct BookHandle {
     handle: thread::JoinHandle<Result<BookDone, String>>,
     stop: StopHandle,
 }
 
 impl BookHandle {
+    /// 実行中の Book 生成へ停止シグナルを送る。
     pub fn stop(&self) {
         self.stop.stop();
     }
 
+    /// スレッドがすでに終了しているかを返す。
     pub fn is_finished(&self) -> bool {
         self.handle.is_finished()
     }
 
+    /// スレッドの終了を待機し、最終結果を返す。
     pub fn join(self) -> Result<BookDone, String> {
         self.handle
             .join()
@@ -141,8 +152,10 @@ impl BookHandle {
     }
 }
 
-/// Starts the generation; checkpoints report through `events`, and the final
-/// result is returned when `BookHandle::join` completes.
+/// Book 生成・修復スレッド（`book-gen`）を起動する。
+///
+/// 途中のチェックポイント進捗は `events` チャネル経由で通知され、最終結果は
+/// [`BookHandle::join`] の戻り値として返される。
 pub fn spawn(
     worker: Arc<EngineWorker>,
     job: BookJob,
@@ -151,12 +164,13 @@ pub fn spawn(
     let stop = job.stop.clone();
     let handle = thread::Builder::new()
         .name("book-gen".into())
-        // The searches recurse on this thread, as on the search thread.
+        // エンジン本体の探索スレッドと同様に深い再帰探索を行うため、既定より大きい 8 MiB のスタックを確保する。
         .stack_size(8 * 1024 * 1024)
         .spawn(move || worker.with(|engine| generate(engine, job, &events)))?;
     Ok(BookHandle { handle, stop })
 }
 
+/// 作業用 `.dbook-work` を保存し、同時に公開用の `.dbook` をエクスポートする。
 fn save_and_export(
     editor: &BookEditor,
     work: &std::path::Path,
@@ -195,7 +209,7 @@ fn generate(
     let mut config = editor.generation_config().cloned().unwrap_or_default();
     job.settings.apply(&mut config);
     config.checkpoint_interval = Duration::from_secs(10);
-    // What already meets the level is kept.
+    // すでに目標レベル以上で探索済みの局面は再計算せず再利用する。
     config.reuse_completed = true;
     config.unregistered_only = false;
     let roots = [GenerationRoot {
@@ -210,8 +224,8 @@ fn generate(
     editor
         .configure_generation_roots(&roots, config)
         .map_err(text)?;
-    // No time limit: it would reach every search and change how it reads.
-    // The run goes on until stopped or nothing is left within the losses.
+    // 時間制限を設けると局面ごとに読みの深さがばらついてブック全体の整合性が落ちるため、
+    // ここでは時間無制限とし、ユーザーが停止するか許容損失内の展開が終わるまで実行する。
     let limits = GenerationLimits::default();
     let work = job.work.clone();
     let result = editor.generate_with_checkpoint(engine, limits, job.stop, |editor, report| {
@@ -227,7 +241,7 @@ fn generate(
     let report = match result {
         Ok(report) => report,
         Err(error) => {
-            // What was found before an error is kept, without hiding the error.
+            // エラー発生時も直前までに得られた局面は失わないよう保存を試みる。
             if let Err(save_error) = editor.save(&job.work) {
                 eprintln!("[book] save after error: {save_error}");
             }
@@ -247,8 +261,7 @@ fn generate(
     })
 }
 
-/// `book repair`: the values from the links, without a search; then the
-/// work file and the book for play are written again.
+/// `book repair`: 探索は行わず、リンク関係と既存の評価値からブック全体を整合修復して再保存する。
 fn repair(editor: &mut BookEditor, work: &std::path::Path) -> Result<BookDone, String> {
     let text = |error: deft_reversi_book::BookError| error.to_string();
     let started = std::time::Instant::now();

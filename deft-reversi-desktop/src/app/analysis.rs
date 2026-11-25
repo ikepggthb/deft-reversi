@@ -1,12 +1,12 @@
-//! Analysis mode (§7.3 of the plan): searches of the shown position, the
-//! exact solve on request, and the whole record from the end backwards.
-//! Results are kept by position, so moving through the record does not
-//! search the same position twice.
+//! 解析モードの制御と探索結果キャッシュを管理するモジュール。
 //!
-//! The shown position is read one move at a time: each legal move is a
-//! search of its own, so its value appears as soon as it is read, and
-//! while it is read the value of each finished iteration shows, with how
-//! it was read.
+//! 以下の 3 種類の解析を担当する:
+//! - **表示中局面の段階的解析**: レベル 1, 4, 8, ... と 4 刻みで設定レベルまで徐々に読みを深くする
+//! - **完全解析**: ユーザー操作に応じて、枝刈りなしの完全読み（選択率 100%）で終局まで読み切る
+//! - **棋譜全体の一括解析**: 置換表（計算済み局面のキャッシュ）を効率よく再利用するため、終局側から初手へ向かって遡りながら各局面を評価する
+//!
+//! 表示中局面の解析では、全合法手をまとめて 1 回で探索するのではなく「1 手ずつ」個別に探索する。
+//! こうすることで、最善手から順に結果が確定し次第すぐ画面へ表示でき、思考の途中経過もリアルタイムに確認できる。
 use super::Effect;
 pub use crate::domain::settings::AnalysisSettings;
 use crate::{
@@ -16,27 +16,32 @@ use crate::{
 use deft_reversi_engine::{Action, Color, Goal, Position, Selectivity};
 use std::collections::HashMap;
 
-/// One move's value for the side to move, and how that value was read.
+/// 手番側から見た 1 手の評価値と、その読みの深さ情報。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MoveValue {
+    /// 着手。
     pub action: Action,
+    /// 評価値（石差）。
     pub score: i32,
+    /// 読みの深さ・精度情報。
     pub reading: Option<Reading>,
-    /// The move is still being read: this is its last finished iteration.
+    /// 現在探索中のため最新の完了イテレーションから得た暫定値であるか。
     pub provisional: bool,
 }
 
-/// A legal move as the analysis shows it.
+/// 解析パネル／盤面に表示する 1 合法手の情報。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShownMove {
+    /// 着手。
     pub action: Action,
+    /// 評価値（未探索なら `None`）。
     pub value: Option<MoveValue>,
-    /// Read by the running level, or by the last one when none runs; a
-    /// value from an earlier level is shown faintly.
+    /// 現在探索中（または最後に完了した）レベルの値であれば `true`。
+    /// 過去の浅いレベルの値は `false` となり UI 上で薄く表示される。
     pub fresh: bool,
 }
 
-/// How deeply every legal move of a position has been read together.
+/// 局面の全合法手がどこまで揃って読まれたかを表す深さ。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum MovesDepth {
     #[default]
@@ -45,24 +50,23 @@ enum MovesDepth {
     Exact,
 }
 
+/// 1 つの局面に対する解析結果キャッシュ。
 #[derive(Clone, Debug)]
 pub struct Analysis {
-    /// The value and line from a search that covered every legal move.
+    /// 全合法手をカバーした探索から得られた局面評価値と読み筋（PV）。
     pub report: Option<Report>,
-    /// The level of the position's report, when there is a level.
+    /// 局面全体の評価値が得られた探索レベル（完全解析時や未完了時は `None`）。
     pub level: Option<u8>,
-    /// Every move read, best first, each with its own reading.
+    /// 探索済みの各合法手の評価値（良い順）。
     pub moves: Vec<MoveValue>,
-    /// How deeply every move was read, apart from the position's value. A
-    /// record search gives the value alone, so the moves still rise from
-    /// the lowest level.
+    /// 全合法手の探索進捗（一括解析では局面全体の値のみを得るため、候補手リストとは別に管理する）。
     moves_depth: MovesDepth,
-    /// Stopped by the user: not searched further.
+    /// ユーザーにより途中停止された場合 `true`（再解析が指示されるまでこれ以上深追いしない）。
     settled: bool,
 }
 
 impl Analysis {
-    /// The values are exact: solved to the end with no pruning.
+    /// 枝刈りなしの完全終局解析（選択率 100%）が完了しているかを返す。
     pub fn is_exact(&self) -> bool {
         self.report
             .as_ref()
@@ -70,8 +74,7 @@ impl Analysis {
     }
 }
 
-/// The shown position is searched at rising levels up to the setting, so a
-/// value comes at once and then improves: 1, 4, 8, 12, … every four levels.
+/// 表示中局面の次の目標探索レベルを返す（1, 4, 8, 12, ... と 4 刻みで `target` まで上昇）。
 pub fn next_level(searched: u8, target: u8) -> u8 {
     let next = match searched {
         0 => 1,
@@ -89,45 +92,49 @@ enum Job {
 }
 
 struct Running {
-    /// The search now running; `None` between two moves.
+    /// 現在実行中の探索 ID（1 手読み終えて次の手へ移る一瞬の間は `None` になる）。
     id: Option<SearchId>,
     job: Job,
     position: Position,
-    /// `None` for the exact solve.
+    /// 目標探索レベル（完全解析時はレベル上限がないため `None`）。
     level: Option<u8>,
-    /// The moves still to read, the next one last, and the one being read.
+    /// これから読む予定の残り合法手（`pop()` で末尾から取り出すため、優先したい手ほど後ろに積む）。
     pending: Vec<Action>,
+    /// いま探索している 1 手。
     current: Option<Action>,
-    /// The values read at this level so far.
+    /// このレベルでこれまでに読み終えた各手の評価値。
     values: Vec<MoveValue>,
-    /// The search of the best move so far, for the position's value and line.
+    /// このレベルでこれまでに見つかった最善手の探索レポート（局面全体の評価値と読み筋に使う）。
     best: Option<Report>,
-    /// The running search's last progress.
+    /// いま探索している手の最新の途中経過レポート。
     live: Option<Report>,
-    /// The user stopped it: what it found is final.
+    /// ユーザーが停止ボタンを押したか（`true` の場合、いま読んでいる手が終わり次第このレベルを確定させる）。
     stopping: bool,
 }
 
+/// 局面ごとの解析結果キャッシュと現在実行中の解析ジョブを管理する構造体。
 #[derive(Default)]
 pub struct Analyzer {
+    /// 解析レベルおよび悪手判定閾値の設定。
     pub settings: AnalysisSettings,
     cache: HashMap<Position, Analysis>,
     running: Option<Running>,
-    /// Positions still to search, the last one first; and how many there were.
+    /// 一括解析で残っている局面キュー（末尾から取り出すため終局側が末尾）と総数。
     batch: Option<(Vec<Position>, usize)>,
 }
 
-/// Positions a search can score: not over, not a forced pass, and with
-/// enough discs for the evaluation.
+/// 解析対象としてスコアを算出できる局面（終局・強制パスでなく、かつ最小石数以上）かを返す。
 fn searchable(position: Position) -> bool {
     !position.is_terminal() && !position.must_pass() && editor::searchable(position)
 }
 
+/// 候補手リストを評価値の高い順（降順）に並べ替える。
 fn sort_best_first(values: &mut [MoveValue]) {
     values.sort_by_key(|v| std::cmp::Reverse(v.score));
 }
 
 impl Analyzer {
+    /// キャッシュ済みの局面解析結果を返す。
     pub fn get(&self, position: Position) -> Option<&Analysis> {
         self.cache.get(&position)
     }
@@ -138,24 +145,23 @@ impl Analyzer {
             .filter(|r| r.position == position && r.job != Job::Batch)
     }
 
-    /// The running search's progress when it is for `position`.
+    /// 指定局面を現在探索中であれば、最新の途中経過レポートを返す。
     pub fn live(&self, position: Position) -> Option<&Report> {
         self.running_for(position).and_then(|r| r.live.as_ref())
     }
 
-    /// The move being read at `position`, and at what level (`None` for
-    /// the exact solve).
+    /// 指定局面で現在探索中の手と、その目標レベル（完全解析時は `None`）を返す。
     pub fn reading_move(&self, position: Position) -> Option<(Option<u8>, Action)> {
         self.running_for(position)
             .and_then(|r| Some((r.level, r.current?)))
     }
 
+    /// 指定局面を現在探索中（一括解析を除く）であるかを返す。
     pub fn is_searching(&self, position: Position) -> bool {
         self.running_for(position).is_some()
     }
 
-    /// The position's value, best move and line: the last level read
-    /// through, or the best move so far before any level is.
+    /// 局面の評価値・最善手・読み筋を返す（完了済みレベルの結果、または現在レベルの暫定最善手）。
     pub fn report(&self, position: Position) -> Option<&Report> {
         self.cache
             .get(&position)
@@ -163,8 +169,7 @@ impl Analyzer {
             .or_else(|| self.running_for(position)?.best.as_ref())
     }
 
-    /// Every legal move with its newest value: the running level's where it
-    /// has one, else the last level's. Fresh values come first, best first.
+    /// 指定局面の全合法手を「現在レベルの最新値優先 → 評価値降順」で返す。
     pub fn moves(&self, position: Position) -> Vec<ShownMove> {
         let running = self.running_for(position);
         let older = self.cache.get(&position).map_or(&[][..], |a| &a.moves[..]);
@@ -198,13 +203,13 @@ impl Analyzer {
         shown
     }
 
-    /// The level now searched at `position`: `Some(None)` for the exact solve.
+    /// 指定局面で現在探索中のレベルを返す（完全解析時は `Some(None)`、テスト用）。
     #[cfg(test)]
     pub fn searching_level(&self, position: Position) -> Option<Option<u8>> {
         self.running_for(position).map(|r| r.level)
     }
 
-    /// The level the shown position needs next, if any.
+    /// 表示中の局面で次に読むべき目標レベルを返す（すでに十分読まれていれば `None`）。
     fn wanted_level(&self, position: Position) -> Option<u8> {
         let target = self.settings.level;
         let Some(analysis) = self.cache.get(&position) else {
@@ -213,8 +218,8 @@ impl Analyzer {
         if analysis.settled {
             return None;
         }
-        // The moves rise level by level, whatever level the position's value
-        // came from: a record search gives the value alone.
+        // 一括解析では局面全体の評価値だけを計算し、各候補手の評価値は調べない。
+        // そのため局面自体のレベルに関わらず、候補手一覧の到達深さ（`moves_depth`）を基準に段階的に読み進める。
         let read = match analysis.moves_depth {
             MovesDepth::Exact => return None,
             MovesDepth::Level(level) => {
@@ -228,15 +233,14 @@ impl Analyzer {
         Some(next_level(read, target))
     }
 
-    /// Positions done and in all, while the whole record is analysed.
+    /// 棋譜全体の一括解析進捗（`(完了局面数, 総局面数)`）を返す。
     pub fn batch_progress(&self) -> Option<(usize, usize)> {
         self.batch
             .as_ref()
             .map(|(queue, total)| (total - queue.len(), *total))
     }
 
-    /// The analysis behind the value of the position after `index` actions;
-    /// for a forced pass, the next position's.
+    /// 棋譜の `index` 手目時点における解析結果を返す（強制パス局面の場合はパス後の局面を参照する）。
     pub fn analysis_at(&self, history: &History, index: usize) -> Option<&Analysis> {
         let mut position = history.position(index);
         if position.must_pass() && !position.is_terminal() {
@@ -245,9 +249,9 @@ impl Analyzer {
         self.cache.get(&position)
     }
 
-    /// The value for Black of the position after `index` actions: exact at
-    /// the end of the game, the search's score otherwise. A forced pass
-    /// shows the same discs as the next position, so it takes its value.
+    /// 棋譜の `index` 手目時点における黒番視点の評価値を返す。
+    ///
+    /// 終局局面では公式ルール準拠の確定石差を返し、強制パス局面では直後局面の評価値を引き継ぐ。
     pub fn black_value(&self, history: &History, index: usize) -> Option<i32> {
         let mut position = history.position(index);
         if position.is_terminal() {
@@ -263,8 +267,7 @@ impl Analyzer {
         })
     }
 
-    /// Discs the move at `index` lost against the best move, for its player,
-    /// when both positions are known.
+    /// 棋譜の `index` 手目の着手が最善手と比べて何石損したかを着手側視点で返す。
     pub fn loss(&self, history: &History, index: usize) -> Option<i32> {
         let Action::Place(_) = history.actions()[index] else {
             return None;
@@ -278,9 +281,10 @@ impl Analyzer {
         })
     }
 
+    /// 解析設定の変更を反映する。目標レベルが上がった場合は停止済みフラグを解除して再探索を許可する。
     pub fn settings_changed(&mut self, settings: AnalysisSettings) {
         if settings.level > self.settings.level {
-            // Shown positions go on up to the new level.
+            // 新しい目標レベルまで再び読み進められるようにする。
             for analysis in self.cache.values_mut() {
                 analysis.settled = false;
             }
@@ -288,7 +292,7 @@ impl Analyzer {
         self.settings = settings;
     }
 
-    /// Drops the running search and the batch.
+    /// 実行中の解析探索および一括解析キューをすべて破棄・キャンセルする。
     pub fn cancel(&mut self, effects: &mut Vec<Effect>) {
         self.batch = None;
         if let Some(running) = self.running.take()
@@ -298,8 +302,9 @@ impl Analyzer {
         }
     }
 
-    /// Gives the engine to an AI move: the running search is dropped, and a
-    /// batch position goes back to the queue to be searched afterwards.
+    /// AI の対局探索へエンジンを譲るため、実行中の解析探索を一時中断する。
+    ///
+    /// 一括解析中の局面はキューへ戻し、AI の着手後に再開されるようにする。
     pub fn interrupt(&mut self, effects: &mut Vec<Effect>) {
         if let Some(running) = self.running.take() {
             if running.id.is_some() {
@@ -313,7 +318,7 @@ impl Analyzer {
         }
     }
 
-    /// Stops the running search but keeps what it found; ends the batch.
+    /// 実行中の解析探索を途中結果を保持したまま停止し、一括解析も終了する。
     pub fn stop(&mut self, effects: &mut Vec<Effect>) {
         self.batch = None;
         let Some(running) = &mut self.running else {
@@ -324,13 +329,12 @@ impl Analyzer {
             effects.push(Effect::MoveNow);
             return;
         }
-        // Between two moves: nothing runs, so it ends here.
+        // 手と手の切り替え中（探索未起動）であれば即座に完了処理を行う。
         let running = self.running.take().expect("checked above");
         self.finish_moves(running);
     }
 
-    /// Forgets what is known of `position` and reads it again from the
-    /// lowest level.
+    /// 指定局面のキャッシュを消去し、最低レベルから再解析できるようにする。
     pub fn reanalyze(&mut self, position: Position, effects: &mut Vec<Effect>) {
         if self.running_for(position).is_some() {
             return;
@@ -341,26 +345,25 @@ impl Analyzer {
         self.cache.remove(&position);
     }
 
-    /// Whether a record search of `position` has nothing to add: it is
-    /// solved exactly, or with `redo` unset, read at the level already.
+    /// 一括解析で `position` を再探索する必要がないか（完全解析済み、または `redo` 無効かつ設定レベル以上に達しているか）を返す。
     fn batch_done(&self, position: Position, redo: bool) -> bool {
         self.cache.get(&position).is_some_and(|a| {
             a.is_exact() || (!redo && a.level.is_some_and(|level| level >= self.settings.level))
         })
     }
 
+    /// 棋譜全体の一括解析キューを構築する。
     pub fn start_batch(&mut self, history: &History, redo: bool) {
         let queue: Vec<Position> = (0..=history.actions().len())
             .map(|i| history.position(i))
             .filter(|&p| searchable(p) && !self.batch_done(p, redo))
             .collect();
-        // Popped from the end: the record is searched backwards, so the
-        // endgame results in the table help the earlier positions.
+        // 末尾から pop して終局側から遡って探索することで、置換表の結果を序盤側へ活かす。
         let total = queue.len();
         self.batch = (total > 0).then_some((queue, total));
     }
 
-    /// The exact solve of `position`, move by move, after the running search.
+    /// 指定局面の完全解析（選択率 100% 終局読み）を 1 手ずつ開始する。
     pub fn exact(&mut self, position: Position, next_id: &mut u64, effects: &mut Vec<Effect>) {
         if !searchable(position) {
             return;
@@ -369,9 +372,14 @@ impl Analyzer {
         self.begin_moves(Job::Exact, position, None, next_id, effects);
     }
 
-    /// Starts the next search when the engine is free: the next move of the
-    /// shown position's level, the batch, then the shown position's next
-    /// level. A search of another shown position stops.
+    /// エンジンが空いているときに次の解析探索を起動する。
+    ///
+    /// 優先順位:
+    /// 1. 実行中の表示局面レベルの次の手（または実行中の一括解析）
+    /// 2. 一括解析キューの次の局面
+    /// 3. 表示中局面の次のレベル
+    ///
+    /// 表示局面が切り替わっていた場合は古い表示局面の探索をキャンセルする。
     pub fn pump(&mut self, shown: Position, next_id: &mut u64, effects: &mut Vec<Effect>) {
         if let Some(running) = &self.running {
             if running.job == Job::Batch || running.position == shown {
@@ -387,7 +395,7 @@ impl Analyzer {
         }
         if let Some((queue, _)) = &mut self.batch {
             while let Some(position) = queue.pop() {
-                // Solved exactly since it was queued, say by the shown search.
+                // キューに積んだ後で、表示局面解析などにより完全解析が終わっていた場合はスキップする。
                 if self.cache.get(&position).is_some_and(Analysis::is_exact) {
                     continue;
                 }
@@ -418,8 +426,9 @@ impl Analyzer {
         }
     }
 
-    /// A level of `position` read one move at a time: the best moves of the
-    /// last level first, so the position's value settles early.
+    /// `position` の全合法手を 1 手ずつ順番に読み始める。
+    ///
+    /// 前回のレベルで評価値が高かった手から先に読むことで、局面全体の評価値と最善手が早い段階で安定する。
     fn begin_moves(
         &mut self,
         job: Job,
@@ -456,7 +465,7 @@ impl Analyzer {
         self.next_move(next_id, effects);
     }
 
-    /// Reads the next move of the running level, or ends the level.
+    /// 現在進行中レベルの次の 1 手の探索を開始する（残りがなければこのレベルを完了する）。
     fn next_move(&mut self, next_id: &mut u64, effects: &mut Vec<Effect>) {
         let Some(running) = self.running.as_mut() else {
             return;
@@ -500,13 +509,15 @@ impl Analyzer {
         id
     }
 
-    /// Ends a level read move by move. Read through, it replaces the last
-    /// level; stopped part way, the moves it read join the last level's,
-    /// each with its own reading, and the position keeps its last value.
+    /// 1 手ずつの探索レベルを完了し、結果をキャッシュへ反映する。
+    ///
+    /// 全合法手を読み切った場合は前のレベルの結果を新しいレベルで置き換える。
+    /// 途中で停止された場合は、今回読めた手だけを新しい結果に更新し、残りの手や局面全体の評価値は前回の結果を維持する。
     fn finish_moves(&mut self, running: Running) {
         let previous = self.cache.remove(&running.position);
         let legal = running.position.legal_moves().count();
-        // Stopping the last move can leave a score from an earlier iteration.
+        // 最後の手を停止で打ち切った場合、目標レベルに届かない浅い反復イテレーションの結果が
+        // 混ざることがあるため、すべての手の読み精度が最善手と一致しているか確認する。
         let complete = running.values.len() == legal
             && running.best.as_ref().is_some_and(|best| {
                 running
@@ -529,8 +540,8 @@ impl Analyzer {
         sort_best_first(&mut moves);
         let analysis = match (complete, previous) {
             (true, previous) => {
-                // The position keeps a value read deeper than this level,
-                // such as the record search's.
+                // 一括解析などで今回のレベルより深い局面評価値がすでに得られている場合は、
+                // 浅い値で上書きせず深い方の値を保持する。
                 let deeper = previous.as_ref().filter(|p| {
                     running.job != Job::Exact
                         && (p.is_exact() || p.level.zip(running.level).is_some_and(|(p, r)| p > r))
@@ -568,12 +579,13 @@ impl Analyzer {
         self.cache.insert(running.position, analysis);
     }
 
+    /// 解析中の探索進捗イベントを反映し、現在探索中の手の暫定評価値を即時更新する。
     pub fn on_progress(&mut self, id: SearchId, report: &Report) -> bool {
         let Some(running) = self.running.as_mut().filter(|r| r.id == Some(id)) else {
             return false;
         };
         running.live = Some(report.clone());
-        // Each finished iteration of a move shows at once, with its reading.
+        // 1 手の探索中も、完了した反復深化ごとの暫定値を即座に候補手リストへ反映する。
         if let (Some(action), Some(score)) = (running.current, report.score) {
             running.values.retain(|v| v.action != action);
             running.values.push(MoveValue {
@@ -587,7 +599,7 @@ impl Analyzer {
         true
     }
 
-    /// Keeps the result; false when `id` is not this analyzer's search.
+    /// 解析探索の完了イベントを反映する。`id` がこの解析器の探索でない場合は `false` を返す。
     pub fn on_finished(&mut self, id: SearchId, report: Report) -> bool {
         let Some(running) = self.running.as_mut().filter(|r| r.id == Some(id)) else {
             return false;
@@ -632,14 +644,14 @@ impl Analyzer {
     fn finish_batch(&mut self, running: Running, report: Report) {
         let previous = self.cache.remove(&running.position);
         let analysis = match previous {
-            // A stopped record search keeps what was there.
+            // 途中停止で評価値が得られなかった場合は、前回のキャッシュをそのまま残す。
             previous if report.score.is_none() => match previous {
                 Some(previous) => previous,
                 None => return,
             },
             Some(previous) if previous.is_exact() => previous,
-            // The new value replaces the old; the moves keep their values,
-            // each with its own reading.
+            // 局面全体の評価値は新しい結果で更新しつつ、各候補手の個別評価値は
+            // それぞれの読み深さ情報を保ったまま引き継ぐ。
             previous => Analysis {
                 moves_depth: previous
                     .as_ref()
@@ -656,6 +668,7 @@ impl Analyzer {
         self.cache.insert(running.position, analysis);
     }
 
+    /// 解析探索の失敗イベントを処理し、該当する場合は一括解析キューも停止する。
     pub fn on_failed(&mut self, id: SearchId) -> bool {
         let failed = self.running.take_if(|r| r.id == Some(id)).is_some();
         if failed {

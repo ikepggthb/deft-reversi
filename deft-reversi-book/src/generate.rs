@@ -1,9 +1,11 @@
-//! 生成の設定、保存する仕事一覧、登録範囲と損失条件の判定。
+//! Book 自動生成の設定・再開用の仕事一覧・登録範囲・損失条件の判定を担当するモジュール。
 //!
-//! このファイルは「何を、どこまで育てるか」を担当し、探索の実行はgrow.rsへ渡す。
-//! candidate_planがレベル／深さ指定をEngineの予定条件へ変換する唯一の場所。
-//! active_pathsは新しい手を登録してよい根拠、analysis_distanceは既存の不明値を
-//! 調べ直すための範囲であり、後者だけで新しい手を登録してはいけない。
+//! このファイルは「どの局面を、どこまで広げて育てるか」の計画・判定を受け持ち、
+//! 実際のエンジン探索の実行は `grow.rs` へ渡す。
+//! - `candidate_plan`: ユーザーが指定したレベルや深さを、エンジンが実行できる探索条件へ変換する唯一の場所。
+//! - `active_paths`: 「新しい手を登録してよいか」の根拠となる到達経路。
+//! - `analysis_distance`: 「既存の不明な値を調べ直してよいか」の範囲であり、
+//!   こちらだけを根拠に新しい手を登録してはならない。
 use super::*;
 use deft_reversi_engine::{Goal, ResultKind, SearchRequest, StopHandle};
 use std::{
@@ -11,7 +13,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     time::Instant,
 };
-/// Absolute side is generation context, never part of the relative-board key.
+/// 生成時の手番の絶対色（相対盤面キーには含めない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum BookSide {
@@ -51,8 +53,9 @@ pub struct Stage {
     pub depth: u8,
     pub selectivity: Selectivity,
 }
-/// Exactly one input method. Levels retain the engine's current child-based
-/// interpretation; only the planner translates it to an executable root search.
+/// 解析スケジュールの指定方法（ちょうど 1 種類を選ぶ）。
+/// `Levels` は現在のエンジンと同じ子局面基準の解釈を保持し、
+/// プランナのみが実行可能なルート探索へ変換する。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnalysisSchedule {
     Levels(Vec<u8>),
@@ -127,13 +130,13 @@ pub struct GenerationConfig {
     pub reuse_completed: bool,
     /// 探索方法が不明な旧データを、記録された条件だけで再利用してよいか。
     pub allow_imported: bool,
-    /// Recompute unregistered candidates over the saved registered graph only.
-    /// Does not expand links and ignores loss filters during reachability.
+    /// 保存済みの登録済みグラフ上の未登録候補手のみを再計算する。
+    /// 新たなリンク展開は行わず、到達可能性判定時の損失フィルタも無視する。
     pub unregistered_only: bool,
     pub schedule: SchedulePolicy,
-    /// Maximum consecutive best-line additions before returning to deviations.
+    /// 分岐探索に戻るまでに最善手順を連続して伸ばす最大手数。
     pub line_plies: u8,
-    /// Zero chooses up to the engine's total thread and TT budget automatically.
+    /// 0 の場合、エンジンの総スレッド数と TT 予算から並列ジョブ数を自動決定する。
     pub max_parallel_jobs: u16,
     /// レベル系列か深さ・選択率系列のどちらか一つ。段階番号はこの系列の添字。
     pub analysis: AnalysisSchedule,
@@ -143,9 +146,9 @@ pub struct GenerationConfig {
     pub black_loss: Option<u8>,
     /// 白の手番での1手損失。Noneはexpansion_lossを使う。
     pub white_loss: Option<u8>,
-    /// Sum of positive local losses along a root path (both sides).
+    /// 開始局面からの経路上の正の局所損失の累積上限（両手番合計）。
     pub cumulative_loss: Option<u16>,
-    /// Independent threshold for adding an unregistered candidate as a link.
+    /// 未登録候補手をリンクとして追加する際の独立した損失閾値。
     pub leaf_loss: Option<u8>,
     pub new_job_weight: u8,
     pub deepen_job_weight: u8,
@@ -283,9 +286,12 @@ impl ReachabilityCache {
     }
 }
 #[derive(Clone, Debug)]
-/// 再開する仕事と、そこから作り直せる補助データ。
-/// fresh/deepen/expansions/urgent/hintsは保存する。priority/reachability/expandedは
-/// 読込後に作り直す。distancesの最短距離だけでは損失条件を満たす経路とは言えない。
+/// 生成を途中再開するための仕事リストと、読み込み後に作り直せる補助データ。
+/// `fresh`（初回探索待ち）・`deepen`（より深い段階の探索待ち）・`expansions`（登録判定待ち）・
+/// `urgent`（優先ライン）・`hints`（最善手ヒント）はファイルへ保存する。
+/// 一方、`priority`・`reachability`・`expanded` は読み込み後に再構築する。
+/// なお、`distances` の最短手数だけでは損失条件を満たす到達経路があるとは限らないため、
+/// 実際の登録可否は `reachability` で経路ごとの累積損失を確認する。
 pub(super) struct GenerationState {
     pub reachability: RefCell<ReachabilityCache>,
     pub config: GenerationConfig,
@@ -421,7 +427,7 @@ impl GenerationState {
         let total =
             u64::from(self.config.new_job_weight) + u64::from(self.config.deepen_job_weight);
         let prefer_new = self.iteration % total < u64::from(self.config.new_job_weight);
-        // One in sixteen jobs retains ordinary breadth/stage order for fairness.
+        // 公平性を保つため、16 回に 1 回は通常の幅優先・段階順を用いる。
         let selected =
             if self.config.schedule == SchedulePolicy::Promising && self.iteration % 16 != 15 {
                 self.priority_job(editor, prefer_new)
@@ -448,10 +454,10 @@ impl GenerationState {
     }
 }
 impl BookEditor {
-    /// Public graph edits happen while the generation state is in the editor;
-    /// internal generation owns that state separately and queues its own links.
-    /// Walk the retained subgraph too: a newly connected node may already have
-    /// registered descendants or may shorten their geometric root distances.
+    /// 公開グラフ編集 API は生成状態がエディタ内にある間に呼ばれる
+    /// （内部生成ループは状態を排他所有し、独自のリンクをキューに積む）。
+    /// 新たに接続されたノードが既に登録済みの子孫を持っていたり、ルートからの幾何距離を
+    /// 短縮したりする可能性があるため、保持中の部分グラフも辿る。
     pub(super) fn enqueue_registered_link(&mut self, parent: Key, action: Action) {
         let Some(state) = &mut self.generation else {
             return;
@@ -557,7 +563,7 @@ impl BookEditor {
             .collect();
         keys.sort_unstable();
         keys.dedup();
-        // Count before inserting roots so a small memory budget cannot be bypassed.
+        // 小さなメモリ予算を回避できないよう、ルートを挿入する前に見積もりを加算して検査する。
         if check_memory
             && self
                 .estimated_bytes()
@@ -790,8 +796,8 @@ pub(super) fn eligible_mask(editor: &BookEditor, key: Key, loss: u8) -> u64 {
         }
     })
 }
-// The shortest path and the cheapest path need not be the same when several
-// roots or transpositions meet. Keep the nondominated (distance, loss) frontier.
+// 複数のルートや合流が交わる場合、最短経路と最小損失経路は一致するとは限らない。
+// パレート非劣な (distance, loss) フロンティアを保持する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// 開始局面からの一経路の「石を置く手数」と「累積損失」。パスは手数を増やさない。
 pub(super) struct PathCost {
@@ -934,8 +940,8 @@ pub(super) fn active_distance(
         .map(|p| p.distance)
 }
 
-/// Existing unknown branches may be analyzed to restore their values, but only
-/// exact active_paths can authorize the registration of new descendants.
+/// 既存の不明な枝は値を復元するために再解析してよいが、
+/// 新しい子孫の登録を許可できるのは厳密な `active_paths` のみ。
 pub(super) fn analysis_distance(
     editor: &BookEditor,
     state: &GenerationState,
@@ -1040,8 +1046,7 @@ pub(super) fn analysis_distance(
     })
 }
 
-// Resolve at the child, using the engine's own table. Fixed-depth stages retain
-// their historical exact-endgame behavior for compatibility.
+// エンジン自身のレベル表を使って子局面で解決する。固定深さステージは互換性のため従来の完全終盤読みの挙動を維持する。
 // 現在のLevelは「候補を打った子」で解決し、石を置く手なら深さ+1して親へ戻す。
 // Stageは最初から親の深さ。grow::prepareはここで求めた条件で親の集合探索を組む。
 // 将来の「中盤レベル=同じ探索元での深さ」は現時点では実装していない。
