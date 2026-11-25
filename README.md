@@ -169,7 +169,7 @@ cargo run -p deft_reversi_train --release -- <サブコマンド>
 
 ### 定石名
 
-デスクトップ版の定石名リスト（[openings.txt](deft-reversi-desktop/assets/openings.txt)）は、うえのんさんの「[オセロ定石一覧(250種以上)](https://evaccaneer.livedoor.blog/archives/11101657.html)」（ブログ「レコちゃんも頑張ってるのに」）を使わせていただいています。ページには著作権を主張しないと書かれています。
+デスクトップ版の定石名リスト（[openings.txt](deft-reversi-desktop/assets/openings.txt)）は、うえのんさんの「[オセロ定石一覧(250種以上)](https://evaccaneer.livedoor.blog/archives/11101657.html)」（ブログ「レコちゃんも頑張ってるのに」）を使わせていただいています。
 
 ### 局面と開局
 
