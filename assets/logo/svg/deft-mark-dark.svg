@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="4 4 92 92" width="92" height="92" role="img" aria-label="Deft Reversi">
+<title>Deft Reversi</title>
+<rect x="4" y="4" width="92" height="92" fill="#111316"/>
+<rect x="5.5" y="5.5" width="89" height="89" fill="none" stroke="#F4F2EC" stroke-width="3"/>
+<path fill-rule="evenodd" fill="#F4F2EC" d="M4 4H50V96H4Z M47 24A26 26 0 0 0 47 76Z"/>
+<path fill="#F4F2EC" d="M53 24A26 26 0 0 1 53 76Z"/>
+</svg>

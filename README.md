@@ -1,4 +1,9 @@
-# Deft Reversi
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/svg/deft-logo-horizontal-dark.svg">
+    <img src="assets/logo/svg/deft-logo-horizontal-light.svg" alt="Deft Reversi" height="48">
+  </picture>
+</h1>
 
 オセロの探索エンジン。現在の開発対象はネイティブ向けのRustライブラリです。
 

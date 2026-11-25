@@ -24,6 +24,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # Sound effects are made in code, so only playback is needed.
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
 
+[build-dependencies]
+# The icon and version information of the Windows executable.
+winresource = "0.1"
+
 [dev-dependencies]
 # Tests build a small engine from the zero model with known ProbCut rules.
 deft_reversi_engine = { path = "../deft-reversi-engine", features = ["tuning"] }
