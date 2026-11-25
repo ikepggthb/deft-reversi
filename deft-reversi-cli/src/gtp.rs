@@ -277,7 +277,7 @@ fn generate(
             } else if limit.is_zero() {
                 searched_action(game_clock::reflex(engine, next))
             } else {
-                searched_action(budget.search(engine, next, &mut report))
+                searched_action(budget.search(engine, next, true, &mut report))
             }
         }
     };

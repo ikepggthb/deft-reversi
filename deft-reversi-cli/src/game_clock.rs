@@ -47,11 +47,15 @@ impl Budget {
         self,
         engine: &mut Engine,
         pos: Position,
+        reuse_pv: bool,
         mut report: impl FnMut(&Progress),
     ) -> Result<SearchResult, EngineError> {
-        let request = SearchRequest::timed_levels(60, self.hard)
-            .reuse_pv()
-            .skip_pv_recovery();
+        let request = SearchRequest::timed_levels(60, self.hard).skip_pv_recovery();
+        let request = if reuse_pv {
+            request.reuse_pv()
+        } else {
+            request
+        };
         let handle = request.stop_handle();
         let _armed = stop::arm(handle.clone());
         let mut forecast = Forecast {

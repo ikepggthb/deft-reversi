@@ -15,6 +15,22 @@ use std::{
 };
 
 const REPLY_MARGIN: Duration = Duration::from_millis(50);
+// Reserve 1.5 times the connector's 750 ms cutoff and the estimated
+// 300 ms communication cost for each earlier turn.
+const FINAL_TURN_RESERVE: Duration = Duration::from_millis(1_125);
+const COMMUNICATION_PER_TURN: Duration = Duration::from_millis(450);
+
+fn search_budget(empties: u8, remaining: Duration, cap: Duration) -> Budget {
+    let turns_before_final = u32::from(empties.div_ceil(2).saturating_sub(1));
+    // Keep the final turn's clock plus communication for each preceding turn.
+    // On the estimated final turn, the connector's cap limits the search.
+    let search_clock = if turns_before_final == 0 {
+        remaining
+    } else {
+        remaining.saturating_sub(FINAL_TURN_RESERVE + COMMUNICATION_PER_TURN * turns_before_final)
+    };
+    Budget::new(empties, search_clock, cap)
+}
 
 #[derive(Args, Clone, Debug)]
 pub struct FlipsightArgs {
@@ -84,6 +100,8 @@ impl Turn {
 struct Reply {
     #[serde(rename = "move")]
     square: i16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eval: Option<i32>,
 }
 
 enum SearchEngine {
@@ -148,18 +166,19 @@ pub fn run(args: FlipsightArgs) -> Result<()> {
         }
         let turn: Turn = serde_json::from_str(&line)?;
         let (position, mut moves) = turn.position()?;
-        let square = match moves.next() {
-            None => -1,
-            Some(only) if moves.is_empty() => i16::from(only.index()),
+        let (square, eval) = match moves.next() {
+            None => (-1, None),
+            Some(only) if moves.is_empty() => (i16::from(only.index()), None),
             Some(first) => {
                 let engine = match &mut engine {
                     Some(engine) => engine,
                     None => engine.insert(SearchEngine::start(args.clone())?),
                 };
-                i16::from(choose(engine, &turn, position, first, received)?.index())
+                let (square, eval) = choose(engine, &turn, position, first, received)?;
+                (i16::from(square.index()), eval)
             }
         };
-        serde_json::to_writer(&mut out, &Reply { square })?;
+        serde_json::to_writer(&mut out, &Reply { square, eval })?;
         writeln!(out)?;
         out.flush()?;
     }
@@ -172,29 +191,82 @@ fn choose(
     position: Position,
     first: Square,
     received: Instant,
-) -> Result<Square> {
+) -> Result<(Square, Option<i32>)> {
     let hard_limit = Duration::from_millis(turn.budget_ms.min(turn.remaining_ms));
     let time_left = || hard_limit.saturating_sub(received.elapsed() + REPLY_MARGIN);
     // The connector spawns us on the first move, so model loading must also respect its deadline.
     let Some(engine) = engine.wait(time_left())? else {
-        return Ok(first);
+        return Ok((first, None));
     };
     if let Some(choice) = engine.book.as_mut().and_then(|book| book.choose(position))
         && let Action::Place(square) = choice.action
     {
-        return Ok(square);
+        return Ok((square, None));
     }
     let remaining =
         Duration::from_millis(turn.remaining_ms).saturating_sub(received.elapsed() + REPLY_MARGIN);
-    let budget = Budget::new(position.empty_count(), remaining, time_left());
+    let budget = search_budget(position.empty_count(), remaining, time_left());
     let result = if budget.hard.is_zero() {
         game_clock::reflex(&mut engine.engine, position)?
     } else {
-        budget.search(&mut engine.engine, position, |_| {})?
+        // Begin at the first stage so the deadline fallback comes from this search.
+        budget.search(&mut engine.engine, position, false, |_| {})?
     };
     match (result.stop_reason, result.best_move) {
         (StopReason::WorkerFailed, _) => Err("search worker failed".into()),
-        (_, Some(Action::Place(square))) => Ok(square),
+        (_, Some(Action::Place(square))) => {
+            // The root score is already relative to the player making this move.
+            let eval = result
+                .score
+                .filter(|score| !result.score_is_upper_bound && (-64..=64).contains(score));
+            Ok((square, eval))
+        }
         _ => Err("search returned no placement for a playable position".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn move_reply_includes_only_available_evaluation() {
+        let scored = Reply {
+            square: 19,
+            eval: Some(-2),
+        };
+        let unscored = Reply {
+            square: 19,
+            eval: None,
+        };
+        assert_eq!(
+            serde_json::to_value(scored).unwrap(),
+            serde_json::json!({"move": 19, "eval": -2})
+        );
+        assert_eq!(
+            serde_json::to_value(unscored).unwrap(),
+            serde_json::json!({"move": 19})
+        );
+    }
+
+    #[test]
+    fn search_protects_the_final_turn_and_communication() {
+        for (empties, reserve_ms) in [(3, 1_575), (6, 2_025), (10, 2_925), (60, 14_175)] {
+            let reserve = Duration::from_millis(reserve_ms);
+            let cap = Duration::from_secs(60);
+            assert!(search_budget(empties, reserve, cap).hard.is_zero());
+            let remaining = reserve + Duration::from_secs(1);
+            let hard = search_budget(empties, remaining, cap).hard;
+            assert!(hard > Duration::ZERO && remaining - hard >= reserve);
+        }
+    }
+
+    #[test]
+    fn estimated_final_turn_can_use_the_connector_cap() {
+        let cap = Duration::from_millis(350);
+        for empties in [1, 2] {
+            let budget = search_budget(empties, FINAL_TURN_RESERVE, cap);
+            assert_eq!(budget.hard, cap);
+        }
     }
 }
