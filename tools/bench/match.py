@@ -14,8 +14,9 @@
 
 開始局面:
   既定では初期局面からランダムに 8 手進めた重複のない局面（シード 1）を使う。
-  環境変数 XOT=FILE を指定すると、XOT リストから OPENINGS 行を抽出する（シード 1。
-  positions/xot-openingslarge.txt が大規模 XOT リスト）。
+  環境変数 XOT=large を指定すると、XOT の開局リスト（large）から OPENINGS 行を抽出する
+  （シード 1）。リストは同梱せず、初回に配布元から local/xot/ へ取得する（common.fetch_xot）。
+  XOT=FILE で手元の別のリストも指定できる。
 
 エンジンと並列実行:
   Deft は CLI の `gtp` サブコマンドで起動する（モデルは DEFT_MODEL、既定は common.py の
@@ -32,7 +33,7 @@
 import math, os, random, subprocess, sys, threading, time
 from pathlib import Path
 
-from common import paths
+from common import fetch_xot, paths
 
 TOOLS = paths()
 THREADS = os.environ.get("MATCH_THREADS", "1")
@@ -81,6 +82,11 @@ def name(sq):
 
 def square(text):
     return (int(text[1]) - 1) * 8 + "abcdefgh".index(text[0].lower())
+
+
+def xot_path(value):
+    """環境変数 XOT の値を開局リストのパスに変換する。large なら配布元のリストを取得して使う。"""
+    return fetch_xot(TOOLS["xot"]) if value == "large" else Path(value)
 
 
 def xot(n, path, seed=1):
@@ -250,8 +256,8 @@ def main():
     if mode.startswith("time") and workers != 1:
         sys.exit("time modes must run one game at a time: other games change the speed")
     games = [(i, deft_black) for i in range(n) for deft_black in (True, False)]
-    # XOT=FILE が指定されている場合は、ランダム手順の代わりに XOT リストから開始局面を抽出する。
-    lines = xot(n, os.environ["XOT"]) if os.environ.get("XOT") else openings(n)
+    # XOT が指定されている場合は、ランダム手順の代わりに XOT リストから開始局面を抽出する。
+    lines = xot(n, xot_path(os.environ["XOT"])) if os.environ.get("XOT") else openings(n)
     done = set()
     if out.exists():
         for l in out.read_text().splitlines()[1:]:

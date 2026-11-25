@@ -13,7 +13,8 @@ from types import SimpleNamespace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common import POSITIONS, Deft, DEFAULTS, empties, engine, paths, read_answers  # noqa: E402
+import common  # noqa: E402
+from common import POSITIONS, Deft, DEFAULTS, empties, engine, fetch_xot, paths, read_answers  # noqa: E402
 
 
 class Common(unittest.TestCase):
@@ -67,6 +68,32 @@ class Common(unittest.TestCase):
     def test_paths_are_absolute(self):
         """paths() が返す全パスが絶対パスであることを確認する。"""
         self.assertTrue(all(p.is_absolute() for p in paths().values()))
+
+    def test_xot_is_fetched_once_and_checked(self):
+        """XOT の開局リストは手元になければ取得し、SHA-256 が違えば保存しないことを確認する。"""
+        body = b"f5d6c4d3c2b3b4b5\n"
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "xot" / "openingslarge.txt"
+            with patch.object(common, "XOT_SHA256", common.hashlib.sha256(body).hexdigest()), \
+                    patch.object(common.urllib.request, "urlopen", return_value=Response(body)) as get, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(fetch_xot(path), path)
+                self.assertEqual(path.read_bytes(), body)
+                fetch_xot(path)
+                self.assertEqual(get.call_count, 1)
+            other = Path(d) / "other.txt"
+            with patch.object(common.urllib.request, "urlopen", return_value=Response(body)), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                fetch_xot(other)
+            self.assertFalse(other.exists())
 
 
 if __name__ == "__main__":

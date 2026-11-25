@@ -6,11 +6,13 @@
 """
 import io
 import csv
+import hashlib
 import os
 import re
 import subprocess
 import sys
 import tomllib
+import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -24,7 +26,13 @@ DEFAULTS = {
     "edax": "local/bench-engines/edax-4.5.6/bin/lEdax-x86-64-v3",
     # 公式の clang++ コマンドでビルドした Egaroucid for Console 7.8.2。
     "egaroucid": "local/bench-engines/Egaroucid-console_v7.8.2/bin/Egaroucid_for_Console.out",
+    # XOT の開局リスト（large）。リポジトリには同梱せず、初回に配布元から取得する（fetch_xot）。
+    "xot": "local/xot/openingslarge.txt",
 }
+
+# XOT（Matthias Berg 氏）の配布元と、取得したファイルの SHA-256。
+XOT_URL = "https://berg.earthlingz.de/xot/downloads/openingslarge.txt"
+XOT_SHA256 = "ccbeb0ed7b7ae23de20013a3992b9a6ede77610bbb5cacda82ccbaedaab72530"
 
 
 def paths():
@@ -34,6 +42,22 @@ def paths():
     if config.exists():
         values.update(tomllib.loads(config.read_text()))
     return {k: Path(v) if Path(v).is_absolute() else REPO / v for k, v in values.items()}
+
+
+def fetch_xot(path, url=XOT_URL):
+    """XOT の開局リストを path に用意して返す。なければ配布元から取得し、SHA-256 を確かめてから保存する。"""
+    path = Path(path)
+    if path.exists():
+        return path
+    print(f"XOT の開局リストを取得します: {url}", file=sys.stderr)
+    with urllib.request.urlopen(url, timeout=60) as response:
+        data = response.read()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != XOT_SHA256:
+        sys.exit(f"XOT の開局リストの SHA-256 が一致しません: {digest}（期待値 {XOT_SHA256}）")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
 
 
 def read_answers(path):

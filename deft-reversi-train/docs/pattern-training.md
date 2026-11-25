@@ -100,7 +100,7 @@ python3 tools/bench/ffo.py --only 40-49 --threads 1 --cpus 2 --rounds 3 --out OU
 
 ```sh
 DEFT_MODEL=runs/NAME/mpc/model.dpr2 OPP_MODEL=CURRENT.dpr2 \
-  XOT=tools/bench/positions/xot-openingslarge.txt \
+  XOT=large \
   python3 tools/bench/match.py deft level12 250 出力.tsv
 ```
 

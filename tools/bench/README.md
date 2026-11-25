@@ -58,10 +58,12 @@ python3 tools/bench/midgame.py --cpus 2 --rounds 3 --out OUT base:solve=/path/to
 Deft（CLIの `gtp` サブコマンド）と Edax・Egaroucid・別のモデルの Deft を、GTP で対局させます。開局は XOT から選び、色を入れ替えて2局ずつ打ちます。
 
 ```sh
-XOT=tools/bench/positions/xot-openingslarge.txt python3 tools/bench/match.py edax level12 250 OUT.tsv
-DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=tools/bench/positions/xot-openingslarge.txt \
+XOT=large python3 tools/bench/match.py edax level12 250 OUT.tsv
+DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=large \
   python3 tools/bench/match.py deft time1 250 OUT.tsv
 ```
+
+XOT の開局リストはリポジトリに含めていません。`XOT=large` を指定すると、初回に配布元（[XOT](https://berg.earthlingz.de/xot/)、Matthias Berg 氏）から [openingslarge.txt](https://berg.earthlingz.de/xot/downloads/openingslarge.txt) を `local/xot/` に取得し、SHA-256 を確かめてから使います。手元の別のリストは `XOT=FILE` で指定できます。
 
 別のビルドの Deft を相手にするときは、`OPP_GTP` にそのCLIバイナリを指定します。`MATCH_THREADS=N` で各エンジンを N スレッドで動かします（1局ずつ）。使い方の詳細はファイルの先頭にあります。
 
@@ -73,7 +75,6 @@ DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=tools/bench/positions/xot-openingslar
 | [ffo40-59.obf](positions/ffo40-59.obf) | FFO 40〜59 と全部の手の正解 |
 | [mid150.obf](positions/mid150.obf) | 中盤150局面 |
 | [mid150-level24.tsv](positions/mid150-level24.tsv) | 中盤150局面のレベル24 の結果（手の質の基準） |
-| [xot-openingslarge.txt](positions/xot-openingslarge.txt) | XOT の開局（large） |
 
 ## 決まり
 
