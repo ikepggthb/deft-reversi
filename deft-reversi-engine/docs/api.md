@@ -83,7 +83,7 @@ let plan = SearchPlan::midgame(20, Selectivity::Percent83)
 let request = SearchRequest::new(Goal::Plan(plan));
 ```
 
-レベルの表と、その決め方は [deft-reversi-notes/benchmarks/2026-11-15-level-table](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-11-15-level-table/README.md) にある。
+レベルの表と、その決め方は [deft-reversi-notes/search-control/2026-11-15-level-table](https://github.com/ikepggthb/deft-reversi-notes/blob/main/search-control/2026-11-15-level-table/README.md) にある。
 
 ### 結果
 
