@@ -25,8 +25,8 @@ pub fn default_resources() -> Resources {
     }
 }
 
-/// The release asset of the GitHub release `model-v3-pen-mpc2`.
-pub const MODEL_FILE: &str = "deft-eval-v3-pen.dpr2";
+/// The release asset of the GitHub release `model-v4`.
+pub const MODEL_FILE: &str = "deft-eval-v4.dpr2";
 
 /// `DEFT_REVERSI_MODEL`, then `resources/` next to the executable, then
 /// `data/eval/` in the workspace for development builds.

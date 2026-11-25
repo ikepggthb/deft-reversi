@@ -18,7 +18,7 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native \
 | キー | 既定の場所 |
 |---|---|
 | `solve`・`gtp` | `target-native/release/deft-reversi-cli`（それぞれ `solve --tsv`・`gtp` を呼ぶ） |
-| `model` | `local/release/model-v3-pen-mpc2/deft-eval-v3-pen.dpr2`（今の Release のモデルと同じ重み・規則で、校正を今の形式にしたもの） |
+| `model` | `local/release/model-v4/deft-eval-v4.dpr2`（GitHub Release `model-v4` のモデル） |
 | `edax` | `local/bench-engines/edax-4.5.6/bin/lEdax-x86-64-v3`（Edax 4.5.6 の配布版） |
 | `egaroucid` | `local/bench-engines/Egaroucid-console_v7.8.2/bin/Egaroucid_for_Console.out`（Egaroucid 7.8.2、公式の clang の手順でビルド） |
 

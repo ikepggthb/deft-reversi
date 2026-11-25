@@ -41,7 +41,7 @@
 | `SearchRequest` | `Goal::Level(1..=60)`＋`time_limit`を併用可。`Level`と`selectivity`の併用はエラー | 要求ごとに新しいrequestを作る |
 | `SearchResult` | `score`は探索開始局面の手番側の石差。`None`は完了反復なし。`is_solved()`で完全読みを判別。途中停止でも`best_move`は合法手 | 表示は黒視点へ変換。未評価を0点と扱わない |
 | `all_moves()` | 最善手探索に加え全候補を再探索するため数倍遅い。時間切れでは候補が空になりうる | 解析の明示操作に限定する |
-| 評価モデル | `Model::from_file` / `from_bytes`はDPR2（版1〜4）を読む。校正は新形式（MPC2）だけを読み、旧形式（MPC1）は拒否する。モデルはGitに入れず、GitHub Release（`model-*`タグ）で配る。現行は`model-v3-pen-mpc2`の`deft-eval-v3-pen.dpr2`（179,148,242 bytes） | 同梱するモデルはこのリリース資産。読込とTT確保は最初の描画から切り離す |
+| 評価モデル | `Model::from_file` / `from_bytes`はDPR2（版1〜4）を読む。校正は新形式（MPC2）だけを読み、旧形式（MPC1）は拒否する。モデルはGitに入れず、GitHub Release（`model-*`タグ）で配る。現行は`model-v4`の`deft-eval-v4.dpr2` | 同梱するモデルはこのリリース資産。読込とTT確保は最初の描画から切り離す |
 | 評価の段階 | 段階は`60 - empty_count`を0〜59に丸めて選ぶ | 石4個未満の編集局面も評価自体は可能。ただし学習範囲外なので§9で扱う |
 | ビルド設定 | release: `lto = "fat"`、`codegen-units = 1`、`panic = 'unwind'`。toolchain 1.99.1 | `panic = 'unwind'`は並列探索の後処理に必要なので維持する。配布版に`target-cpu=native`を付けない |
 
@@ -788,6 +788,7 @@ AIの準備は最初のフレームとほぼ同時に終わる。参考：P0の�
 
 ### 分かったこと・未決事項
 
+- 2.0のベータ版からは、GitHub Release `model-v4`の`deft-eval-v4.dpr2`（179,150,162 bytes、SHA-256 `cc444a8c…8076`）を使う。
 - develop/v2のマージ（`45b1e7f`）以降は、GitHub Release `model-v3-pen-mpc2`の`deft-eval-v3-pen.dpr2`（SHA-256 `1a6e6b81…eab5`）を使う。旧モデルの校正（MPC1）は新しいエンジンが読まない。
 - engine-v2のマージ（`6423a77`）以降、エンジンはDPR2だけを読む。モデルはGitに入れず、GitHub Release `model-v2-pattern-lr0.3`の`deft-eval-v2-pattern-lr0.3.dpr2`（SHA-256 `76b80e7f…bcc5`）を使う。開発時は`data/eval/`に置く（`.gitignore`で除外）。旧`data/eval/eval.json`は使わない。
 - 盤面は64個のdiv要素で問題なく描画できた。日本語はフォントを指定しなくてもWindowsの代替フォントで崩れずに表示される（2026-11-03確認）。Linuxでの日本語表示は未確認。

@@ -27,7 +27,7 @@ FlipSight 接続プログラムの `--engine` に、次のようなコマンド�
 
 ## 対局用Book
 
-リリースで案内されたモデルとBookを組み合わせて指定する。配布タグは [`model-v3-pen-mpc2`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v3-pen-mpc2)、ファイル名は `deft-eval-v3-pen.dpr2`。このファイルはDPR2形式 v3で、PENの重みとMPC2校正を含む。
+リリースで案内されたモデルとBookを組み合わせて指定する。配布タグは [`model-v4`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v4)、ファイル名は `deft-eval-v4.dpr2`。このファイルはDPR2形式 v4で、PEN2の重みとMPC2校正を含む。
 
 ```sh
 ./target/release/deft-reversi-cli play --model model.dpr2 --book openings.dbook
@@ -48,7 +48,7 @@ Bookを自分で生成・再開・検査するには `deft-reversi-cli book --he
 広域学習の例。レベル22の終盤MPCは空き28、完全読みは空き21からです。
 
 ```sh
-./target/release/deft-reversi-cli book build --model deft-eval-v3-pen.dpr2 \
+./target/release/deft-reversi-cli book build --model deft-eval-v4.dpr2 \
   --work openings.dbook-work --book openings.dbook --level 22 --max-plies 32 \
   --schedule frontier --line-plies 4 --loss 4 --cumulative-loss 4 --leaf-loss 4 \
   --threads 18 --tt-mib 1024 --memory-mib 2048 --seconds 14400

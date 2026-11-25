@@ -19,7 +19,7 @@ DEFAULTS = {
     # Built with RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native.
     "solve": "target-native/release/deft-reversi-cli",
     "gtp": "target-native/release/deft-reversi-cli",
-    "model": "local/release/model-v3-pen-mpc2/deft-eval-v3-pen.dpr2",
+    "model": "local/release/model-v4/deft-eval-v4.dpr2",
     # Edax 4.5.6 as distributed; it reads data/eval.dat next to its bin/.
     "edax": "local/bench-engines/edax-4.5.6/bin/lEdax-x86-64-v3",
     # Egaroucid for Console 7.8.2 built with the official clang++ command.
