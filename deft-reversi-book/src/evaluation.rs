@@ -1,37 +1,38 @@
-//! 現在の評価。点数・探索条件・出所を直接読む。
-//! 旧形式の「導出」「投影」などの表現はlegacy内で検査・変換し、ここへ持ち込まない。
+//! Book 内で扱う評価値（[`Evaluation`]）とその出所（[`EvaluationSource`]）を定義するモジュール。
+//!
+//! 点数・探索条件・出所を 1 つの型にまとめて直接読めるようにしており、
+//! 旧形式にあった「導出」「投影」などの複雑な表現は `legacy` モジュール内で検査・変換し、ここには持ち込まない。
 use super::*;
 
-/// 値の出所。計算した局面や手は直接記録し、分類を何段もたどらせない。
+/// 評価値がどこから得られたかを表す出所。計算に使った局面や手を直接記録し、分類を何段も辿らせない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvaluationSource {
-    /// 指定した手集合の最大値。全合法手を含むとは限らない。
+    /// 指定した候補手集合の最大値として得られた探索結果（全合法手を含むとは限らない）。
     Search(CompletedSearch),
-    /// 同じ探索から得た最良手の点評価、または他の手の上限。点数の種類で区別する。
+    /// 同じ探索から得られた最良手の点評価、または他の手の上界（`Bound::Upper`）。点数の種類で区別する。
     SearchMove(CompletedSearch),
+    /// 局面の全合法手の評価をまとめて求めた局面全体の値。
     Position {
         root: [u64; 2],
         conditions: SearchConditions,
     },
+    /// 子局面の評価値を符号反転して親の手へ伝播（バックアップ）した値。
     Child {
         root: [u64; 2],
         placement: bool,
         conditions: SearchConditions,
     },
+    /// 特定の候補手を指定して計算・調整された値。
     Move {
         root: [u64; 2],
         action: Action,
         conditions: SearchConditions,
     },
-    Terminal {
-        root: [u64; 2],
-    },
-    /// 深さ等は旧入力の表示情報を保持するための欄。探索の実績ではない。
-    Manual {
-        depth: u8,
-        selectivity: Selectivity,
-    },
-    /// 探索方法が残っていない入力。深さから中盤・終盤を推測しない。
+    /// 終局局面のルール上の確定スコア。
+    Terminal { root: [u64; 2] },
+    /// 手動で入力された値。深さ等は旧入力の表示情報を残すための欄であり、実際の探索実績ではない。
+    Manual { depth: u8, selectivity: Selectivity },
+    /// 探索方法が記録されていない旧形式からの取り込み値。深さから中盤・終盤を推測しない。
     Imported {
         depth: u8,
         selectivity: Selectivity,
@@ -209,7 +210,7 @@ impl EvaluationSource {
     }
 }
 
-/// 一つの評価の唯一の表現。簡易表示用に点数・深さ・確定フラグを重複保存しない。
+/// Book 内の 1 つの評価を表す唯一の型。簡易表示用に点数・深さ・確定フラグを重複保存しない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Evaluation {
     result: Score,

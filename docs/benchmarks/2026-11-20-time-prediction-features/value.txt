@@ -1,7 +1,0 @@
-transitions 22872; mean gain by kind: mid 0.089 (n 17699), entry 0.263 (n 1300), stage 0.059 (n 2991), exact 0.029 (n 882)
-  kind                                 mse 1.2209  R2 +0.001  gain in predicted bottom 20% 0.079, top 20% 0.110
-  kind x changed (as oracle.py)        mse 1.2127  R2 +0.008  gain in predicted bottom 20% 0.043, top 20% 0.259
-  + changed in the last iteration      mse 1.2104  R2 +0.010  gain in predicted bottom 20% 0.043, top 20% 0.204
-  + |score change|                     mse 1.2111  R2 +0.009  gain in predicted bottom 20% 0.041, top 20% 0.204
-  + changes so far, |score|, near 0    mse 1.2114  R2 +0.009  gain in predicted bottom 20% 0.033, top 20% 0.244
-  + empties, mobility, parity          mse 1.2109  R2 +0.010  gain in predicted bottom 20% 0.029, top 20% 0.240

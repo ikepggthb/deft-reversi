@@ -1,8 +1,9 @@
-//! 一回の探索で要求・予定・完了した条件と、探索対象の記録。
+//! 1 回の探索で「何を要求し・何を予定し・どこまで完了したか」と、探索対象となった盤面を記録するモジュール。
 use super::*;
 use deft_reversi_engine::ResultKind;
-/// 探索の種類。深さが空きマス数と同じでも、MidgameをEndgameへ読み替えない。
-/// Endgameも選択率がFullでなければ最終石差の確定にはならない。
+/// エンジンが行う探索の種類。
+/// 残り空きマス数と同じ深さであっても、中盤探索（`Midgame`）を終盤完全読み（`Endgame`）へ勝手に読み替えない。
+/// また `Endgame` であっても、選択率が `Full`（枝刈りなしの 100% 探索）でなければ最終石差の確定にはならない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SearchKind {
     Midgame { depth: u8, selectivity: Selectivity },
@@ -33,31 +34,31 @@ impl SearchKind {
         Ok(())
     }
 }
+/// 利用者・設定が要求する探索の粒度・仕様。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RequestedAnalysis {
-    /// Levels are resolved after the candidate move, then shifted to its parent.
+    /// 候補手を打った後の子局面側でレベルを解決し、親局面側へ深さを +1 シフトする。
     ChildLevel(u8),
-    /// Engine level resolved at the searched root.
+    /// 探索ルート局面側でエンジンレベルを直接解決する。
     RootLevel(u8),
-    ParentDepth {
-        depth: u8,
-        selectivity: Selectivity,
-    },
-    Endgame {
-        selectivity: Selectivity,
-    },
+    /// 親局面側での固定深さ・選択率による中盤探索。
+    ParentDepth { depth: u8, selectivity: Selectivity },
+    /// 指定選択率による終盤完全読み。
+    Endgame { selectivity: Selectivity },
+    /// 外部から取り込まれた探索結果。
     External,
 }
-/// 一回の探索の記録。requested=利用者の指定、planned=実行予定、completed=完了条件。
-/// 途中停止した外部結果では、予定より浅い完了済み反復だけが記録される場合がある。
+/// 1 回の探索の完了記録。
+/// `requested` は利用者の要求、`planned` は実行予定だった条件、`completed` は実際に完了した条件を表す。
+/// 途中で打ち切られた外部結果では、予定より浅い深さまでしか完了していない場合がある。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CompletedSearch {
     pub requested: RequestedAnalysis,
     pub planned: SearchKind,
     pub completed: SearchKind,
-    /// Canonical search root; not a guessed parent horizon.
+    /// 正規化済みの探索ルート盤面（推測された親ホライズンではない）。
     pub root: [u64; 2],
-    /// Root square mask. Zero is valid for a forced pass or terminal root.
+    /// 探索対象としたルート着手マスク（パス強制や終局ルートでは 0 が有効）。
     pub moves: u64,
     /// 0..=63はマス、64はパス、65は終局で着手なし。
     /// 集合全体の上限を記録する場合は、探索対象から選んだ代表手。

@@ -1,21 +1,23 @@
+//! 中盤および広域終盤ノードの Alpha-Beta / PVS 探索木を実装するモジュールです。
+//!
+//! 置換表（TT：一度調べた局面の再利用）、ETC（Enhanced Transposition Cutoff：子局面を事前に置換表で調べて
+//! 枝刈りする手法）、確定石による上界枝刈り、Multi-ProbCut（MPC：浅い探索から枝刈りを統計予測する手法）、
+//! YBWC 並列分割、および葉近傍の簡易探索（`simple_search`）を統合しています。
 use super::endgame::parity::odd_regions;
 use super::*;
 use crate::board::CORNERS;
 use std::ops::ControlFlow;
-// Midgame nodes split down to four plies of remaining depth: the shallow
-// iterations before an endgame solve otherwise leave most threads idle.
+// 中盤ノードは残り深さ 4 手（4 プライ）まで並列分割を許可します。
+// 終盤完全読み直前の浅い準備イテレーションでスレッドが遊ばないようにするためです。
 pub(super) const SPLIT_DEPTH: u8 = 4;
-/// Fewest empties at which an exact node splits with few threads, and in
-/// the selective stages before an exact solve. Below 14 empties only the
-/// root can split: the local endgame (`LOCAL_END_MAX`) never does.
+/// スレッド数が少ない場合、および完全読み前の選択ステージにおいて、
+/// 完全読みノードが YBWC 分割を行う最小空きマス数です。
+/// 14 マス未満ではルートだけ分割可能で、ローカル終盤ソルバ（`LOCAL_END_MAX`）は分割しません。
 pub(super) const SPLIT_EMPTIES: u8 = 10;
-/// The same for the final exact solve. With many threads idle ones are
-/// almost always there, and small splits cost more in handoffs and joins
-/// than they save: at 20 threads one 28-empties FFO position made 470,000
-/// helper jobs at 14 empties and 67,000 at 17, and FFO 40-59 took 10% less
-/// time; at 4 threads 14 stays the fastest. The selective stages prune too
-/// much to keep 20 threads busy at 17, and keep `SPLIT_EMPTIES`
-/// (docs/benchmarks/2026-11-07-parallel).
+/// 最終完全読みステージで YBWC 分割を行う最小空きマス数をスレッド数に応じて返します。
+/// スレッド数が多い環境では常に空きスレッドが存在するため、小さすぎる分割はハンドオフと合流（join）の
+/// オーバーヘッドが並列化の削減効果を上回ります（20 スレッド FFO 40-59 で 14→17 により 10% 高速化、
+/// 4 スレッドでは 14 が最速でした。選択ステージは枝刈りが強いため `SPLIT_EMPTIES` を維持します）。
 pub(super) fn split_empties(threads: usize) -> u8 {
     if threads < 8 {
         SPLIT_EMPTIES
@@ -23,19 +25,17 @@ pub(super) fn split_empties(threads: usize) -> u8 {
         13 + threads.min(16) as u8 / 4
     }
 }
-/// Null-window midgame nodes below this depth search without the TT, and
-/// below `ORDERED_SEARCH_DEPTH` without move ordering too, like main's
-/// `SWITCH_SIMPLE_SEARCH_LEVEL` and `SWITCH_NEGAALPHA_SEARCH_LEVEL`. With
-/// the PEN evaluation 4 and 3 were the fastest (5 and 3 with the linear
-/// one; docs/benchmarks/2026-11-06-pen-tuning).
+/// Null-Window（幅 1 の窓）の中盤ノードでこの深さ未満なら置換表をスキップし、`ORDERED_SEARCH_DEPTH` 未満なら
+/// ムーブオーダリング（候補手の並び替え）もスキップします（旧 `SWITCH_SIMPLE_SEARCH_LEVEL` / `SWITCH_NEGAALPHA_SEARCH_LEVEL` 相当）。
+/// 小型ニューラルネット併用時は 4 と 3 が最速でした（線形評価のみでは 5 と 3）。
 pub(super) const SIMPLE_SEARCH_DEPTH: u8 = 4;
 pub(super) const ORDERED_SEARCH_DEPTH: u8 = 3;
-/// A ProbCut test runs only when the rule's prediction from the static
-/// evaluation is within these margins (discs) of its bound; Egaroucid uses 4.
-/// Chosen for the PEN evaluation (docs/benchmarks/2026-11-06-pen-tuning).
+/// 静的評価からの回帰予測値が現在の探索境界のこのマージン（石数）以内に収まるときだけ
+/// ProbCut の浅い探索を実行します（Egaroucid は 4、小型ニューラルネット併用評価向けに上界マージンを調整済みです）。
 const PROBCUT_MIDGAME_UPPER_MARGIN: f64 = 8.0;
 const PROBCUT_EXACT_UPPER_MARGIN: f64 = 2.0;
 const PROBCUT_LOWER_MARGIN: f64 = 4.0;
+/// 終盤ノード（13 マス以上〜汎用探索木）のムーブオーダリング重みです。
 struct OrderingWeights {
     mobility: i32,
     corner: i32,
@@ -50,6 +50,7 @@ const ORDERING: OrderingWeights = OrderingWeights {
 };
 
 impl Context {
+    /// スレッドローカルな探索コンテキストを生成します。
     pub(super) fn new(
         runtime: Arc<Runtime>,
         ancestors: Vec<Arc<Helper>>,
@@ -65,7 +66,7 @@ impl Context {
             end_ordering: [None; 3],
         }
     }
-    /// Fewest empties at which an exact node splits in the current stage.
+    /// 現在のステージにおいて完全読みノードが並列分割を行う最小空きマス数を返します。
     pub(super) fn exact_split_empties(&self) -> u8 {
         if self.runtime.selective() {
             SPLIT_EMPTIES
@@ -73,12 +74,14 @@ impl Context {
             self.runtime.split_empties
         }
     }
+    /// 全体の停止条件または祖先分割点でのベータカットが発生しているかを返します。
     pub(super) fn aborted(&self) -> bool {
         self.runtime.control.check() || self.cuts.iter().any(|cut| cut.load(Ordering::Acquire))
     }
+    /// ノード訪問時に呼び出し、中断チェックとノード数上限の予約を行います。
     pub(super) fn enter(&mut self) -> Result<(), Aborted> {
-        // Poll cancellation/deadline every 256 nodes; the optional hard node
-        // budget below is still reserved for every individual visited node.
+        // 停止要求・時間制限のポーリングは負荷軽減のため 256 ノードごとに間引きますが、
+        // ハードなノード上限（`node_limit`）は訪問ノードごとに厳密に 1 ずつ予約します。
         if self.stats.nodes & 255 == 0 && self.aborted() {
             return Err(Aborted);
         }
@@ -98,15 +101,17 @@ impl Context {
         self.stats.nodes += 1;
         Ok(())
     }
+    /// 差分評価状態を用いて静的評価値を計算します。
     pub(super) fn evaluate(&mut self, board: Board, state: &EvalState) -> i32 {
         self.stats.evaluations += 1;
         self.runtime.model.evaluate_state(&board, state)
     }
-    /// The evaluation and the legal moves it computed.
+    /// 静的評価値と、そのモビリティ計算で副産物として得られた合法手ビットマスクを返します。
     pub(super) fn evaluate_and_moves(&mut self, board: Board, state: &EvalState) -> (i32, u64) {
         self.stats.evaluations += 1;
         self.runtime.model.evaluate_state_and_moves(&board, state)
     }
+    /// 子ノードで `EvalState` の差分更新が必要かを判定します（完全読みローカル領域では不要な場合が多いです）。
     fn child_needs_eval(&self, board: Board, exact: bool, narrow: bool) -> bool {
         if !exact {
             return true;
@@ -117,12 +122,13 @@ impl Context {
         }
         let selective = self.runtime.selective();
         if empties == super::endgame::LOCAL_END_MAX + 1 {
-            // A wide thirteen-empty child still orders moves using its state.
-            // The experimental narrow entry seeds its pattern cache from it too.
+            // 空き 13 マスの広域窓子ノードはムーブオーダリングで状態を使います。
+            // 実験的パターンオーダリング有効時は狭域入口でもキャッシュの種まきに使います。
             return !narrow || selective || cfg!(feature = "endgame-pattern-ordering");
         }
         selective
     }
+    /// 汎用探索ノード（PVS / Alpha-Beta）のエントリポイントです。
     pub(super) fn node(
         &mut self,
         position: Position,
@@ -136,7 +142,7 @@ impl Context {
             exact,
             probcut: allow_probcut,
         } = spec;
-        // As in main: shallow null-window midgame nodes skip the TT.
+        // 浅い Null-Window 中盤ノードは置換表をスキップして軽量探索へ流します。
         if !exact && beta - alpha == 1 && (1..SIMPLE_SEARCH_DEPTH).contains(&depth) {
             return self
                 .simple_search(position, alpha, depth, allow_probcut)
@@ -153,7 +159,7 @@ impl Context {
         if exact && board.empty_count() <= super::endgame::TAIL_EMPTIES {
             return self.tail_entered(board, alpha, beta);
         }
-        // The caller's window decides the bound type stored for the result.
+        // 呼び出し元の元の窓幅を保持します（置換表格納時の上下界種別判定に使います）。
         let window = (alpha, beta);
         let moves = board.get_moves();
         if moves == 0 {
@@ -219,7 +225,7 @@ impl Context {
         {
             return Ok(Line::leaf(score));
         }
-        // A move list has at most 64 entries and never allocates per node.
+        // 候補手リストは最大 64 要素の固定配列で持ち、ノードごとのヒープ割り当てを避けます。
         let mut candidates = [Candidate {
             square: Square::lowest(1),
             flips: 0,
@@ -248,8 +254,8 @@ impl Context {
             depth: depth - 1,
             ..spec
         };
-        // Complete cheap child-TT cutoffs before spending search effort on
-        // the TT move. Remaining moves are still unevaluated here.
+        // 子 TT カットオフ（ETC）で安価に枝刈りできるものを先に処理してから、置換表に記録された最善手の探索へ進みます。
+        // 残りの手はこの時点ではまだ評価関数を通していません。
         let tt_move = cached.map_or(64, |e| e.best);
         let preferred =
             if let Some(index) = (0..count).find(|&i| candidates[i].square.index() == tt_move) {
@@ -317,10 +323,9 @@ impl Context {
         self.store_node_line(board, &best, window, spec, quality);
         Ok(best)
     }
-    /// The TT entry for `board`. A wide exact window also reads the PV table
-    /// and prefers the narrower of two entries that both fit the search.
-    // This and the next three helpers are parts of `node`. Kept inline:
-    // as calls they cost 0.6% at one thread.
+    /// `board` に対応する置換表エントリを取得します。
+    /// 広域の完全読み窓の場合は PV 専用テーブルも参照し、両方適合すれば窓が狭い方（より情報が正確な方）を優先します。
+    // この関数と続く 3 つのヘルパーは `node` の一部であり、1 スレッド時 0.6% の呼び出しコストを避けるためインライン化しています。
     #[inline(always)]
     fn probe_tables(
         &self,
@@ -351,10 +356,9 @@ impl Context {
             _ => pv.or(main),
         }
     }
-    /// Enhanced transposition cutoff: looks up every child in the main table,
-    /// fills `candidates` with the moves that still need a search, and
-    /// returns their count and the largest upper bound of the skipped ones.
-    /// Breaks with the score when a child alone fails high.
+    /// Enhanced Transposition Cutoff（ETC）：すべての局面を実際に展開する前に子局面をメイン置換表で事前照会し、
+    /// 探索が必要な手だけを `candidates` に詰めて、その個数とスキップした手の最大上界を返します。
+    /// 1 手でもベータカットが確定した場合はそのスコアで即座に `Break` します。
     #[inline(always)]
     fn child_tt_pass(
         &mut self,
@@ -372,9 +376,8 @@ impl Context {
             let bit = moves.isolate_lowest_one();
             moves &= moves - 1;
             let flips = board.flip_mask(bit);
-            // Null-window children with thirteen or fewer empties live only
-            // in the local endgame cache, so the main table cannot cut them.
-            // The window narrows during the pass, so this is checked per move.
+            // 空き 13 マス以下の Null-Window 子ノードはローカル終盤キャッシュだけに存在するため、
+            // メイン置換表での照会は無駄になります。パス中に窓が狭まる可能性があるため毎手判定します。
             let probe = if exact {
                 board.empty_count() > 12 + 2 * u8::from(bounds.beta - bounds.alpha == 1)
             } else {
@@ -391,8 +394,9 @@ impl Context {
                 if lower >= bounds.beta {
                     return ControlFlow::Break(lower);
                 }
-                // Reference ETC uses the original alpha to skip moves. Keep
-                // their largest upper bound so a fail-low remains sound.
+                // 参照 ETC と同様に元の alpha を基準にスキップします。
+                // fail-low（すべての手が alpha 以下で終わる場合）の上界の正しさを保つため、
+                // スキップした手の最大上界を記録しておきます。
                 if upper <= bounds.original_alpha {
                     skipped_upper = skipped_upper.max(upper);
                     continue;
@@ -412,8 +416,7 @@ impl Context {
         }
         ControlFlow::Continue((count, skipped_upper, bounds))
     }
-    /// Sets the ordering key of every candidate; `second` is the TT's
-    /// second-best move.
+    /// 各候補手にオーダリングキーを付与します。`second` は置換表の次善手インデックスです。
     #[inline(always)]
     fn score_moves(
         &mut self,
@@ -456,8 +459,8 @@ impl Context {
         }
         Ok(())
     }
-    /// Searches `candidates[start..]` after the first move returned `best`,
-    /// splitting when idle threads can take the remaining moves.
+    /// 先頭手探索後、残りの兄弟候補 `candidates[start..]` を探索します。
+    /// 空きスレッドがあれば YBWC 分割（[`split`](Self::split)）へ移行します。
     #[inline(always)]
     fn search_siblings(
         &mut self,
@@ -484,9 +487,8 @@ impl Context {
             };
         let mut index = start;
         while index < count {
-            // Like the reference node_split, retry after every sibling:
-            // a thread that became idle meanwhile can still take the
-            // remaining moves instead of waiting for another split point.
+            // 参照 `node_split` と同様に各兄弟の終了ごとに再試行します。
+            // その間に空いたスレッドが次の分割点を待たずに残り候補を引き受けられるようにするためです。
             let enough = if index == start {
                 count >= 3
             } else {
@@ -550,8 +552,7 @@ impl Context {
             self.runtime.pv_table.store(board, entry);
         }
     }
-    /// Searches one later move with a null window and, if it lands inside
-    /// the window, again with the full window.
+    /// 2 番目以降の手を Null-Window で探索し、窓内（`alpha < score < beta`）に入った場合だけフルウィンドウで再探索します。
     pub(super) fn sibling(
         &mut self,
         position: Position,
@@ -575,6 +576,7 @@ impl Context {
         }
         Ok(line)
     }
+    /// Multi-ProbCut（MPC）：浅い探索結果と回帰モデルを用いて、高い確率でベータカットまたはアルファカットを判定します。
     pub(super) fn probcut(
         &mut self,
         board: Board,
@@ -584,13 +586,13 @@ impl Context {
         beta: i32,
         exact: bool,
     ) -> Result<Option<i32>, Aborted> {
-        // The stage of the iteration; a full-width one does not prune.
+        // 現在のイテレーションの選択率タグです（0 は全幅探索のため枝刈りしません）。
         let quality = self.runtime.quality.load(Ordering::Relaxed);
         if quality == 0 {
             return Ok(None);
         }
-        // Like Edax, only null-window nodes try ProbCut: a wide window is a
-        // principal-variation node, where a wrong cut costs the most.
+        // Edax と同様、Null-Window ノードだけで ProbCut を試みます。
+        // 広い窓は PV ノードであり、誤って枝刈りしたときの悪影響が最も大きいためです。
         if beta - alpha > 1 {
             return Ok(None);
         }
@@ -605,8 +607,7 @@ impl Context {
             return Ok(None);
         };
         self.stats.probcut_tries += 1;
-        // Skip a test the static evaluation does not support: its prediction
-        // is too far below the upper bound or above the lower one.
+        // 静的評価による予測値が境界から遠すぎる場合は、浅い探索自体をスキップします。
         let predicted = rule.slope * f64::from(self.evaluate(board, &state)) + rule.intercept;
         let upper_margin = if exact {
             PROBCUT_EXACT_UPPER_MARGIN
@@ -620,9 +621,8 @@ impl Context {
             let score = self.probcut_shallow(board, state, bound - 1, bound, rule.shallow_depth)?;
             if score >= bound {
                 self.stats.probcut_cuts += 1;
-                // A final score is even, so at least `beta` means at least
-                // the next even number; an odd window edge would otherwise
-                // reach the root as an impossible score.
+                // 完全読みスコアは常に偶数（空き 60 マスの標準盤面）であるため、
+                // `beta` 以上を意味する切り上げ偶数へ丸めて奇数窓端がルートへ漏れるのを防ぎます。
                 return Ok(Some(if exact { beta + (beta & 1) } else { beta }));
             }
         }
@@ -638,10 +638,7 @@ impl Context {
         }
         Ok(None)
     }
-    /// The shallow search of a ProbCut test: the midgame search without
-    /// ProbCut, so its value is the plain minimax value the rules were
-    /// measured with. Like every midgame search it uses the TT and move
-    /// ordering only far enough from the leaves.
+    /// ProbCut 用の浅い探索です。ルール測定時と同じ条件（ProbCut なしの純粋なミニマックス中盤探索）で実行します。
     fn probcut_shallow(
         &mut self,
         board: Board,
@@ -659,9 +656,8 @@ impl Context {
             .node(Position { board, state }, alpha, beta, spec)?
             .score)
     }
-    /// Null-window midgame search near the leaves, without the TT: moves
-    /// ordered by their evaluation and mobility, and below
-    /// `ORDERED_SEARCH_DEPTH` not ordered at all. Fail-soft.
+    /// 葉近傍の Null-Window 中盤探索です（置換表を使わず、評価値とモビリティでオーダリングします。
+    /// `ORDERED_SEARCH_DEPTH` 未満ではオーダリングも省略し、窓外の値もそのまま返す Fail-soft 方式で動作します）。
     fn simple_search(
         &mut self,
         position: Position,
@@ -731,12 +727,11 @@ impl Context {
         Ok(best)
     }
 }
-/// Whether a TT entry was stored by a search of the same depth, mode and
-/// selectivity, so that its bounds apply.
+/// 置換表エントリが現在の探索仕様（深さ・品質・完全読みモード）に適合し、その上下界が有効かを判定します。
 fn fits(entry: Entry, spec: SearchSpec, quality: u8) -> bool {
     entry.depth == spec.depth && entry.quality == quality && entry.exact_mode == spec.exact
 }
-/// The bounds the child-TT pass reads and narrows.
+/// 子 TT パス（ETC）が読み取り・更新する境界値です。
 #[derive(Clone, Copy)]
 struct ChildBounds {
     original_alpha: i32,
@@ -744,6 +739,7 @@ struct ChildBounds {
     beta: i32,
     known_lower: i32,
 }
+/// `candidates[index..]` の中で最もオーダリングスコアが高い要素を `index` 位置へスワップします。
 pub(super) fn pick_best(candidates: &mut [Candidate], index: usize) {
     let best = (index..candidates.len())
         .max_by_key(|&i| candidates[i].ordering)
@@ -752,7 +748,7 @@ pub(super) fn pick_best(candidates: &mut [Candidate], index: usize) {
 }
 
 impl Context {
-    // At depth one, evaluating children for ordering evaluates every leaf twice.
+    // 深さ 1 ではオーダリングのために子局面を評価すると同じ葉を 2 回評価することになるため、直接探索します。
     fn one_ply(
         &mut self,
         position: Position,
@@ -826,7 +822,7 @@ mod tt_tests {
                 Arc::get_mut(&mut context.runtime).unwrap().model = model.clone();
                 context
             };
-            // Find an interior score so sibling must perform its wide re-search.
+            // sibling() がフルウィンドウ再探索を行う必要があるため、窓の内側のスコアを探します。
             let expected = -make_context().node(next, -64, 64, spec).unwrap().score;
             assert!((-64..64).contains(&expected));
             let alpha = expected - 1;
@@ -898,8 +894,7 @@ mod tt_tests {
             .runtime
             .table
             .store(board.board_after_move(bit), entry(2, -7, -7));
-        // A wide window: shallow null-window midgame nodes skip the TT, and
-        // from depth 4 the child-TT pass would cut first.
+        // 広域窓: 浅い Null-Window 中盤ノードは TT をスキップし、深さ 4 以上では子 TT パスが先に枝刈りします。
         let line = context
             .node(
                 Position {
@@ -985,7 +980,7 @@ mod tt_tests {
         let score = context.node(position, -1, 0, spec).unwrap().score;
         assert_eq!(context.stats.tt_cuts, 0);
         assert!(context.stats.nodes > 1);
-        // The same value as the full-width search with the TT.
+        // TT を使った全幅探索と同じ値になることを確かめます。
         let mut wide = test_context();
         let full = wide.node(position, -64, 64, spec).unwrap().score;
         assert_eq!(score >= 0, full >= 0);

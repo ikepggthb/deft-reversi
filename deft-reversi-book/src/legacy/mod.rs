@@ -1,5 +1,5 @@
-//! 旧book・外部の旧評価を取り込む境界。現在の評価モデルから独立させる。
-//! 編集や対局を読む際は、このモジュールを理解する必要はない。
+//! 旧バージョンの Book や外部から取り込んだ旧形式の評価を扱う境界モジュール。
+//! 現在の評価モデルとは切り離されており、通常の編集処理や対局処理を読む際はこのモジュールを気にする必要はない。
 pub(crate) use crate::SearchConditions as QualitySummary;
 use crate::{
     Action, AnalysisIdentity, Board, BookError, CompletedSearch, Key, ReadLimits,
@@ -18,7 +18,7 @@ pub(crate) use convert::dominates;
 pub use evidence::ImportedValue;
 pub(crate) use evidence::*;
 pub(crate) use values::ValueStore;
-/// What a stored score is known to be: the value itself, or a bound on it.
+/// 記録された点数が何を表すか：点評価そのものか、上下限の境界か。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Bound {
     /// その探索条件での点評価。最終石差が確定したことは意味しない。
@@ -27,11 +27,12 @@ pub enum Bound {
     Lower,
     /// 探索条件内での上限。この値の点数を得られる手とは限らない。
     Upper,
-    /// Certified bound on final game score, not a point-valued solution.
+    /// 最終石差の確定した下限（一点に確定した結果ではない）。
     ProvenLower,
     /// 最終石差の確定した上限。
     ProvenUpper,
 }
+/// 旧形式における評価値の由来。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ValueOrigin {
     Search,
@@ -41,9 +42,9 @@ pub enum ValueOrigin {
     Derived,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-/// 簡易表示・比較用の条件。中盤／終盤／混在の区別はValueAnalysis側で確認する。
+/// 簡易表示・比較用の条件。中盤／終盤／混在の区別は `ValueAnalysis` 側で確認する。
 pub struct AnalysisQuality {
-    /// Effective depth in placements, measured from the candidate's parent.
+    /// 候補手の親局面から測った実効探索深さ（着手数）。
     pub depth: u8,
     pub selectivity: Selectivity,
     /// 最終石差が一点に確定しているか。`Bound::Exact`だけではtrueにならない。

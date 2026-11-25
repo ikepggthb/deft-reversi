@@ -1,8 +1,12 @@
 [package]
 name = "deft_reversi_desktop"
 version = "1.0.0-dev.1"
-edition = "2024"
-publish = false
+description = "Desktop application of Deft Reversi"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "deft-reversi"
@@ -23,6 +27,14 @@ dirs = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # Sound effects are made in code, so only playback is needed.
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
+
+[features]
+# Frame times while discs turn and search results go to stderr.
+trace = []
+
+[build-dependencies]
+# The icon and version information of the Windows executable.
+winresource = "0.1"
 
 [dev-dependencies]
 # Tests build a small engine from the zero model with known ProbCut rules.

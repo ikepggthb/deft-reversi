@@ -1,4 +1,13 @@
-//! Bounded mailboxes, no global task queue. Waiting ancestors accept descendant work.
+//! グローバルなタスクキューを持たない、有界メールボックス型のスレッドプールです。
+//!
+//! 並列探索では YBWC（Young Brothers Wait Concept：最初の有力な手だけを先に調べ終えて探索窓を狭めてから、
+//! 残りの手を複数スレッドで並列探索する手法）を使います。
+//!
+//! もし全スレッドが共有のグローバルキューから任意の仕事を取れるようにすると、
+//! 子の完了を待っている親スレッドが無関係な別の仕事を引き受けてしまい、
+//! 元の子の完了を待てなくなるデッドロックやスレッド枯渇が起きる恐れがあります。
+//! そのため、このプールでは子の完了を待つ親スレッド（[`Helper`]）が「自分の配下にある子孫のジョブ」だけを
+//! 直接引き受けて手伝う仕組みにして、デッドロックを防いでいます。
 use std::{
     sync::{
         Arc, Condvar, Mutex, MutexGuard,
@@ -7,15 +16,21 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
+/// ジョブの投入先種別です。
 #[derive(Clone, Copy)]
 pub(crate) enum Dispatch {
+    /// 子タスクの完了を待っている祖先スレッド（[`Helper`]）へ直接渡されました。
     Ancestor,
+    /// プール内の待機中ワーカースレッドのメールボックスへ渡されました。
     Worker,
 }
+/// ワーカースレッドまたはヘルパー上で実行される 1 回限りのクロージャです。
 pub(crate) type Job = Box<dyn FnOnce() + Send + 'static>;
-/// Keeps a value on cache lines of its own (two lines, for the adjacent-line
-/// prefetcher), so that writes to it do not evict data other threads read
-/// on every node, and `Arc` reference counts stay off its line.
+/// 値を 128 バイトのキャッシュライン境界に配置するラッパーです（隣接ラインプリフェッチャ対策を含みます）。
+///
+/// 異なるスレッドが同じキャッシュライン上の別々の変数を書き換えると、キャッシュ同期が頻発して性能が落ちます（偽共有）。
+/// また、他スレッドが毎ノード参照するデータや `Arc` の参照カウントが同じキャッシュラインに乗ると追い出されてしまうため、
+/// 境界を分けてそれを防いでいます。
 #[repr(align(128))]
 pub(crate) struct Padded<T>(pub T);
 impl<T> std::ops::Deref for Padded<T> {
@@ -24,26 +39,32 @@ impl<T> std::ops::Deref for Padded<T> {
         &self.0
     }
 }
+/// ミューテックスのポイズン化（他スレッドのパニックによるロック汚染）を無視してロックを取得します。
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|p| p.into_inner())
 }
+/// ワーカースレッド 1 本分のメールボックスの内部状態です。
 struct MailState {
     job: Option<Job>,
     shutdown: bool,
 }
+/// 1 本のワーカースレッドに 1 対 1 で対応する有界メールボックス（容量 1）です。
 struct Mailbox {
     state: Mutex<MailState>,
     ready: Condvar,
     busy: AtomicBool,
 }
+/// 固定数のワーカースレッドに対応するメールボックス群を保持するプールです。
 pub(crate) struct Pool {
     mailboxes: Vec<Arc<Mailbox>>,
 }
+/// 探索用ワーカースレッド群のライフサイクルを管理し、Drop 時に全スレッドを終了して join します。
 pub(crate) struct Workers {
     pub pool: Arc<Pool>,
     threads: Vec<JoinHandle<()>>,
 }
 impl Workers {
+    /// 指定数 `count` のワーカースレッド（各 8 MiB スタック）を起動し、プールを生成します。
     pub(crate) fn new(count: usize) -> std::io::Result<Self> {
         let mut workers = Self {
             pool: Arc::new(Pool {
@@ -75,7 +96,7 @@ impl Workers {
                         }
                         let job = state.job.take().unwrap();
                         drop(state);
-                        // Search jobs catch failures and signal the owning session.
+                        // ジョブ内のパニックなどはジョブ側で捕捉して探索セッションへ通知します。
                         job();
                         worker.busy.store(false, Ordering::Release);
                     }
@@ -101,6 +122,7 @@ impl Drop for Workers {
     }
 }
 impl Pool {
+    /// 空いているワーカーまたは待機中の祖先スレッドが存在するかを、ロックなしで概算判定します。
     pub(crate) fn can_offer(&self, ancestors: &[Arc<Helper>]) -> bool {
         self.mailboxes
             .iter()
@@ -109,6 +131,8 @@ impl Pool {
                 .iter()
                 .any(|h| h.available.load(Ordering::Relaxed))
     }
+    /// ジョブの実行を試みます。まず最も近い待機中の祖先（`ancestors` の末尾側）へ渡し、
+    /// 受け手がいなければ空いているワーカーメールボックスへ渡します。すべて埋まっていれば `Err(job)` を返します。
     pub(crate) fn offer(&self, mut job: Job, ancestors: &[Arc<Helper>]) -> Result<Dispatch, Job> {
         for ancestor in ancestors.iter().rev() {
             match ancestor.offer(job) {
@@ -135,20 +159,23 @@ impl Pool {
         Err(job)
     }
 }
+/// 待機中の祖先ヘルパーの内部状態です。
 struct HelpState {
     waiting: bool,
     job: Option<Job>,
     closed: bool,
 }
-// Its flag is polled by every thread looking for idle helpers; the alignment
-// keeps the reference counts of its many `Arc` clones off that line.
+// 空きワーカーを探す全スレッドが `available` をポーリングするため、128 バイト境界に揃えて
+// `Arc` の参照カウントと同じキャッシュラインに乗らないようにしています。
 #[repr(align(128))]
+/// 子タスクの完了を待つ間、自身をヘルパースレッドとして子孫ジョブを受け入れるための同期プリミティブです。
 pub(crate) struct Helper {
     available: AtomicBool,
     state: Mutex<HelpState>,
     ready: Condvar,
 }
 impl Helper {
+    /// 初期状態（未待機・ジョブなし）の [`Helper`] を生成します。
     pub(crate) fn new() -> Self {
         Self {
             available: AtomicBool::new(false),
@@ -160,6 +187,7 @@ impl Helper {
             ready: Condvar::new(),
         }
     }
+    /// 待機中の祖先へジョブを引き渡します。受け入れできない場合は `Err(job)` を返します。
     fn offer(&self, job: Job) -> Result<(), Job> {
         if !self.available.load(Ordering::Acquire) {
             return Err(job);
@@ -175,12 +203,14 @@ impl Helper {
             Err(job)
         }
     }
+    /// 待機中のスレッドに完了または状態変化を通知して起こします。
     pub(crate) fn wake(&self) {
-        // Under the lock: `wait` checks completion and starts waiting while
-        // holding it, so the notification cannot fall between the two.
+        // ロック下で通知します。`wait` はロックを保持したまま `complete()` を確認して待機に入るため、
+        // 確認と待機開始のあいだに通知が取りこぼされる（lost wakeup）のを防ぐためです。
         let _state = lock(&self.state);
         self.ready.notify_all();
     }
+    /// `complete()` が真を返すまで待機し、その間に渡された子孫ジョブがあれば実行します。
     pub(crate) fn wait(&self, complete: impl Fn() -> bool) {
         loop {
             let mut state = lock(&self.state);
@@ -229,7 +259,7 @@ mod tests {
                 Err(back) => job = back,
             }
             if std::time::Instant::now() > deadline {
-                // Always release the waiter before reporting a scheduling failure.
+                // スケジューリング失敗を報告する前に、待機中のスレッドを必ず解放します。
                 let mut state = lock(&helper.state);
                 state.job = Some(job);
                 helper.ready.notify_all();

@@ -1,8 +1,8 @@
-//! モデル等の説明と生成実行の一覧。work/playの両方に残す。
+//! 使用した評価モデル・エンジンの情報（[`AnalysisProfile`]）と、Book 生成の実行履歴（[`GenerationRun`]）を管理するモジュール。
 //!
-//! AnalysisProfileは識別値に付ける説明、GenerationRunは一回のgenerate呼出しの記録。
-//! 局面・手に付く実際の探索条件はvalues.rsのCompletedSearchが持ち、ここへ集約しない。
-//! 旧ファイルの計算元の関係はlegacy内だけで扱い、この一覧へ保持しない。
+//! どちらの履歴も作業ファイル（`.dbook-work`）と対局用ファイル（`.dbook`）の両方に保存される。
+//! 局面や手ごとの実際の探索条件は `values.rs` の [`CompletedSearch`] が個別に持っており、この一覧には集約しない。
+//! 旧形式ファイルからの変換元の関係は `legacy` モジュール内だけで扱い、ここには残さない。
 use super::*;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnalysisProfile {

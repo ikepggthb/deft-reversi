@@ -1,5 +1,7 @@
-//! The book builder (§24, B3): a work file, growing it from the position
-//! shown until stopped, and linking or unlinking the moves of that position.
+//! Book 作業ファイル（`.dbook-work`）の作成・読み込み・Book 展開・修復・手リンク編集を担うダイアログモジュール。
+//!
+//! 指定局面から停止されるまで（または許容損失内の展開が完了するまで）バックグラウンドで探索を進め、
+//! 10 秒ごとに作業ファイルと対局用 `.dbook` ファイルを保存する。
 use super::{
     format::{action_text, signed},
     root::{Dialog, RootView},
@@ -22,40 +24,48 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Where a book grows from.
+/// Book を展開する起点局面の選択方法。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RootChoice {
-    /// The position on the board.
+    /// 現在盤面に表示中の局面から展開する。
     Current,
-    /// The standard start.
+    /// 通常の初期局面から展開する。
     Initial,
-    /// The end of a record typed in; its moves are linked on the way.
+    /// 入力された棋譜の最終局面から展開する（途中の手順も自動的にリンク登録する）。
     Record,
 }
 
+/// Book 作成ダイアログの UI 状態と共有エディタハンドル。
 pub(super) struct BookWork {
-    /// The `.dbook-work`; None until one is made or opened.
+    /// 対象の `.dbook-work` ファイルパス（新規作成または開くまで `None`）。
     pub path: Option<PathBuf>,
-    /// Shared with a running generation, which holds it until done.
+    /// Book 生成スレッドと共有する作業エディタ（生成中はスレッド側がロックを保持する）。
     pub editor: SharedEditor,
+    /// 探索レベル。
     pub level: u8,
+    /// 初期局面からの最大手数。
     pub max_plies: u8,
+    /// 黒番の許容損失（石差）。
     pub black_loss: u8,
+    /// 白番の許容損失（石差）。
     pub white_loss: u8,
-    /// 0 is no limit.
+    /// 変化に沿った累積損失の上限（0 は無制限）。
     pub cumulative_loss: u16,
+    /// 末端手のリンク登録を許可する最大損失（`None` は無制限）。
     pub leaf_loss: Option<u8>,
-    /// Where the next run grows from.
+    /// 次回実行時の展開起点。
     pub root: RootChoice,
-    /// The record chosen for `RootChoice::Record`.
+    /// `RootChoice::Record` 用に入力された棋譜。
     pub record: Option<History>,
-    /// Whether the running job mends the book rather than grows it.
+    /// 実行中のジョブが展開ではなく修復（`fix`）であるか。
     pub fixing: bool,
-    /// True while a link/unlink edit is being saved in the background.
+    /// 手リンク編集結果をバックグラウンドで保存中であれば `true`。
     pub saving: bool,
-    /// Stops the running generation, and when it began.
+    /// 実行中の Book 生成を停止するためのハンドルと開始時刻。
     pub running: Option<(StopHandle, Instant)>,
+    /// 最新のチェックポイント進捗。
     pub progress: Option<BookProgress>,
+    /// 完了・エラー等の通知メッセージ。
     pub message: Option<SharedString>,
 }
 
@@ -95,7 +105,7 @@ impl BookWork {
         }
     }
 
-    /// A work file opens with the settings it was last grown with.
+    /// 作業ファイルに記録されていた前回の生成パラメータをダイアログ状態へ取り込む。
     fn take_settings(&mut self, settings: &BookSettings) {
         self.level = settings.level;
         self.max_plies = settings.max_plies;
@@ -107,6 +117,7 @@ impl BookWork {
 }
 
 impl RootView {
+    /// 新規 `.dbook-work` ファイルの保存先を選択する。
     pub(super) fn new_book_work(&mut self, cx: &mut Context<Self>) {
         let directory = dirs::document_dir()
             .or_else(dirs::home_dir)
@@ -127,6 +138,7 @@ impl RootView {
         .detach();
     }
 
+    /// 既存の `.dbook-work` ファイルを選択し、バックグラウンドスレッドで読み込む。
     pub(super) fn open_book_work(&mut self, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -168,7 +180,7 @@ impl RootView {
         .detach();
     }
 
-    /// Where the next run grows from, and the moves linked on the way.
+    /// 展開起点局面と、そこに至るまでに事前リンクすべき手順を返す。
     fn book_root(&self) -> Option<(Position, Vec<(Position, Action)>)> {
         match self.book_work.root {
             RootChoice::Current => Some((self.controller.history().current(), Vec::new())),
@@ -186,7 +198,7 @@ impl RootView {
         }
     }
 
-    /// Grows the book, or with `fix` mends it.
+    /// Book の自動展開（`fix == false`）または整合修復（`fix == true`）をバックグラウンドで開始する。
     pub(super) fn start_book(&mut self, fix: bool, cx: &mut Context<Self>) {
         let Some(path) = self.book_work.path.clone() else {
             return;
@@ -233,7 +245,7 @@ impl RootView {
         self.book_work.message = None;
         self.send_engine(EngineCommand::Generate(job));
         self.run(Command::GenerateBook, cx);
-        // The clock goes on between the checkpoints.
+        // チェックポイント間も経過時間表示が止まらないよう、1 秒ごとに再描画をトリガする。
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -251,6 +263,7 @@ impl RootView {
         .detach();
     }
 
+    /// 実行中の Book 生成に停止シグナルを送る。
     pub(super) fn stop_book(&mut self, cx: &mut Context<Self>) {
         if let Some((stop, _)) = &self.book_work.running {
             stop.stop();
@@ -258,11 +271,12 @@ impl RootView {
         cx.notify();
     }
 
+    /// Book 生成のチェックポイント進捗を更新する。
     pub(super) fn on_book_progress(&mut self, progress: BookProgress) {
         self.book_work.progress = Some(progress);
     }
 
-    /// The play book is read again from what the generation wrote.
+    /// Book 生成・修復の完了を受け、対局用 `.dbook` を再読み込みして完了メッセージを表示する。
     pub(super) fn on_book_done(&mut self, done: Result<BookDone, String>, cx: &mut Context<Self>) {
         let s = self.settings.lang.strings();
         self.book_work.running = None;
@@ -285,8 +299,7 @@ impl RootView {
         }
     }
 
-    /// Links or unlinks a move of the position shown, then saves the work
-    /// and the play book in the background.
+    /// 現在表示中の局面における指定手のリンク登録・解除を行い、作業ファイルと対局用ブックをバックグラウンド保存する。
     fn set_link(&mut self, action: Action, link: bool, cx: &mut Context<Self>) {
         if self.book_work.running.is_some() || self.book_work.saving {
             return;
@@ -353,19 +366,20 @@ impl RootView {
         .detach();
     }
 
+    /// Book 作成モーダルダイアログを描画する。
     pub(super) fn render_book_work(&self, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let work = &self.book_work;
         let running = work.running.is_some();
         let position = self.controller.history().current();
-        // A running generation holds the editor.
+        // 生成スレッドが BookEditor のロックを保持している間は try_lock が失敗し None となる。
         let slot = work.editor.try_lock().ok();
         let editor = slot.as_ref().and_then(|slot| slot.as_ref());
 
         let row = |label: &'static str, control: Div, note: Option<SharedString>| {
             widgets::form_row(130., label, control, note)
         };
-        // Settings change only between runs.
+        // 生成設定は停止中のみ編集可能とする。
         let edit = |f: fn(&mut BookWork)| -> Handler {
             widgets::handler(move |this, _| {
                 if this.book_work.running.is_none() {
@@ -426,7 +440,7 @@ impl RootView {
                     return;
                 }
                 this.book_work.root = choice;
-                // A record is typed in the first time it is chosen.
+                // 「棋譜から」を初めて選んだときは、そのまま棋譜入力ダイアログを開く。
                 if choice == RootChoice::Record && this.book_work.record.is_none() {
                     this.enter_book_record(cx);
                 }
@@ -453,7 +467,7 @@ impl RootView {
             ],
             cx,
         );
-        // The record chosen: its moves, cut short, and a way to change it.
+        // 選択中の棋譜（手順の抜粋と手数）および再入力リンクを表示する。
         let record = (work.root == RootChoice::Record).then(|| {
             let text = work
                 .record
@@ -542,8 +556,7 @@ impl RootView {
             edit(|w| w.cumulative_loss = (w.cumulative_loss + 1).min(64)),
             cx,
         );
-        // Below the one-move losses; at them it changes nothing, so it reads
-        // as no limit.
+        // 1 手あたりの許容損失より小さい値にしたときだけ意味があるため、上限に達したら「無制限」として扱う。
         let leaf = widgets::stepper(
             "book-leaf",
             work.leaf_loss
@@ -594,7 +607,7 @@ impl RootView {
             )
             .when(!can_fix, |el| el.opacity(0.4))
         });
-        // Positions come at each save; the clock runs on its own.
+        // 局面数は 10 秒ごとの保存時に更新されるため、経過時間だけは独立したタイマーで毎秒進める。
         let elapsed = work
             .running
             .as_ref()
@@ -625,7 +638,7 @@ impl RootView {
             }))
             .children(progress.map(|p| div().text_color(theme::text_secondary()).child(p)));
 
-        // The moves of the position shown, with what the work knows of them.
+        // 現在表示中の局面について、作業ブックに登録済みの候補手とリンク状態を表示する。
         let moves: Div = match editor {
             _ if running => caption(s.book_generating),
             _ if work.saving => caption(s.book_loading),
@@ -754,6 +767,7 @@ impl RootView {
             ))
     }
 
+    /// Book 作成ダイアログを開く。
     pub(super) fn open_book_work_dialog(&mut self, cx: &mut Context<Self>) {
         self.open_dialog(Dialog::BookWork, cx);
     }

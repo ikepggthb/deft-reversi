@@ -1,8 +1,10 @@
-//! Transient priority indexes; persisted ordinary queues remain authoritative.
+//! Book 生成時に「次にどの局面を探索するか」を決める一時的な優先度インデックス。
 //!
-//! 優先順位は「次にどの探索をするか」だけを変える。登録してよいかの判定はしない。
-//! 元のfresh/deepenから作る補助索引を持ち、局面値の変更で順位を計算し直す。
-//! generate::GenerationState::popが16回に1回は通常順へ戻し、偏りを抑える。
+//! 永続化される通常キュー（`fresh` / `deepen`）が引き続き正式なデータであり、
+//! このインデックスは優先順位を付け替えるだけの補助構造（保存ファイルには残さない）。
+//! 登録してよいかどうかの判定は行わない。
+//! 局面の評価値が変わると順位を計算し直し、さらに `generate::GenerationState::pop` が
+//! 16 回に 1 回は通常の幅優先順へ戻すことで、特定の枝ばかりに偏るのを防ぐ。
 use super::generate::{Context, GenerationState};
 use super::*;
 use std::{
@@ -10,15 +12,21 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
+/// Book 生成時の探索ジョブ選択ポリシー。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SchedulePolicy {
+    /// 幅優先（通常のキュー順）。
     #[default]
     Breadth,
+    /// 有望な枝・誤差の大きい局面を優先する。
     Promising,
 }
-// Smaller means more urgent: promising incoming/frontier loss, larger backup
-// disagreement, then weaker frontier depth/selectivity. Distance breaks ties.
+// Rank はタプルの値が小さいほど優先度が高い：
+// 1. 有望な流入損失 ＋ フロンティア（未登録の末端候補）の損失が小さいもの
+// 2. 直接評価と子からのバックアップ評価の乖離が大きいもの（再探索の優先度が高い）
+// 3. フロンティアの深さが浅いもの・選択率が低いもの（より精密に調べ直す余地が大きい）
+// 同率の場合は距離などで比較する。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct Rank(u16, Reverse<u16>, u8, u8);
 #[derive(Clone, Debug, Default)]
@@ -68,7 +76,7 @@ impl PriorityIndex {
     }
     fn refresh(&mut self, editor: &BookEditor, state: &GenerationState) {
         let mut dirty = std::mem::take(&mut self.dirty);
-        // A parent's changed scores also change each child's incoming loss.
+        // 親局面のスコア変化は、子局面への流入損失も変化させる。
         for c in dirty.clone() {
             for e in editor.nodes[&c.key].edges.iter().filter(|e| e.registered) {
                 let child = Context {

@@ -1,6 +1,8 @@
-//! The position editor (§9.1): the AI column gives way, the left column
-//! holds the tools, and the board takes painted discs. The game waits
-//! untouched until the edit is started or cancelled.
+//! 局面エディタ（盤面編集モード）の UI と状態管理を担うモジュール。
+//!
+//! 編集中は右カラムの AI パネルを隠し、左カラムに石配置ツールを、中央に編集用盤面を表示する。
+//! 編集内容は下書き（[`EditorDraft`]）に隔離され、「ここから開始」または「キャンセル」まで
+//! 本体の対局状態には影響しない。
 use super::{
     analysis_panel::disc,
     board::{LABEL, labeled_board},
@@ -17,17 +19,22 @@ use gpui::{
     SharedString, div, prelude::*, px,
 };
 
+/// 局面エディタ開扉中の一時状態。
 pub(super) struct EditorState {
+    /// 編集中の盤面下書き。
     pub draft: EditorDraft,
+    /// 現在選択中のペン（黒・白・消去）。
     pub pen: Pen,
-    /// What a drag paints while a button is held.
+    /// マウスドラッグ中に連続適用しているペン。
     painting: Option<Pen>,
-    /// Analysis mode comes back on cancel.
+    /// エディタを開く前に解析モードが有効だったか（キャンセル時に復元するため保持）。
     was_analyzing: bool,
+    /// 貼り付け失敗などの一時通知メッセージ。
     notice: Option<SharedString>,
 }
 
 impl RootView {
+    /// 現在の表示局面を初期値として局面エディタを開く。
     pub(super) fn open_editor(&mut self, cx: &mut Context<Self>) {
         if self.editor.is_some() {
             return;
@@ -49,6 +56,7 @@ impl RootView {
         cx.notify();
     }
 
+    /// 局面エディタを破棄して元の対局へ戻る（開く前に解析モードだった場合は再開する）。
     pub(super) fn cancel_editor(&mut self, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.take()
             && editor.was_analyzing
@@ -58,7 +66,7 @@ impl RootView {
         cx.notify();
     }
 
-    /// A new game from the draft, with the players last chosen for a game.
+    /// 下書き局面から、直近の新規対局設定のプレイヤー構成で新しい対局を開始する。
     fn start_from_draft(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.editor.take() else {
             return;
@@ -80,6 +88,7 @@ impl RootView {
         }
     }
 
+    /// エディタ上部のタイトルおよび「キャンセル」「ここから開始」バーを描画する。
     pub(super) fn render_editor_bar(&self, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         div()
@@ -103,6 +112,7 @@ impl RootView {
             ))
     }
 
+    /// 左カラムのペン選択・手番切替・初期化・石数・注意点表示を描画する。
     pub(super) fn render_editor_tools(&self, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let Some(editor) = &self.editor else {
@@ -243,15 +253,16 @@ impl RootView {
             }))
     }
 
+    /// ドラッグ配置・右クリック消去・テキストコピー/貼り付けを備えた編集用盤面を描画する。
     pub(super) fn render_editor_board(&self, cell: Pixels, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let Some(editor) = &self.editor else {
             return div();
         };
         let position = editor.draft.position();
-        // The side to move's moves, so a forced pass shows before starting.
+        // 開始前に強制パス状態を確認できるよう、現在手番側の合法手ドットを表示する。
         let legal = position.legal_moves();
-        // Turned as the game's board is, with the labels following.
+        // 通常の対局盤面と同じ回転・反転向きで表示する。
         let view = self.settings.board_view;
         let rows = (0..8u8).map(|y| {
             let squares = (0..8u8).map(|x| {
@@ -302,7 +313,7 @@ impl RootView {
                                     cx.notify();
                                 }
                             }
-                            // The button came up outside the board.
+                            // 盤面の外でマウスボタンが離された場合もドラッグ状態を解除する。
                             (None, Some(_)) => this.edit(|e| e.painting = None),
                             _ => {}
                         }

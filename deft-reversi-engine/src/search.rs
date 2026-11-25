@@ -1,3 +1,5 @@
+//! 探索エンジン本体（[`Engine`]）と、反復深化スケジューラ・置換表からのウォームスタート・PV（最善応手列）復元を制御するモジュールです。
+
 use crate::{
     Action, Board, Model, Square,
     evaluation::{EvalState, PatternModel},
@@ -27,8 +29,8 @@ mod root;
 mod tree;
 mod ybwc;
 
-/// Owns the model, the transposition tables and the worker threads. One
-/// search runs at a time; `EngineWorker` runs them on a thread of its own.
+/// 評価モデル・置換表（TT）・ワーカースレッドプールを所有する探索エンジンです。
+/// 1 インスタンスにつき同時に 1 つの探索を実行できます（非同期実行には [`EngineWorker`](crate::EngineWorker) を使います）。
 pub struct Engine {
     model: Arc<PatternModel>,
     table: Arc<Table>,
@@ -39,10 +41,11 @@ pub struct Engine {
     calibration: Arc<[Option<ProbCutRule>]>,
     sigmas: ProbCutSigmas,
     end_cache: EndgameCache,
-    /// Tags the local endgame caches that are valid for the current state.
+    /// 現在のモデル・較正・置換表状態に対して有効なローカル終盤キャッシュを識別するエポック番号です。
     cache_epoch: u64,
 }
 impl Engine {
+    /// 指定されたモデルとオプション（スレッド数・置換表サイズ）で [`Engine`] を構築します。
     pub fn new(model: Model, options: EngineOptions) -> Result<Self, EngineError> {
         if options.threads == 0 || options.threads > 256 {
             return Err(EngineError::InvalidOptions("threads must be 1..=256"));
@@ -63,9 +66,8 @@ impl Engine {
             cache_epoch: new_cache_epoch(),
         })
     }
-    /// Independent search state sharing immutable model/calibration weights.
-    /// Tables and workers obey the supplied budgets and are not duplicated
-    /// from the source. Useful for a bounded pool of independent batch jobs.
+    /// 不変な評価モデル・ProbCut 較正データを共有しつつ、独立した置換表とワーカースレッドを持つ
+    /// 新しい [`Engine`] インスタンスを複製します。バッチ処理用に独立したワーカープールを構築したい場合に便利です。
     pub fn fork(&self, options: EngineOptions) -> Result<Self, EngineError> {
         if options.threads == 0 || options.threads > 256 {
             return Err(EngineError::InvalidOptions("threads must be 1..=256"));
@@ -84,8 +86,8 @@ impl Engine {
             cache_epoch: new_cache_epoch(),
         })
     }
-    /// Reconfigure idle search resources. Existing tables survive unchanged
-    /// sizes; changing worker count joins old workers before creating new ones.
+    /// 待機中のエンジンのスレッド数と置換表サイズを再構成します。
+    /// 置換表サイズが変わらない場合は既存のテーブルを保持し、スレッド数変更時は旧ワーカーを join してから再生成します。
     pub fn set_resources(&mut self, options: EngineOptions) -> Result<(), EngineError> {
         if options.threads == 0 || options.threads > 256 {
             return Err(EngineError::InvalidOptions("threads must be 1..=256"));
@@ -103,26 +105,25 @@ impl Engine {
         self.options = options;
         Ok(())
     }
+    /// 現在の [`EngineOptions`] を返します。
     pub fn options(&self) -> EngineOptions {
         self.options
     }
-    /// Replaces the model and its ProbCut calibration, and clears every table.
+    /// 評価モデルと ProbCut 較正データを差し替え、すべての置換表をクリアします。
     pub fn set_model(&mut self, model: Model) -> Result<(), EngineError> {
         let (rules, sigmas) = split_calibration(model.calibration);
         self.set_rules(rules, sigmas)?;
         self.model = Arc::new(model.pattern);
         Ok(())
     }
-    /// Forgets every searched position, for example before a new game.
+    /// すべての置換表とローカル終盤キャッシュをクリアします（新規対局の開始時など）。
     pub fn clear_tt(&mut self) -> Result<(), EngineError> {
         (self.table, self.pv_table) = new_tables(self.options.tt_mib)?;
         self.invalidate_end_caches();
         Ok(())
     }
-    /// Resolves the requested depth/mode and selectivity without searching.
-    /// A plan is a target, not evidence that a search completed or solved a game.
-    /// This validates the goal but does not require MPC calibration; calibration
-    /// is checked when an actual selective search is requested.
+    /// 探索を実行せずに、指定局面とリクエストが解決する目標深さ・モード・選択率を返します。
+    /// ここでの検証はリクエストの妥当性だけを確認し、MPC 較正の有無は実際の選択探索開始時に検査します。
     pub fn search_plan(
         &self,
         position: impl Into<Board>,
@@ -139,7 +140,7 @@ impl Engine {
             },
         })
     }
-    /// Searches `position`, blocking the calling thread.
+    /// 呼び出し元スレッドをブロックして `position` を探索します。
     pub fn search(
         &mut self,
         position: impl Into<Board>,
@@ -147,8 +148,7 @@ impl Engine {
     ) -> Result<SearchResult, EngineError> {
         self.search_with(position, request, |_| {})
     }
-    /// Like `search`, calling `on_progress` after every completed iteration
-    /// on the calling thread.
+    /// `search` と同様ですが、反復深化の各段階が終わるたびに呼び出し元スレッド上で `on_progress` を呼び出します。
     pub fn search_with(
         &mut self,
         position: impl Into<Board>,
@@ -163,18 +163,17 @@ impl Engine {
         }
         self.run(job, &mut on_progress)
     }
-    /// Use the MPC table from the legacy main-branch evaluator. This is an
-    /// explicit opt-in for models converted from main's `data/eval/eval.json`.
+    /// 旧メインブランチ互換の MPC テーブルをインストールします（`data/eval/eval.json` 変換モデル用の明示的オプトインです）。
     #[cfg(feature = "tuning")]
     pub fn set_legacy_main_mpc(&mut self) -> Result<(), EngineError> {
         self.set_rules(crate::mpc::legacy_main_rules(), ProbCutSigmas::NORMAL)
     }
-    /// Installs ProbCut rules with the normal deviation multiples.
+    /// 正規分布の偏差倍率で ProbCut ルールをインストールします。
     #[cfg(feature = "tuning")]
     pub fn set_probcut_rules(&mut self, rules: Vec<ProbCutRule>) -> Result<(), EngineError> {
         self.set_probcut_calibration(rules, ProbCutSigmas::NORMAL)
     }
-    /// Installs ProbCut rules with measured deviation multiples per stage.
+    /// 実測した各ステージの偏差倍率と合わせて ProbCut ルールをインストールします。
     #[cfg(feature = "tuning")]
     pub fn set_probcut_calibration(
         &mut self,
@@ -184,8 +183,7 @@ impl Engine {
         validate_calibration(&rules, &sigmas)?;
         self.set_rules(rules, sigmas)
     }
-    /// Installs new ProbCut rules. Every cached result depends on them, so
-    /// the tables are replaced first; on failure nothing changes.
+    /// 新しい ProbCut ルールを適用します。既存のキャッシュ結果は旧ルールに依存しているため、先に置換表をクリアします。
     fn set_rules(
         &mut self,
         rules: Vec<ProbCutRule>,
@@ -196,13 +194,12 @@ impl Engine {
         self.sigmas = sigmas;
         Ok(())
     }
-    /// Drops the main thread's local endgame cache and, through a new epoch,
-    /// every worker's.
+    /// メインスレッドのローカル終盤キャッシュを破棄し、新しいエポック番号を発行して全ワーカーのキャッシュも無効化します。
     fn invalidate_end_caches(&mut self) {
         self.end_cache.clear();
         self.cache_epoch = new_cache_epoch();
     }
-    /// Checks a request and resolves its goal against the root position.
+    /// リクエストを検証し、ルート局面に対する実行ジョブ [`Job`] へ解決します。
     fn resolve(&self, board: Board, request: &SearchRequest) -> Result<Job, EngineError> {
         let (mode, selectivity, level) = match request.goal {
             Goal::Depth(depth) if depth > 60 => {
@@ -285,12 +282,13 @@ impl Engine {
             stop: request.stop.clone(),
         })
     }
+    /// 探索ドライバー本体です（反復深化・PV 復元・全手評価を実行します）。
     fn run(
         &mut self,
         job: Job,
         on_progress: &mut dyn FnMut(&Progress),
     ) -> Result<SearchResult, EngineError> {
-        // The reference handles a forced root pass before starting its driver.
+        // ルート局面が強制パスの場合は、探索ドライバーを起動する前に 1 手パスした局面へ委譲して結果を反転します。
         if job.board.must_pass() {
             let pass_start = Instant::now();
             let all_moves = job.all_moves;
@@ -340,9 +338,9 @@ impl Engine {
             result.elapsed = pass_start.elapsed();
             return Ok(result);
         }
-        // Entries carry their stage (`quality`) and exact mode, and a cut
-        // uses only an entry from the same stage, so searches at other
-        // stages keep the tables; a calibration change clears them.
+        // 各 TT エントリは自身の品質タグ (`quality`) と完全読みモードを保持しており、
+        // 同一条件のエントリだけが枝刈りに使われます。そのため異なるステージ間でも置換表をクリアせずに維持できます
+        // （較正パラメータが変更された場合だけクリアします）。
         self.generation = self.generation.wrapping_add(1);
         let start = Instant::now();
         let deadline = match job.time_limit {
@@ -374,14 +372,14 @@ impl Engine {
         let mut root = root::RootSearch::new(Position { board, state });
         root.restrict(mask, job.preferred_move);
         let mut context = Context::new(runtime.clone(), Vec::new(), Vec::new());
-        // Owned by the active context; retained by this Engine between requests.
+        // 探索中はこのコンテキストが `end_cache` を所有し、リクエスト終了後に Engine へ戻します。
         context.end_cache = std::mem::take(&mut self.end_cache);
         let mut last = None;
         let plan = self.plan(&job);
         let warm = self.warm_start(&job, mask, &plan);
         let (skip, mut prediction) = if let Some((skip, square, score)) = warm {
-            // If time expires in the first uncached iteration, the compatible
-            // cached move is a better fallback than the lowest legal square.
+            // キャッシュされていない最初の反復中に時間切れになった場合、
+            // 最小合法マスよりも互換性のあるキャッシュ済みの手のほうがよい暫定手になります。
             result.best_move = Some(Action::Place(square));
             root.restrict(mask, Some(square));
             context.stats.reused_iterations += skip as u64;
@@ -421,7 +419,7 @@ impl Engine {
             }
             prediction = line.score;
             last = Some(iteration);
-            // Helpers merge their counters when they finish.
+            // ヘルパースレッドは完了時に自身のカウンタを合算します。
             runtime.drain();
             on_progress(&Progress {
                 kind: result.kind.unwrap(),
@@ -435,8 +433,8 @@ impl Engine {
             });
         }
         runtime.drain();
-        // Full TT cutoffs return scores without a recursion-built PV. Recover
-        // the line separately, verifying each suggested move against the value.
+        // 置換表で枝刈り（カットオフ）が起きたときは再帰によって PV が構築されないため、
+        // 確定スコアと一致する手を置換表や再探索から個別に辿って PV を復元します。
         if !job.skip_pv_recovery
             && !result.score_is_upper_bound
             && !context.aborted()
@@ -521,6 +519,8 @@ impl Engine {
         result.elapsed = start.elapsed();
         Ok(result)
     }
+    /// 置換表に互換性のある完了済みイテレーションの結果があれば、初期の反復をスキップして
+    /// 最善手と予測スコアをウォームスタートとして再利用します。
     fn warm_start(&self, job: &Job, mask: u64, plan: &[Iteration]) -> Option<(usize, Square, i32)> {
         if !job.reuse_pv || plan.len() < 2 {
             return None;
@@ -533,8 +533,8 @@ impl Engine {
                 if mask & best.bit() == 0 || entry.lower != entry.upper {
                     return None;
                 }
-                // Only skip iterations of the same search mode and MPC stage.
-                // Retain the target iteration even for a matching deeper entry.
+                // 同じ探索モードかつ同じ MPC ステージのイテレーションだけをスキップ対象とし、
+                // より深い一致エントリがあっても目標（最終）イテレーション自体は必ず残します。
                 let index = plan[..plan.len() - 1].iter().rposition(|iteration| {
                     entry.exact_mode == iteration.exact
                         && entry.quality == iteration.selectivity.quality()
@@ -564,12 +564,12 @@ impl Engine {
             pending_ready: Padded(std::sync::Condvar::new()),
             parallel: self.options.threads > 1,
             split_empties: tree::split_empties(self.options.threads),
-            // Each iteration sets its own stage before it starts.
+            // 各イテレーションが開始前に自身の選択率ステージを設定します。
             quality: AtomicU8::new(0),
             rules: self.calibration.clone(),
             sigmas: self.sigmas,
-            // The timed ladder treats selective stages as level goals, using
-            // their own ProbCut range. A fixed exact search uses them as preparation.
+            // 時間制限付きレベル（timed_levels）では、選択ステージをそれ自体が目標レベルとして扱い
+            // 通常の ProbCut 範囲を使います。固定の完全読み探索では準備段階として扱います。
             cache_epoch: self.cache_epoch,
             endgame_probcut_min: if job.mode == SearchMode::Exact && !job.timed_levels {
                 endgame::EXACT_PREPARATION_PROBCUT_MIN
@@ -578,8 +578,7 @@ impl Engine {
             },
         })
     }
-    /// The iterative deepening schedule: evaluation iterations, then for
-    /// endgame requests the selective stages and the final solve.
+    /// 反復深化スケジュール（評価探索のイテレーション群、および終盤要求時は選択ステージ＋最終完全読み）を構築します。
     fn plan(&self, job: &Job) -> Vec<Iteration> {
         let board = job.board;
         if job.timed_levels {
@@ -602,7 +601,7 @@ impl Engine {
         };
         let exact = matches!(job.mode, SearchMode::Exact | SearchMode::SelectiveEndgame);
         let depths = if exact {
-            // Match the reference's endgame preparation depth and two-ply steps.
+            // 参照ソルバーの終盤準備深さと 2 手刻みのステップに合わせます。
             let warmup = target
                 .saturating_sub(8)
                 .clamp(2, 24)
@@ -612,10 +611,9 @@ impl Engine {
         } else {
             iterative_depths(target)
         };
-        // Evaluation iterations use the requested selectivity. Before an
-        // endgame search they only prepare the tables and the move order,
-        // so they run at the least accurate stage, and the endgame then
-        // steps from 85% up to the requested stage.
+        // 評価探索のイテレーションは指定された選択率を使います。
+        // 終盤探索の直前に行う場合は置換表と着手順序の準備だけが目的のため、
+        // 最も軽い選択率ステージ（83%）で実行し、その後の終盤探索で 85% から目標ステージまで段階的に上げます。
         let prepare = exact && !self.calibration.is_empty();
         let warmup = if prepare {
             Selectivity::Percent83
@@ -640,7 +638,7 @@ impl Engine {
     }
 }
 
-/// A request resolved against its root position.
+/// ルート局面に対して解決された実行ジョブです。
 struct Job {
     minimum_score: Option<i32>,
     reuse_pv: bool,
@@ -650,8 +648,7 @@ struct Job {
     board: Board,
     mode: SearchMode,
     selectivity: Selectivity,
-    /// The midgame depth of a `Goal::Level` or `Goal::Plan`; it also caps the
-    /// endgame preparation depth.
+    /// `Goal::Level` または `Goal::Plan` で指定された中盤の探索深さです（終盤準備探索の深さ上限も兼ねます）。
     level: Option<u8>,
     time_limit: Option<Duration>,
     timed_levels: bool,
@@ -670,7 +667,7 @@ fn new_tables(tt_mib: usize) -> Result<(Arc<Table>, Arc<Table>), EngineError> {
     Ok((Arc::new(table), Arc::new(pv_table)))
 }
 
-/// The result before any iteration completes: the first legal action, if any.
+/// 最初の反復が完了する前の初期結果です（合法手があれば先頭の合法手を仮の最善手とします）。
 fn initial_result(board: Board) -> SearchResult {
     let moves = board.get_moves();
     let best_move = if moves != 0 {
@@ -696,16 +693,16 @@ fn initial_result(board: Board) -> SearchResult {
     }
 }
 
-/// Whether an iteration searched moves; a depth-0 one only evaluates.
+/// イテレーションが実際に手を探索したかを返します（深さ 0 は静的評価だけを行います）。
 fn searched(kind: ResultKind) -> bool {
     !matches!(kind, ResultKind::Depth { depth: 0, .. })
 }
 
-/// One root iteration of `Engine::search`.
+/// `Engine::search` におけるルート探索の 1 イテレーション分の設定です。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Iteration {
     depth: u8,
-    /// Searches to the end of the game rather than to an evaluation.
+    /// 静的評価ではなく終局まで読み切るかどうかを表します。
     exact: bool,
     selectivity: Selectivity,
 }
@@ -728,7 +725,7 @@ impl Iteration {
             }
         }
     }
-    /// Makes `line`, the completed iteration's result, the search result.
+    /// 完了したイテレーションの結果 `line` を `SearchResult` に反映します。
     fn record(self, result: &mut SearchResult, line: &Line) {
         result.kind = Some(self.kind());
         result.score = Some(line.score);
@@ -736,7 +733,7 @@ impl Iteration {
         if let Some(action) = result.pv.first() {
             result.best_move = Some(*action)
         }
-        // Depth-0 evaluates the position without claiming a searched best move.
+        // 深さ 0 は局面を静的評価するだけなので、探索した最善手順（PV）としては記録しません。
         if self.depth == 0 {
             result.pv.clear();
         }
@@ -761,7 +758,7 @@ fn timed_level_iterations(max_level: u8, empties: u8) -> Vec<Iteration> {
     steps.dedup();
     let endgame_start = steps.partition_point(|step| !step.exact);
     if let Some(&target) = steps[..endgame_start].last() {
-        // Keep the depth at the table's transition, including its parity.
+        // テーブル切り替え時の探索深さとその偶奇（パリティ）をそのまま保ちます。
         steps.splice(
             ..endgame_start,
             iterative_depths(target.depth)
@@ -772,7 +769,7 @@ fn timed_level_iterations(max_level: u8, empties: u8) -> Vec<Iteration> {
     steps
 }
 
-/// Reference solver: begin at 5/6 when possible, retaining target parity.
+/// 目標深さの偶奇を保ったまま、可能であれば深さ 5 または 6 から 2 手刻みで反復深化の深さ列を生成します。
 fn iterative_depths(target: u8) -> Vec<u8> {
     if target <= 1 {
         return vec![target];
@@ -786,10 +783,9 @@ fn split_calibration(c: Option<crate::model::Calibration>) -> (Vec<ProbCutRule>,
     c.map_or((Vec::new(), ProbCutSigmas::NORMAL), |c| (c.rules, c.sigmas))
 }
 
-/// Checks ProbCut rules and multiples the way every installer does: rules
-/// within the board, a shallow depth below the deep one, finite positive
-/// slopes and deviations, no triple twice, and positive non-decreasing
-/// multiples.
+/// ProbCut ルール群と偏差倍率の整合性を検証します。
+/// すべてのルールが盤面範囲内（`empties <= 60`, `shallow_depth < depth`）で、有限かつ正の傾き・偏差を持ち、
+/// `(exact, depth, empties)` の重複がなく、各ステージ倍率が正・有限・単調非減少であることを確認します。
 pub(crate) fn validate_calibration(
     rules: &[ProbCutRule],
     sigmas: &ProbCutSigmas,
@@ -852,9 +848,8 @@ fn indexed_rules(rules: Vec<ProbCutRule>) -> Arc<[Option<ProbCutRule>]> {
     indexed.into()
 }
 
-/// The endgame stage after `current`, which is 85% or above, on the way to
-/// `target`: with fewer than 27 empties the search goes straight to the
-/// target, and with fewer than 30 it does so after 95%.
+/// `current`（85% 以上）の次の終盤選択ステージを返します。
+/// 空き 27 マス未満では即座に `target` へ飛び、30 マス未満では 95% の次に直接 `target` へ進みます。
 fn next_stage(current: Selectivity, target: Selectivity, empties: u8) -> Selectivity {
     let next = current.next();
     if empties < 27 || (empties < 30 && next >= Selectivity::Percent98) {
@@ -865,17 +860,15 @@ fn next_stage(current: Selectivity, target: Selectivity, empties: u8) -> Selecti
 }
 
 impl Engine {
-    /// Writes the evaluation weights, with the pattern embedding networks if
-    /// the model has them, in the DPR2 format (no calibration). With
-    /// `write_analysis_settings`, this identifies analyses that are comparable,
-    /// for example to tag the values stored in an opening book.
+    /// 評価重み（補助ニューラルネットを持つ場合はそれも含みます）を DPR2 形式で書き出します（較正データは含みません）。
+    /// [`write_analysis_settings`](Self::write_analysis_settings) と組み合わせることで、
+    /// Book ファイルなどに記録する解析値の互換性を識別できます。
     pub fn write_evaluation_model(&self, out: impl std::io::Write) -> std::io::Result<()> {
         self.model.write_to(out)
     }
 
-    /// Serialize the effective analysis settings in a stable order.
-    /// Includes the search compatibility revision, compiled evaluation variant,
-    /// and expanded calibration rules.
+    /// 現在の探索セマンティクス設定（互換性リビジョン、コンパイル時評価バリアント、
+    /// 展開済み ProbCut 較正ルール・倍率）を安定した順序でシリアライズします。
     pub fn write_analysis_settings(&self, mut out: impl std::io::Write) -> std::io::Result<()> {
         out.write_all(b"deft-search-semantics")?;
         out.write_all(&SEARCH_SEMANTICS_REVISION.to_le_bytes())?;
@@ -891,7 +884,7 @@ impl Engine {
                 out.write_all(&value.to_bits().to_le_bytes())?;
             }
         }
-        // Normal multiples write nothing, so earlier settings stay the same.
+        // 標準の倍率（ProbCutSigmas::NORMAL）のときは何も書かず、従来の設定バイト列と同じにします。
         if self.sigmas != ProbCutSigmas::NORMAL {
             out.write_all(b"sigmas")?;
             for value in self.sigmas.midgame.iter().chain(&self.sigmas.exact) {

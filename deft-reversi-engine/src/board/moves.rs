@@ -1,17 +1,24 @@
+//! ビット並列演算を使って 8 方向の合法手を一括生成するモジュールです（AVX2 版および汎用版）。
+//!
+//! ## 出典
+//!
+//! AVX2 版は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の合法手生成（奥原俊彦氏の手法）を Rust に移植したものです。
+//! 手法の解説は奥原氏の <http://www.amy.hi-ho.ne.jp/okuhara/bitboard.htm#mobility> にあります。
+
 #[cfg(target_feature = "avx2")]
 pub use avx2::get_moves;
 #[cfg(not(target_feature = "avx2"))]
 pub use generic::get_moves;
 
-// Using AVX2
-// Optimization ideas :
-//    edax-reversi (Richard Delorme, Toshihiko Okuhara)
-//    Edax src               : https://github.com/abulmo/edax-reversi
-//    Explanation by Okuhara : http://www.amy.hi-ho.ne.jp/okuhara/bitboard.htm#mobility
+// AVX2（256 ビット幅の SIMD 命令）を用いた高速な合法手生成です。
 #[cfg(target_feature = "avx2")]
 mod avx2 {
     use std::arch::x86_64::*;
 
+    /// 手番石 `p` と相手石 `o` から合法手のビットマスクを生成します（AVX2 版）。
+    ///
+    /// 4 つの軸（シフト幅 1, 8, 9, 7 の横・縦・両斜め）の正・逆方向を 256 ビットベクトルで並列に処理し、
+    /// Kogge-Stone 法（倍々シフトで連続する相手石を一気に伝播させる手法）で合法手を求めます。
     #[inline(always)]
     pub fn get_moves(p: u64, o: u64) -> u64 {
         unsafe {
@@ -76,6 +83,7 @@ mod avx2 {
 
 #[cfg(not(target_feature = "avx2"))]
 mod generic {
+    /// 手番石 `p` と相手石 `o` から合法手のビットマスクを生成します（汎用スカラー版）。
     #[inline(always)]
     pub fn get_moves(p: u64, o: u64) -> u64 {
         let mut moves: u64;
@@ -89,10 +97,11 @@ mod generic {
         let mut pre9: u64;
         let mut pre8: u64;
 
-        // 水平方向マスク処理用(7,9,1方向)のo
+        // 盤面の左右の端（A 列と H 列）をまたいで隣の行にビットが回り込まないよう、
+        // 横・斜め方向（7, 9, 1）の計算では端の列を除いたマスク `0x7e7e...` を使います。
         let m_o: u64 = o & 0x7e7e7e7e7e7e7e7e_u64;
 
-        // 正方向（左上7、左下9、下8、右1）
+        // 正方向（左上 7、左下 9、下 8、右 1）への伝播です。
         flip7 = m_o & (p << 7);
         flip9 = m_o & (p << 9);
         flip8 = o & (p << 8);
@@ -119,7 +128,7 @@ mod generic {
         moves |= flip9 << 9;
         moves |= flip8 << 8;
 
-        // 逆方向（右下7、右上9、上8、左1）
+        // 逆方向（右下 7、右上 9、上 8、左 1）への伝播です。
         flip7 = m_o & (p >> 7);
         flip9 = m_o & (p >> 9);
         flip8 = o & (p >> 8);
@@ -150,7 +159,7 @@ mod generic {
         moves |= flip8 >> 8;
         moves |= flip1 >> 1;
 
-        // 空きマスでマスク
+        // 相手石を挟める位置のうち、まだ石が置かれていない空きマスだけを残します。
         moves & !(p | o)
     }
 }

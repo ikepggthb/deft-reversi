@@ -1,5 +1,8 @@
-//! Writes that leave either the old file or the new one, never a torn file,
-//! and a backup of the last good version.
+//! 書き込み途中のクラッシュによるファイル破損を防ぎ、直前の正常な状態をバックアップするモジュール。
+//!
+//! ファイルを直接上書きすると、書き込みの途中で電源が落ちたりアプリが異常終了したりした際に
+//! 中途半端な内容でファイルが壊れる恐れがある。このモジュールでは「一時ファイルへ完全に書き出して
+//! ディスクへ同期した後、名前変更で一気に差し替える（アトミック保存）」ことで破損を防ぐ。
 use std::{
     ffi::OsString,
     fs::{self, File},
@@ -9,18 +12,25 @@ use std::{
     time::Duration,
 };
 
+/// ファイル名の末尾に接尾辞（`.tmp`, `.bak`, `.corrupt` 等）を付与したパスを返す。
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name: OsString = path.file_name().unwrap_or_default().into();
     name.push(suffix);
     path.with_file_name(name)
 }
 
+/// 指定ファイルに対応するバックアップファイル（`.bak`）のパスを返す。
 pub fn backup_path(path: &Path) -> PathBuf {
     with_suffix(path, ".bak")
 }
 
-/// Writes a temporary file in the same folder, syncs it, keeps the current
-/// file as `.bak`, and renames the new one over it.
+/// ファイルを壊さないよう安全に上書き保存する。
+///
+/// 1. 同じフォルダに一時ファイル（`.tmp`）を作り、内容を書き込んで `sync_all` でディスクへ確実に反映させる
+/// 2. 既存の本体ファイルがあれば `.bak` へコピーしてバックアップを残す
+/// 3. 一時ファイルを本体ファイル名へリネームして差し替える
+///
+/// リネームは OS レベルで原子的に行われるため、本体ファイルが書きかけの状態で残ることはない。
 pub fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -32,7 +42,7 @@ pub fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         file.sync_all()?;
         drop(file);
         if path.exists() {
-            // A copy, so the file itself is never missing.
+            // リネームではなくコピーで退避することで、本体ファイルが一瞬でも欠損するのを防ぐ。
             fs::copy(path, backup_path(path))?;
         }
         rename_with_retry(&temporary, path)
@@ -43,7 +53,8 @@ pub fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
     result
 }
 
-/// On Windows a virus scanner may hold the target for a moment.
+/// Windows 環境でウイルス対策ソフト等が一時的にファイルをロックしている場合に備え、
+/// `PermissionDenied` 時に指数バックオフで最大 4 回リネームを再試行する。
 fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
     let mut attempt = 0;
     loop {
@@ -58,7 +69,7 @@ fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Reads at most `limit` bytes; a larger file is an error.
+/// 最大 `limit` バイトまでファイルを UTF-8 文字列として読み込む。上限超過時はエラーとする。
 pub fn read(path: &Path, limit: u64) -> io::Result<String> {
     let file = File::open(path)?;
     let mut bytes = Vec::new();
@@ -72,12 +83,16 @@ pub fn read(path: &Path, limit: u64) -> io::Result<String> {
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-/// How a file's contents parsed. `Unsupported` marks a valid file from a newer
-/// version: it must neither fall back to an older backup nor be renamed to
-/// `.corrupt`.
+/// ファイル内容のパース結果。
+///
+/// `Unsupported` は新しいバージョンのアプリが作成した有効なファイルを示し、
+/// 古い `.bak` へのフォールバックや `.corrupt` へのリネームを行わずに保護する。
 pub enum ParseOutcome<T, E> {
+    /// パース成功。
     Ok(T),
+    /// ファイル内容が破損・不正。
     Corrupt(E),
+    /// 未対応の新しいスキーマバージョン。
     Unsupported(E),
 }
 
@@ -90,10 +105,11 @@ impl<T, E> From<Result<T, E>> for ParseOutcome<T, E> {
     }
 }
 
-/// Reads and parses `path`, then its backup. When both fail and the main file
-/// was actually corrupt (not merely unreadable due to a transient I/O error or
-/// an unsupported newer version), it is kept as `.corrupt` so it is not
-/// overwritten, and the first error is returned.
+/// 本体ファイル `path` を読み込み、失敗時は `.bak` へのフォールバックを試みる。
+///
+/// 双方とも失敗し、かつ本体ファイルが実際に破損していた場合（一時的な I/O エラーや
+/// 未対応の新バージョンではない場合）は、上書きを免れるよう `.corrupt` にリネームしてから
+/// 最初のエラーを返す。
 pub fn read_with_backup<T, E>(
     path: &Path,
     limit: u64,

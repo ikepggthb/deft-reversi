@@ -1,10 +1,11 @@
-//! A game as a line of squares, such as `f5d6c3d3c4`: copied out of the
-//! app and typed or pasted back in. Passes are not written; they follow
-//! from the moves.
+//! `f5d6c3d3c4` のような 1 行の着手列文字列と [`History`] を相互変換するモジュール。
+//!
+//! クリップボードへのコピーや貼り付けによる棋譜の受け渡しに使用する。
+//! パスは着手位置の連続から一意に決まるため文字列には含めない。
 use super::{Grouping, History};
 use deft_reversi_engine::{Action, Position, Square};
 
-/// The moves of the whole record, passes left out.
+/// 棋譜全体からパスを除いた着手列を小文字の座標文字列（例: `f5d6c3`）へ変換する。
 pub fn to_text(actions: &[Action]) -> String {
     actions
         .iter()
@@ -15,9 +16,10 @@ pub fn to_text(actions: &[Action]) -> String {
         .collect()
 }
 
-/// A game from the standard start. Anything but letters and digits is
-/// ignored, so spaces and separators may be pasted along. On failure, the
-/// number of the first move that cannot be played.
+/// 初期局面からの棋譜テキストを解析し、[`History`] を構築する。
+///
+/// 英数字以外の文字（空白やハイフン等）は無視されるため、区切り文字を含む文字列もそのまま貼り付けられる。
+/// 不正な手が含まれていた場合は、最初に打てなかった手の 1 始まりの手数を `Err` で返す。
 pub fn parse(text: &str) -> Result<History, usize> {
     let chars: Vec<char> = text
         .chars()

@@ -1,9 +1,13 @@
-//! Text shared by the commands: boards, search kinds, principal variations.
+//! 各コマンドで共通して使う表示用文字列の整形モジュール。
+//!
+//! 盤面図、手番、探索種別、PV（予想手順）、評価値、ノード数、経過時間、停止理由を整形する。
+
 use deft_reversi_engine::{
     Action, Color, Position, Progress, ResultKind, SearchResult, Selectivity, Square, StopReason,
 };
 use std::time::Duration;
 
+/// 現在の盤面と合法手（`*`）を A1〜H8 の座標付き ASCII 文字列に整形する。
 pub fn board(position: Position) -> String {
     let moves = position.legal_moves();
     let mut out = String::from("  A B C D E F G H\n");
@@ -28,6 +32,7 @@ pub fn board(position: Position) -> String {
     out
 }
 
+/// 手番の色を石記号付きの文字列（`Black (X)` または `White (O)`）で返す。
 pub fn color(color: Color) -> &'static str {
     match color {
         Color::Black => "Black (X)",
@@ -35,7 +40,9 @@ pub fn color(color: Color) -> &'static str {
     }
 }
 
-/// `d12`, `d12@95%`, `exact` or `end@95%`.
+/// 探索結果の種類（深さと選択率）を `d12`、`d12@95%`、`exact`、`end@95%` の形式で返す。
+///
+/// 選択率（MPC＝Multi-ProbCut の信頼度）が 100% の終盤探索は `exact`（完全読み）になる。
 pub fn kind(kind: Option<ResultKind>) -> String {
     let percent = |s: Selectivity| match s {
         Selectivity::Full => String::new(),
@@ -53,6 +60,7 @@ pub fn kind(kind: Option<ResultKind>) -> String {
     }
 }
 
+/// PV（Principal Variation＝双方最善を仮定した予想手順）を空白区切りの文字列にする。
 pub fn pv(pv: &[Action]) -> String {
     pv.iter()
         .map(Action::to_string)
@@ -60,6 +68,7 @@ pub fn pv(pv: &[Action]) -> String {
         .join(" ")
 }
 
+/// PV の先頭 `limit` 手だけを取り出し、残りの手がある場合は末尾に ` ...` を付ける。
 pub fn pv_prefix(line: &[Action], limit: usize) -> String {
     let mut preview = pv(&line[..line.len().min(limit)]);
     if line.len() > limit {
@@ -68,14 +77,17 @@ pub fn pv_prefix(line: &[Action], limit: usize) -> String {
     preview
 }
 
+/// 着手（またはパス）を文字列にする。`None` のときは `-` を返す。
 pub fn action(action: Option<Action>) -> String {
     action.map_or_else(|| "-".into(), |a| a.to_string())
 }
 
+/// 評価値（石差）を符号付き文字列にする。`None` のときは `?` を返す。
 pub fn score(score: Option<i32>) -> String {
     score.map_or_else(|| "?".into(), |s| format!("{s:+}"))
 }
 
+/// 探索ノード数を読みやすい単位（`12.3M`、`1.23G` など）に整形する。
 pub fn nodes(nodes: u64) -> String {
     match nodes {
         0..1_000_000 => nodes.to_string(),
@@ -84,7 +96,7 @@ pub fn nodes(nodes: u64) -> String {
     }
 }
 
-/// hh:mm:ss.mmm
+/// 経過時間を `hh:mm:ss.mmm` 形式の文字列にする。
 pub fn duration(d: Duration) -> String {
     let s = d.as_secs();
     format!(
@@ -96,6 +108,7 @@ pub fn duration(d: Duration) -> String {
     )
 }
 
+/// 反復深化の途中経過 1 回分を 1 行の表示文字列に整形する。
 pub fn progress(p: &Progress) -> String {
     format!(
         "  {:<8} {:>4}  {:>8} nodes  {:>7.2}s  pv {}",
@@ -107,6 +120,7 @@ pub fn progress(p: &Progress) -> String {
     )
 }
 
+/// 探索が通常完了以外で止まった場合に、行末へ添える注記文字列を返す。
 pub fn stop_note(result: &SearchResult) -> &'static str {
     match result.stop_reason {
         StopReason::Completed => "",

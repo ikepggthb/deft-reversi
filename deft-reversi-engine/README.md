@@ -4,10 +4,14 @@
 
 実装・元モデル直接読込・実データ照合・通常/並列ストレステストを用意しています。検証件数や測定結果は各時点のレポートを参照してください。ビルドにはルートの `rust-toolchain.toml` と `Cargo.lock` を使います。
 
+## 出典
+
+一部のモジュールは [Edax](https://github.com/abulmo/edax-reversi)（GPL-3.0）と [Egaroucid](https://github.com/Nyanyan/Egaroucid)（GPL-3.0-or-later）のコードを Rust に移植したものです。移植した箇所は各ソースファイルの先頭の「出典」に、一覧はルートの [README](../README.md#謝辞と出典) にあります。
+
 ## 構成
 
 - `board`: 非公開のビットボードと検証付き着手。内部探索は合法手と反転ビットを再利用。
-- `evaluation`: 11パターン×4回転、60フェーズ、合法手数差、バイアス。両手番の特徴量を差分更新。モデルがパターン埋め込みネット（PEN、`evaluation/pen.rs`）を持つときは、その出力を線形の和に足す（[PEN の測定](../docs/benchmarks/2026-11-06-pen/README.md)）。
+- `evaluation`: 11パターン×4回転、60フェーズ、合法手数差、バイアス。両手番の特徴量を差分更新。モデルがパターン埋め込みネット（PEN、`evaluation/pen.rs`）を持つときは、その出力を線形の和に足す（[PEN の測定](https://github.com/ikepggthb/deft-reversi-notes/blob/main/evaluation-model/2026-11-06-pen/README.md)）。
 - `position`: 手番の色を持つ局面と、その文字列形式。
 - `worker`: 探索を別スレッドで動かす `EngineWorker`。
 - `search/api`: 要求・結果・進捗・停止・統計・エラー。
@@ -16,7 +20,7 @@
 - `mpc`: 旧 main の ProbCut 規則（旧 main から変換したモデル用）。
 - `search/root`: ルート候補ごとの境界、アスピレーションの安定化、最善手順の継承。
 - `search/level`: レベルごとの深さ・選択率・終盤への移行。
-- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。中盤のヌルウィンドウ探索は、残り4手未満で TT を使わず（評価値と着手可能数で手順付け）、残り3手未満で手順付けもしない（旧 main の `SWITCH_SIMPLE_SEARCH_LEVEL`・`SWITCH_NEGAALPHA_SEARCH_LEVEL` と同じ仕組みで、深さは PEN のモデルで測って決めた。[PEN に合わせた調整](../docs/benchmarks/2026-11-06-pen-tuning/README.md)）。MPC の浅い探索は、MPC を使わない中盤探索である。MPC はゼロ窓のノードだけで試す（Edax と同じ。[終盤 MPC の悪手の調査](../docs/benchmarks/2026-11-05-endgame-mpc-quality/README.md)）。MPC の判定は、静的評価から規則で予測した値が境界から離れすぎていれば浅い探索を省く（上側は中盤8石・終盤2石、下側は4石。[中盤探索の高速化](../docs/benchmarks/2026-11-03-midgame-speed/README.md)、[PEN に合わせた調整](../docs/benchmarks/2026-11-06-pen-tuning/README.md)）。
+- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。中盤のヌルウィンドウ探索は、残り4手未満で TT を使わず（評価値と着手可能数で手順付け）、残り3手未満で手順付けもしない（旧 main の `SWITCH_SIMPLE_SEARCH_LEVEL`・`SWITCH_NEGAALPHA_SEARCH_LEVEL` と同じ仕組みで、深さは PEN のモデルで測って決めた。[PEN に合わせた調整](https://github.com/ikepggthb/deft-reversi-notes/blob/main/evaluation-model/2026-11-06-pen-tuning/README.md)）。MPC の浅い探索は、MPC を使わない中盤探索である。MPC はゼロ窓のノードだけで試す（Edax と同じ。[終盤 MPC の悪手の調査](https://github.com/ikepggthb/deft-reversi-notes/blob/main/mpc/2026-11-05-endgame-mpc-quality/README.md)）。MPC の判定は、静的評価から規則で予測した値が境界から離れすぎていれば浅い探索を省く（上側は中盤8石・終盤2石、下側は4石。[中盤探索の高速化](https://github.com/ikepggthb/deft-reversi-notes/blob/main/search-control/2026-11-03-midgame-speed/README.md)、[PEN に合わせた調整](https://github.com/ikepggthb/deft-reversi-notes/blob/main/evaluation-model/2026-11-06-pen-tuning/README.md)）。
 - `board/stability`: 元実装の辺の全パターン表・満杯のライン・接触による確定石判定。
 - `search/endgame/mod`: 終盤探索の入口と通常窓の処理。
 - `search/endgame/local_tt`: 空き6〜13ごとの局所TT。境界・候補手・選択率を保持し、照会結果は値として再帰へ渡す。
@@ -115,15 +119,15 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_BUILD_JOBS=1 cargo test -p deft_reversi_en
 検証ケース: 座標参照実装との照合、perft、差分特徴量、スコア・フェーズ、モデル往復、不正入力、単純完全読みとの一致、合法PV、停止・再利用、MPC分離、TT同時アクセス、祖先ハンドオフ、1/2/4/8/20スレッド反復。
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo run --locked --release -p deft_reversi_engine --example solve -- MODEL.bin POSITIONS.obf exact 4 256
+RUSTFLAGS="-Ctarget-cpu=native" cargo run --locked --release -p deft-reversi-cli -- solve POSITIONS.obf --model MODEL.dpr2 --exact --threads 4 --tt-mib 256 --tsv
 ```
 
-OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・時間をTSV出力する。任意の末尾引数で1局面の時間上限（ミリ秒）を指定できる。
+CLIの `solve` がOBFの盤面64文字と手番X/Oを読み、結果・ノード数・時間を出力する。`--time-ms` で1局面の時間上限（ミリ秒）を指定できる。
 `PatternModel::zero()` はルール・探索テスト用。棋力のあるモデルではない。
 
 ## 比較
 
-速さの比較（変更の前後、Edax・Egaroucid）と対局は [tools/bench](../tools/bench/README.md) を使う。`examples/solve` が完全読みと固定レベルの探索、`examples/gtp` が対局用の GTP である。
+速さの比較（変更の前後、Edax・Egaroucid）と対局は [tools/bench](../tools/bench/README.md) を使う。CLIの `solve` が完全読みと固定レベルの探索、`gtp` が対局用の GTP である。
 
 ## 並列測定
 
@@ -133,29 +137,29 @@ OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・
 
 既定の汎用探索では、子TTのETCを確認してからTT候補を他候補の評価前に探索する。局所TTの照会結果は子へ渡し、同じ照会を繰り返さない。選択率タグと中断時の保存条件は維持する。
 
-末端のゼロ窓探索では、6マス側で既知の合法手を再利用し、5マス側は空きマスから合法手を順に確認して専用4マス探索へ直接つなぐ。6→5→4マスの四分割parityは差分更新する。手順付け規則とノード上限・中断処理は維持している。[末端カーネルの比較](../docs/benchmarks/2026-10-27-tail-kernels/README.md)に段階的な試作と測定条件を記録した。
+末端のゼロ窓探索では、6マス側で既知の合法手を再利用し、5マス側は空きマスから合法手を順に確認して専用4マス探索へ直接つなぐ。6→5→4マスの四分割parityは差分更新する。手順付け規則とノード上限・中断処理は維持している。[末端カーネルの比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-27-tail-kernels/README.md)に段階的な試作と測定条件を記録した。
 
-最終1マスでは、BMI2の抽出結果を8ビットに限定し、縦・斜線の表引き行を共通化して、不要な範囲検査と位置情報の読出しを削減した。最終1マスを2マス側へインライン展開し、安定石表のLazyLock参照は判定あたり1回にまとめる。[最終1マスの比較](../docs/benchmarks/2026-10-27-last-empty-optimization/README.md)に機械語の確認、正しさの検証、採用・保留した試作と測定上の制約を記録した。
+最終1マスでは、BMI2の抽出結果を8ビットに限定し、縦・斜線の表引き行を共通化して、不要な範囲検査と位置情報の読出しを削減した。最終1マスを2マス側へインライン展開し、安定石表のLazyLock参照は判定あたり1回にまとめる。[最終1マスの比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-27-last-empty-optimization/README.md)に機械語の確認、正しさの検証、採用・保留した試作と測定上の制約を記録した。
 
-評価と手順付けでは、通常評価がmobility項のために計算した合法手を共有する。既定の完全読みでは、ゼロ窓の14→13マスで不要な評価状態の更新を省き、広い窓で再探索する場合に状態を作る。[合法手共有と評価状態更新の比較](../docs/benchmarks/2026-10-27-ordering-reuse/README.md)に2方式の試作、正しさの検証、局面別の性能差を記録した。
+評価と手順付けでは、通常評価がmobility項のために計算した合法手を共有する。既定の完全読みでは、ゼロ窓の14→13マスで不要な評価状態の更新を省き、広い窓で再探索する場合に状態を作る。[合法手共有と評価状態更新の比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-27-ordering-reuse/README.md)に2方式の試作、正しさの検証、局面別の性能差を記録した。
 
-14マス以上のゼロ窓の完全読みでは、子局面の評価値と着手可能数で手を並べる。空き20マス以上では、評価値の代わりに子局面から1手読んだ値を使う（Egaroucid と同じ深さ。[空きの多い完全読みの調査](../docs/benchmarks/2026-11-03-endgame-large-empties/README.md)）。
+14マス以上のゼロ窓の完全読みでは、子局面の評価値と着手可能数で手を並べる。空き20マス以上では、評価値の代わりに子局面から1手読んだ値を使う（Egaroucid と同じ深さ。[空きの多い完全読みの調査](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-11-03-endgame-large-empties/README.md)）。
 
-7〜13マスのゼロ窓探索は、相手の着手可能数（隅を2倍）、自分の隅の確定石、升の価値、四分割パリティの順で手を並べる（Edaxの軽量手順付けから潜在合法手を除いたもの）。評価特徴の差分更新は升ごとの差分ベクトルの加算で行う。5〜6マスのゼロ窓探索でも、7〜13マス・4マスと同じ閾値で安定石カットを行い、8近傍に他の空きがない升を先に探索する。局所TTは各層1024スロット。14マスのゼロ窓節点では、局所TTにしか保存されない13マスの子について主TTのETCを省く。安定石判定はカットに必要な安定石数が確定した時点で伝播を打ち切り、辺の安定石表はコンパイル時に生成する。[Edax・Egaroucidとの差の調査](../docs/benchmarks/2026-10-28-engine-gap/README.md)と[続き](../docs/benchmarks/2026-10-28-edax-gap/README.md)に、空き数別の節点分布、各試作の単独比較、採用・保留の理由と測定条件を記録した。
+7〜13マスのゼロ窓探索は、相手の着手可能数（隅を2倍）、自分の隅の確定石、升の価値、四分割パリティの順で手を並べる（Edaxの軽量手順付けから潜在合法手を除いたもの）。評価特徴の差分更新は升ごとの差分ベクトルの加算で行う。5〜6マスのゼロ窓探索でも、7〜13マス・4マスと同じ閾値で安定石カットを行い、8近傍に他の空きがない升を先に探索する。局所TTは各層1024スロット。14マスのゼロ窓節点では、局所TTにしか保存されない13マスの子について主TTのETCを省く。安定石判定はカットに必要な安定石数が確定した時点で伝播を打ち切り、辺の安定石表はコンパイル時に生成する。[Edax・Egaroucidとの差の調査](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-28-engine-gap/README.md)と[続き](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-28-edax-gap/README.md)に、空き数別の節点分布、各試作の単独比較、採用・保留の理由と測定条件を記録した。
 
-`--features endgame-pattern-ordering` は、残り11〜13マスのゼロ窓探索にパターン評価を追加する実験用機能。7〜10マスは合法手数とparityによる軽い手順付けを使う。既存モデルの44パターンを使い、特徴量を差分更新し、候補評価では子の片側の特徴量だけを計算する。終盤手順付け専用に学習した係数ではなく、既定では無効。比較と試作の経緯は[測定レポート](../docs/benchmarks/2026-10-27-endgame-implementation/README.md)を参照。
+`--features endgame-pattern-ordering` は、残り11〜13マスのゼロ窓探索にパターン評価を追加する実験用機能。7〜10マスは合法手数とparityによる軽い手順付けを使う。既存モデルの44パターンを使い、特徴量を差分更新し、候補評価では子の片側の特徴量だけを計算する。終盤手順付け専用に学習した係数ではなく、既定では無効。比較と試作の経緯は[測定レポート](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-27-endgame-implementation/README.md)を参照。
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release --example solve --features endgame-pattern-ordering
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release -p deft-reversi-cli --features endgame-pattern-ordering
 ```
 
-現deft・Edax・Egaroucidの通常SIMD版／AVX-512版を、FFO40〜49・1コア・主TT約839万項目で比較した。[3エンジンの比較](../docs/benchmarks/2026-10-27-three-engines/README.md)に8周分の時間、局面別の差、評価データ・ハッシュ・計時条件を記録した。
+現deft・Edax・Egaroucidの通常SIMD版／AVX-512版を、FFO40〜49・1コア・主TT約839万項目で比較した。[3エンジンの比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/engine-comparison/2026-10-27-three-engines/README.md)に8周分の時間、局面別の差、評価データ・ハッシュ・計時条件を記録した。
 
 ## 対象外と制約
 
 初回はネイティブエンジンのみ。Web/WASM、対局CLI、学習処理、NNUE、対局履歴の移行は含めていない。
 速度は測定対象とCPUに依存する。特定の集合での改善を、全局面の改善とは扱わない。
-過去の旧版比較は [調査レポート](../docs/benchmarks/2026-10-24-regression-investigation/README.md) に、その時点の条件とともに保存しています。
+過去の旧版比較は [調査レポート](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-24-regression-investigation/README.md) に、その時点の条件とともに保存しています。
 
 ## 対局用book
 

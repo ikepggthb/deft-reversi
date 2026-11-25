@@ -1,4 +1,8 @@
-//! GTP interface for CLI-based matches.
+//! CLI ベースの自動対局向けに GTP（Go Text Protocol v2）を提供するモジュール。
+//!
+//! 固定レベル探索（`--level`）または持ち時間制（`--game-ms` / `time_settings` / `time_left`）で動作し、
+//! 8x8 盤面・コミ 0・切れ負けルールのコマンドを受け付ける。
+
 use crate::{
     EngineArgs, Result,
     game_clock::{self, Budget},
@@ -13,14 +17,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// GTP セッションの時間／探索制御モード。
 enum Mode {
+    /// 固定エンジンレベル（1〜60）で探索するモード。
     Level(u8),
-    /// The time left of black and of white.
+    /// 黒番・白番の残り持ち時間に応じて時間配分するモード。
     Time {
+        /// 黒番（添字 0）と白番（添字 1）の残り時間。
         remaining: [Duration; 2],
     },
 }
 
+/// 手番の色を `remaining` 配列の添字（黒: 0、白: 1）へ変換する。
 fn clock(side: Color) -> usize {
     match side {
         Color::Black => 0,
@@ -28,14 +36,14 @@ fn clock(side: Color) -> usize {
     }
 }
 
-/// Seconds from GTP as a duration; negative, infinite or NaN values are
-/// errors.
+/// GTP の秒数引数を [`Duration`] に変換する。負値・無限大・NaN は構文エラーとする。
 fn seconds(text: Option<&&str>) -> std::result::Result<Duration, String> {
     text.and_then(|s| s.parse::<f64>().ok())
         .and_then(|s| Duration::try_from_secs_f64(s).ok())
         .ok_or_else(|| "syntax error".into())
 }
 
+/// GTP の色指定文字列（`b`/`black`/`w`/`white`、大文字小文字無視）を [`Color`] に変換する。
 fn color(s: &str) -> Option<Color> {
     match s.to_ascii_lowercase().as_str() {
         "b" | "black" => Some(Color::Black),
@@ -44,8 +52,10 @@ fn color(s: &str) -> Option<Color> {
     }
 }
 
-/// Plays `action` for `side`, passing first for the other side if it has no
-/// move (GTP clients do not always send passes).
+/// `side` の着手 `action` を `pos` に適用する。
+///
+/// GTP クライアントは相手側の強制パスを送信しない場合があるため、
+/// 手番が異なっていて相手側がパス必須であれば先にパスを 1 回補ってから適用する。
 fn apply(pos: &mut Position, side: Color, action: Action) -> std::result::Result<(), String> {
     let mut next = *pos;
     if next.side_to_move() != side {
@@ -60,18 +70,20 @@ fn apply(pos: &mut Position, side: Color, action: Action) -> std::result::Result
     Ok(())
 }
 
+/// `gtp` サブコマンドの引数。
 #[derive(Args, Debug)]
 pub struct GtpArgs {
     #[command(flatten)]
     engine: EngineArgs,
-    /// Fixed engine level, 1-60.
+    /// 固定エンジンレベル（1〜60）。`--game-ms` とは排他。
     #[arg(long, required_unless_present = "game_ms", conflicts_with = "game_ms", value_parser = clap::value_parser!(u8).range(1..=60))]
     level: Option<u8>,
-    /// Total time per side in milliseconds.
+    /// 1 人あたりの総持ち時間（ミリ秒）。
     #[arg(long)]
     game_ms: Option<u64>,
 }
 
+/// 標準入力から GTP コマンドを 1 行ずつ読み取り、応答（`=id ...` / `?id ...`）を標準出力へ返す。
 pub fn run(args: GtpArgs) -> Result<()> {
     let mut mode = match args.level {
         Some(level) => Mode::Level(level),
@@ -107,6 +119,7 @@ pub fn run(args: GtpArgs) -> Result<()> {
     ];
     for line in stdin.lock().lines() {
         let line = line?;
+        // GTP 仕様に従い、水平タブ以外の制御文字と `#` 以降のコメントを取り除く。
         let clean: String = line
             .chars()
             .filter(|c| !c.is_control() || *c == '\t')
@@ -214,6 +227,7 @@ pub fn run(args: GtpArgs) -> Result<()> {
     Ok(())
 }
 
+/// 探索結果から最善手を検証して取り出す。探索ワーカー失敗や着手なしはエラーにする。
 fn searched_action(
     result: std::result::Result<SearchResult, EngineError>,
 ) -> std::result::Result<Action, String> {
@@ -226,6 +240,7 @@ fn searched_action(
         .ok_or_else(|| "search returned no legal move".into())
 }
 
+/// `genmove` コマンドを実行し、選択した着手を盤面に反映して小文字座標（または `pass`）で返す。
 fn generate(
     engine: &mut crate::Engine,
     pos: &mut Position,
@@ -247,7 +262,7 @@ fn generate(
         return Ok("pass".into());
     }
     let start = Instant::now();
-    let log = std::env::var_os("DEFT_GTP_LOG").is_some();
+    let log = cfg!(feature = "trace");
     let mut last = None;
     let mut steps = String::new();
     let tag = |kind: &ResultKind| match kind {
@@ -269,6 +284,7 @@ fn generate(
         }
         Mode::Time { remaining } => {
             let mut moves = next.legal_moves();
+            // 10 ms は応答・時計処理の余裕として差し引く。
             let left = remaining[clock(side)].saturating_sub(Duration::from_millis(10));
             let budget = Budget::new(next.empty_count(), left, left);
             limit = budget.hard;
@@ -290,8 +306,8 @@ fn generate(
                     n.as_ref().map_or("-".into(), tag),
                 )
             });
-        // `next` is the iteration that was running (or would have run) when
-        // the search stopped; `steps` lists each completed iteration.
+        // `next` は探索停止時に実行中（または次に実行予定）だった反復、
+        // `steps` は完了した各反復の経過秒数を表す。
         eprintln!(
             "empties {} budget {:.4} used {:.4} last_done {:.4} kind {} next {pending} steps{steps}",
             next.empty_count(),

@@ -1,9 +1,11 @@
-//! Shared, current records. Graph slots contain four-byte numbers, never copies
-//! of search traces. The store owns the records; numbers do not escape its owner.
+//! 評価値レコードを重複なく共有して保持するストア（[`ValueStore`]）を提供するモジュール。
 //!
-//! 参照順はValueId→StoredEvaluation→StoredSource→CompletedSearch。
-//! モデル等の識別値も別の一覧を参照する。Evaluationは読取・検査用に展開する型で、
-//! 全候補がその構造体を一つずつ保持するわけではない。
+//! グラフ内の各局面や候補手は、重い探索トレースを毎回複製して持つのではなく、
+//! 4 バイトの識別番号（`ValueId`）だけを保持し、実体はストア側が一元管理する。
+//!
+//! 内部の参照順は `ValueId → StoredEvaluation → StoredSource → CompletedSearch` となっており、
+//! モデル等の識別値（`AnalysisIdentity`）も別テーブルで共有する。
+//! [`Evaluation`] は読み取りや検査のために展開する値型であり、全候補が個別に持つわけではない。
 use super::*;
 use std::{collections::BTreeMap, num::NonZeroU32};
 
@@ -43,8 +45,8 @@ pub(super) struct ValueStore {
     profile_index: BTreeMap<AnalysisIdentity, u32>,
 }
 
-/// A borrowed value for normal play. Score/quality checks do not copy the full
-/// search trace. Call source() or to_owned() when detailed records are needed.
+/// 通常対局向けの借用評価値参照。点数・品質確認では完全な探索トレースを複製しない。
+/// 詳細な記録が必要な場合は [`Self::source`] または [`Self::to_owned`] を呼ぶ。
 #[derive(Clone, Copy)]
 pub struct EvaluationRef<'a> {
     store: &'a ValueStore,

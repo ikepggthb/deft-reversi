@@ -1,4 +1,5 @@
-//! 旧入力の計算関係を当時の意味で検査する。現行の編集からは呼ばない。
+//! 旧形式の計算元（どの評価値からどの評価値を作ったか）を、当時の規則に従って検証するモジュール。
+//! 現在の編集処理からは呼ばない。
 use super::*;
 use crate::{
     AnalysisProfile, GenerationRoot, GenerationRun, InterruptedAnalysis, catalog, legal_actions,
@@ -18,7 +19,7 @@ impl ReadCatalog {
         }
     }
     pub fn bytes(&self) -> u64 {
-        // The decoder's allowance includes historical input lists until validation finishes.
+        // 検証完了まで保持する履歴上の入力リストのメモリ使用量もデコーダの上限計算に含める。
         self.derivations
             .values()
             .map(|v| 96 + v.capacity() as u64 * 32)
@@ -149,8 +150,8 @@ pub(crate) fn rebuild_legacy_play_quality(
     }
     Ok(changed)
 }
-// 旧形式の「どの評価から計算したか」という入力関係を、当時の規則で検査する。
-// 先にValueStoreへ入れると旧入力IDが消えるため、必ず変換前に呼ぶ。
+// 旧形式の「どの評価から計算したか」という入力関係を当時の規則で検査する。
+// 先に ValueStore へ入れると旧入力 ID が失われるため、必ず変換前に呼ぶ。
 pub(crate) fn validate_catalog(c: &ReadCatalog, values: &[Assessment]) -> Result<()> {
     let historical = values.iter().any(|v| {
         matches!(
@@ -184,8 +185,8 @@ pub(crate) fn validate_catalog(c: &ReadCatalog, values: &[Assessment]) -> Result
         return Ok(());
     }
     let map: BTreeMap<_, _> = values.iter().map(|&v| (v.content_id(), v)).collect();
-    // Each derivation is checked from its immediate immutable inputs. Exact
-    // content IDs bind every link; cycles are rejected by a separate walk.
+    // 各導出値は直近の不変な入力から検証する。すべてのリンクは厳密なコンテンツ ID で結ばれ、
+    // 循環参照は後続のトポロジカル走査で拒否する。
     for &v in values {
         v.validate()?;
         let ids = provenance_inputs(c, v)?;
@@ -272,7 +273,7 @@ pub(crate) fn validate_catalog(c: &ReadCatalog, values: &[Assessment]) -> Result
             _ => {}
         }
     }
-    // Kahn's algorithm bounds both time and stack usage on untrusted files.
+    // 信頼できないファイルに対して時間計算量とスタック使用量を抑えるため Kahn のアルゴリズムを用いる。
     let mut remaining: BTreeMap<_, usize> = BTreeMap::new();
     let mut parents: BTreeMap<_, Vec<[u8; 32]>> = BTreeMap::new();
     let mut ready = VecDeque::new();

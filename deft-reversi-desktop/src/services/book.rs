@@ -1,11 +1,16 @@
-//! What the opening book knows of a position, for the analysis panel and
-//! the board (§24, B2). The engine thread loads the book and shares it.
+//! Book（`.dbook`）から現在局面の登録手・評価値を照会するモジュール。
+//!
+//! エンジンスレッドが読み込んだブックを [`SharedBook`] として共有し、
+//! 解析パネルや盤面上の Book マーカー表示に利用する。
 use super::engine::Reading;
 use deft_reversi_book::{Book, Bound, EvaluationRef, Score, UsePolicy};
 use deft_reversi_engine::{Action, Position, Selectivity};
 
-/// The conditions a book value must meet to be played; the analysis shows
-/// the others faintly.
+/// AI が Book 手を採用するための最低条件（選択率 83% 以上）を返す。
+///
+/// 「選択率」は探索時の枝刈りの慎重さを表す指標で、値が低いほど浅い読みで候補を絞り込んでいる。
+/// AI が実戦で使うには十分な信頼性（83% 以上）を求める一方、解析パネルでは
+/// 条件を満たさない手も薄い文字色で参考表示できるようにしている。
 pub fn use_policy() -> UsePolicy {
     UsePolicy {
         min_selectivity: Selectivity::Percent83,
@@ -13,33 +18,38 @@ pub fn use_policy() -> UsePolicy {
     }
 }
 
-/// One move the book has for a position, from the side to move.
+/// Book に登録されている 1 手分の情報。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BookLine {
+    /// 着手（またはパス）。
     pub action: Action,
-    /// The book goes on with this move.
+    /// ブック内でこの手が先へ続く登録手であるか。
     pub registered: bool,
+    /// 記録されている評価値。
     pub value: Option<BookValue>,
-    /// The AI would play from this value.
+    /// AI の対局使用ポリシーを満たしているか。
     pub usable: bool,
 }
 
+/// Book エントリに記録された評価値とその探索条件。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BookValue {
+    /// 評価値（石差）。
     pub score: i32,
-    /// Only a bound: at least or at most `score`.
+    /// 点値か上下限値かの種別。
     pub bound: Bound,
-    /// How the value was read; None for a value set by hand or imported.
+    /// 探索条件（手動設定やインポート値の場合は `None`）。
     pub reading: Option<Reading>,
 }
 
 impl BookValue {
-    /// The score alone, when it is one.
+    /// 上下限の幅（「◯石以上」「◯石以下」）ではなく、確定した 1 点の評価値（[`Bound::Point`]）である場合のみ値を返す。
     pub fn point(self) -> Option<i32> {
         (self.bound == Bound::Point).then_some(self.score)
     }
 }
 
+/// Book ライブラリ側の [`EvaluationRef`] を UI 表示用の [`BookValue`] へ変換する。
 fn value(v: EvaluationRef<'_>) -> BookValue {
     let conditions = v.conditions();
     let reading = match (
@@ -67,8 +77,9 @@ fn value(v: EvaluationRef<'_>) -> BookValue {
     }
 }
 
-/// The book's moves for `position`, best first; None when it is not in
-/// the book.
+/// 指定局面 `position` に対する Book の候補手一覧を評価値の高い順で返す。
+///
+/// 局面がブック未登録の場合は `None` を返す。
 pub fn lines(book: &Book, position: Position) -> Option<Vec<BookLine>> {
     let entry = book.probe(position.board())?;
     let policy = use_policy();
@@ -87,12 +98,12 @@ pub fn lines(book: &Book, position: Position) -> Option<Vec<BookLine>> {
             }
         })
         .collect();
-    // Moves with a value first, the best of them first.
+    // 評価値を持つ手を先頭に、高い順に並べる。
     lines.sort_by_key(|line| std::cmp::Reverse(line.value.map(|v| v.score)));
     Some(lines)
 }
 
-/// The loaded book, shared by the engine thread and the views.
+/// エンジンスレッドと UI ビュー間で共有する読み込み済み Book。
 #[derive(Clone)]
 pub struct SharedBook(pub std::sync::Arc<Book>);
 

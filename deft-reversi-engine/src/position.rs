@@ -1,13 +1,20 @@
-//! Positions with the colour to move, for callers that show or record games.
+//! 手番の色を保持する局面型 [`Position`] を定義します。
+//!
+//! 探索エンジン内部の [`Board`] は「常に自分から見た盤面」として黒白の区別を持たないため、
+//! 対局の表示や棋譜の記録を行う呼び出し側はこちらの型を使います。
 use crate::{Action, Board, MoveError, Moves, Square};
 use std::{fmt, str::FromStr};
 
+/// プレイヤーの石の色（黒または白）を表します。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Color {
+    /// 先手（黒）。
     Black,
+    /// 後手（白）。
     White,
 }
 impl Color {
+    /// 相手側の色を返します。
     pub const fn opponent(self) -> Self {
         match self {
             Self::Black => Self::White,
@@ -16,8 +23,10 @@ impl Color {
     }
 }
 
-/// A board with the colour to move. Searches take its [`Board`], seen from
-/// the side to move, so their scores are for that side.
+/// 手番の色を保持する盤面です。
+///
+/// 探索関数には手番側から見た [`Board`] が渡されるため、
+/// 探索スコアは常に「現在の手番側から見た石差」になります。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Position {
     board: Board,
@@ -29,14 +38,14 @@ impl Default for Position {
     }
 }
 impl Position {
-    /// The standard starting position, black to move.
+    /// リバーシの標準初期局面（黒番）を返します。
     pub fn initial() -> Self {
         Self {
             board: Board::new(),
             side: Color::Black,
         }
     }
-    /// Rejects overlapping discs.
+    /// 黒石・白石のビットマスクと手番から局面を構築します。同じマスに両方の石が重なっている場合は `None` を返します。
     pub fn from_colors(black: u64, white: u64, side: Color) -> Option<Self> {
         let board = match side {
             Color::Black => Board::from_bits(black, white)?,
@@ -44,16 +53,19 @@ impl Position {
         };
         Some(Self { board, side })
     }
-    /// `board` is seen from `side`, the colour to move.
+    /// 手番側 `side` から見た [`Board`] をそのまま包んで [`Position`] を生成します。
     pub fn from_board(board: Board, side: Color) -> Self {
         Self { board, side }
     }
+    /// 手番側から見た内部の [`Board`] を返します。
     pub fn board(&self) -> Board {
         self.board
     }
+    /// 現在の手番の色を返します。
     pub fn side_to_move(&self) -> Color {
         self.side
     }
+    /// 指定した色の石配置ビットマスクを返します。
     pub fn discs(&self, color: Color) -> u64 {
         if color == self.side {
             self.board.player_bits()
@@ -61,36 +73,44 @@ impl Position {
             self.board.opponent_bits()
         }
     }
+    /// 黒石のビットマスクを返します。
     pub fn black(&self) -> u64 {
         self.discs(Color::Black)
     }
+    /// 白石のビットマスクを返します。
     pub fn white(&self) -> u64 {
         self.discs(Color::White)
     }
+    /// 指定した色の石数を返します。
     pub fn disc_count(&self, color: Color) -> u32 {
         self.discs(color).count_ones()
     }
+    /// 空きマス数を返します。
     pub fn empty_count(&self) -> u8 {
         self.board.empty_count()
     }
+    /// 現在の手番の合法手集合を返します。
     pub fn legal_moves(&self) -> Moves {
         self.board.legal_moves()
     }
+    /// 指定したマスに着手した際に反転する石のビットマスクを返します（非合法手なら 0）。
     pub fn flips(&self, square: Square) -> u64 {
         self.board.flips(square)
     }
+    /// 現在の手番がパスしなければならないか（合法手がなく、かつ終局していないか）を返します。
     pub fn must_pass(&self) -> bool {
         self.board.must_pass()
     }
+    /// 両者とも合法手がなく終局しているかを返します。
     pub fn is_terminal(&self) -> bool {
         self.board.is_terminal()
     }
-    /// Disc difference for `color`, with the empty squares given to the winner.
+    /// `color` 側から見た終局スコア（空きマスを勝者に加算した石差）を返します。
     pub fn final_score(&self, color: Color) -> i32 {
         let score = self.board.final_score();
         if color == self.side { score } else { -score }
     }
-    /// The position after `action`; the other colour moves next.
+    /// `action` を実行した後の新しい局面を返します（手番は相手側に交代します）。
     pub fn play(&self, action: impl Into<Action>) -> Result<Self, MoveError> {
         Ok(Self {
             board: self.board.play(action.into())?,
@@ -109,8 +129,7 @@ impl From<&Position> for Board {
     }
 }
 
-/// 64 squares from A1 to H8 (`X` black, `O` white, `-` empty), a space,
-/// and the colour to move.
+/// A1 から H8 までの 64 文字（`X` が黒、`O` が白、`-` が空）、空白、手番の色を出力します。
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (black, white) = (self.black(), self.white());
@@ -131,6 +150,7 @@ impl fmt::Display for Position {
     }
 }
 
+/// 局面文字列（[`Position::from_str`]）の解析に失敗したときのエラーです。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParsePositionError(&'static str);
 impl fmt::Display for ParsePositionError {
@@ -140,8 +160,8 @@ impl fmt::Display for ParsePositionError {
 }
 impl std::error::Error for ParsePositionError {}
 
-/// Reads the [`Display`](fmt::Display) form and the common variants: `x`
-/// and `*` for black, `o` for white, `.` for empty, and a trailing `;`.
+/// [`Display`](fmt::Display) 形式および一般的な表記揺れ
+/// （黒に `x` / `*`、白に `o`、空マスに `.`、末尾の `;`）を読み込みます。
 impl FromStr for Position {
     type Err = ParsePositionError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -205,7 +225,7 @@ mod tests {
         assert_eq!(f5.to_string(), "F5");
         assert_eq!(initial.flips(f5), Square::from_xy(4, 4).unwrap().bit());
         assert_eq!(initial.flips(Square::from_xy(0, 0).unwrap()), 0);
-        // White has no discs left: nobody can move, and black takes the empties.
+        // 白石が 0 個になったため両者とも打てず終局となり、空きマスはすべて黒に加算されます。
         let terminal = Position::from_colors(0b111, 0, Color::White).unwrap();
         assert!(terminal.is_terminal());
         assert!(!terminal.must_pass());

@@ -1,21 +1,20 @@
-//! The weights of one phase and their training.
+//! 1 フェーズ分の線形パターン重みを学習するモジュール。
 //!
-//! Every phase has its own weights and only sees positions with its own disc
-//! count, so phases train independently: one at a time per thread, with the
-//! whole phase in memory and shuffled every epoch.
+//! 評価関数では盤上の石数（フェーズ）ごとに独立した重みテーブルを用意し、
+//! 自身の石数に一致する局面だけを学習する。そのため、スレッドごとに 1 フェーズずつ
+//! メモリに展開してエポックごとにシャッフルしながら独立に学習できる。
 //!
-//! Three things keep the exported weights close to what training fitted:
-//! - A pattern state and its mirror image share one weight (`mirror`), so
-//!   the model values a position and its mirror image alike.
-//! - Every position reads four weights of each pattern table and one
-//!   mobility weight, so a constant added to a whole table only moves the
-//!   score, and AdaGrad lets such offsets drift into the tables. After
-//!   every pass `recenter` moves each table's mean (weighted by use) into
-//!   the bias, which changes no prediction. Shrinking a rarely used weight
-//!   toward 0 then pulls it toward an average state, not toward an offset.
-//! - Rarely used mobility weights are pulled toward their well-used
-//!   neighbours instead of 0, so the table has no cliff at its ends
-//!   (`export`).
+//! 学習した重みをモデルとして書き出す（export）際に精度が落ちないよう、次の 3 つの工夫を行っている：
+//! - **鏡像での重み共有（`mirror`）**: 盤面のパターン状態とその左右反転・対称形（鏡像）で重みを共有し、
+//!   対称な局面を必ず同じスコアで評価する。
+//! - **テーブル中心化（[`PhaseWeights::recenter`]）**: どの局面も各パターンテーブルから 4 個、
+//!   着可能手数テーブルから 1 個の重みを必ず参照するため、テーブル全体に定数を足しても
+//!   定数バイアスが増減するだけで予測結果は変わらない。AdaGrad で学習を続けるとこうした定数オフセットが
+//!   テーブル内に溜まりやすいため、各パスの終わりに各テーブルの出現回数加重平均をバイアスへ移して
+//!   平均を 0 に揃える（予測値は一切変わらない）。これにより、後述の `shrink` で出現回数の少ない重みを
+//!   0 へ寄せたとき、偏ったオフセットではなく「テーブルの平均値」へ自然に引き寄せられる。
+//! - **着可能手数重みの近傍補間（[`PhaseWeights::export`]）**: 出現回数の少ない着可能手数の重みは、
+//!   0 ではなく近くの十分に学習された重みの値へ引き寄せることで、テーブルの両端に不自然な段差ができるのを防ぐ。
 use crate::rd::Record;
 use deft_reversi_engine::{
     Board, Features, MOBILITY_WEIGHT_COUNT, PATTERN_WEIGHT_COUNT, PatternPhase, mirror_weights,
@@ -24,8 +23,7 @@ use deft_reversi_engine::{
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
-/// For every pattern weight, the one it shares with its mirror image: the
-/// smaller of the two indices.
+/// 各パターン重みインデックスについて、鏡像と共有する代表インデックス（双方の小さい方）を返す。
 pub fn shared_weights() -> &'static [u32] {
     static SHARED: OnceLock<Vec<u32>> = OnceLock::new();
     SHARED.get_or_init(|| {
@@ -36,21 +34,21 @@ pub fn shared_weights() -> &'static [u32] {
     })
 }
 
-/// Optimisation settings. They are stored in checkpoints, and resuming
-/// requires the same values.
+/// 最適化のハイパーパラメータ設定。チェックポイントに保存され、再開時には同じ値であることが要求される。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
-    /// AdaGrad step size, in discs.
+    /// AdaGrad（勾配の二乗和に応じて歩幅を自動調整する最適化手法）の学習率（石単位）。
     pub lr: f32,
-    /// L2 penalty added to every gradient, times the weight.
+    /// 重みの肥大化を防ぐ L2 正則化係数（各勾配に `l2 * weight` を加算する）。
     pub l2: f32,
-    /// Errors beyond this many discs count linearly (Huber loss).
+    /// Huber 損失（外れ値に強い誤差関数）において、誤差を二乗ではなく線形で扱う境界値（石数）。
     pub huber_delta: f32,
-    /// Share each pattern weight with its mirror image's.
+    /// パターン重みを鏡像と共有するかどうか。
     pub mirror: bool,
 }
 
 impl Settings {
+    /// 設定値が有効範囲（`lr > 0`, `huber_delta > 0`, `l2 >= 0` かつ有限）かを検証する。
     pub fn validate(&self) -> Result<(), String> {
         let positive = |x: f32| x.is_finite() && x > 0.0;
         if !positive(self.lr)
@@ -65,13 +63,12 @@ impl Settings {
     }
 }
 
-/// A weight with its AdaGrad state, together so one update touches one
-/// cache line.
+/// 重みとその AdaGrad 状態を 1 構造体にまとめ、更新時に 1 キャッシュラインで済むようにする。
 #[derive(Clone, Copy, Default, Debug, Serialize, Deserialize)]
 struct Slot {
     weight: f32,
     grad_squares: f32,
-    /// Training samples that used this weight.
+    /// この重みが学習サンプルで参照された回数。
     seen: u32,
 }
 
@@ -84,7 +81,8 @@ impl Slot {
         self.seen += 1;
     }
 
-    /// The weight times 128, pulled toward 0 when few samples used it.
+    /// 重みを 128 倍して `i16` に量子化する。
+    /// データセットにあまり現れなかった重み（過学習しやすい）は、`shrink` を使って `seen / (seen + shrink)` 倍に縮め、0 方向へ寄せる。
     fn quantized(&self, shrink: f32) -> i16 {
         let seen = self.seen as f32;
         let weight = if seen + shrink > 0.0 {
@@ -98,16 +96,17 @@ impl Slot {
     }
 }
 
+/// 1 フェーズ分の線形パターン・着可能手数・バイアス重みと学習状態。
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PhaseWeights {
     patterns: Vec<Slot>,
     mobility: Vec<Slot>,
     bias: Slot,
-    /// See `Settings::mirror`.
+    /// [`Settings::mirror`] の値。
     mirror: bool,
 }
 
-/// Mean Huber loss and mean absolute error, in discs.
+/// 平均 Huber 損失および平均絶対誤差（MAE、単位：石）。
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Metrics {
     pub loss: f64,
@@ -116,8 +115,8 @@ pub struct Metrics {
 }
 
 impl PhaseWeights {
-    /// Zero weights with the bias at the mean label, so early steps fit the
-    /// patterns rather than the offset.
+    /// バイアスをラベル平均値で初期化し、パターン・着可能手数重みを 0 で初期化する。
+    /// これにより学習初期ステップが定数オフセットではなくパターンの差を捉えることに集中できる。
     pub fn new(records: &[Record], mirror: bool) -> Self {
         let mean =
             records.iter().map(|r| f64::from(r.value)).sum::<f64>() / records.len().max(1) as f64;
@@ -132,17 +131,17 @@ impl PhaseWeights {
         }
     }
 
-    /// Adds `x` discs to the bias, for an offset moved out of another term.
+    /// 他項（補助ニューラルネットの出力など）から移動してきた定数オフセット `x` 石分をバイアスに加算する。
     pub fn add_to_bias(&mut self, x: f32) {
         self.bias.weight += x;
     }
 
-    /// Whether mirror images share their weights.
+    /// 鏡像で重みを共有しているかどうかを返す。
     pub fn mirror(&self) -> bool {
         self.mirror
     }
 
-    /// The features of `board`, with mirror images sharing their weights.
+    /// `board` の特徴量を抽出する。`mirror` 有効時は鏡像共有インデックスへ写像する。
     pub fn features(&self, board: &Board) -> Features {
         let mut f = Features::of(board);
         if self.mirror {
@@ -154,10 +153,9 @@ impl PhaseWeights {
         f
     }
 
-    /// Moves the mean of every pattern table and of the mobility table,
-    /// each weight weighted by the positions that used it, into the bias. Predictions stay the same: every
-    /// position reads four weights of each pattern table and one mobility
-    /// weight.
+    /// 各パターンテーブルおよび着可能手数テーブルの出現回数加重平均をバイアスへ移す。
+    /// どの局面も各パターンテーブルから 4 重み、着可能手数テーブルから 1 重みを読むため、
+    /// パターン平均の 4 倍と着可能手数平均の 1 倍をバイアスへ移せば予測値は一切変化しない。
     pub fn recenter(&mut self) {
         fn mean(slots: &[Slot]) -> f32 {
             let (sum, n) = slots.iter().fold((0.0f64, 0.0f64), |(s, n), slot| {
@@ -183,6 +181,7 @@ impl PhaseWeights {
         self.bias.weight += m;
     }
 
+    /// 特徴量 `f` に対する現在の線形予測値（石単位）を返す。
     pub fn predict(&self, f: &Features) -> f32 {
         let mut sum = self.bias.weight + self.mobility[f.mobility].weight;
         for &i in &f.patterns {
@@ -191,7 +190,7 @@ impl PhaseWeights {
         sum
     }
 
-    /// One pass over `records` in their order, updating after every sample.
+    /// `records` を先頭から順に 1 パス走査し、1 サンプルごとに重みを更新したあと中心化する。
     pub fn train(&mut self, records: &[Record], s: &Settings) -> Metrics {
         let mut m = Accumulator::default();
         for r in records {
@@ -204,10 +203,10 @@ impl PhaseWeights {
         m.finish()
     }
 
-    /// One step for one sample, with `grad` the clipped error.
+    /// 1 サンプル分の更新処理（`grad` は Huber クリップ済みの誤差）。
     pub fn update(&mut self, f: &Features, grad: f32, s: &Settings) {
-        // Symmetric discs can make two orientations read the same weight;
-        // its gradient is then the sum, applied in one step.
+        // 対称な石配置により同じ重みインデックスが複数回参照される場合、
+        // 勾配を合算して 1 回の AdaGrad ステップとして適用する。
         crate::pen::for_each_read(&f.patterns, |i, _, times| {
             self.patterns[i as usize].update(grad * times as f32, s);
         });
@@ -215,6 +214,7 @@ impl PhaseWeights {
         self.bias.update(grad, s);
     }
 
+    /// `records` 上で重みを更新せずに Huber 損失と MAE を計測する。
     pub fn validate(&self, records: &[Record], huber_delta: f32) -> Metrics {
         let mut m = Accumulator::default();
         for r in records {
@@ -224,11 +224,11 @@ impl PhaseWeights {
         m.finish()
     }
 
-    /// Engine weights, scaled by 128. `shrink` pulls weights seen in few
-    /// samples toward 0, the mean of their table after `recenter`: a weight
-    /// seen n times is multiplied by n / (n + shrink). Mobility weights are
-    /// pulled toward `mobility_targets` instead. Mirror images get the
-    /// weight they share.
+    /// 128 倍に量子化したエンジン用の [`PatternPhase`] を生成する。
+    ///
+    /// 出現回数 `n` の少ない重みは過学習しやすいため、`shrink` を使って `n / (n + shrink)` 倍に縮める：
+    /// パターン重みは `recenter` 済みのテーブル平均（0）へ寄せ、着可能手数重みは [`mobility_targets`] で決まる
+    /// 近傍の信頼できる重みの補間値へ引き寄せる。鏡像共有が有効な場合は共有元の値を複製する。
     pub fn export(&self, shrink: f32) -> PatternPhase {
         let shared = shared_weights();
         let patterns = (0..self.patterns.len())
@@ -251,9 +251,8 @@ impl PhaseWeights {
                 .round()
                 .clamp(i16::MIN.into(), i16::MAX.into()) as i16
         });
-        // The bias is never shrunk, used or not: without linear training
-        // (`--pen-no-linear`) it still holds the mean label and the
-        // network's moved offset.
+        // バイアスは参照回数に関わらず縮小しない：線形学習を行わない場合（`--pen-no-linear`）でも
+        // ラベル平均と補助ニューラルネット出力から移されたオフセットを保持しているため。
         let bias = (self.bias.weight * 128.0)
             .round()
             .clamp(i16::MIN.into(), i16::MAX.into()) as i16;
@@ -261,11 +260,10 @@ impl PhaseWeights {
     }
 }
 
-/// What each mobility weight is pulled toward when few samples used it:
-/// the weights seen at least `reliable` times keep their value; beyond the
-/// outermost of them a weight takes the outermost one's value, and between
-/// two of them the straight line between their values. Without any such
-/// weight every target is 0.
+/// 参照回数が少ない着可能手数重みの縮小先ターゲットを計算する。
+///
+/// `reliable` 回以上参照された重みをアンカーとし、最外アンカーより外側は最外アンカーの値、
+/// アンカー間は線形補間値とする。アンカーが 1 つもない場合は全て 0.0 とする。
 fn mobility_targets(slots: &[Slot], reliable: f32) -> Vec<f32> {
     let anchors: Vec<usize> = (0..slots.len())
         .filter(|&i| slots[i].seen as f32 >= reliable)
@@ -292,6 +290,7 @@ fn mobility_targets(slots: &[Slot], reliable: f32) -> Vec<f32> {
         .collect()
 }
 
+/// 1 パス分の Huber 損失と絶対誤差を集計するアキュムレータ。
 #[derive(Default)]
 pub struct Accumulator {
     loss: f64,
@@ -300,6 +299,7 @@ pub struct Accumulator {
 }
 
 impl Accumulator {
+    /// 誤差 `error` と Huber 閾値 `delta` から 1 サンプル分の損失を加算する。
     pub fn add(&mut self, error: f32, delta: f32) {
         let e = f64::from(error.abs());
         let d = f64::from(delta);
@@ -312,6 +312,7 @@ impl Accumulator {
         self.n += 1;
     }
 
+    /// 集計結果を [`Metrics`] として返す。
     pub fn finish(self) -> Metrics {
         let n = self.n.max(1) as f64;
         Metrics {

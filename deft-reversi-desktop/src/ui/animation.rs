@@ -1,36 +1,41 @@
-//! The turn-over animation (§9.3). It is drawn over the finished position
-//! and never touches the game: a new move, Undo or loading drops it.
+//! 石を置いてから挟んだ石が順に裏返る反転アニメーションを管理するモジュール。
+//!
+//! 確定後の局面の上に視覚効果として重ね描きするだけであり、対局状態には一切干渉しない
+//! （次の着手・Undo・棋譜読み込みが発生すると即座に破棄される）。
 use deft_reversi_engine::{Color, Position, Square};
 use std::time::Instant;
 
-/// The placed disc grows in this long…
+/// 着手した石が拡大表示される時間（ms）。
 const PLACE_MS: f32 = 140.;
-/// …then each turned disc flips in this long, the nearest first.
+/// 裏返る石 1 つあたりの反転時間（ms）。
 const FLIP_MS: f32 = 260.;
+/// 着手位置から縦横斜め何マス離れているか（チェビシェフ距離 `max(|dx|, |dy|)`）に応じた反転開始の遅延間隔（ms）。
+/// 遠い石ほど少し遅れて裏返り始めることで、波紋のように広がる自然な動きになる。
 const STAGGER_MS: f32 = 35.;
 
+/// 1 手分の石配置・反転アニメーション状態。
 pub(super) struct FlipAnimation {
     placed: Square,
-    /// Each turned disc and when it starts, in ms.
+    /// 反転する各石と、その反転開始時刻（アニメーション開始からの ms）。
     flips: Vec<(Square, f32)>,
-    /// The colour the turned discs had.
+    /// 反転前の石の色。
     from: Color,
     start: Instant,
-    /// 1 for normal, 0.5 for short.
+    /// 再生速度倍率（標準 1.0、高速 0.5）。
     scale: f32,
     length_ms: f32,
 }
 
-/// How to draw one square while the animation runs.
+/// アニメーション実行中の特定マスにおける描画フレーム状態。
 pub(super) enum Frame {
-    /// The new disc at this size, 0 to 1.
+    /// 新しく置かれた石の拡大率（0.0〜1.0）。
     Growing(f32),
-    /// A turned disc: its width, 0 to 1, and the colour it shows.
+    /// 反転中の石の見かけの幅（0.0〜1.0）と現在見えている面の石色。
     Turning(f32, Color),
 }
 
 impl FlipAnimation {
-    /// The move `square` played in `before`; None when it is not a move.
+    /// `before` の局面で `square` に打ったときのアニメーションを生成する（非合法手や無効時は `None`）。
     pub fn new(before: Position, square: Square, scale: f32) -> Option<Self> {
         let flips = before.flips(square);
         if flips == 0 || scale <= 0. {
@@ -66,15 +71,18 @@ impl FlipAnimation {
         self.start.elapsed().as_secs_f32() * 1000.
     }
 
+    /// アニメーションが終了したかを返す。
     pub fn done(&self) -> bool {
         self.elapsed_ms() >= self.length_ms
     }
 
+    /// アニメーション全体の長さ（テスト用）。
     #[cfg(test)]
     pub fn length(&self) -> std::time::Duration {
         std::time::Duration::from_secs_f32(self.length_ms / 1000.)
     }
 
+    /// 現在時刻における指定マス `square` のアニメーションフレームを返す。
     pub fn frame(&self, square: Square) -> Option<Frame> {
         let now = self.elapsed_ms();
         if square == self.placed {
@@ -86,8 +94,7 @@ impl FlipAnimation {
         if t >= 1. {
             return None;
         }
-        // Turns about its axis: the width a turning disc shows, eased so it
-        // starts and ends softly; the colour changes when it is edge-on.
+        // 軸を中心に回転する見かけの幅をコサインで表現し、真横（t = 0.5）を通過した瞬間に色を切り替える。
         let t = ease_in_out(t);
         let colour = if t < 0.5 {
             self.from

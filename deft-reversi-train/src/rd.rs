@@ -1,10 +1,11 @@
-//! The `.rd` dataset of reversi-dataset-gen (rdg): `phase_<NN>/<split>.rd`
-//! files of positions labelled with the final disc difference, where the
-//! phase `NN` is the disc count minus 4, in two digits.
+//! reversi-dataset-gen（rdg）形式の `.rd` データセットを読み書きし、内容確認用のフィンガープリントを計算するモジュール。
 //!
-//! Each file is `RDGBBVAL1\n` followed by 18-byte records: the mover's discs
-//! (u64 LE), the opponent's discs (u64 LE) and the label (i16 LE), all from
-//! the side to move.
+//! `.rd` データセットは、盤面と「その局面から最善を尽くしたときの最終石差」をペアにした学習用バイナリ形式である。
+//! ディレクトリ構成は `phase_<NN>/<split>.rd` となっており、フェーズ番号 `NN` は「石数 − 4」の 2 桁の数値（例：12 石なら `phase_08`）を表す。
+//! 各ファイルは先頭 10 バイトの識別子 `RDGBBVAL1\n` に続いて、18 バイトのレコードが連続して並ぶ：
+//! - 手番側の石ビットボード（`u64` リトルエンディアン）
+//! - 相手側の石ビットボード（`u64` リトルエンディアン）
+//! - 手番側から見た最終石差ラベル（`i16` リトルエンディアン）
 use deft_reversi_engine::Board;
 use std::{
     fs::File,
@@ -12,24 +13,27 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// `.rd` ファイル先頭の識別バイト列（マジックナンバー）。
 pub const MAGIC: &[u8] = b"RDGBBVAL1\n";
+/// 1 レコードのバイト長（8 + 8 + 2 = 18 バイト）。
 const RECORD_SIZE: usize = 18;
 
+/// `.rd` ファイルから読み込んだ 1 局面分の学習レコード。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Record {
+    /// 手番側視点の盤面。
     pub board: Board,
-    /// Final disc difference for the side to move.
+    /// 手番側から見た最終石差（`-64..=64`）。
     pub value: i8,
 }
 
-/// The file holding `split` ("train", "valid" or "test") for positions with
-/// `stones` discs.
+/// 指定した石数 `stones` と分割名 `split`（`"train"` / `"valid"` / `"test"`）に対応する `.rd` ファイルのパスを返す。
 pub fn path(data: &Path, stones: u8, split: &str) -> PathBuf {
     data.join(format!("phase_{:02}", stones - 4))
         .join(format!("{split}.rd"))
 }
 
-/// Number of records in `path`, from its size.
+/// ファイルサイズから `path` 内に含まれるレコード数を計算する。
 pub fn count(path: &Path) -> io::Result<u64> {
     let size = path.metadata()?.len();
     let payload = size
@@ -39,19 +43,21 @@ pub fn count(path: &Path) -> io::Result<u64> {
     Ok(payload / RECORD_SIZE as u64)
 }
 
-/// Identifies the contents of `path` without reading all of it: the record
-/// count and a hash of the first and last 4096 records.
+/// 巨大なデータセット全体を読み込まずに `path` の内容が同じかを識別するためのフィンガープリント。
+/// レコード数と、先頭・末尾それぞれ最大 4096 レコードの FNV-1a ハッシュ値を保持する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Fingerprint {
     records: u64,
     hash: u64,
 }
 
+/// チェックポイント再開時に学習データが差し替わっていないか検証するため、`path` の [`Fingerprint`] を計算する。
 pub fn fingerprint(path: &Path) -> io::Result<Fingerprint> {
     use std::io::{Seek, SeekFrom};
     let records = count(path)?;
     let mut file = File::open(path)?;
     let edge = records.min(4096);
+    // FNV-1a 64-bit オフセット基底値
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for start in [0, records - edge] {
         file.seek(SeekFrom::Start(
@@ -66,7 +72,7 @@ pub fn fingerprint(path: &Path) -> io::Result<Fingerprint> {
     Ok(Fingerprint { records, hash })
 }
 
-/// Reads every record of `path`, checking that each has `stones` discs.
+/// `path` の全レコードを読み込み、各盤面が `stones` 個の石を持ちラベルが `-64..=64` に収まることを検証する。
 pub fn read(path: &Path, stones: u8) -> io::Result<Vec<Record>> {
     let n = count(path)?;
     let mut input = BufReader::with_capacity(1 << 20, File::open(path)?);

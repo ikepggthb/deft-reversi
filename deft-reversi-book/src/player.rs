@@ -1,8 +1,10 @@
-//! 対局時の品質判定と登録手の選択。ファイル操作・生成・通常探索は行わない。
+//! 対局時の品質判定と、登録された手の中から実際の手を選ぶモジュール（ファイル操作・Book 生成・通常探索は行わない）。
 //!
-//! decideは利用できない理由も返し、chooseは着手だけが必要な呼出し側向け。
-//! check_partsが中盤・終盤・旧データ・手動値の条件を分けて確認する。
-//! ここでいう利用可能な上限は損失の基準には使うが、着手としては点評価だけを選ぶ。
+//! - [`BookPlayer::decide`] は手が選べなかった理由（[`BookMiss`]）も返すため、診断やログ出力に向いている。
+//! - [`BookPlayer::choose`] は着手だけが必要な呼び出し側向けの簡易版。
+//! - `UsePolicy::check_parts` が中盤・終盤・旧データ・手動値の条件をそれぞれ分けて検査する。
+//!   ここでいう「上界」しか分からない候補手は損失計算の基準（これより悪い手は避ける）には使うが、
+//!   実際に指す手としては正確な点評価（`Bound::Point`）を持つ登録手だけを選ぶ。
 use super::*;
 use std::sync::Arc;
 #[derive(Clone, Copy, Debug, Default)]
@@ -46,8 +48,8 @@ pub struct UsePolicy {
     pub require_all_evaluated: bool,
     pub min_endgame_selectivity: Selectivity,
     pub allow_calculated: bool,
-    /// Legacy values never acquire a guessed midgame/endgame kind. This
-    /// compatibility option checks their recorded depth and selectivity.
+    /// 旧形式から取り込まれた値は中盤・終盤の種別を推測しない。
+    /// この互換オプションは、記録された深さと選択率を基準に利用可否を検査する。
     pub allow_imported: bool,
     /// 手動値、または手動値を含めて計算した値の利用を許可する。
     pub allow_manual: bool,
@@ -72,9 +74,9 @@ pub struct BookChoice {
     pub value: Evaluation,
     pub all_moves_evaluated: bool,
 }
-/// Picks book moves for positions in the book. It does not search: when
-/// `choose` returns None, the caller searches with its `Engine` or
-/// `EngineWorker` as usual.
+/// Book 内の局面に対して登録手を選択するプレイヤー。
+/// 自身では探索を行わないため、`choose` が `None` を返した場合は呼び出し側が
+/// 通常の `Engine` や `EngineWorker` で探索する。
 pub struct BookPlayer {
     identity: AnalysisIdentity,
     book: Option<Arc<Book>>,
@@ -82,8 +84,8 @@ pub struct BookPlayer {
     rng: u64,
 }
 impl BookPlayer {
-    /// Uses the values that `engine`'s model and calibration produced; see
-    /// [`analysis_identity`]. Call `set_engine` after changing either.
+    /// `engine` の評価モデルと校正パラメータから生成される識別値（[`analysis_identity`]）を用いる。
+    /// モデルや校正を変更した後は [`Self::set_engine`] を呼び出すこと。
     pub fn new(
         engine: &Engine,
         book: Option<Arc<Book>>,
@@ -110,8 +112,7 @@ impl BookPlayer {
         self.policy = policy;
         Ok(())
     }
-    /// The book move for `position`, or None when the book has no usable one.
-    /// Does not allocate.
+    /// `position` に対する Book の手を選択する。利用可能な手がない場合は `None` を返す（メモリ確保なし）。
     pub fn choose(&mut self, position: impl Into<Board>) -> Option<BookChoice> {
         match self.decide(position) {
             BookDecision::Chosen(c) => Some(c),
@@ -128,20 +129,19 @@ impl BookPlayer {
         )
     }
 
-    /// Look up recorded candidates in the caller's orientation, including
-    /// evaluations that the play policy would reject.
+    /// 呼び出し側の盤面の向きで記録済み候補手を照会する（対局ポリシーで弾かれる評価値も含む）。
     pub fn probe(&self, position: impl Into<Board>) -> Option<BookEntry<'_>> {
         self.book.as_ref()?.probe(position.into())
     }
 
-    /// A point evaluation usable at the configured search quality.
+    /// 設定された探索品質条件を満たす点評価（石差）を返す。
     pub fn point_value(&self, candidate: BookMove<'_>) -> std::result::Result<i16, BookMiss> {
         let value = candidate.value.ok_or(BookMiss::NoPointValue)?;
         self.policy.check_ref(value, self.identity)?;
         value.result().point_value().ok_or(BookMiss::NoPointValue)
     }
 
-    /// Return the strongest eligible move without advancing the play RNG.
+    /// 対局用乱数を進めずに、条件を満たす最善手を返す。
     pub fn recommend(&self, position: impl Into<Board>) -> BookDecision {
         Self::decide_with(
             self.book.as_deref(),
@@ -152,12 +152,12 @@ impl BookPlayer {
         )
     }
 
-    /// Follow eligible Book moves starting at this position. Forced passes
-    /// are included so that the returned continuation can be replayed.
+    /// 指定局面から条件を満たす Book の手を連続して辿る。
+    /// 返却される手順がそのまま再生できるよう、強制パスも手順に含める。
     pub fn continuation(&self, position: impl Into<Board>) -> Vec<Action> {
         let mut board = position.into();
         let mut line = Vec::new();
-        // Hold a pending pass until there is a Book move on the other side.
+        // 相手番側に有効な Book の手が見つかるまで、保留中のパスを保持する。
         while !board.is_terminal() {
             let pass = board.must_pass();
             if pass {
@@ -211,7 +211,7 @@ impl UsePolicy {
             identity,
         )
     }
-    /// Check a borrowed value from BookEntry::moves without expanding its trace.
+    /// [`BookEntry::moves`] から得た借用評価値をトレース展開せずに検査する。
     pub fn check_ref(
         self,
         value: EvaluationRef<'_>,
@@ -298,9 +298,9 @@ fn choose(
     {
         return Err(BookMiss::InsufficientCoverage);
     }
-    // Only registered moves keep the game in the book, but the threshold is
-    // set by every usable value: a registered move that is known to be worse
-    // than an unregistered one by more than the allowed loss is not played.
+    // Book 内に手順の流れを保つのは「登録手（`registered`）」だけだが、
+    // 許容損失の基準となる最善スコアの計算には、利用可能なすべての評価（未登録手や上界 `Bound::Upper` を含む）を含める。
+    // 未登録手より許容損失を超えて劣ることが分かっている登録手を誤って指さないため。
     let best = entry
         .moves()
         .filter(|c| {
@@ -322,8 +322,8 @@ fn choose(
                     BookMiss::NoRegisteredMove
                 })
         })?;
-    // bestには未登録手や上限も含む。上限が高くて登録手の損失を保証できない場合は
-    // 安易に登録手を返さず、OutsideLossなどの理由で呼出し側の通常探索へ戻す。
+    // best には未登録手や上界も含まれる。上界が高いために登録手の損失が許容範囲内と保証できない場合は、
+    // 安易に登録手を返さず、`OutsideLoss` などの理由で呼び出し側の通常探索へフォールバックする。
     let threshold = best
         - match policy.moves {
             MovePolicy::Best => 0,
@@ -360,7 +360,7 @@ fn choose(
         all_moves_evaluated: entry.all_moves_evaluated(),
     })
 }
-// SplitMix64 with rejection sampling: stable across platforms, no modulo bias.
+// 棄却サンプリング付き SplitMix64：プラットフォーム間で再現性があり剰余バイアスがない。
 fn next(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9e3779b97f4a7c15);
     let mut z = *state;

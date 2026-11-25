@@ -1,32 +1,24 @@
-//! Builds an `.rd` dataset from game transcripts or labelled positions, in
-//! the layout of reversi-dataset-gen (rdg,
-//! <https://github.com/ikepggthb/reversi-dataset-gen>).
+//! 棋譜や局面テキストから、reversi-dataset-gen（rdg）形式の `.rd` データセットを作成するモジュール（<https://github.com/ikepggthb/reversi-dataset-gen>）。
 //!
-//! Two inputs, as Egaroucid publishes its training data:
-//! - `--transcripts`: a directory of directories named by the number of
-//!   random opening moves `N` (training data v0002), each holding text
-//!   files of one game per line (`f5d6c3...`). The first `N` moves of a game
-//!   were random, so the positions before them say little about the final
-//!   result and are left out, and so are the next `--after-random` moves'.
-//!   Every later position with a move to play becomes a record, labelled
-//!   with the game's final disc difference from its side to move. Empty
-//!   squares go to the winner, as in the engine's final score.
-//! - `--boards`: directories of text files of one position per line, 64
-//!   characters (a1, b1, ..., h8; `X` the side to move, `O` the opponent,
-//!   `-` empty) and its score from the side to move (training data of
-//!   Egaroucid 7.4.0 / 7.5.1). The score is kept as it is.
+//! 公開されている Egaroucid の学習データ形式に合わせ、次の 2 種類の入力に対応しています：
+//! - `--transcripts`: ランダム序盤の手数 `N` をディレクトリ名とする棋譜データ群（training data v0002）。
+//!   各ファイルは 1 行につき 1 対局の棋譜（`f5d6c3...`）が書かれています。序盤のランダムな `N` 手は
+//!   終局スコアとの結びつきが弱いため除外し、さらに直後の `--after-random` 手分の局面も除外します。
+//!   それ以降の着手可能な各局面に対し、「手番側から見た最終石差（空きマスは勝者に加算）」を正解ラベルとして書き出します。
+//! - `--boards`: 1 行につき 1 局面を記したテキストファイル群（Egaroucid 7.4.0 / 7.5.1 学習データ形式）。
+//!   a1, b1, ..., h8 の 64 文字（`X`: 手番側、`O`: 相手側、`-`: 空き）に続いて手番側視点のスコアが書かれており、
+//!   そのスコアをそのまま正解ラベルとして使います。
 //!
-//! `--stones` keeps the positions with that many discs only.
+//! `--stones` を指定すると、その石数範囲に当てはまる局面だけを抽出できます。
 //!
-//! As rdg writes them:
-//! - a position goes to `train`, `valid` or `test` by its canonical hash
-//!   (`canonical_own_opponent_v1`), so a position and its symmetric copies
-//!   always land in the same split
-//! - `phase_<NN>/` holds the positions of phase `NN` = discs − 4, with a
-//!   `metadata.json` and a `stats.json`; `summary.json` covers every phase
+//! 出力の構成や分割ルールは rdg と互換性があります：
+//! - 各局面は対称な 8 通りを同一視したハッシュ（`canonical_own_opponent_v1`）に基づいて `train` / `valid` / `test` に
+//!   振り分けられるため、回転・反転で同じになる局面が訓練用とテスト用に分裂するのを防げます。
+//! - 石数に応じた `phase_<NN>/`（`NN` = 石数 − 4）ディレクトリごとに `.rd` ファイルと `metadata.json` / `stats.json` を書き出し、
+//!   全体のサマリーとして `summary.json` を出力します。
 //!
-//! Unlike rdg's generator, repeated positions are all kept: each comes from
-//! a different game and carries that game's result.
+//! なお rdg 本来の生成器とは異なり、同じ盤面が複数回現れても重複除去は行わず、
+//! 異なる対局から生じたそれぞれの勝敗結果をそのまま残します。
 use crate::{Result, rd};
 use clap::Args;
 use deft_reversi_engine::{Action, Board, Square};
@@ -38,47 +30,44 @@ use std::{
     path::PathBuf,
 };
 
+/// `convert` サブコマンドの CLI 引数。
 #[derive(Args, Debug)]
 #[command(group(clap::ArgGroup::new("input").required(true).args(["transcripts", "boards"])))]
 pub struct ConvertArgs {
-    /// Directory of `<random moves>/` directories of transcript files.
+    /// `<ランダム手数>/` サブディレクトリを含む棋譜のルートディレクトリ。
     #[arg(long)]
     transcripts: Option<PathBuf>,
-    /// Directory of directories of `<64 squares> <score>` position files.
+    /// `<64マス> <スコア>` 形式の局面ファイルディレクトリを含むルートディレクトリ。
     #[arg(long)]
     boards: Option<PathBuf>,
-    /// With `--transcripts`, also leave out this many moves' positions after
-    /// the random ones.
+    /// `--transcripts` 指定時、ランダム序盤のあとに追加で除外する手数。
     #[arg(long, default_value_t = 0, requires = "transcripts")]
     after_random: usize,
-    /// Leave out fewer moves where data is scarce: at a position with `s`
-    /// discs, `--after-random` is at most `s - RAMP` (and at least 0). The
-    /// positions of `s` discs come from games with up to `s - 12 - K` random
-    /// moves, about a million positions each in Egaroucid's v0002, so a ramp
-    /// of 21 keeps about ten million positions from 21 discs on.
+    /// データ数が少ない序盤で除外手数を段階的に減らすためのしきい値。
+    /// 石数 `s` の局面では `--after-random` の上限を `s - RAMP`（最小 0）に抑える。
+    /// 石数 `s` の局面は最大 `s - 12 - K` ランダム手の対局から供給される（Egaroucid v0002 では各約 100 万局面）ため、
+    /// `RAMP = 21` とすると 21 石以降で約 1,000 万局面を確保できる。
     #[arg(long, requires = "transcripts")]
     after_random_ramp: Option<u8>,
-    /// Keep the positions with this many discs only.
+    /// 出力対象とする石数の範囲（両端含む）。
     #[arg(long, default_value = "4..=63")]
     stones: crate::StoneRange,
-    /// Output dataset directory.
+    /// 出力先データセットディレクトリ。
     #[arg(long)]
     out: PathBuf,
-    /// Files converted at once (default: every core). The output is the same
-    /// for any number.
+    /// 並列処理するスレッド数（既定：全コア）。スレッド数を変えても出力内容は同じになる。
     #[arg(short, long)]
     threads: Option<usize>,
-    /// Share of positions in `train`.
+    /// 訓練用（`train`）分割に割り当てる比率。
     #[arg(long, default_value_t = 0.98)]
     train: f64,
-    /// Share of positions in `valid`; the rest go to `test`.
+    /// 検証用（`valid`）分割に割り当てる比率（残りがテスト用 `test` になる）。
     #[arg(long, default_value_t = 0.01)]
     valid: f64,
 }
 
 impl ConvertArgs {
-    /// The moves left out after the random ones at a position of `stones`
-    /// discs.
+    /// 石数 `stones` の局面において、ランダム序盤後に追加で除外する手数を返す。
     fn after_random_at(&self, stones: u8) -> usize {
         match self.after_random_ramp {
             Some(ramp) => self
@@ -92,17 +81,17 @@ impl ConvertArgs {
 const SPLITS: [&str; 3] = ["train", "valid", "test"];
 const RECORD_SPEC: &str = "u64 own_bits little-endian, u64 opponent_bits little-endian, i16 value little-endian; side-to-move perspective; bit0=a1, bit63=h8";
 
-/// The positions a game contributes and the label of each: the final disc
-/// difference from its side to move, empty squares to the winner. A
-/// position before move `i` (0 based, passes not counted) with `s` discs is
-/// kept when `i >= skip(s)`.
+/// 1 局の棋譜文字列から学習用レコード列を生成する。
+///
+/// 各局面のラベルは手番側から見た終局石差（空きマスは勝者側に加算）となる。
+/// パスを除いた 0 始まりの着手番号 `i`、石数 `s` に対して `i >= skip(s)` を満たす局面のみを抽出する。
 pub fn game_records(moves: &str, skip: impl Fn(u8) -> usize) -> Option<Vec<rd::Record>> {
     let bytes = moves.as_bytes();
     if !bytes.len().is_multiple_of(2) {
         return None;
     }
     let mut board = Board::new();
-    // Black moves first; `black_to_move` follows the side to move.
+    // 初手は黒番。`black_to_move` で現在の手番を追跡する。
     let mut black_to_move = true;
     let mut positions = Vec::new();
     for (i, pair) in bytes.chunks(2).enumerate() {
@@ -133,9 +122,9 @@ pub fn game_records(moves: &str, skip: impl Fn(u8) -> usize) -> Option<Vec<rd::R
     )
 }
 
-/// A position line of `--boards`: 64 squares from a1 to h8 (`X` the side to
-/// move, `O` the opponent, `-` empty), a space and the score from the side
-/// to move.
+/// `--boards` 形式の 1 行をパースして [`rd::Record`] を返す。
+///
+/// 形式: a1 から h8 までの 64 文字（`X`: 手番側、`O`: 相手側、`-`: 空き）、空白、手番側視点のスコア。
 pub fn board_record(line: &str) -> Option<rd::Record> {
     let (squares, score) = line.split_once(' ')?;
     if squares.len() != 64 {
@@ -160,7 +149,7 @@ pub fn board_record(line: &str) -> Option<rd::Record> {
     })
 }
 
-/// rdg's transform `t` of a bitboard (bit `8 y + x` is square (x, y)).
+/// rdg 準拠の D4 対称変換 `t`（0..8）をビットボードに適用する（ビット `8*y + x` がマス (x, y)）。
 fn transform(bits: u64, t: u8) -> u64 {
     let mut out = 0;
     let mut rest = bits;
@@ -183,8 +172,10 @@ fn transform(bits: u64, t: u8) -> u64 {
     out
 }
 
-/// rdg's `CanonicalHashBits`: the SHA-256, in lowercase hex, of the smallest
-/// (own, opponent) pair over the eight symmetries, as 16 little-endian bytes.
+/// rdg の `CanonicalHashBits` と互換性のある正規化ハッシュを返す。
+///
+/// 回転・反転による 8 通りの盤面のうち辞書順で最小となる `(own, opponent)` ペアを 16 バイトのリトルエンディアン列にし、
+/// SHA-256 を計算して小文字の 16 進文字列として返す。
 pub fn canonical_hash(own: u64, opponent: u64) -> String {
     let best = (0..8)
         .map(|t| (transform(own, t), transform(opponent, t)))
@@ -199,8 +190,8 @@ pub fn canonical_hash(own: u64, opponent: u64) -> String {
         .collect()
 }
 
-/// rdg's `chooseSplit`: the first 8 bytes of the SHA-256 of the hash text,
-/// big endian, as a fraction of `u64::MAX`.
+/// rdg の `chooseSplit` 互換の分割判定を行う（0: train, 1: valid, 2: test）。
+/// ハッシュ文字列の SHA-256 先頭 8 バイトをビッグエンディアン `u64` とみなし、`u64::MAX` で割った値で振り分ける。
 fn split_of(hash: &str, train: f64, valid: f64) -> usize {
     let sum = Sha256::digest(hash.as_bytes());
     let x = u64::from_be_bytes(sum[..8].try_into().unwrap());
@@ -214,7 +205,7 @@ fn split_of(hash: &str, train: f64, valid: f64) -> usize {
     }
 }
 
-/// Labels seen in one phase, for `stats.json`.
+/// 1 フェーズ分の出現ラベルヒストグラムおよび分割別件数（`stats.json` 生成用）。
 #[derive(Default)]
 struct Values {
     histogram: BTreeMap<i8, u64>,
@@ -249,14 +240,14 @@ impl Writers {
     }
 }
 
+/// `convert` サブコマンドを実行し、入力ディレクトリ群を並列変換して `.rd` とメタデータを書き出す。
 pub fn run(args: ConvertArgs) -> Result<()> {
     let share = |x: f64| x.is_finite() && (0.0..=1.0).contains(&x);
     if !share(args.train) || !share(args.valid) || args.train + args.valid > 1.0 {
         return Err("--train and --valid must be shares with a sum of at most 1".into());
     }
     let input = args.transcripts.as_ref().or(args.boards.as_ref()).unwrap();
-    // Transcripts by their number of random moves; position files in one
-    // group of their directory's order.
+    // 棋譜モードではランダム手数ごとに、盤面モードではディレクトリ順にグループ化する。
     let mut dirs: Vec<(usize, PathBuf)> = Vec::new();
     for entry in fs::read_dir(input)? {
         let path = entry?.path();
@@ -308,9 +299,8 @@ pub fn run(args: ConvertArgs) -> Result<()> {
         .threads
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
         .max(1);
-    // Files are read and their records split in parallel, a batch at a
-    // time; the records are written in file order, so the output does not
-    // depend on the threads.
+    // ファイルをバッチ単位で並列に読み込み・分割し、ファイル順で書き出すことで
+    // スレッド数に依存しない決定的な出力を保証する。
     let (mut lines, mut skipped) = (0u64, 0u64);
     for batch in jobs.chunks(threads * 2) {
         let results: Vec<std::sync::Mutex<Option<std::io::Result<FileRecords>>>> =
@@ -347,7 +337,7 @@ pub fn run(args: ConvertArgs) -> Result<()> {
     Ok(())
 }
 
-/// The records of one input file with their splits, in line order.
+/// 1 つの入力ファイルから抽出されたレコード列と分割先（行順を保持）。
 struct FileRecords {
     lines: u64,
     skipped: u64,
@@ -397,7 +387,7 @@ fn file_records(
     Ok(out)
 }
 
-/// The local time in RFC 3339, as rdg writes it.
+/// rdg メタデータ互換の RFC 3339 形式の現在ローカル時刻を返す。
 fn now() -> String {
     std::process::Command::new("date")
         .arg("--iso-8601=seconds")

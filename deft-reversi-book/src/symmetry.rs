@@ -1,16 +1,22 @@
-//! 盤面と着手を同じ回転・反転へ変換する。点数の符号と手番の色は変えない。
-//! 正規化はKey::newから使い、対局へ返す着手は逆変換する。
+//! 盤面と着手を同じ回転・反転規則で変換するモジュール（点数の符号や手番の色は変えない）。
+//!
+//! リバーシの盤面は回転・反転によって 8 通りの対称形を持つため、Book では
+//! 代表となる 1 つの向きに揃えて（正規化して）保存することで容量と探索を節約する。
+//! 正規化は `Key::new` から使い、対局時に呼び出し側へ手を返すときは `inverse()` で元の向きに戻す。
 use super::*;
-/// Same transform order as Board::canonical. Never swaps the two colors.
+/// `Board::canonical` と同じ変換順序の D4 対称変換（0..8）。手番の色は入れ替えない。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Symmetry(u8);
 impl Symmetry {
+    /// 全 8 通りの対称変換を返す。
     pub fn all() -> [Self; 8] {
         std::array::from_fn(|i| Self(i as u8))
     }
+    /// 盤面 `b` にこの対称変換を適用する。
     pub fn board(self, b: Board) -> Board {
         b.symmetries()[self.0 as usize]
     }
+    /// 着手 `a` にこの対称変換を適用する（パスはそのまま返す）。
     pub fn action(self, a: Action) -> Action {
         let Action::Place(s) = a else { return a };
         let (mut x, mut y) = (s.index() % 8, s.index() / 8);
@@ -28,6 +34,7 @@ impl Symmetry {
         }
         Action::Place(deft_reversi_engine::Square::new(y * 8 + x).unwrap())
     }
+    /// この対称変換の逆変換を返す。
     pub fn inverse(self) -> Self {
         match self.0 {
             3 => Self(5),

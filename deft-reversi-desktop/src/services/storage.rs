@@ -1,5 +1,9 @@
-//! The `storage` thread: autosave with a debounce, settings, export, load,
-//! and the list of saved games. Writes run one at a time, in order.
+//! 棋譜の自動保存・設定保存・エクスポート・読み込み・対局一覧取得を担う `storage` スレッドサービス。
+//!
+//! ディスクへの書き込みを専用の単一スレッドにまとめることで、UI の描画を止めず、
+//! かつファイル操作が同時に走って競合するのも防いでいる。
+//! また、対局中の自動保存には「デバウンス（連続した変更を一定時間待ってから 1 回にまとめる仕組み）」を使い、
+//! 連打で Undo や着手を繰り返したときの無駄なディスク書き込みを抑えている。
 use crate::{
     domain::{GameInfo, Player},
     persistence::{
@@ -17,58 +21,80 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// A save waits this long for the next change…
+/// 連続した棋譜変更を 1 回の保存にまとめるための待機時間（デバウンス時間）。
+/// 最後の変更からこの時間だけ追加の変更がなければディスクへ書き出す。
 const QUIET: Duration = Duration::from_millis(200);
-/// …but no longer than this after the first unsaved change.
+/// 変更が途切れず続いた場合でも、最初の未保存変更から遅くともこの時間以内には必ず書き出す上限。
 const MAX_DELAY: Duration = Duration::from_secs(1);
 
+/// `storage` スレッドへ送信するコマンド。
 #[derive(Debug)]
 pub enum StorageCommand {
-    /// Debounced; a newer record of the same game replaces it.
+    /// 棋譜を自動保存する（デバウンス対象。同一対局 ID の新しい記録で上書きされる）。
     SaveGame(RecordV1),
+    /// 設定ファイルを保存する。
     SaveSettings(SettingsV1),
+    /// 指定パスへ棋譜をエクスポートする。
     Export {
+        /// 出力先ファイルパス。
         path: PathBuf,
+        /// エクスポートする棋譜データ。
         record: RecordV1,
     },
-    /// Opens an existing autosave under its original identity.
+    /// 既存の自動保存ファイルを元の対局 ID のまま開く。
     Load(PathBuf),
-    /// Opens a file as a new autosaved copy of the recorded game.
+    /// 外部ファイルをインポートし、新しい対局 ID を採番したコピーとして開く。
     Import(PathBuf),
+    /// 保存済み対局の一覧を要求する。
     ListGames,
+    /// 指定 ID の対局ファイル（およびバックアップ）を削除する。
     DeleteGame(String),
 }
 
+/// 対局一覧に表示するための 1 局分のサマリ情報。
 #[derive(Clone, Debug)]
 pub struct GameSummary {
+    /// 対局 ID。
     pub id: String,
+    /// 最終更新日時（RFC 3339）。
     pub updated_at: String,
+    /// 黒番・白番のプレイヤー設定。
     pub players: [Player; 2],
-    /// Discs placed, so the number of moves played.
+    /// 初期局面から打たれた手数（石数の増分）。
     pub moves: usize,
-    /// Black's and White's discs at the end, when finished.
+    /// 終局済みの場合の `(黒石数, 白石数)`。
     pub outcome: Option<(u32, u32)>,
 }
 
+/// `storage` スレッドから UI 側へ通知されるイベント。
 #[derive(Debug)]
 pub enum StorageEvent {
-    /// The newest saved game, read when the thread starts.
+    /// スレッド起動時に読み込まれた最新の保存済み対局。
     Restored(Option<LoadedGame>),
+    /// 自動保存が完了した。
     Saved,
+    /// 自動保存に失敗した。
     SaveFailed {
+        /// 失敗した対局 ID。
         id: String,
+        /// エラー内容。
         error: String,
     },
+    /// 棋譜の読み込み／インポート結果。
     Loaded(Result<LoadedGame, String>),
+    /// エクスポート結果。
     Exported(Result<PathBuf, String>),
+    /// 保存済み対局一覧の取得結果。
     Games(Vec<GameSummary>),
 }
 
+/// 永続化バックグラウンドスレッドへの操作ハンドル。
 pub struct StorageService {
     commands: Option<mpsc::Sender<StorageCommand>>,
     thread: Option<JoinHandle<()>>,
 }
 
+/// デバウンス待ちの未保存棋譜データ。
 struct Pending {
     record: RecordV1,
     first: Instant,
@@ -76,6 +102,7 @@ struct Pending {
 }
 
 impl StorageService {
+    /// `storage` スレッドを起動し、コマンド送信ハンドルとイベント受信チャネルを返す。
     pub fn spawn(paths: Paths) -> (Self, async_channel::Receiver<StorageEvent>) {
         let (commands, receiver) = mpsc::channel();
         let (events, event_receiver) = async_channel::unbounded();
@@ -98,15 +125,16 @@ impl StorageService {
         )
     }
 
+    /// `storage` スレッドへコマンドを送信する。
     pub fn send(&self, command: StorageCommand) {
         if let Some(commands) = &self.commands {
             let _ = commands.send(command);
         }
     }
 
-    /// Writes what is pending and waits for the thread to end.
+    /// 保留中の自動保存をディスクへ書き出してからスレッドの終了を待機する。
     pub fn shutdown(&mut self) {
-        // Closing the channel ends the thread after it flushes.
+        // チャネルを閉じることで、スレッド側が保留分をフラッシュした後に終了する。
         self.commands = None;
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -160,7 +188,7 @@ fn run(
         match command {
             StorageCommand::SaveGame(record) => {
                 let now = Instant::now();
-                // Another game's save is written first, not dropped.
+                // 別対局の保存に切り替えられた場合は、古い方の保留データを破棄せず先に書き出す。
                 if pending
                     .as_ref()
                     .is_some_and(|p| p.record.game_id != record.game_id)
@@ -198,7 +226,7 @@ fn run(
                 send(StorageEvent::Loaded(game));
             }
             StorageCommand::ListGames => {
-                // The list shows what is on disk, including the latest save.
+                // ディスク上の最新状態（未フラッシュの保留分を含む）を一覧へ反映する。
                 write_game(&paths, pending.take(), &send);
                 send(StorageEvent::Games(list_games(&paths)));
             }
@@ -206,7 +234,7 @@ fn run(
                 if pending.as_ref().is_some_and(|p| p.record.game_id == id) {
                     pending = None;
                 } else {
-                    // Flush another game's pending save so the returned list is current.
+                    // 別対局の保留分を先にフラッシュし、返却する一覧の整合性を保つ。
                     write_game(&paths, pending.take(), &send);
                 }
                 let path = paths.game(&id);
@@ -241,7 +269,7 @@ fn write_game(paths: &Paths, pending: Option<Pending>, send: &impl Fn(StorageEve
     );
 }
 
-/// Record file paths in the games folder.
+/// 保存先フォルダ内の `.dreversi` ファイルパス一覧を収集する。
 fn game_paths(paths: &Paths) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(&paths.games) else {
         return Vec::new();
@@ -253,7 +281,7 @@ fn game_paths(paths: &Paths) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Record files in the games folder with their modified times.
+/// 保存先フォルダ内の `.dreversi` ファイルとその更新日時を収集する。
 fn game_files(paths: &Paths) -> Vec<(PathBuf, std::time::SystemTime)> {
     game_paths(paths)
         .into_iter()
@@ -264,7 +292,7 @@ fn game_files(paths: &Paths) -> Vec<(PathBuf, std::time::SystemTime)> {
         .collect()
 }
 
-/// The most recently written game, from its backup if the file is broken.
+/// 最も新しく更新された対局を読み込む（本体破損時は `.bak` からの復旧も試みる）。
 fn newest_game(paths: &Paths) -> Option<LoadedGame> {
     let mut files = game_files(paths);
     files.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));

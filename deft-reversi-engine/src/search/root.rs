@@ -1,16 +1,26 @@
-//! Root PVS, per-move bounds and aspiration stabilization from the reference.
+//! ルート局面における探索制御を担当するモジュールです。
+//!
+//! - PVS（Principal Variation Search：最初の有力な手だけを広い探索窓で調べ、2 番目以降の手はまず幅 1 の狭い窓で
+//!   「最善手を更新しないか」だけを高速に確認し、更新しそうな場合だけ広い窓で探索し直す手法）
+//! - 各候補手の上界・下界キャッシュ（[`RootBound`]）
+//! - Aspiration Window（前の深さで得た予測スコアの周辺に狭い探索窓を設定し、外れた場合だけ窓を段階的に広げて
+//!   再探索する手法）
 use super::*;
 
+/// ルート候補手ごとのスコア下界・上界ペアです。
+/// Aspiration Window の再探索で同じ手を調べ直す際に、前回の探索で確定した境界を再利用して探索窓を狭めます。
 #[derive(Clone, Copy)]
 pub(super) struct RootBound {
     lower: i32,
     upper: i32,
 }
 impl RootBound {
+    /// 未探索時の初期境界（-64..=64）です。
     const UNBOUNDED: Self = Self {
         lower: -64,
         upper: 64,
     };
+    /// 現在の `[alpha, beta]` 窓に対して既に境界が確定している場合はそのスコアを返します。
     fn cutoff(self, alpha: i32, beta: i32) -> Option<i32> {
         if self.lower == self.upper || self.lower >= beta {
             Some(self.lower)
@@ -20,6 +30,7 @@ impl RootBound {
             None
         }
     }
+    /// `[alpha, beta]` 窓の探索結果 `score` で上下界を更新し、値が確定していればその正確な値を返します。
     pub(super) fn update(&mut self, score: i32, alpha: i32, beta: i32) -> i32 {
         if score <= alpha {
             self.upper = self.upper.min(score);
@@ -38,12 +49,14 @@ impl RootBound {
     }
 }
 
+/// ルート局面の探索状態（候補手リストと各マスごとの境界テーブル）を管理する構造体です。
 pub(super) struct RootSearch {
     position: Position,
     candidates: Vec<Candidate>,
     bounds: [RootBound; 64],
 }
 impl RootSearch {
+    /// ルート局面の全合法手を候補リストとして初期化します。
     pub(super) fn new(position: Position) -> Self {
         let mut moves = position.board.get_moves();
         let mut candidates = Vec::new();
@@ -62,6 +75,7 @@ impl RootSearch {
             bounds: [RootBound::UNBOUNDED; 64],
         }
     }
+    /// 候補手を `mask` に含まれるマスだけに絞り、`preferred` が含まれていれば先頭へ移動します。
     pub(super) fn restrict(&mut self, mask: u64, preferred: Option<Square>) {
         self.candidates
             .retain(|c| mask & (1u64 << c.square.index()) != 0);
@@ -71,6 +85,8 @@ impl RootSearch {
             self.candidates.swap(0, i);
         }
     }
+    /// 1 イテレーション分のルート探索を実行します。
+    /// 途中で中断された場合は、直前の先頭候補（前回までの最善手）が別の手に意図せず入れ替わらないよう順序を元に戻します。
     pub(super) fn iteration(
         &mut self,
         context: &mut Context,
@@ -91,6 +107,7 @@ impl RootSearch {
         }
         outcome
     }
+    /// 選択されたルート手のいずれも `minimum` 以上に届かないかを Null-Window（`[minimum-1, minimum]`）で判定します。
     pub(super) fn below_minimum(
         &mut self,
         context: &mut Context,
@@ -100,8 +117,8 @@ impl RootSearch {
         self.bounds.fill(RootBound::UNBOUNDED);
         Ok(self.window(context, spec, minimum - 1, minimum)?.score < minimum)
     }
-    /// Scores the requested root moves with a full window, best first.
-    /// `on_move` sees the moves scored so far, best first, as they finish.
+    /// `mask` で指定されたルート合法手をそれぞれフルウィンドウ（`-64..=64`）で評価し、スコア降順で返します。
+    /// `on_move` にはその時点までに評価完了した手が良い順で逐次渡されます。
     pub(super) fn move_scores(
         &self,
         context: &mut Context,
@@ -136,6 +153,7 @@ impl RootSearch {
         moves.sort_by_key(|(entry, _)| std::cmp::Reverse(entry.score));
         Ok(moves)
     }
+    /// 予測値 `prediction` を中心に Aspiration Window を設定し、スコアが窓内に収まって収束するまで再探索します。
     fn aspiration(
         &mut self,
         context: &mut Context,
@@ -239,7 +257,7 @@ impl RootSearch {
             return Ok(best);
         }
         alpha = alpha.max(best.score);
-        // Keep YBWC at the root; workers share the same score-only TT rules.
+        // ルートノードでも YBWC による並列分割を行います（各ワーカーはスコア専用の置換表ルールを共有します）。
         let split = context.runtime.parallel
             && self.candidates.len() >= 3
             && if spec.exact {
@@ -334,16 +352,17 @@ fn root_line(action: Action, score: i32) -> Line {
 }
 
 type ScoredMove = (MoveScore, Vec<Action>);
-/// Sees the root moves scored so far, best first.
+/// それまでに評価完了したルート手（良い順）を受け取るコールバック型です。
 type OnMove<'a> = &'a mut dyn FnMut(&Context, &[MoveScore]);
 
-/// The moves scored so far, best first.
+/// スコア済み候補手をスコア降順に並べて返します。
 fn best_first(moves: impl Iterator<Item = MoveScore>) -> Vec<MoveScore> {
     let mut moves: Vec<_> = moves.collect();
     moves.sort_by_key(|entry| std::cmp::Reverse(entry.score));
     moves
 }
 
+/// 1 つのルート候補手をフルウィンドウ（`-64..=64`）で評価し、必要なら PV も返します。
 fn score_candidate(
     context: &mut Context,
     position: Position,
@@ -377,8 +396,8 @@ fn score_candidate(
     ))
 }
 
-// Each candidate has its own window. Reuse the regular worker pool and
-// shared stop control instead of running one engine per candidate.
+// 各候補手は独立した探索窓を持つため、候補ごとにエンジンを複製せず、
+// 通常のワーカープールと共有の停止制御を再利用して並列評価します。
 struct CandidateBatch {
     position: Position,
     spec: SearchSpec,
@@ -389,8 +408,8 @@ struct CandidateBatch {
 }
 
 impl CandidateBatch {
-    /// The calling thread passes `on_move`, which sees every move finished
-    /// so far, by any thread, each time it finishes one of its own.
+    /// 呼び出し元スレッドは `on_move` を渡し、自身の手が 1 つ終わるたびに
+    /// 他スレッド分も含めた完了済み結果を通知します。
     fn run(&self, context: &mut Context, mut on_move: Option<OnMove<'_>>) -> Result<(), Aborted> {
         while !context.aborted() {
             let index = self.next.fetch_add(1, Ordering::Relaxed);

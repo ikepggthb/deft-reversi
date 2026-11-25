@@ -1,6 +1,6 @@
 # 計測ツール
 
-Deft の速さと強さを測るスクリプトです。測った結果は `docs/benchmarks/<日付>-<名前>/` に、README（何を、どのコマンドで測ったか、結果と結論）と結果のデータを置きます。スクリプトは測定のたびに写さず、ここのものを使います。
+Deft の速さと強さを測るスクリプトです。測った結果は `deft-reversi-notes/<テーマ>/<日付>-<名前>/` に、README（何を、どのコマンドで測ったか、結果と結論）と結果のデータを置きます。スクリプトは測定のたびに写さず、ここのものを使います。
 
 性能・局面解析・対局の測定は `deft-reversi-cli` の公開コマンドを使います。CLIに必要な出力や機能がなければCLIに追加し、エンジンのexampleを計測用の入口には使いません。過去の記録の実行条件は当時のものとして保持します。
 
@@ -18,7 +18,7 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native \
 | キー | 既定の場所 |
 |---|---|
 | `solve`・`gtp` | `target-native/release/deft-reversi-cli`（それぞれ `solve --tsv`・`gtp` を呼ぶ） |
-| `model` | `local/release/model-v3-pen-mpc2/deft-eval-v3-pen.dpr2`（今の Release のモデルと同じ重み・規則で、校正を今の形式にしたもの） |
+| `model` | `local/release/model-v4/deft-eval-v4.dpr2`（GitHub Release `model-v4` のモデル） |
 | `edax` | `local/bench-engines/edax-4.5.6/bin/lEdax-x86-64-v3`（Edax 4.5.6 の配布版） |
 | `egaroucid` | `local/bench-engines/Egaroucid-console_v7.8.2/bin/Egaroucid_for_Console.out`（Egaroucid 7.8.2、公式の clang の手順でビルド） |
 
@@ -47,7 +47,7 @@ Deft の設定は `NAME:key=value,...` で書きます。キーは `solve`（バ
 
 ## 中盤：[midgame.py](midgame.py)
 
-中盤150局面（[positions/mid150.obf](positions/mid150.obf)、空き32・40・48 を各50）を、レベル21 と18 で読む時間と、選んだ手の質を比べます。手の質は、レベル24 の結果（[positions/mid150-level24.tsv](positions/mid150-level24.tsv)、PEN のモデル・MPC 250局面校正）と同じ手を選んだ割合と、石差の差の平均です。
+中盤150局面（[positions/mid150.obf](positions/mid150.obf)、空き32・40・48 を各50）を、レベル21 と18 で読む時間と、選んだ手の質を比べます。手の質は、レベル24 の結果（[positions/mid150-level24.tsv](positions/mid150-level24.tsv)、小型ニューラルネット併用モデル・MPC 250局面校正）と同じ手を選んだ割合と、石差の差の平均です。
 
 ```sh
 python3 tools/bench/midgame.py --cpus 2 --rounds 3 --out OUT base:solve=/path/to/cli-base new:solve=/path/to/cli-new
@@ -58,10 +58,12 @@ python3 tools/bench/midgame.py --cpus 2 --rounds 3 --out OUT base:solve=/path/to
 Deft（CLIの `gtp` サブコマンド）と Edax・Egaroucid・別のモデルの Deft を、GTP で対局させます。開局は XOT から選び、色を入れ替えて2局ずつ打ちます。
 
 ```sh
-XOT=tools/bench/positions/xot-openingslarge.txt python3 tools/bench/match.py edax level12 250 OUT.tsv
-DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=tools/bench/positions/xot-openingslarge.txt \
+XOT=large python3 tools/bench/match.py edax level12 250 OUT.tsv
+DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=large \
   python3 tools/bench/match.py deft time1 250 OUT.tsv
 ```
+
+XOT の開局リストはリポジトリに含めていません。`XOT=large` を指定すると、初回に配布元（[XOT](https://berg.earthlingz.de/xot/)、Matthias Berg 氏）から [openingslarge.txt](https://berg.earthlingz.de/xot/downloads/openingslarge.txt) を `local/xot/` に取得し、SHA-256 を確かめてから使います。手元の別のリストは `XOT=FILE` で指定できます。
 
 別のビルドの Deft を相手にするときは、`OPP_GTP` にそのCLIバイナリを指定します。`MATCH_THREADS=N` で各エンジンを N スレッドで動かします（1局ずつ）。使い方の詳細はファイルの先頭にあります。
 
@@ -73,13 +75,12 @@ DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=tools/bench/positions/xot-openingslar
 | [ffo40-59.obf](positions/ffo40-59.obf) | FFO 40〜59 と全部の手の正解 |
 | [mid150.obf](positions/mid150.obf) | 中盤150局面 |
 | [mid150-level24.tsv](positions/mid150-level24.tsv) | 中盤150局面のレベル24 の結果（手の質の基準） |
-| [xot-openingslarge.txt](positions/xot-openingslarge.txt) | XOT の開局（large） |
 
 ## 決まり
 
 - 時間の比較は、同じ機械・同じスレッド数・同じ TT で測った値どうしだけで行う。
 - 時間を測っている間は、ビルドやほかの重い処理を動かさない。測定は1つずつ順に動かす。
-- 結果は `docs/benchmarks/<日付>-<名前>/` に置く。README には、使ったコマンド、機械、コミット、モデルを書く。
+- 結果は `deft-reversi-notes/<テーマ>/<日付>-<名前>/` に置く。README には、使ったコマンド、機械、コミット、モデルを書く。
 
 ## ツール自身の確認
 

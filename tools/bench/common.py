@@ -1,34 +1,42 @@
-"""Shared paths, engine specs and position files for the bench tools.
+"""ベンチマーク用スクリプトが共有するパス解決、エンジン設定、局面ファイル読み込み処理。
 
-Engines, models and data live in the ignored `local/` folder (see
-local/README.md). Their default places are below; `local/bench.toml`
-overrides any of them (keys as in DEFAULTS, paths relative to the repo).
+エンジン本体・評価モデル・データ類は Git 管理外の `local/` ディレクトリに配置する
+（詳細は local/README.md を参照）。既定の配置場所は DEFAULTS に定義しており、
+`local/bench.toml` を置くと任意の項目（リポジトリルートからの相対パス、または絶対パス）を上書きできる。
 """
 import io
 import csv
+import hashlib
 import os
 import re
 import subprocess
 import sys
 import tomllib
+import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 POSITIONS = Path(__file__).resolve().parent / "positions"
 DEFAULTS = {
-    # Built with RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native.
+    # RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native でビルドしたバイナリを使う。
     "solve": "target-native/release/deft-reversi-cli",
     "gtp": "target-native/release/deft-reversi-cli",
-    "model": "local/release/model-v3-pen-mpc2/deft-eval-v3-pen.dpr2",
-    # Edax 4.5.6 as distributed; it reads data/eval.dat next to its bin/.
+    "model": "local/release/model-v4/deft-eval-v4.dpr2",
+    # 配布版の Edax 4.5.6。bin/ の隣にある data/eval.dat を参照する。
     "edax": "local/bench-engines/edax-4.5.6/bin/lEdax-x86-64-v3",
-    # Egaroucid for Console 7.8.2 built with the official clang++ command.
+    # 公式の clang++ コマンドでビルドした Egaroucid for Console 7.8.2。
     "egaroucid": "local/bench-engines/Egaroucid-console_v7.8.2/bin/Egaroucid_for_Console.out",
+    # XOT の開局リスト（large）。リポジトリには同梱せず、初回に配布元から取得する（fetch_xot）。
+    "xot": "local/xot/openingslarge.txt",
 }
+
+# XOT（Matthias Berg 氏）の配布元と、取得したファイルの SHA-256。
+XOT_URL = "https://berg.earthlingz.de/xot/downloads/openingslarge.txt"
+XOT_SHA256 = "ccbeb0ed7b7ae23de20013a3992b9a6ede77610bbb5cacda82ccbaedaab72530"
 
 
 def paths():
-    """The tool paths, with local/bench.toml applied, as absolute paths."""
+    """local/bench.toml の上書きを反映した各ツール・モデル・エンジンの絶対パス辞書を返す。"""
     values = dict(DEFAULTS)
     config = REPO / "local/bench.toml"
     if config.exists():
@@ -36,9 +44,26 @@ def paths():
     return {k: Path(v) if Path(v).is_absolute() else REPO / v for k, v in values.items()}
 
 
+def fetch_xot(path, url=XOT_URL):
+    """XOT の開局リストを path に用意して返す。なければ配布元から取得し、SHA-256 を確かめてから保存する。"""
+    path = Path(path)
+    if path.exists():
+        return path
+    print(f"XOT の開局リストを取得します: {url}", file=sys.stderr)
+    with urllib.request.urlopen(url, timeout=60) as response:
+        data = response.read()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != XOT_SHA256:
+        sys.exit(f"XOT の開局リストの SHA-256 が一致しません: {digest}（期待値 {XOT_SHA256}）")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
 def read_answers(path):
-    """Positions of an .obf file with answers (`BOARD SIDE; A2:+38; ...`):
-    a list of (position, best score)."""
+    """正解付き .obf ファイル（`盤面 手番; A2:+38; ...` 形式）を読み込み、
+    `(局面文字列, 最善手スコア)` のリストを返す（スコア記載がなければ None）。
+    """
     out = []
     for line in Path(path).read_text().splitlines():
         if not line.strip() or line.startswith("#"):
@@ -50,14 +75,19 @@ def read_answers(path):
 
 
 def empties(position):
+    """局面文字列から空きマス（`-`）の個数を数えて返す。"""
     return position.split()[0].count("-")
 
 
 class Deft:
-    """A Deft configuration: `NAME` or `NAME:key=value,...`.
+    """Deft エンジンの構成を表す。`NAME` または `NAME:key=value,...` 形式で指定する。
 
-    Keys: `solve` (binary), `model`, `tt` (MiB), and any upper-case key,
-    which is set in the environment (for temporary switches)."""
+    指定できるキー:
+      solve: CLI バイナリのパス
+      model: 評価モデルファイルのパス
+      tt:    置換表のサイズ（MiB、既定は 256）
+      大文字のみのキー: サブプロセスに渡す環境変数（一時的な実験用スイッチなどに使う）
+    """
 
     kind = "deft"
 
@@ -79,6 +109,7 @@ class Deft:
                 raise SystemExit(f"unknown setting {key!r} in {spec!r}")
 
     def solve_file(self, case, goal, threads, cpus):
+        """指定した局面ファイルを `deft-reversi-cli solve` で探索し、TSV 出力を辞書のリストで返す。"""
         goal_args = ["--exact"] if goal == "exact" else (["--level", goal[5:]] if goal.startswith("level") else ["--depth", goal])
         cmd = ["taskset", "-c", cpus, str(self.solve), "solve", str(Path(case).resolve()),
                "--model", str(self.model), *goal_args, "--threads", str(threads), "--tt-mib", str(self.tt), "--tsv"]
@@ -91,7 +122,7 @@ class Deft:
 
 
 def engine(spec, tools):
-    """`edax`, `egaroucid`, or a Deft configuration."""
+    """指定文字列（`edax`、`egaroucid`、または Deft 構成文字列）に応じたエンジンラッパーを返す。"""
     if spec == "edax":
         return Edax(tools)
     if spec == "egaroucid":
@@ -100,12 +131,15 @@ def engine(spec, tools):
 
 
 class Edax:
+    """Edax 4.5.6 を外部プロセスとして呼び出し、完全読み結果を解析するラッパー。"""
+
     kind = name = "edax"
 
     def __init__(self, tools):
         self.binary = tools["edax"]
 
     def exact(self, case, threads, cpus, hash_bits=23):
+        """Book なしで完全読みを実行し、`(深さ, 石差スコア, 秒数, ノード数)` を返す。"""
         cmd = ["taskset", "-c", cpus, str(self.binary), "-solve", str(case), "-n", str(threads), "-l", "60",
                "-h", str(hash_bits), "-eval-file", "data/eval.dat", "-book-usage", "off"]
         out = subprocess.run(cmd, cwd=self.binary.parent, capture_output=True, text=True, check=True).stdout
@@ -114,12 +148,15 @@ class Edax:
 
 
 class Egaroucid:
+    """Egaroucid for Console 7.8.2 を外部プロセスとして呼び出し、完全読み結果を解析するラッパー。"""
+
     kind = name = "egaroucid"
 
     def __init__(self, tools):
         self.binary = tools["egaroucid"]
 
     def exact(self, case, threads, cpus, hash_bits=23):
+        """Book なしで完全読みを実行し、`(深さ, 石差スコア, 秒数, ノード数)` を返す。"""
         cmd = ["taskset", "-c", cpus, str(self.binary), "-t", str(threads), "-l", "60", "-nobook",
                "-hash", str(hash_bits), "-s", str(case)]
         out = subprocess.run(cmd, cwd=self.binary.parent, capture_output=True, text=True, check=True).stdout

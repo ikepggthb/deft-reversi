@@ -1,29 +1,35 @@
+//! エンジン同士の自己対戦を行い、棋譜をファイルへ書き出す `self-play` コマンド。
+//!
+//! 序盤の指定手数をランダムに打って変化を付け、残りをエンジン探索で終局まで指し切る。
+
 use crate::{EngineArgs, GoalArgs, Result, game::Game, stop};
 use clap::Args;
 use deft_reversi_engine::{Action, Engine, Goal, SearchRequest};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use std::{fs::File, io::Write, path::PathBuf};
 
+/// `self-play` サブコマンドの引数。
 #[derive(Args, Debug)]
 pub struct SelfPlayArgs {
-    /// Number of games.
+    /// 対局数。
     games: usize,
     #[command(flatten)]
     engine: EngineArgs,
-    /// Level 16 unless a level, depth or exact solve is given.
+    /// 探索レベル・深さ・完全読みの指定（省略時はレベル 16）。
     #[command(flatten)]
     goal: GoalArgs,
-    /// Random placements at the start of each game.
+    /// 各局の開始時にランダムで打つ手数。
     #[arg(long, default_value_t = 20)]
     random: usize,
-    /// Seed for the random openings; a fresh one when omitted.
+    /// ランダム序盤用の乱数シード（省略時は環境エントロピーから生成）。
     #[arg(long)]
     seed: Option<u64>,
-    /// One game record per line.
+    /// 1 行 1 局で棋譜を書き出す出力先ファイル。
     #[arg(short, long, default_value = "self-play.txt")]
     out: PathBuf,
 }
 
+/// 指定された局数の自己対戦を実行し、完了した対局の棋譜をファイルへ書き出す。
 pub fn run(args: SelfPlayArgs) -> Result<()> {
     let mut engine = args.engine.engine()?;
     let mut rng = args
@@ -41,6 +47,7 @@ pub fn run(args: SelfPlayArgs) -> Result<()> {
             return Ok(());
         }
         writeln!(out, "{}", game.record())?;
+        // 前局の探索結果が次局に影響しないよう、1 局ごとに置換表を消去する。
         engine.clear_tt()?;
         println!("{n} / {} games", args.games);
     }
@@ -48,6 +55,10 @@ pub fn run(args: SelfPlayArgs) -> Result<()> {
     Ok(())
 }
 
+/// 1 局分の自己対戦を実行する。
+///
+/// 序盤 `random` 手までは合法手から一様ランダムに選び、その後は `request` に従う
+/// エンジン探索で終局まで進める。中断要求を受けた場合は途中のまま返す。
 pub fn play_game(
     engine: &mut Engine,
     request: &SearchRequest,

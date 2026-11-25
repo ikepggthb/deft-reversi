@@ -4,6 +4,14 @@ members = ["deft-reversi-engine", "deft-reversi-book", "deft-reversi-train", "de
 exclude = ["deft-reversi-web"]
 resolver = "2"
 
+# Versions are per crate (see README.md).
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/ikepggthb/deft-reversi"
+publish = false
+
 [profile.release]
 lto = "fat"
 opt-level = 3

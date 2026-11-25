@@ -1,10 +1,12 @@
-//! Experimental endgame ordering using the existing 44 pattern tables.
-//! These weights have not been trained specifically for ordering.
+//! 既存の 44 個のパターンテーブルを流用した、実験的な終盤の着手順序付け（ムーブオーダリング）評価です。
+//! これらの重み自体は順序付け専用に学習されたものではありません。
 use super::*;
 
 impl PatternModel {
-    /// Pattern-only ordering score. Mobility is already available to the caller;
-    /// this deliberately avoids generating either side's legal moves again.
+    /// パターンテーブルだけを用いた、着手順序付け用の評価値を計算します。
+    ///
+    /// 合法手数（モビリティ）は呼び出し側で既に把握しているため、
+    /// ここでは計算コストを抑える目的で双方の合法手再生成を意図的に省いています。
     pub(crate) fn end_ordering_child_value(
         &self,
         board: Board,
@@ -28,8 +30,8 @@ impl PatternModel {
 }
 
 impl EvalState {
-    // An ordering evaluation only needs the child's current viewpoint.
-    // Preserve the full two-viewpoint update for children actually searched.
+    /// 順序付け評価では、子局面の「現在の手番視点」のインデックスだけがあれば十分です。
+    /// 実際に探索する子ノードに対してだけ、両視点の完全な差分更新を行います。
     pub(super) fn ordering_child_indices(&self, bit: u64, mut flips: u64) -> [u16; LANES] {
         let mut indices = self.swapped;
         for (index, d) in indices

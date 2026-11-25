@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Exact solves of FFO-style positions: Deft configurations, Edax 4.5.6 and
-Egaroucid 7.8.2 on the same CPUs and thread count.
+"""FFO 形式の終盤局面集を完全読みで解き、複数エンジンの速度とノード数を比較する。
 
-Every position is solved in a fresh process; the order of the engines
-rotates per position and round, and reverses every other round. Every
-score is checked against the answers. Writes OUT/results.tsv (every solve,
-after each one) and OUT/summary.txt (median seconds and nodes per
-position, the median total per engine, and its ratio to the first engine
-in the same rounds).
+Deft の各構成、Edax 4.5.6、Egaroucid 7.8.2 を同じ CPU コア・スレッド数で実行する。
+全局面を毎回新しいプロセスで解き、実行順序は局面・ラウンドごとに回転させ、
+1 ラウンドおき（奇数ラウンド）は逆順にする。全スコアを正解と照合し、
+OUT/results.tsv（1 局面ごとに追記）と OUT/summary.txt（局面ごとの所要時間・ノード数の
+中央値、エンジンごとの合計時間中央値、先頭エンジンとの比率）を出力する。
 
-usage: ffo.py [--threads N] [--cpus LIST] [--rounds R] [--positions FILE] [--only A-B] --out DIR ENGINE...
-ENGINE: edax | egaroucid | NAME[:key=value,...] (a Deft configuration;
-        keys solve=BINARY, model=FILE, tt=MIB, or UPPER_CASE=value for the
-        environment)
+使い方:
+  ffo.py [--threads N] [--cpus LIST] [--rounds R] [--positions FILE] [--only A-B] --out DIR ENGINE...
 
-examples:
+ENGINE の指定:
+  edax | egaroucid | NAME[:key=value,...]（Deft 構成。solve=BINARY, model=FILE, tt=MIB,
+  または環境変数用の UPPER_CASE=value を指定できる）
+
+実行例:
   ffo.py --threads 1 --cpus 4 --rounds 3 --out t1 deft edax egaroucid
   ffo.py --threads 20 --cpus 0-19 --rounds 5 --out t20 \\
       base:solve=/tmp/cli-base new:solve=/tmp/cli-new
@@ -38,7 +38,8 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("engines", nargs="+")
     args = parser.parse_args()
-    # Opponents run in their own binary directories.
+    # 対戦相手のエンジンは各バイナリの配置ディレクトリをカレントディレクトリにして起動するため、
+    # --out は絶対パスに解決しておく。
     args.out = args.out.resolve()
 
     tools = paths()
@@ -78,6 +79,7 @@ def main():
 
 
 def solve(e, case, threads, cpus, n_empties):
+    """指定エンジンで 1 局面を完全読みし、完了状態と深さを検証したうえで `(石差スコア, 秒数, ノード数)` を返す。"""
     if e.kind == "deft":
         row = e.solve_file(case, "exact", threads, cpus)[0]
         if row["stop"] != "Completed" or row["mode"] != "Exact" or int(row["depth"]) != n_empties:
@@ -90,6 +92,7 @@ def solve(e, case, threads, cpus, n_empties):
 
 
 def summarize(rows, names, args):
+    """全ラウンドの計測結果を集計し、局面別・エンジン別の中央値と先頭エンジン比の文字列を返す。"""
     rounds = args.rounds
     numbers = sorted({r[1] for r in rows})
     med = lambda xs: statistics.median(xs)

@@ -1,50 +1,62 @@
+//! 探索エンジンの公開 API で使うリクエスト・結果・設定・進捗・エラー型と ProbCut 設定型を定義します。
 use super::*;
 
-/// Compatibility epoch for persisted estimated search values. Increment when
-/// evaluation/search/MPC semantics change incompatibly, including level plans.
-/// Thread counts, time limits and performance-only changes do not require a bump.
+/// 永続化された推定探索値の互換性エポック番号です。
+/// 評価関数・探索ロジック・MPC（Multi-ProbCut）の仕様（レベル表を含みます）が非互換に変更されたときに増やします。
+/// スレッド数・制限時間・純粋な高速化だけの変更では増やす必要はありません。
 pub const SEARCH_SEMANTICS_REVISION: u32 = 2;
 
-/// The internal search driver mode a request resolves to.
+/// 探索リクエストが解決される内部の探索モードです。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SearchMode {
+    /// 指定深さ `Depth(d)` までの中盤探索です。
     Depth(u8),
-    /// Exact final result. Calibrated selective preparation may precede it.
+    /// 完全読み（`Selectivity::Full`）です。事前に較正済みの選択探索で準備イテレーションを行う場合があります。
     Exact,
-    /// Terminal-depth search with calibrated probabilistic cuts.
+    /// 較正済みの確率枝刈り（ProbCut）を伴う終盤の読み切り探索です。
     SelectiveEndgame,
 }
+/// 探索が終了・停止した理由です。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
-    // Stored in an `AtomicU8` during the search; zero means still running.
+    // 探索中は `AtomicU8` に格納されます。0 は「実行中（または正常完了）」を意味します。
+    /// 要求された探索が最後まで完了しました。
     Completed = 0,
+    /// [`StopHandle::stop`] またはハンドルのドロップによる外部からの停止要求で中断しました。
     Requested = 1,
+    /// 指定された制限時間（`time_limit`）に達しました。
     TimeLimit = 2,
+    /// 指定された訪問ノード数上限（`node_limit`）に達しました。
     NodeLimit = 3,
+    /// ワーカースレッド内でパニックなどの致命的エラーが発生しました。
     WorkerFailed = 4,
 }
-/// Stops a search from another thread. Clones share the same flag, and a
-/// stopped handle stays stopped, so each search needs a new request.
+/// 別スレッドから実行中の探索を停止するためのハンドルです。
+/// クローン同士は同じ停止フラグを共有し、一度停止したハンドルは停止状態のままになるため、
+/// 探索ごとに新しいリクエスト（ハンドル）を生成する必要があります。
 #[derive(Clone, Default, Debug)]
 pub struct StopHandle(pub(super) Arc<AtomicBool>);
 impl StopHandle {
+    /// 未停止状態の新しい [`StopHandle`] を生成します。
     pub fn new() -> Self {
         Self::default()
     }
+    /// 探索へ停止を要求します。
     pub fn stop(&self) {
         self.0.store(true, Ordering::Release);
     }
+    /// すでに停止要求が出されているかを返します。
     pub fn is_stopped(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
 }
-/// Build with `EngineOptions::default().threads(n).tt_mib(m)`.
+/// エンジン起動時の構成オプションです。`EngineOptions::default().threads(n).tt_mib(m)` のように組み立てます。
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct EngineOptions {
-    /// Search threads, including the calling thread: 1..=256.
+    /// 呼び出し元スレッドを含む探索スレッド数（1..=256）です。
     pub threads: usize,
-    /// Size of the main transposition table.
+    /// メイン置換表のサイズ（MiB）です。
     pub tt_mib: usize,
 }
 impl Default for EngineOptions {
@@ -56,29 +68,38 @@ impl Default for EngineOptions {
     }
 }
 impl EngineOptions {
+    /// 探索スレッド数を設定します。
     pub fn threads(mut self, threads: usize) -> Self {
         self.threads = threads;
         self
     }
+    /// 置換表サイズ（MiB）を設定します。
     pub fn tt_mib(mut self, tt_mib: usize) -> Self {
         self.tt_mib = tt_mib;
         self
     }
 }
-/// ProbCut confidence, ordered from least accurate to full search.
+/// ProbCut（浅い探索の結果から見込みの薄い枝を統計的に打ち切る手法）の信頼度ステージです。
+/// 精度が低い順から、枝刈りをしない完全探索 `Full` までが並びます。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Selectivity {
+    /// 選択率 83%。
     Percent83,
+    /// 選択率 85%。
     Percent85,
+    /// 選択率 95%。
     Percent95,
+    /// 選択率 98%。
     Percent98,
+    /// 選択率 99%。
     Percent99,
+    /// 確率的枝刈りを行わない完全探索（100%）。
     #[default]
     Full,
 }
 impl Selectivity {
-    /// Every stage, least accurate first.
+    /// 全ステージの一覧（精度が低い順）です。
     pub const ALL: [Self; 6] = [
         Self::Percent83,
         Self::Percent85,
@@ -87,6 +108,7 @@ impl Selectivity {
         Self::Percent99,
         Self::Full,
     ];
+    /// パーセント値（83, 85, 95, 98, 99, 100）を返します。
     pub fn percent(self) -> u8 {
         match self {
             Self::Percent83 => 83,
@@ -97,11 +119,11 @@ impl Selectivity {
             Self::Full => 100,
         }
     }
-    /// The stage with this probability: 83, 85, 95, 98, 99 or 100.
+    /// パーセント値（83, 85, 95, 98, 99, 100）に対応する [`Selectivity`] を返します。
     pub fn from_percent(percent: u8) -> Option<Self> {
         Self::ALL.into_iter().find(|s| s.percent() == percent)
     }
-    /// The next more accurate stage; `Full` stays `Full`.
+    /// 1 段階精度が高いステージを返します（`Full` は `Full` のままです）。
     pub(crate) fn next(self) -> Self {
         match self {
             Self::Percent83 => Self::Percent85,
@@ -111,7 +133,7 @@ impl Selectivity {
             Self::Percent99 | Self::Full => Self::Full,
         }
     }
-    /// The tag of the stage in the transposition tables: zero for `Full`.
+    /// 置換表に格納する品質タグ値を返します（`Full` は 0、選択ステージは 1..=5 です）。
     pub(crate) fn quality(self) -> u8 {
         match self {
             Self::Full => 0,
@@ -124,30 +146,28 @@ impl Selectivity {
     }
 }
 
-/// What a search reads to.
+/// 探索の目標（どこまで読むか）を表します。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Goal {
-    /// That many moves ahead, 0..=60. Passes are not counted.
+    /// 指定手数（0..=60）まで先読みします（パスは手数に含めません）。
     Depth(u8),
-    /// To the end of the game; an exact solve at `Selectivity::Full`.
+    /// 終局まで読み切ります（`Selectivity::Full` 指定時は完全読みになります）。
     Endgame,
-    /// A level, 1..=60, which chooses the depth, the switch to the endgame
-    /// and the selectivity: `Plan(SearchPlan::level(n)?)`.
+    /// 強さレベル（1..=60）です。レベル表に応じて中盤深さ・終盤切替空きマス数・選択率を決定します
+    /// （`Plan(SearchPlan::level(n)?)` と等価です）。
     Level(u8),
-    /// A midgame depth and the empties from which the endgame is searched,
-    /// chosen freely or changed from a level's.
+    /// 中盤深さと終盤ステージごとの空きマス閾値を明示したカスタム [`SearchPlan`] です。
     Plan(SearchPlan),
 }
 
-/// What a search does by the number of empties: with few enough empties it
-/// searches to the end of the game at one of the endgame stages, otherwise
-/// the midgame to a depth.
+/// 空きマス数に応じた探索計画です。
+/// 空きマスが十分少なければ終盤ステージのいずれかで終局まで読み切り、そうでなければ中盤深さまで読みます。
 ///
 /// ```
 /// # use deft_reversi_engine::{SearchPlan, Selectivity};
-/// // Level 24, but solving exactly from 26 empties.
+/// // レベル 24 をベースに、完全読みの開始だけを空き 26 マスに変更します。
 /// let plan = SearchPlan::level(24)?.endgame(Selectivity::Full, 26);
-/// // Depth 12 at 83%; 95% endgame from 20 empties, exact from 16.
+/// // 中盤は 83% で深さ 12、空き 20 マスから 95% 終盤読み、空き 16 マスから完全読みを行います。
 /// let own = SearchPlan::midgame(12, Selectivity::Percent83)
 ///     .endgame(Selectivity::Percent95, 20)
 ///     .endgame(Selectivity::Full, 16);
@@ -157,19 +177,18 @@ pub enum Goal {
 pub struct SearchPlan {
     midgame_depth: u8,
     midgame_selectivity: Selectivity,
-    /// By `Selectivity`: the most empties searched to the end at that stage;
-    /// zero if the stage is not used.
+    /// [`Selectivity`] を添字とし、そのステージで終局まで読み切る最大空きマス数を保持します（0 は未使用）。
     endgame: [u8; 6],
 }
 impl SearchPlan {
-    /// The plan of a level, 1..=60.
+    /// レベル 1..=60 に対応する標準の [`SearchPlan`] を返します。
     pub fn level(level: u8) -> Result<Self, EngineError> {
         if !(1..=60).contains(&level) {
             return Err(EngineError::InvalidRequest("level must be 1..=60"));
         }
         Ok(level::plan(level))
     }
-    /// A midgame search to `depth` (0..=60) at every number of empties.
+    /// すべての空きマス数で `depth`（0..=60）まで中盤探索する計画を生成します。
     pub fn midgame(depth: u8, selectivity: Selectivity) -> Self {
         Self {
             midgame_depth: depth,
@@ -177,29 +196,31 @@ impl SearchPlan {
             endgame: [0; 6],
         }
     }
-    /// Changes the midgame search, keeping the endgame stages.
+    /// 終盤ステージの設定を保ったまま、中盤探索の深さと選択率を変更します。
     pub fn with_midgame(mut self, depth: u8, selectivity: Selectivity) -> Self {
         self.midgame_depth = depth;
         self.midgame_selectivity = selectivity;
         self
     }
-    /// Searches to the end of the game at `selectivity` (`Full` solves
-    /// exactly) with `up_to_empties` or fewer empties; zero drops the stage.
-    /// Where several stages apply, the most accurate one is used.
+    /// `up_to_empties` マス以下で選択率 `selectivity`（`Full` なら完全読み）の終盤探索を行うよう設定します。
+    /// 0 を指定するとそのステージを無効化します。複数ステージが該当する場合は最も高精度なものが選ばれます。
     pub fn endgame(mut self, selectivity: Selectivity, up_to_empties: u8) -> Self {
         self.endgame[selectivity as usize] = up_to_empties;
         self
     }
+    /// 中盤探索深さを返します。
     pub fn midgame_depth(&self) -> u8 {
         self.midgame_depth
     }
+    /// 中盤探索の選択率を返します。
     pub fn midgame_selectivity(&self) -> Selectivity {
         self.midgame_selectivity
     }
-    /// The most empties searched to the end at `selectivity`; zero if unused.
+    /// 指定選択率の終盤探索を適用する最大空きマス数を返します（未使用なら 0）。
     pub fn endgame_limit(&self, selectivity: Selectivity) -> u8 {
         self.endgame[selectivity as usize]
     }
+    /// 深さと空きマス上限が 0..=60 の範囲内かを検証します。
     pub(crate) fn validate(&self) -> Result<(), EngineError> {
         if self.midgame_depth > 60 || self.endgame.iter().any(|&e| e > 60) {
             return Err(EngineError::InvalidRequest(
@@ -208,7 +229,7 @@ impl SearchPlan {
         }
         Ok(())
     }
-    /// The search at a position with `empties` empties.
+    /// 空きマス数 `empties` の局面で適用される探索モードと選択率を返します。
     pub(crate) fn at(&self, empties: u8) -> (SearchMode, Selectivity) {
         let stage = Selectivity::ALL
             .into_iter()
@@ -225,7 +246,7 @@ impl SearchPlan {
     }
 }
 
-/// Built with `SearchRequest::new(goal)` and the setters below.
+/// 探索リクエストです。`SearchRequest::new(goal)` と各種ビルダーメソッドで組み立てます。
 #[derive(Clone, Debug)]
 pub struct SearchRequest {
     pub(super) goal: Goal,
@@ -266,112 +287,108 @@ impl SearchRequest {
             stop: StopHandle::new(),
         }
     }
-    /// Iteratively search up to `level` under one clock, returning the best
-    /// move from the last completed iteration. With a calibrated model, the
-    /// root's empty-square count determines the last evaluation depth and
-    /// endgame stages from the level table. Evaluation depths advance by two.
+    /// 1 つの制限時間内で `level` まで反復深化探索を行い、最後に完了したイテレーションの最善手を返します。
+    /// 較正済みモデルを使っている場合は、ルートの空きマス数とレベル表から最終探索深さと終盤ステージが決まります。
+    /// 評価探索深さは 2 ずつ増加します。
     pub fn timed_levels(level: u8, limit: Duration) -> Self {
         Self {
             timed_levels: true,
             ..Self::new(Goal::Level(level)).time_limit(limit)
         }
     }
-    /// Pruning for `Depth` and `Endgame`; `Full` when not set. A `Level`
-    /// chooses its own, so setting one there is an invalid request.
+    /// `Depth` および `Endgame` 用の ProbCut 選択率を設定します（未指定時は `Full`）。
+    /// `Level` は自身のスケジュールを持つため、`Level` に対して指定すると無効リクエストエラーになります。
     pub fn selectivity(mut self, selectivity: Selectivity) -> Self {
         self.selectivity = Some(selectivity);
         self
     }
-    /// Search only these legal root squares. Descendants are unrestricted.
-    /// A subset result proves at most the selected moves, not the whole root.
-    /// For a forced pass or terminal root the only valid mask is zero.
+    /// ルートで探索する合法手をビットマスクで限定します（子孫ノードは制限されません）。
+    /// 部分集合の探索結果は選択された手の中での最善だけを保証し、局面全体の最善は保証しません。
+    /// 強制パスや終局局面では 0 だけが有効なマスクになります。
     pub fn root_moves(mut self, mask: u64) -> Self {
         self.root_moves = Some(mask);
         self
     }
-    /// A legal ordering hint; ignored if outside the selected root moves.
+    /// 最初に探索する優先手のヒントを設定します（選択された `root_moves` 外なら無視されます）。
     pub fn preferred_move(mut self, square: crate::Square) -> Self {
         self.preferred_move = Some(square);
         self
     }
-    /// At the final midgame depth, first test whether any selected move
-    /// reaches this score. A failed test returns an upper bound for the
-    /// entire mask; a successful test is followed by a normal point search.
+    /// 最終中盤深さにおいて、選択された手の中に `score` 以上に到達する手があるかを先に検証します。
+    /// 失敗時はマスク全体の上界だけを返し、成功時は通常の点スコア探索へ進みます。
     pub fn minimum_score(mut self, score: i32) -> Self {
         self.minimum_score = Some(score);
         self
     }
-    /// Reuse a compatible transposition-table result as a warm start. The
-    /// target iteration is still searched with the requested root mask.
+    /// 互換性のある置換表エントリをウォームスタート（初期反復の省略）として再利用します。
+    /// 目標イテレーション自体は要求されたルートマスクで引き続き探索します。
     pub fn reuse_pv(mut self) -> Self {
         self.reuse_pv = true;
         self
     }
-    /// Try to extend a selective endgame PV at the completed search stage.
-    /// Recovery shares the search limits and may leave a partial line.
+    /// 完了した終盤選択ステージで短くなった PV（最善応手手順）の延長を試みます。
+    /// 復元処理も探索の時間・ノード上限を共有するため、途中で打ち切られる場合があります。
     pub fn recover_endgame_pv(mut self) -> Self {
         self.recover_endgame_pv = true;
         self
     }
-    /// Try to extend any selective PV, midgame or endgame, at the completed
-    /// search stage, when the search left it short (transposition-table
-    /// cutoffs do). The best move and score are unchanged; recovery shares
-    /// the search limits and may leave a partial line.
+    /// 中盤・終盤を問わず、置換表カットなどで短くなった選択探索の PV を完了ステージで延長します。
+    /// 最善手とスコアは変更されません。復元処理も探索上限を共有するため部分列になる場合があります。
     pub fn recover_pv(mut self) -> Self {
         self.recover_pv = true;
         self
     }
-    /// Return the line found during search without a separate PV recovery
-    /// pass. The best move and score still come from the completed search.
+    /// 探索中に得られた PV をそのまま返し、個別の PV 復元パスを実行しません。
+    /// 最善手とスコアは完了した探索からそのまま取得されます。
     pub fn skip_pv_recovery(mut self) -> Self {
         self.skip_pv_recovery = true;
         self
     }
-    /// Stops after this much time, returning the last completed iteration.
+    /// 指定時間経過後に停止を要求し、最後に完了したイテレーションの結果を返します。
     pub fn time_limit(mut self, limit: Duration) -> Self {
         self.time_limit = Some(limit);
         self
     }
-    /// Stops before visiting more nodes than this, across all threads.
+    /// 全スレッド合計の訪問ノード数が上限に達したら停止します。
     pub fn node_limit(mut self, limit: u64) -> Self {
         self.node_limit = Some(limit);
         self
     }
-    /// Also scores every selected legal root move with a full window (`SearchResult::moves`).
-    /// This searches each move again, so it takes several times longer.
+    /// 選択されたすべてのルート合法手をフルウィンドウ（絞り込まない通常の探索窓）で再探索し、
+    /// 各手のスコアを `SearchResult::moves` に格納します。各手を個別に探索するため数倍の時間がかかります。
     pub fn all_moves(mut self) -> Self {
         self.all_moves = true;
         self
     }
-    /// Score every selected root move and retain its principal variation from
-    /// the scoring search. TT cutoffs may leave a partial line.
+    /// 選択されたすべてのルート合法手をスコア付けし、各手の PV も保持します（`SearchResult::move_pvs`）。
+    /// 置換表カットオフにより一部が短い PV になる場合があります。
     pub fn all_moves_with_pv(mut self) -> Self {
         self.all_moves = true;
         self.move_pvs = true;
         self
     }
-    /// Score the principal move and the specified legal move with full windows
-    /// at the final search stage. Intended for reviewing a played move.
-    /// This skips full PV recovery. If `all_moves` is set, score every root move.
+    /// 最終探索ステージで最善手および指定した合法手 `square` をフルウィンドウで評価します（指し手レビュー用）。
+    /// 完全な PV 復元はスキップされます。`all_moves` が設定されている場合は全ルート手を評価します。
     pub fn review_move(mut self, square: crate::Square) -> Self {
         self.review_move = Some(square);
         self
     }
-    /// Stops on `stop` instead of a handle of its own, so that one handle
-    /// can stop several searches, such as all those of a batch job.
+    /// 内部で新規作成する代わりに外部の [`StopHandle`] を使います。
+    /// 1 つのハンドルでバッチ処理中の複数探索を一括停止したい場合に用います。
     pub fn with_stop(mut self, stop: StopHandle) -> Self {
         self.stop = stop;
         self
     }
+    /// このリクエストに紐づく [`StopHandle`] のクローンを返します。
     pub fn stop_handle(&self) -> StopHandle {
         self.stop.clone()
     }
+    /// このリクエストの探索目標 [`Goal`] を返します。
     pub fn goal(&self) -> Goal {
         self.goal
     }
 }
-/// Counters of one search. The parallel ones (`splits` to `join_time`) are
-/// diagnostics and may change between versions.
+/// 1 回の探索の統計カウンタです。並列関連フィールド（`splits` 〜 `join_time`）は診断用でありバージョン間で変わり得ます。
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SearchStats {
@@ -385,15 +402,16 @@ pub struct SearchStats {
     pub helper_jobs: u64,
     pub ancestor_handoffs: u64,
     pub worker_dispatches: u64,
-    /// Sum of join time across masters; includes time spent helping descendants.
+    /// 各マスターの合流待ち時間の合計です（待機中に子孫ジョブを手伝った時間も含みます）。
     pub join_time: Duration,
     pub probcut_tries: u64,
     pub probcut_cuts: u64,
     pub stability_cuts: u64,
-    /// Number of initial iterations skipped using a compatible TT entry.
+    /// 互換性のある置換表エントリを利用してスキップした初期イテレーション数です。
     pub reused_iterations: u64,
 }
 impl SearchStats {
+    /// 別コンテキスト（ワーカースレッドなど）の統計を合算します。
     pub(super) fn merge(&mut self, other: &Self) {
         self.nodes += other.nodes;
         self.leaves += other.leaves;
@@ -412,13 +430,16 @@ impl SearchStats {
         self.reused_iterations += other.reused_iterations;
     }
 }
-/// What a completed iteration searched.
+/// 完了した 1 イテレーションの探索種別です。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResultKind {
+    /// 指定深さ `depth`・選択率 `selectivity` の中盤探索です。
     Depth { depth: u8, selectivity: Selectivity },
+    /// 選択率 `selectivity` の終盤読み切り探索です。
     Endgame { selectivity: Selectivity },
 }
 impl ResultKind {
+    /// このイテレーションの選択率を返します。
     pub fn selectivity(self) -> Selectivity {
         match self {
             Self::Depth { selectivity, .. } | Self::Endgame { selectivity } => selectivity,
@@ -426,53 +447,55 @@ impl ResultKind {
     }
 }
 
+/// 1 つの着手とその評価スコア（石差）のペアです。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MoveScore {
     pub action: Action,
     pub score: i32,
 }
 
-/// Scores are disc differences for the side to move.
+/// 探索の最終結果です。スコアは常に手番側から見た石差を表します。
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct SearchResult {
-    /// None only at the end of the game. A search stopped before any
-    /// iteration completed still returns a legal action. For a mask upper
-    /// bound it is a legal representative, without any optimality claim.
+    /// 終局時だけ `None` になります。最初のイテレーション完了前に停止した場合でも合法手を 1 つ返します。
+    /// マスク全体の上界だけ証明できた場合は、最適性を主張しない合法代表手を返します。
     pub best_move: Option<Action>,
-    /// None when no iteration completed.
+    /// 1 つもイテレーションが完了しなかった場合は `None` になります。
     pub score: Option<i32>,
-    /// True when the last iteration only proved an upper bound for the mask.
+    /// 最終イテレーションがマスク全体に対する上界だけを証明した場合に `true` になります。
     pub score_is_upper_bound: bool,
-    /// The last completed iteration; None with `score`.
+    /// 最後に完了したイテレーション種別です（`score` が `None` なら `None`）。
     pub kind: Option<ResultKind>,
+    /// 復元された最善応手手順（Principal Variation）です。
     pub pv: Vec<Action>,
-    /// Scores best first for the root moves requested by `all_moves` or
-    /// `review_move`, after the final iteration completed.
+    /// `all_moves` または `review_move` の要求時に、最終イテレーションで評価された各手のスコア（良い順）です。
     pub moves: Vec<MoveScore>,
-    /// Lines corresponding to `moves`, when requested by `all_moves_with_pv`.
+    /// `all_moves_with_pv` の要求時に、`moves` の各手に対応して返される PV 列です。
     pub move_pvs: Vec<Vec<Action>>,
+    /// 探索が停止した理由です。
     pub stop_reason: StopReason,
+    /// 探索統計情報です。
     pub stats: SearchStats,
+    /// 探索全体の経過時間です。
     pub elapsed: Duration,
-    /// Root squares included in this result (zero at a forced pass/terminal).
+    /// この結果の対象となったルート合法手マスクです（強制パス・終局時は 0）。
     pub root_moves: u64,
-    /// True when legal root moves were deliberately excluded.
+    /// 合法手のうち一部を意図的に除外して探索した場合に `true` になります。
     pub root_restricted: bool,
 }
 impl SearchResult {
-    /// The terminal disc difference reached by replaying the PV, from the
-    /// root side's perspective. Returns None for a partial or illegal PV.
+    /// PV を終端まで再生したときの終局石差をルート手番視点で返します。
+    /// PV が不完全または非合法手を含む場合は `None` を返します。
     pub fn pv_final_score(&self, position: impl Into<crate::Board>) -> Option<i32> {
         super::pv::terminal_score(position.into(), &self.pv)
     }
-    /// Whether `score` is the exact game value: a full-selectivity endgame
-    /// iteration completed.
+    /// `score` がゲーム全体の厳密な完全読み解（全合法手かつ `Selectivity::Full` で終盤完了）かを返します。
     pub fn is_solved(&self) -> bool {
         !self.root_restricted && self.is_subset_solved()
     }
-    /// Exact maximum over the selected root moves. Does not certify excluded
-    /// moves; callers must retain the mask when backing this result up.
+    /// 選択されたルート手集合に対する厳密最大値が得られたかを返します。
+    /// 除外された手については保証しないため、呼び出し側は結果を保存するときにマスクも記録してください。
     pub fn is_subset_solved(&self) -> bool {
         !self.score_is_upper_bound
             && self.kind
@@ -482,7 +505,7 @@ impl SearchResult {
     }
 }
 
-/// Reported after every completed iteration.
+/// 各イテレーション（または `all_moves` の各手）完了時に通知される進捗情報です。
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Progress {
@@ -490,17 +513,17 @@ pub struct Progress {
     pub score: i32,
     pub best_move: Option<Action>,
     pub pv: Vec<Action>,
-    /// Nodes so far, across all threads.
+    /// 現時点までの全スレッド合計訪問ノード数です。
     pub nodes: u64,
     pub elapsed: Duration,
-    /// The iteration the search plans to run next; None after the last one.
-    /// A time limit, a node limit or a stop may still end the search first.
+    /// 次に実行予定のイテレーションです（最終イテレーション後は `None`）。
+    /// 時間・ノード上限や停止要求により、次のイテレーション前に終了する場合があります。
     pub next: Option<ResultKind>,
-    /// With `all_moves`, after the last iteration: the moves scored so far,
-    /// best first, reported as each one is scored.
+    /// `all_moves` かつ最終イテレーション完了後：これまでスコアが確定した手（良い順）です。
     pub moves: Vec<MoveScore>,
 }
 
+/// エンジン構築・探索・モデル読み込みなどで発生するエラーです。
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum EngineError {
@@ -510,7 +533,7 @@ pub enum EngineError {
     Memory(&'static str),
     Thread(std::io::Error),
     Model(std::io::Error),
-    /// `EngineWorker::start` while a search is running.
+    /// 別の探索が実行中に [`EngineWorker::start`](crate::EngineWorker::start) を呼んだ場合です。
     Busy,
 }
 impl fmt::Display for EngineError {
@@ -535,19 +558,20 @@ impl std::error::Error for EngineError {
     }
 }
 
-/// The multiples of a rule's deviation that each selective stage cuts at
-/// (`ProbCutSigmas::STAGES`), for midgame rules and for exact rules. A stage
-/// at probability p should cut where a fraction 1 - p of the standardized
-/// prediction errors |deep - predicted| / deviation lie beyond. The default
-/// assumes normal errors; measured errors have heavier tails, so a
-/// calibration supplies the empirical quantiles instead.
+/// 各選択率ステージ（[`ProbCutSigmas::STAGES`]）において、中盤ルールおよび完全読みルールが
+/// 枝刈り（カット）に用いる標準偏差倍率（σ 倍率）です。
+///
+/// 選択率 p のステージでは、標準化した予測誤差 `|deep - predicted| / deviation` のうち
+/// 割合 `1 - p` が外側に落ちる位置でカットするのが理想です。
+/// デフォルト（[`ProbCutSigmas::NORMAL`]）は正規分布を仮定しますが、実際の探索誤差は裾が重いため、
+/// 通常は較正ファイルから実測の分位点を与えます。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProbCutSigmas {
     pub midgame: [f64; 5],
     pub exact: [f64; 5],
 }
 impl ProbCutSigmas {
-    /// The stage of each multiple, in the order of the arrays.
+    /// 配列の各要素に対応する選択率ステージ（配列順）です。
     pub const STAGES: [Selectivity; 5] = [
         Selectivity::Percent83,
         Selectivity::Percent85,
@@ -555,12 +579,12 @@ impl ProbCutSigmas {
         Selectivity::Percent98,
         Selectivity::Percent99,
     ];
-    /// Two-sided normal quantiles of the stage probabilities.
+    /// 正規分布に基づく各ステージ確率の両側分位点です。
     pub const NORMAL: Self = Self {
         midgame: NORMAL_SIGMAS,
         exact: NORMAL_SIGMAS,
     };
-    /// The multiple of the stage with the table tag `quality`, 1..=5.
+    /// 置換表品質タグ `quality`（1..=5）と完全読みフラグに対応する偏差倍率を返します。
     pub(crate) fn get(&self, exact: bool, quality: u8) -> f64 {
         let stage = usize::from(quality) - 1;
         if exact {
@@ -569,6 +593,7 @@ impl ProbCutSigmas {
             self.midgame[stage]
         }
     }
+    /// すべての倍率が有限の正値かつ単調非減少であるかを検証します。
     pub(crate) fn is_valid(&self) -> bool {
         [self.midgame, self.exact].iter().all(|s| {
             s.iter().all(|v| v.is_finite() && *v > 0.0) && s.windows(2).all(|w| w[0] <= w[1])
@@ -582,7 +607,7 @@ impl Default for ProbCutSigmas {
 }
 const NORMAL_SIGMAS: [f64; 5] = [1.37220, 1.43953, 1.960, 2.326, 2.576];
 
-/// Advanced per-position calibration overriding the regression configuration.
+/// 局面条件（完全読み/中盤・深さ・空きマス数）ごとの ProbCut 線形回帰パラメータです。
 #[derive(Clone, Copy, Debug)]
 pub struct ProbCutRule {
     pub exact: bool,
@@ -600,7 +625,7 @@ mod tests {
 
     #[test]
     fn stages_are_ordered_and_tagged_consistently() {
-        // `SearchPlan` keeps one limit per stage, indexed by the stage.
+        // `SearchPlan` はステージを添字として 1 つずつ上限値を保持します。
         for (index, stage) in Selectivity::ALL.into_iter().enumerate() {
             assert_eq!(stage as usize, index);
         }
@@ -616,7 +641,7 @@ mod tests {
         }
         assert_eq!(Selectivity::from_percent(68), None);
         assert_eq!(Selectivity::from_percent(77), None);
-        // Table tags: zero for a full search, otherwise the multiple's slot + 1.
+        // テーブルの品質タグ: 完全探索は 0、それ以外は倍率スロット + 1 です。
         assert_eq!(Selectivity::Full.quality(), 0);
         for (slot, stage) in ProbCutSigmas::STAGES.into_iter().enumerate() {
             assert_eq!(usize::from(stage.quality()), slot + 1);

@@ -1,27 +1,36 @@
-//! The actions of one game, the positions they lead to, and the cursor.
+//! 1 局分の着手列・各手後の局面列・現在表示位置（カーソル）・Undo/Redo グループを管理するモジュール。
 use deft_reversi_engine::{Action, MoveError, Position, Square};
 
-/// Whether an action starts a new Undo step or joins the current one.
+/// 着手を追加する際、直前の Undo 単位（「元に戻す」1 回で戻る範囲）にまとめるかどうかの指定。
+///
+/// 例えば人間対 AI 戦では、人間が 1 手打った後に AI が 1 手応手するため、
+/// 「元に戻す」1 回で自分の手番まで戻れるよう、AI の応手は `Join` で前の手に結合する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Grouping {
+    /// 新しい Undo ステップを開始する（通常の人間・AI の着手）。
     NewGroup,
+    /// 直前のステップに結合する（連続する AI の着手や強制パスなど）。
     Join,
 }
 
-/// `positions[i + 1] == positions[i].play(actions[i])`, and the shown
-/// position is `positions[cursor]`; the actions after the cursor are for Redo.
-/// A forced pass is recorded right after the move that caused it.
+/// 1 局分の棋譜履歴。
+///
+/// 常に `positions[i + 1] == positions[i].play(actions[i])` が成り立つことを不変条件として保つ。
+/// `positions[cursor]` が現在画面に表示している局面であり、`actions[cursor..]` は「やり直し（Redo）」用の未来の手順を保持している。
+/// リバーシのルール上、合法手がない場合は強制的にパスとなるため、強制パスはそれを引き起こした着手の直後に自動で記録される。
 #[derive(Clone, Debug)]
 pub struct History {
     positions: Vec<Position>,
     actions: Vec<Action>,
-    /// The index in `actions` where each Undo step starts, ascending.
+    /// 各 Undo ステップが開始する `actions` 内のインデックス（狭義単調増加）。
     groups: Vec<usize>,
     cursor: usize,
 }
 
 impl History {
-    /// A side with no move at the start passes at once.
+    /// 指定された初期局面から新しい履歴を作成する。
+    ///
+    /// 開始時点で手番側に合法手がない場合は即座に強制パスを記録する。
     pub fn new(initial: Position) -> Self {
         let mut history = Self {
             positions: vec![initial],
@@ -33,8 +42,9 @@ impl History {
         history
     }
 
-    /// Rebuilds a saved history, replaying every action. Fails on an
-    /// illegal action, a missing or extra pass, or bad groups or cursor.
+    /// 保存された棋譜データから全手順をリプレイして [`History`] を復元する。
+    ///
+    /// 非合法手・不要または欠落したパス・不正なグループ境界やカーソル位置を検出した場合はエラーを返す。
     pub fn restore(
         initial: Position,
         actions: Vec<Action>,
@@ -72,28 +82,32 @@ impl History {
         })
     }
 
+    /// Undo グループの開始インデックス一覧を返す。
     pub fn groups(&self) -> &[usize] {
         &self.groups
     }
 
+    /// 現在カーソルが指している局面を返す。
     pub fn current(&self) -> Position {
         self.positions[self.cursor]
     }
 
-    /// The position after `index` actions.
+    /// `index` 手進んだ後の局面を返す。
     pub fn position(&self, index: usize) -> Position {
         self.positions[index]
     }
 
+    /// 現在のカーソル位置（`actions` 内の手数）を返す。
     pub fn cursor(&self) -> usize {
         self.cursor
     }
 
+    /// 記録されている全着手列を返す。
     pub fn actions(&self) -> &[Action] {
         &self.actions
     }
 
-    /// The disc placed last on the shown board, looking past a forced pass.
+    /// 現在表示中の盤面における直近の着手マスを返す（強制パスを挟む場合はその手前の着手を探す）。
     pub fn last_move(&self) -> Option<Square> {
         self.actions[..self.cursor]
             .iter()
@@ -105,7 +119,7 @@ impl History {
             })
     }
 
-    /// Plays at the cursor, drops the Redo actions, and adds a forced pass.
+    /// カーソル位置で手を打ち、それ以降の Redo 履歴を切り捨てて、必要なら強制パスを追記する。
     pub fn play(&mut self, action: Action, grouping: Grouping) -> Result<(), MoveError> {
         let next = self.current().play(action)?;
         self.actions.truncate(self.cursor);
@@ -117,6 +131,7 @@ impl History {
         Ok(())
     }
 
+    /// 終局しておらず手番側に合法手がない場合、強制パスを現在のステップに結合して追加する。
     fn pass_if_forced(&mut self) {
         let position = self.current();
         if !position.is_terminal() && position.must_pass() {
@@ -125,6 +140,7 @@ impl History {
         }
     }
 
+    /// 1 手分の着手と結果局面を末尾に追加し、カーソルを最新位置へ進める。
     fn push(&mut self, action: Action, next: Position, grouping: Grouping) {
         if grouping == Grouping::NewGroup || self.groups.is_empty() {
             self.groups.push(self.actions.len());
@@ -134,7 +150,7 @@ impl History {
         self.cursor = self.actions.len();
     }
 
-    /// Back to the start of the Undo step before the cursor.
+    /// カーソルを直前の Undo ステップの開始位置まで戻す。
     pub fn undo(&mut self) -> bool {
         match self.groups.iter().rev().find(|&&start| start < self.cursor) {
             Some(&start) => {
@@ -145,7 +161,7 @@ impl History {
         }
     }
 
-    /// Forward to the end of the Undo step after the cursor.
+    /// カーソルを次の Undo ステップの終了位置まで進める。
     pub fn redo(&mut self) -> bool {
         if !self.can_redo() {
             return false;
@@ -159,9 +175,10 @@ impl History {
         true
     }
 
-    /// Moves by `steps` moves. The position right after a pass shows the
-    /// same discs as the one before it, so a step goes past it, except at the
-    /// end of the record where play continues.
+    /// 指定手数だけカーソルを前後に移動する。
+    ///
+    /// パス直後の局面はパス前と盤面の石配置が同じであるため、棋譜の末尾（対局続行位置）を除き
+    /// 1 回のステップでパスを飛び越えて次の着手位置まで移動する。
     pub fn step(&mut self, steps: isize) -> bool {
         let start = self.cursor;
         for _ in 0..steps.unsigned_abs() {
@@ -188,7 +205,7 @@ impl History {
         index > 0 && self.actions[index - 1] == Action::Pass
     }
 
-    /// Follows an already recorded forced pass without changing the record.
+    /// 履歴を変更せず、カーソル直前に記録済みの強制パスを 1 手分だけ進める。
     pub fn advance_pass(&mut self) -> bool {
         if self.actions.get(self.cursor) != Some(&Action::Pass) {
             return false;
@@ -197,6 +214,7 @@ impl History {
         true
     }
 
+    /// カーソルを指定インデックスへ直接移動する（範囲外は末尾にクランプ）。
     pub fn go_to(&mut self, index: usize) -> bool {
         let index = index.min(self.actions.len());
         let moved = index != self.cursor;
@@ -204,6 +222,7 @@ impl History {
         moved
     }
 
+    /// Redo 可能な未来の手順が残っているかを返す。
     pub fn can_redo(&self) -> bool {
         self.cursor < self.actions.len()
     }

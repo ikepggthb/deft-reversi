@@ -1,4 +1,8 @@
-//! Time allocation for a whole game. Protocols own the clock and reply margin.
+//! 1 局全体の持ち時間配分と、反復深化の次段階コスト予測による探索打ち切り制御モジュール。
+//!
+//! 通信遅延や応答マージンなどのプロトコル固有の余裕時間は呼び出し側（`gtp` や `flipsight`）が
+//! 差し引いたうえで [`Budget::new`] に渡す。
+
 use crate::stop;
 use deft_reversi_engine::{
     Action, Engine, EngineError, Goal, Position, Progress, ResultKind, SearchRequest, SearchResult,
@@ -6,24 +10,27 @@ use deft_reversi_engine::{
 };
 use std::time::Duration;
 
+/// 1 手分の探索時間予算。
 #[derive(Clone, Copy)]
 pub(crate) struct Budget {
+    /// 平常時の目標時間。最善手が揺らいでいるときは `hard` を上限に延長を許す。
     soft: Duration,
+    /// いかなる場合も超えてはならない絶対上限時間。
     pub hard: Duration,
 }
 
 impl Budget {
+    /// 空きマス数 `empties`、残り持ち時間 `remaining`、1 手上限 `cap` から探索時間予算を決める。
     pub fn new(empties: u8, remaining: Duration, cap: Duration) -> Self {
-        // Full solves in the level-table measurements cost about 6 ms at
-        // 17 empties, doubling per empty. Only price *future* turns with
-        // this prior: today's position can be much harder than the average.
+        // レベル表の計測では、完全読みは 17 空きで約 6 ms かかり、空きマスが 1 増えるごとに約 2 倍になる。
+        // ここでは将来の手番の必要時間だけをこの事前見積もりで確保する（現在の局面は平均よりずっと重い場合があるため）。
         let turns = u32::from(empties.div_ceil(2)).max(1);
         let mut pool = remaining;
         let mut turns_left = turns;
         for distance in (1..turns).rev() {
             let future = i32::from(empties) - 2 * distance as i32;
-            // Allow for slower hardware, cold tables and the spread of solve
-            // costs. Even a trivial turn needs a round trip on an integer-ms clock.
+            // 低速な環境、冷えた置換表、局面の難易度のばらつきを見込む。
+            // また、どれほど軽い終盤手番でも整数ミリ秒時計上で往復分の余裕が必要になる。
             let solve = Duration::from_millis(2).saturating_add(Duration::from_secs_f64(
                 3.0 * 0.006 * 2_f64.powi(future - 17),
             ));
@@ -34,8 +41,8 @@ impl Budget {
             turns_left -= 1;
         }
         let share = pool / turns_left;
-        // Borrow up to one share, leaving at least half the projected
-        // future budget. Already discounted exact solves are fully reserved.
+        // 将来の予算の半分以上を残す範囲で、最大 1 手番分まで前借りして `hard` 上限とする。
+        // すでに差し引いた終盤完全読み用の確保時間はそのまま維持される。
         let hard = share.saturating_add(share.min((pool - share) / 2)).min(cap);
         Self {
             soft: share.min(hard),
@@ -43,6 +50,7 @@ impl Budget {
         }
     }
 
+    /// 予算 `self` に従って反復深化探索を実行し、次段階が予算を超えると予測した時点で停止する。
     pub fn search(
         self,
         engine: &mut Engine,
@@ -70,8 +78,7 @@ impl Budget {
                 handle.stop();
             }
         })?;
-        // The forecast stops through the same handle as Ctrl-C. Report its
-        // stops as the time decisions they are, so logs can tell them apart.
+        // 予測停止も Ctrl-C と同じ StopHandle で止めるため、ログで区別できるよう TimeLimit へ変換する。
         if forecast_stopped && result.stop_reason == StopReason::Requested {
             result.stop_reason = StopReason::TimeLimit;
         }
@@ -79,12 +86,14 @@ impl Budget {
     }
 }
 
-/// A two-ply search for a clock too short to budget: it takes microseconds
-/// and avoids blunders that the lowest legal square would make.
+/// 予算を組めないほど残り時間が短いときに使う 2 手読み探索。
+///
+/// 数マイクロ秒程度で終わり、合法手の最小マスを機械的に選ぶことによる大悪手を防ぐ。
 pub(crate) fn reflex(engine: &mut Engine, pos: Position) -> Result<SearchResult, EngineError> {
     engine.search(pos, &SearchRequest::new(Goal::Depth(2)).skip_pv_recovery())
 }
 
+/// 反復深化の各段階の所要時間と最善手の変化を追跡し、次段階に進むべきかを判定する状態。
 #[derive(Default)]
 struct Forecast {
     empties: u8,
@@ -96,8 +105,7 @@ struct Forecast {
 }
 
 impl Forecast {
-    /// After an iteration finishes: whether the planned `next` one would
-    /// end beyond the budget, so the search should stop now.
+    /// 反復が 1 段階完了したときに、次の段階 `next` が予算を超える見込みなら `true` を返す。
     fn stop(
         &mut self,
         elapsed: Duration,
@@ -109,9 +117,8 @@ impl Forecast {
         let cost = elapsed.saturating_sub(self.elapsed);
         let growth = next.map(|next| self.growth(kind, next, cost));
         let changed = self.best.is_some() && self.best != best;
-        // A reversal two plies ago still matters even if the latest
-        // iteration confirmed the new move. Decay the evidence with each
-        // confirmation, and renew it on another reversal.
+        // 2 手前に最善手が入れ替わった場合も、直後の反復で確認されるまでは不安定さとみなす。
+        // 同じ手が確認されるたびに半減させ、再び入れ替わったら 1.0 に戻す。
         self.instability = if changed { 1.0 } else { self.instability * 0.5 };
         self.best = best;
         self.elapsed = elapsed;
@@ -120,7 +127,7 @@ impl Forecast {
             ResultKind::Depth { depth, .. } => Some(depth),
             ResultKind::Endgame { .. } => None,
         };
-        // The last iteration: nothing left to forecast.
+        // 最終段階が完了した場合は、もう予測すべき次段階がない。
         let Some(growth) = growth else {
             return false;
         };
@@ -129,13 +136,13 @@ impl Forecast {
         predicted > target.min(budget.hard.as_secs_f64())
     }
 
-    /// Predicted cost of `next` over the cost of `kind`, which just took `cost`.
+    /// 直前に `cost` を要した段階 `kind` から次の段階 `next` へ進む際の推定コスト倍率を返す。
     fn growth(&self, kind: ResultKind, next: ResultKind, cost: Duration) -> f64 {
         let empties = f64::from(self.empties);
         match (kind, next) {
             (ResultKind::Depth { depth, .. }, ResultKind::Depth { depth: deeper, .. }) => {
-                // Tree growth per two plies, from the last two iterations.
-                // Clamp noisy ratios (TT hits and cheap shallow iterations).
+                // 直近 2 回の反復から 2 手あたりの探索木成長率を計算する。
+                // 置換表ヒットや浅い反復による極端な比率はクランプして抑える。
                 let per_two_plies = match self.last_depth {
                     Some(previous) if !self.last_cost.is_zero() && depth > previous => {
                         let ratio = cost.as_secs_f64() / self.last_cost.as_secs_f64();
@@ -147,8 +154,7 @@ impl Forecast {
                 };
                 per_two_plies.powf(f64::from(deeper.saturating_sub(depth)) / 2.0)
             }
-            // The first endgame stage searches to the end of the game, far
-            // deeper than the last midgame depth.
+            // 最初の終盤ステージは終局まで読み切るため、直前の中盤探索より大幅に重くなる。
             (
                 ResultKind::Depth { .. },
                 ResultKind::Endgame {
@@ -162,16 +168,15 @@ impl Forecast {
                     selectivity: Selectivity::Full,
                 },
             ) => EXACT.at(empties),
-            // Re-searching the same depth at a higher MPC confidence.
+            // 同じ終盤深さをより高い MPC 信頼度で再探索する段階。
             (ResultKind::Endgame { .. }, ResultKind::Endgame { .. }) => STAGE,
-            // Plans never return to the midgame; be cautious if one does.
+            // 計画上、終盤から中盤へ戻ることはないが、万一戻った場合に備えて安全な倍率を返す。
             (ResultKind::Endgame { .. }, ResultKind::Depth { .. }) => ENTRY.at(empties),
         }
     }
 }
 
-/// A cost ratio that grows geometrically with the empties, from `base` at
-/// `pivot` empties, and never falls below `floor`.
+/// 空きマス数に応じて幾何級数的に増加し、下限 `floor` を下回らないコスト倍率モデル。
 struct Ratio {
     floor: f64,
     base: f64,
@@ -180,32 +185,30 @@ struct Ratio {
 }
 
 impl Ratio {
+    /// 空きマス数 `empties` における推定コスト倍率を返す。
     fn at(&self, empties: f64) -> f64 {
         (self.base * self.per_empty.powf(empties - self.pivot)).max(self.floor)
     }
 }
 
-// Median ratios measured on cold tables (probe, 1 and 4 threads) and in
-// games (DEFT_GTP_LOG), see docs/benchmarks/2026-11-20-time-control-forecast.
-// The soft target leaves room up to the hard limit for the upper tail. The
-// thread count barely changes the medians.
-/// Last midgame depth -> first endgame stage: about 5 from 20 to 31
-/// empties, less with few empties and a warm table.
+// 冷えた置換表（probe、1/4 スレッド）および実戦（`trace` 機能付き GTP）で計測した中央値に基づく倍率。
+// `soft` 目標は、上振れ時に `hard` 上限まで許容できるよう余裕を持たせてある。
+// スレッド数を変えても中央値はほとんど変化しない。
+/// 最終中盤深さ → 最初の終盤ステージのコスト倍率（20〜31 空きで約 5 倍、空きが少なく置換表が温まっていればより小さい）。
 const ENTRY: Ratio = Ratio {
     floor: 2.0,
     base: 5.0,
     pivot: 24.0,
     per_empty: 1.06,
 };
-/// Last selective endgame stage -> exact solve: 2.5-3.4 at 20-23 empties,
-/// 4-5 at 24-27, 6 or more from 28.
+/// 最後の選択的終盤ステージ → 完全読みのコスト倍率（20〜23 空きで 2.5〜3.4 倍、24〜27 空きで 4〜5 倍、28 空き以上では 6 倍以上）。
 const EXACT: Ratio = Ratio {
     floor: 1.0,
     base: 3.0,
     pivot: 22.0,
     per_empty: 1.15,
 };
-/// Selective endgame stage -> the next one: medians 1.0-1.25.
+/// 選択的終盤ステージ → 次の選択的終盤ステージのコスト倍率（中央値 1.0〜1.25）。
 const STAGE: f64 = 1.25;
 
 #[cfg(test)]

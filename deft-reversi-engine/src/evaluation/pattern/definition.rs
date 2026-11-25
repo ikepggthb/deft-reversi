@@ -1,6 +1,8 @@
+//! 11 種類の評価パターン（各 4 回転 = 計 44 個の特徴量）と、3 進数インデックス変換テーブルをコンパイル時に定義します。
+
 use crate::board::pos::*;
 
-/// `X` marks a square belonging to the pattern. Squares are read from A1 to H8.
+/// `X` がパターンに属するマスを表す 8×8 テキスト定義です（A1 から H8 の行優先順）。
 pub const PATTERN_FEATURES: [&str; N_PATTERNS] = [
     concat!(
         "X.XXXX.X\n",
@@ -114,21 +116,27 @@ pub const PATTERN_FEATURES: [&str; N_PATTERNS] = [
     ),
 ];
 
+/// 3 のべき乗テーブル（`3^0` .. `3^10`）です。
 pub const POW3: [usize; 11] = [1, 3, 9, 27, 81, 243, 729, 2187, 6561, 19683, 59049];
 
+/// 1 パターンあたりの最大マス数です。
 pub const MAX_PATTERN_SQUARE: usize = 10;
+/// 盤面 90 度回転の数（4 方向）です。
 pub const N_ROTATIONS: usize = 4;
+/// パターンの種類数（11 種類）です。
 pub const N_PATTERNS: usize = 11;
 
+/// 1 つのパターン種別における 4 回転分のマス座標リストです。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CoordToFeature {
     pub n_squares: u8,
     pub feature_coord: [[u8; MAX_PATTERN_SQUARE]; N_ROTATIONS],
 }
 
+/// 全 11 パターンの座標定義テーブル（コンパイル時生成）です。
 pub const FEATURE_COORD: [CoordToFeature; N_PATTERNS] = build_coord_to_features();
 
-/// Builds all pattern coordinates from their 8x8 text representations.
+/// 8×8 テキスト表現から全パターンの座標定義テーブルを生成します。
 pub const fn build_coord_to_features() -> [CoordToFeature; N_PATTERNS] {
     let mut result = [CoordToFeature::EMPTY; N_PATTERNS];
     let mut pattern_idx = 0;
@@ -141,11 +149,10 @@ pub const fn build_coord_to_features() -> [CoordToFeature; N_PATTERNS] {
     result
 }
 
-/// Builds one pattern and its four rotations.
+/// 1 つのパターンとその 4 回転方向の座標リストを生成します。
 ///
-/// `X` is a pattern square, `.` is a non-pattern square, and ASCII whitespace
-/// is ignored. Pattern squares retain their A1-to-H8 reading order in every
-/// rotation so that their base-3 weights remain stable.
+/// `X` はパターン対象マス、`.` は非対象マス、ASCII 空白文字は無視されます。
+/// どの回転方向でも A1→H8 の走査順を保つことで、3 進インデックスの重み対応が回転間で一致します。
 pub const fn build_coord_to_feature(pattern: &str) -> CoordToFeature {
     let bytes = pattern.as_bytes();
     let mut result = CoordToFeature::EMPTY;
@@ -217,27 +224,28 @@ impl CoordToFeature {
 pub const MAX_SQUARE_FEATURES: usize = 11;
 pub const N_BOARD_SQUARES: usize = 64;
 
+/// 1 つのマスが影響を与える特徴量と、その 3 進重み（`3^k`）の組です。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SquareFeature {
     pub feature_idx: u8,
     pub base3_weight: u16,
 }
 
+/// 1 つのマスが属するすべての特徴量リスト（差分パターン更新用）です。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// Per-square feature list for planned differential pattern updates.
 pub struct SquareFeatures {
     pub len: u8,
     pub features: [SquareFeature; MAX_SQUARE_FEATURES],
 }
 
 impl SquareFeatures {
-    // Empty sentinel for compile-time square feature map construction.
+    /// コンパイル時テーブル構築用の空の初期値です。
     pub const EMPTY: Self = Self {
         len: 0,
         features: [SquareFeature::EMPTY; MAX_SQUARE_FEATURES],
     };
 
-    // Const builder for planned differential pattern update maps.
+    /// 特徴量エントリを 1 つ追加するコンパイル時（const）ビルダーです。
     pub const fn push(mut self, feature: SquareFeature) -> Self {
         self.features[self.len as usize] = feature;
         self.len += 1;
@@ -246,19 +254,19 @@ impl SquareFeatures {
 }
 
 impl SquareFeature {
-    // Empty sentinel for compile-time square feature map construction.
+    /// コンパイル時テーブル構築用の空の初期値です。
     pub const EMPTY: Self = Self {
         feature_idx: 0,
         base3_weight: 0,
     };
 }
 
-// pattern_idx ごとの 3 進 table サイズ。
+/// `pattern_idx` ごとの 3 進テーブルサイズ（`3^{n_squares}`）です。
 pub const PATTERN_TABLE_SIZES: [usize; N_PATTERNS] = build_pattern_table_sizes();
+/// 1 フェーズあたりの全パターン重みの総数です。
 pub const TOTAL_PATTERN_WEIGHTS: usize = build_total_pattern_weights();
 
-// 各マスがどの feature に影響するかを compile time に展開した表。
-// Compile-time map retained for planned differential pattern updates.
+/// 各マス（0..64）がどの特徴量・3 進桁に対応するかをコンパイル時に展開した表です。
 pub const SQUARE_TO_FEATURES: [SquareFeatures; N_BOARD_SQUARES] = build_square_to_features();
 
 const fn build_pattern_table_sizes() -> [usize; N_PATTERNS] {
@@ -285,7 +293,7 @@ const fn build_total_pattern_weights() -> usize {
     total
 }
 
-// Builder retained with SQUARE_TO_FEATURES for differential update work.
+// 差分更新用に `SQUARE_TO_FEATURES` をコンパイル時に構築します。
 const fn build_square_to_features() -> [SquareFeatures; N_BOARD_SQUARES] {
     let mut table = [SquareFeatures::EMPTY; N_BOARD_SQUARES];
     let mut pattern_idx = 0;
@@ -322,7 +330,7 @@ const fn build_square_to_features() -> [SquareFeatures; N_BOARD_SQUARES] {
 mod tests {
     use super::*;
 
-    // The previous hand-written table is retained in tests to verify the generator.
+    // 生成ロジックの正しさを検証するため、以前の手書きテーブルをテスト内に残しています。
     #[cfg(test)]
     const EXPECTED_FEATURE_COORD: [CoordToFeature; N_PATTERNS] = [
         // 1

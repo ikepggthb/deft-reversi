@@ -1,63 +1,185 @@
-# Deft Reversi
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/svg/deft-logo-horizontal-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo/svg/deft-logo-horizontal-light.svg" />
+    <img alt="Deft Reversi" src="assets/logo/svg/deft-logo-horizontal-light.svg" width="380" />
+  </picture>
 
-オセロの探索エンジン。現在の開発対象はネイティブ向けのRustライブラリです。
+  <p><strong>Rust 製リバーシ探索エンジン ＆ デスクトップアプリ</strong></p>
 
-- [エンジンのAPI・設計・実行方法](deft-reversi-engine/README.md)
-- [対局用bookの参照・生成・更新](deft-reversi-book/README.md)
-- [リライト計画と移行範囲](docs/rewrite-plan.md)
-- [レビュー後の修正と性能確認](docs/benchmarks/2026-10-27-review-fixes/README.md)
-- [終盤探索の比較と差分調査](docs/benchmarks/2026-10-24-regression-investigation/README.md)
-- [旧評価関数の説明](docs/old-evaluation-function.md)
+  <p>
+    <img alt="Rust 1.99.1" src="https://img.shields.io/badge/Rust-1.99.1-000000?style=flat-square&logo=rust" />
+    <img alt="Edition 2024" src="https://img.shields.io/badge/Edition-2024-1f2937?style=flat-square" />
+    <img alt="License GPL-3.0-or-later" src="https://img.shields.io/badge/License-GPL--3.0--or--later-2563eb?style=flat-square" />
+  </p>
 
-## ビルドと検証
+  <p>
+    <a href="#構成">構成</a> ・
+    <a href="#主な機能">主な機能</a> ・
+    <a href="#ビルドと実行">ビルドと実行</a> ・
+    <a href="#cli--学習ツール">CLI / 学習ツール</a> ・
+    <a href="#ドキュメント">ドキュメント</a>
+  </p>
+</div>
 
-```sh
-cargo build --locked --release
-cargo test --locked
-RUSTFLAGS="-Ctarget-cpu=native" cargo test --locked --release -- --include-ignored
-cargo clippy --locked --all-targets -- -D warnings
+---
+
+Deft Reversi は、リバーシの探索エンジンと関連ツール一式を収めたリポジトリです。探索エンジン本体をはじめ、Book ライブラリ、GPUI を使ったデスクトップアプリ、CLI、評価関数の学習ツールを同じワークスペースに置いています。
+
+## 構成
+
+```text
+deft-reversi
+├── deft-reversi-engine   # 盤面処理、評価関数、並列探索
+├── deft-reversi-book     # Book データの作成・拡張・対局時の参照（.dbook / .dbook-work）
+├── deft-reversi-desktop  # GPUI 製のデスクトップアプリ（deft-reversi）
+├── deft-reversi-cli      # 対局・解析・Book 管理・GTP / FlipSight 連携用の CLI
+├── deft-reversi-train    # 評価関数の学習・比較・ProbCut 校正を行う学習ツール
+└── tools/                # ベンチマーク（Python）と Windows 向け開発スクリプト（PowerShell）
 ```
 
-Rust 1.99.1を `rust-toolchain.toml` で固定し、依存関係はルートの `Cargo.lock` で固定しています。rustfmtとClippyも同じツールチェーンの構成要素として指定しています。
+> [!NOTE]
+> `deft-reversi-web` は旧 API 向けのまま残しているため、ワークスペースのビルド対象からは外しています。
 
-モデルは呼び出し元が指定します。形式は DPR2 の1ファイルで、重みと ProbCut の校正を持ちます（[エンジンの README](deft-reversi-engine/README.md#モデルとmpc)）。NNUEは対象外です。
+<details>
+<summary>クレートとパッケージ名の対応</summary>
 
-```sh
-cargo run --locked --release -p deft-reversi-cli -- solve POSITIONS.obf --model MODEL.dpr2 --exact --threads 1 --tt-mib 256
+| クレート | パッケージ名 | 役割 |
+| --- | --- | --- |
+| [deft-reversi-engine](deft-reversi-engine/) | `deft_reversi_engine` | ビットボード、パターン評価、YBWC 並列探索、終盤完全読み |
+| [deft-reversi-book](deft-reversi-book/) | `deft_reversi_book` | Book の保存・自動生成・対局時の候補選択 |
+| [deft-reversi-desktop](deft-reversi-desktop/) | `deft_reversi_desktop` | 対局・棋譜編集・解析・Book 作成を行えるデスクトップアプリ（`deft-reversi`） |
+| [deft-reversi-cli](deft-reversi-cli/) | `deft-reversi-cli` | ターミナル対局、問題集の解答チェック、棋譜検討、自動対局プロトコル |
+| [deft-reversi-train](deft-reversi-train/) | `deft_reversi_train` | `.rd` データセット変換、評価モデルの学習、MPC 校正 |
+
+</details>
+
+## 主な機能
+
+- **探索エンジン**: `u64` ビットボードとロックフリー置換表を使い、YBWC による並列探索や ProbCut の枝刈り、空き 1〜13 マス専用の終盤ソルバを組み合わせています。
+- **評価関数**: 11 パターン×4 回転の線形評価に、小型ニューラルネットの量子化出力を足し合わせて石差を見積もります。
+- **Book 管理**: 生成や編集の途中経過を `.dbook-work` に貯めながら育て、対局で使うときは読み取り専用の `.dbook` へ書き出して読み込みます。
+- **デスクトップアプリ**: 対局、棋譜の編集と解析、Book の閲覧・生成を GPUI の画面上でまとめて操作できます。
+
+## ビルドと実行
+
+### 動作環境
+
+- Rust `1.99.1`（[rust-toolchain.toml](rust-toolchain.toml) で固定。`rustfmt` と `clippy` を含む）
+- Windows 向けの開発スクリプトを使う場合は PowerShell
+
+### ビルドとテスト
+
+```bash
+cargo check --workspace --all-targets
+cargo test --workspace
 ```
 
-## バージョン
+Windows で `x86-64-v3` 向けのリリースビルド（`target-v3/release/`）や起動確認をするときは、[tools/desktop/](tools/desktop/README.md) のスクリプトを使えます。
 
-今回の開発系列は Deft Reversi 2.0 です。Engine は自身の `Cargo.toml` で `2.0.0-dev.1`、CLI・Book・学習ツール・デスクトップ版もそれぞれの `Cargo.toml` で `1.0.0-dev.1` を指定します。版はワークスペースで共有せず、クレートごとに管理します。`-dev.N` は正式リリース前の開発ビルドを表します。開発版の区切りで `N` を進め、個々のビルドはGitコミットでも識別します。
-
-バージョンを変更したら `cargo check --workspace` でロックファイルを更新し、`cargo test --locked --workspace` で確認します。正式版をリリースするときにプレリリース接尾辞を外します。
-
-```sh
-cargo run --locked --release -p deft-reversi-cli -- --version
-cargo run --locked --release -p deft-reversi-cli -- book --version
-cargo run --locked --release -p deft_reversi_train -- --version
+```powershell
+tools/desktop/build.ps1       # デスクトップ版と CLI をビルド（-Desktop でデスクトップ版のみ）
+tools/desktop/check.ps1       # clippy とテストを実行（-Workspace で全クレート）
+tools/desktop/run.ps1         # ビルド後、テスト用ホーム（local/desktop-home）で起動
 ```
 
-`--version` には製品番号に加え、ビルド元のGitコミットを表示します。`-dirty` は上記4クレートまたはワークスペースのビルド設定に未コミットの変更があることを示します。ソースアーカイブなど、コミットを取得できない場合は `git unknown` と表示します。対局中の `settings` では、ビルドターゲット・バイナリのSHA-256・モデルのSHA-256も確認できます。
+### 評価モデル（`.dpr2`）について
 
-`solve`、`review`、`self-play`、`perft`、`gtp` とBookの学習では、標準エラーにCLI・Engine・Bookライブラリのバージョン、探索仕様番号、Gitコミットを表示します。`solve --tsv` の標準出力は計測結果のままです。
+対局や解析で探索を実行するときは、`.dpr2` 形式の評価モデルファイルを用意してください。
 
-モデルやBookのファイル形式、探索仕様の互換性はそれぞれの番号で管理します。公開済みの旧Web版は独立したバージョンを持ちます。
+| アプリ／ツール | モデルファイルの探し方 |
+| --- | --- |
+| `deft-reversi`（Desktop） | 環境変数 `DEFT_REVERSI_MODEL` → 実行ファイル横の `resources/deft-eval-v4.dpr2` → `data/eval/deft-eval-v4.dpr2` の順 |
+| `deft-reversi-cli`（CLI） | `-m` / `--model` オプション、または環境変数 `DEFT_MODEL` で指定 |
 
-## 旧アプリケーション
+## CLI / 学習ツール
 
-`deft-reversi-train` はパターン評価の学習器です（[使い方](deft-reversi-train/README.md)）。`deft-reversi-cli` は新エンジンと定石を使う端末アプリです（[対局・solve・review・自己対戦・perft](deft-reversi-cli/README.md)）。`deft-reversi-web` は旧APIに依存する移植前のソースとして保存し、ワークスペースから除外しています。
+<details open>
+<summary><strong>deft-reversi-cli</strong> のサブコマンド</summary>
 
-公開済みの[Web版](https://az.recazbowl.net/deft-reversi-web/index.html)は、ここで保存している旧アプリケーションに対応します。新エンジンへの移行は未実施です。
+```bash
+cargo run -p deft-reversi-cli --release -- <サブコマンド>
+```
 
-計測ツールは [tools/bench](tools/bench/README.md) にあります（FFO の完全読みの比較、中盤の速さ、Edax・Egaroucid との対局）。比較用エンジン・モデル・学習データは、`.gitignore` で除外した `local/` に置きます。
+| コマンド | できること |
+| --- | --- |
+| `play` | ターミナル上でエンジンと対局する |
+| `book` | `.dbook` / `.dbook-work` の生成、再開、書き出し、検査を行う |
+| `solve` | OBF 形式の問題集を解いて結果を表示する |
+| `review` | 棋譜を読み込み、実際の手と最善手を比べる |
+| `self-play` | エンジン同士で自己対戦し、棋譜を書き出す |
+| `perft` | 初期局面から指定手数までの合法手展開数を数える |
+| `gtp` | 自動対局向けの GTP（Go Text Protocol）モードで動く |
+| `flipsight` | FlipSight ボット連携用の JSON Lines モードで動く |
 
-## 測定記録
+</details>
 
-直近のFFO40–49・1コア比較は [Edax・Egaroucidとの測定記録](docs/benchmarks/2026-10-27-three-engines/README.md) を参照してください。過去の時間は、異なる実装・モデル・測定条件の結果を含むため、直接つなげて改善率を計算しません。
+<details>
+<summary><strong>deft-reversi-train</strong> のサブコマンド</summary>
 
-過去のレポート中の `deft_reversi_engine_v2` は移動前の名称です。測定時のハッシュ、コマンド、再現用ソースは当時の記録として保持しています。現在のディレクトリは `deft-reversi-engine`、クレート名は `deft_reversi_engine` です。
+```bash
+cargo run -p deft_reversi_train --release -- <サブコマンド>
+```
+
+| コマンド | できること |
+| --- | --- |
+| `convert` | 棋譜から学習用データセット（`.rd`）を作る |
+| `train` | 全フェーズの評価モデルを学習して書き出す |
+| `export` | 学習途中のチェックポイントからモデルを書き出す |
+| `eval` | 検証データを使ってモデル同士の誤差を比べる |
+| `mpc` | モデルに合わせて ProbCut の係数を校正する |
+| `pack` | モデルと ProbCut 校正結果を 1 ファイルにまとめる |
+
+</details>
+
+## ドキュメント
+
+| 内容 | 参照先 |
+| --- | --- |
+| 技術解説（第1章〜第9章） | [docs/README.md](docs/README.md) |
+| 探索エンジン API | [deft-reversi-engine/docs/api.md](deft-reversi-engine/docs/api.md) |
+| Book の仕組みと運用 | [deft-reversi-book/docs/index.md](deft-reversi-book/docs/index.md) |
+| 評価関数の学習手順 | [deft-reversi-train/docs/pattern-training.md](deft-reversi-train/docs/pattern-training.md) |
+| ベンチマークの使い方 | [tools/bench/README.md](tools/bench/README.md) |
+| デスクトップ開発スクリプト | [tools/desktop/README.md](tools/desktop/README.md) |
+
+## 謝辞と出典
+
+### 移植したコード
+
+探索エンジンの一部は、次のリバーシエンジンのコードを Rust に移植したものです。移植した箇所は、各ソースファイルの先頭に「出典」として書いています。
+
+| 出典 | 移植したもの | Deft のファイル（`deft-reversi-engine/src/`） |
+| --- | --- | --- |
+| [Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0） | 合法手生成と着手の AVX2 版（奥原氏の手法と acepck 氏の最適化）、最終手で返る石数の計算（BMI2）、辺の確定石の表と確定石による枝刈り、空き 1〜4 マスのソルバ、高速な終盤の着手順序 | `board/moves.rs`、`board/flip.rs`、`board/last.rs`、`board/edge_stability.rs`、`board/stability.rs`、`search/endgame/last_four.rs`、`search/endgame/ordered.rs` |
+| [Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later） | 着手順序の深さ・窓・重み、スレッド専有の終盤置換表、孤立した空きマスを先に読む並べ替え | `search/ordering.rs`、`search/endgame/local_tt.rs`、`search/endgame/shallow.rs` |
+
+このほか、ProbCut を Null-Window のノードだけで試す（Edax）、静的評価が境界から遠いときは ProbCut の浅い探索を省く（Egaroucid）といった設計も参考にしています。ビットボードの手法は、奥原俊彦さんの解説（[bitboard tricks](http://www.amy.hi-ho.ne.jp/okuhara/bitboard.htm)）に多くを負っています。
+
+### 評価関数の学習データ
+
+評価モデル（`deft-eval-v4.dpr2`）は、山名琢翔さんが公開している [Egaroucid 学習データ](https://www.egaroucid.nyanyan.dev/ja/technology/train-data/) で学習しました。
+
+- Egaroucid 7.8.0 レベル11 と Edax 4.5.5 レベル11 の対戦棋譜（v0002）
+- Egaroucid 7.4.0 / 7.5.1 レベル17 によるデータ（石数 4〜13 の局面）
+
+これだけの量と質のデータを自由に使える形で公開していただいたおかげで、評価関数を作れました。心から感謝します。
+
+> 山名琢翔: Egaroucid 学習データ, https://www.egaroucid.nyanyan.dev/ja/technology/train-data/
+
+### 定石名
+
+デスクトップ版の定石名リスト（[openings.txt](deft-reversi-desktop/assets/openings.txt)）は、うえのんさんの「[オセロ定石一覧(250種以上)](https://evaccaneer.livedoor.blog/archives/11101657.html)」（ブログ「レコちゃんも頑張ってるのに」）を使わせていただいています。
+
+### 局面と開局
+
+- FFO の終盤問題（`ffo*.obf`、`fforum-*.obf`）は、フランスの連盟（Fédération Française d'Othello）の会誌 FFORUM に掲載された、プログラム向けの問題です。Edax にも同じものが同梱されています。
+- 対局のベンチマークに使う XOT の開局リストは、Matthias Berg さんの [XOT](https://berg.earthlingz.de/xot/) から取得します（リポジトリには含めていません。[tools/bench](tools/bench/README.md) を参照）。
+
+## 商標
+
+「オセロ」「Othello」は株式会社メガハウスの登録商標です。Deft Reversi は株式会社メガハウスおよび Othello Co. とは関係ありません。
 
 ## ライセンス
 
-[GNU General Public License v3.0](LICENSE)。
+[GPL-3.0-or-later](LICENSE)（全文は [COPYING](COPYING)）。依存クレートのライセンスは、リリースに同梱する `THIRD-PARTY-NOTICES.txt` にまとめています（[tools/release](tools/release/README.md)）。

@@ -27,7 +27,7 @@ FlipSight 接続プログラムの `--engine` に、次のようなコマンド�
 
 ## 対局用Book
 
-リリースで案内されたモデルとBookを組み合わせて指定する。配布タグは [`model-v3-pen-mpc2`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v3-pen-mpc2)、ファイル名は `deft-eval-v3-pen.dpr2`。このファイルはDPR2形式 v3で、PENの重みとMPC2校正を含む。
+リリースで案内されたモデルとBookを組み合わせて指定する。配布タグは [`model-v4`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v4)、ファイル名は `deft-eval-v4.dpr2`。このファイルはDPR2形式 v4で、PEN2の重みとMPC2校正を含む。
 
 ```sh
 ./target/release/deft-reversi-cli play --model model.dpr2 --book openings.dbook
@@ -43,12 +43,12 @@ FlipSight 接続プログラムの `--engine` に、次のようなコマンド�
 
 Book有効時の `hint` は、対局と同じ品質・損失条件を満たす最良のBook手を提示する。候補がない場合や終局まで読む設定を明示した場合は探索する。`analyze` は従来どおり全候補を探索し、各手の右にBook値を併記する。探索順は探索値に従う。
 
-Bookを自分で生成・再開・検査するには `deft-reversi-cli book --help` を使う。`book build --level 29` でエンジンと共通のレベル表を使い、空き28から完全読みする。生成条件と作業ファイルの扱いは [Bookの操作手順](../docs/book-v2/training.md) を参照。
+Bookを自分で生成・再開・検査するには `deft-reversi-cli book --help` を使う。`book build --level 29` でエンジンと共通のレベル表を使い、空き28から完全読みする。生成条件と作業ファイルの扱いは [Bookの操作手順](../deft-reversi-book/docs/training.md) を参照。
 
 広域学習の例。レベル22の終盤MPCは空き28、完全読みは空き21からです。
 
 ```sh
-./target/release/deft-reversi-cli book build --model deft-eval-v3-pen.dpr2 \
+./target/release/deft-reversi-cli book build --model deft-eval-v4.dpr2 \
   --work openings.dbook-work --book openings.dbook --level 22 --max-plies 32 \
   --schedule frontier --line-plies 4 --loss 4 --cumulative-loss 4 --leaf-loss 4 \
   --threads 18 --tt-mib 1024 --memory-mib 2048 --seconds 14400
@@ -219,6 +219,8 @@ perftはモデル不要。初期局面から深さ1〜Nまでの葉・パス・�
 `--level` と `--game-ms` はどちらか一方が必須。後者は各色の対局全体の持ち時間（ミリ秒）。GTPはプロトコル応答だけを標準出力へ出す。
 
 対応コマンドは `protocol_version`・`name`・`version`・`known_command`・`list_commands`・`boardsize`・`clear_board`・`komi`・`play`・`genmove`・`time_settings`・`time_left`・`showboard`・`final_score`・`quit`。コマンド番号と `#` コメントを扱い、成功は `=番号`、失敗は `?番号` で返す。
+
+`--features trace` を付けてビルドすると、GTPは各手の時間の枠、使った時間、終えた反復を標準エラーへ出す（時間管理の調査用）。
 
 盤面サイズは8、コミは0のみ。`boardsize 8` と `clear_board` は盤面・TT・時計をリセットする。`time_settings MAIN 0 0` と `time_left COLOR REMAINING 0` に対応し、秒読みは扱わない。不正な引数、非数・負の時間、不正な着手や手番にはエラーを返して状態を維持する。`final_score` は終局後だけ、黒勝ちなら `B+差`、白勝ちなら `W+差`、引き分けなら `0`。時間設定の指定後は、その持ち時間を次のリセット時の基準にする。
 

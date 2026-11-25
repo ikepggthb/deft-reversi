@@ -1,4 +1,4 @@
-//! 旧ファイルの評価表現。通常の編集・生成・対局では使わない。
+//! 旧バージョンの Book ファイルで使われていた評価表現。通常の編集・生成・対局では使わない。
 use super::*;
 
 /// その探索条件での推定値の意味。最終石差の保証には使わない。
@@ -46,8 +46,7 @@ pub enum SearchProjection {
     /// trace.moves内の最良手以外に付ける上限。各手の点評価は分からない。
     OtherMoveUpper,
 }
-/// The board in a calculated value is either the position itself, the child
-/// whose value was negated, or the parent of a particular candidate move.
+/// 計算結果が表す盤面対象：その局面自体、符号反転元の子局面、または特定候補手の親局面。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CalculationSubject {
     Position,
@@ -84,24 +83,24 @@ impl PartialOrd for CalculationSubject {
 /// 現在の計算の対象を記録する。旧3形式の入力ハッシュは旧ファイル検査用にのみ残す。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Derivation {
-    /// Current calculation, with no historical input references.
+    /// 現在の計算記録（履歴上の入力参照を持たない）。
     Current {
         root: [u64; 2],
         subject: CalculationSubject,
     },
-    #[doc(hidden)] // Old-file decoder only.
+    #[doc(hidden)] // 旧ファイルデコーダ専用。
     Maximum {
         root: [u64; 2],
         policy: u8,
         inputs: [u8; 32],
     },
-    #[doc(hidden)] // Old-file decoder only.
+    #[doc(hidden)] // 旧ファイルデコーダ専用。
     Intersection {
         root: [u64; 2],
         action: u8,
         inputs: [[u8; 32]; 2],
     },
-    #[doc(hidden)] // Old-file decoder only.
+    #[doc(hidden)] // 旧ファイルデコーダ専用。
     Child {
         child: [u64; 2],
         input: [u8; 32],
@@ -126,7 +125,7 @@ pub enum ValueAnalysis {
         depth: u8,
         selectivity: Selectivity,
     },
-    /// The recorded quality survives; the lost search/derivation kind does not get invented.
+    /// 記録された品質条件のみ保持し、失われた探索／導出種別を推測で補わない。
     LegacyUnknown {
         depth: u8,
         selectivity: Selectivity,
@@ -228,8 +227,8 @@ impl ValueAnalysis {
         }
     }
 }
-/// Explicit external input. Missing search provenance remains unknown; callers
-/// are responsible for the truth of imported final-score assertions.
+/// 明示的な外部入力値。探索の由来が欠落している場合は不明のまま保持し、
+/// 取り込まれた確定石差の真偽については呼び出し側が責任を持つ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ImportedValue {
     pub score: i16,
@@ -238,8 +237,8 @@ pub struct ImportedValue {
     pub identity: AnalysisIdentity,
     pub origin: ValueOrigin,
 }
-/// Validated evaluation returned by book queries. Accessors are read-only;
-/// actual search conditions are available through analysis(), not an editable flag.
+/// Book 照会によって返される検証済み評価。アクセサは読み取り専用であり、
+/// 実際の探索条件は編集可能なフラグではなく `analysis()` を通じて取得する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Assessment {
     claim: ValueClaim,

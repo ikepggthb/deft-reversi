@@ -1,6 +1,7 @@
-# Runs clippy and the tests.
-#   tools/desktop/check.ps1             desktop crate
-#   tools/desktop/check.ps1 -Workspace  every crate (book, CLI, engine, ...)
+﻿# cargo clippy とテストを実行する。
+# 使い方:
+#   tools/desktop/check.ps1             デスクトップ版のクレートのみ検査する
+#   tools/desktop/check.ps1 -Workspace  ワークスペース内の全クレート（book、CLI、エンジンなど）を検査する
 param([switch]$Workspace)
 . (Join-Path $PSScriptRoot 'env.ps1')
 

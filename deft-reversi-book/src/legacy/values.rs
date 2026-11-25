@@ -1,4 +1,4 @@
-//! work v8 / play v4の共有テーブルのバイト表現。
+//! 旧形式（work v8 / play v4）の共有評価テーブルのバイト表現を読み書きするモジュール。
 use super::*;
 use crate::selectivity_code;
 use std::{collections::BTreeMap, num::NonZeroU32};
@@ -145,8 +145,8 @@ impl ValueStore {
     }
 }
 
-// The file tables mirror ownership: profiles and completed searches are written
-// once, followed by small analysis descriptors and values referring to them.
+// ファイル上のテーブル構成は所有権構造を反映している：
+// プロファイルと完了済み探索記録を 1 回ずつ書き出し、その後にそれらを参照する小さな解析記述子と評価値本体を並べる。
 impl ValueStore {
     pub fn write(&self, w: &mut dyn std::io::Write) -> Result<()> {
         use value_codec::*;

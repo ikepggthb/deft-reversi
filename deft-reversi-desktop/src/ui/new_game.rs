@@ -1,5 +1,5 @@
-//! The new game dialog (§9.5): human or AI for each colour, the AI's
-//! strength, and the start position.
+//! 新規対局ダイアログ（黒白プレイヤー種別・AI 強さ・開始局面・Book 使用）と
+//! 探索レベルの読み計画チャートを描画するモジュール。
 use super::{root::RootView, theme, widgets};
 use crate::{
     app::{Command, NewGame},
@@ -20,13 +20,14 @@ fn side_index(color: Color) -> usize {
     }
 }
 
-/// One stretch of empties that a level reads the same way.
+/// 空きマス数の連続区間ごとに同じ探索戦略（読み方）になるフェーズを表す。
 struct Phase {
     from: u8,
     to: u8,
     reading: ResultKind,
 }
 
+/// 指定レベルの 60 空きマスから 1 空きマスまでの探索計画をフェーズ一覧へまとめる。
 fn phases(level: u8) -> Vec<Phase> {
     let mut phases: Vec<Phase> = Vec::new();
     for empties in (1..=60).rev() {
@@ -53,7 +54,7 @@ fn reading_color(reading: ResultKind) -> Rgba {
     }
 }
 
-/// Stronger pruning shows lighter.
+/// 枝刈りが強い（選択率が低い）ほど薄い不透明度で表示する。
 fn reading_opacity(reading: ResultKind) -> f32 {
     let percent = f32::from(reading.selectivity().percent());
     0.45 + 0.55 * (percent - 83.) / 17.
@@ -62,7 +63,7 @@ fn reading_opacity(reading: ResultKind) -> f32 {
 const STRIP_WIDTH: f32 = 500.;
 
 impl RootView {
-    /// Starts the game the dialog describes and closes it.
+    /// ダイアログの入力内容で新しい対局を開始し、ダイアログを閉じる。
     pub(super) fn start_new_game(&mut self, cx: &mut Context<Self>) {
         let form = self.settings.new_game;
         let start = if form.from_current {
@@ -70,7 +71,7 @@ impl RootView {
         } else {
             Position::initial()
         };
-        // The book choice of the dialog holds from this game on.
+        // ダイアログで切り替えた Book 使用フラグを今後の設定としても保存する。
         if self.settings.book.enabled != self.new_game_book {
             self.set_book_use(self.new_game_book, cx);
         }
@@ -84,6 +85,7 @@ impl RootView {
         );
     }
 
+    /// 新規対局モーダルダイアログを描画する。
     pub(super) fn render_new_game(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = self.settings.lang.strings();
         let form = self.settings.new_game;
@@ -110,8 +112,8 @@ impl RootView {
             })
             .map(|color| self.render_manual(color, cx))
             .collect::<Vec<_>>();
-        // The title and the buttons stay; the rest scrolls on a short window.
-        // Whether the AI plays the book's moves; only with a book chosen.
+        // ヘッダと開始・キャンセルボタンは固定し、フォーム本体だけをスクロール可能にする。
+        // Book トグルは Book ファイルが選択されている場合のみ表示する。
         let book_row = self.settings.book.path.is_some().then(|| {
             let book = self.new_game_book;
             div()
@@ -443,7 +445,7 @@ impl RootView {
             .child(body)
     }
 
-    /// The level's plan over the empties, as a strip and a table.
+    /// 指定探索レベルが空きマス数 60→1 の各区間でどのように読むかを帯グラフと表で表示する。
     fn render_phases(&self, level: u8) -> Div {
         level_chart(self.settings.lang.strings(), level, STRIP_WIDTH)
     }
@@ -451,7 +453,9 @@ impl RootView {
 
 const PHASE_ROW: f32 = 18.;
 
-/// How a level reads over the empties: a strip `width` wide and a table.
+/// 指定探索レベル `level` の読み計画を幅 `width` の帯グラフと詳細テーブルとして生成する。
+///
+/// 新規対局ダイアログ・設定画面・Book 作成ダイアログで共有して使用する。
 pub(super) fn level_chart(s: &Strings, level: u8, width: f32) -> Div {
     let phases = phases(level);
     let strip = div()

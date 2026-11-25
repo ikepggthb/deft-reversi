@@ -1,8 +1,15 @@
+//! 中盤および終盤探索ノード向けのムーブオーダリング（有望そうな手から先に探索するための並び替えスコア算出）モジュールです。
+//! Alpha-Beta 法では、良い手から先に調べるほど枝刈り（カット）が増えて探索が速くなります。
+//!
+//! ## 出典
+//!
+//! 着手順序の評価に使う探索の深さ・窓・重みは、[Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later）の `move_ordering.hpp` の値を移植したものです。
 use super::*;
 use crate::board::CORNERS;
 
 impl Context {
-    /// Port of the reference final-search ordering depths, windows and weights.
+    /// 終盤完全読み・終盤選択探索向けのムーブオーダリングスコアを計算します。
+    /// 浅い評価値・相手の合法手数（および隅への着手）・置換表への登録有無を重み付きで合算して返します。
     pub(super) fn endgame_ordering(
         &mut self,
         parent: Position,
@@ -15,8 +22,7 @@ impl Context {
         let empties = parent.board.empty_count();
         let narrow = beta - alpha == 1;
         let depth = if narrow {
-            // From 20 empties a one-ply search under each child, as
-            // Egaroucid orders its endgame null-window moves.
+            // 空き 20 マス以上では Null-Window（幅 1 の窓）探索時に各子局面を 1 手浅く先読みして順序の精度を上げます（Egaroucid 方式）。
             if empties >= 20 { 2 } else { empties >> 4 }
         } else {
             (empties >> 3).max(1)
@@ -39,7 +45,7 @@ impl Context {
         let state = parent.state.played(bit, flips);
         let (value, moves) = if depth <= 1 {
             if depth == 1 {
-                // Preserve the depth-zero ordering_search visit and hard budget.
+                // depth == 0 の `ordering_search` と同様のノード訪問カウントとノード上限チェックを保ちます。
                 self.enter()?;
             }
             self.stats.evaluations += 1;
@@ -65,7 +71,7 @@ impl Context {
         Ok(-value * value_weight + mobility * mobility_weight + presence)
     }
 
-    /// Reference midgame ordering, also used by endgame preparation iterations.
+    /// 中盤探索および終盤準備イテレーション向けのムーブオーダリングスコアを計算します。
     pub(super) fn midgame_ordering(
         &mut self,
         parent: Position,
@@ -103,7 +109,7 @@ impl Context {
         Ok(-value - 2 * legal.count_ones() as i32 - (legal & CORNERS).count_ones() as i32)
     }
 
-    /// Small score-only search, without TT writes or probabilistic pruning.
+    /// オーダリング専用の軽量な Alpha-Beta 探索です（置換表への書き込みや ProbCut 枝刈りを行いません）。
     pub(super) fn ordering_search(
         &mut self,
         position: Position,
@@ -114,7 +120,7 @@ impl Context {
         self.enter()?;
         let Position { board, state } = position;
         if depth == 0 {
-            // Unlike `node`, this has not checked for a finished game yet.
+            // `node` と異なり終局チェックをまだ行っていないため、ここで両者パス（終局）を確認します。
             let (value, moves) = self.evaluate_and_moves(board, &state);
             if moves == 0 && board.get_opponent_moves() == 0 {
                 return Ok(board.final_score());

@@ -1,4 +1,8 @@
-//! CLI display for recorded Book evaluations and lines.
+//! Book（`.dbook` 形式）の読み込みと評価内容・手順の CLI 表示モジュール。
+//!
+//! [`BookPlayer`] を通じて、局面に登録された候補手の評価値、探索条件、
+//! 評価の出所（直接探索・子局面からの伝播・手動登録など）、Book ラインを整形する。
+
 use crate::display;
 use deft_reversi_book::{
     Book, BookMove, BookPlayer, EvaluationSource, MovePolicy, ReadLimits, Score, SearchConditions,
@@ -7,6 +11,9 @@ use deft_reversi_book::{
 use deft_reversi_engine::{Engine, Position, Selectivity};
 use std::{path::Path, sync::Arc};
 
+/// 指定パスの `.dbook` ファイルを読み込み、[`BookPlayer`]・登録局面数・モデル一致フラグを返す。
+///
+/// Book 作成時のエンジン／モデル識別子と現在の `engine` が一致しない場合は警告を標準エラー出力へ出す。
 pub fn load(
     engine: &Engine,
     path: &Path,
@@ -33,6 +40,7 @@ pub fn load(
     Ok((player, positions, matches))
 }
 
+/// Book に記録された評価値・探索条件・評価の出所を 1 つの説明文字列に整形する。
 pub fn value(score: Score, conditions: SearchConditions, source: EvaluationSource) -> String {
     let points = match score {
         Score::Estimate { score, bound } => {
@@ -82,6 +90,9 @@ pub fn value(score: Score, conditions: SearchConditions, source: EvaluationSourc
     format!("{points} ({})", modes.join(", "))
 }
 
+/// 候補手比較表（`analyze` コマンド）向けに、候補手の Book 評価値を 1 セル分の文字列に整形する。
+///
+/// 値があっても現在の [`UsePolicy`] で採用対象外になる場合は `[inactive]` を添える。
 pub fn analysis_value(book: &BookPlayer, candidate: BookMove<'_>) -> String {
     let Some(v) = candidate.value.or(candidate.final_score) else {
         return "-".into();
@@ -96,6 +107,7 @@ pub fn analysis_value(book: &BookPlayer, candidate: BookMove<'_>) -> String {
     detail
 }
 
+/// 候補手 1 手分の登録状態（`linked` / `unlinked`）、有効評価値、確定値、使用不可理由を整形する。
 pub fn candidate(book: &BookPlayer, candidate: BookMove<'_>) -> String {
     let mut parts = vec![if candidate.registered {
         "linked".into()
@@ -125,6 +137,7 @@ pub fn candidate(book: &BookPlayer, candidate: BookMove<'_>) -> String {
     parts.join("; ")
 }
 
+/// 指定局面 `position` に対する Book 内の登録状況・評価値・各候補手の Book ラインを標準出力へ表示する。
 pub fn show(book: &BookPlayer, position: Position) {
     let Some(entry) = book.probe(position) else {
         println!("Book: position absent");

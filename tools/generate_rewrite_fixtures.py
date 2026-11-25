@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Regenerate the small rewrite corpus using independent coordinate rules."""
+"""エンジン本体とは独立した座標ルールで対局を再現し、テスト用の小さな局面集を再生成する。
+
+シード 1〜8 でランダムに対局を進め、12・24・36 手目（中盤）と 48 手目（終盤）の局面を
+deft-reversi-engine/tests/fixtures/ へ書き出す。あわせてリポジトリ内の
+fforum-40-59.obf から先頭 5 問（FFO 40〜44）を切り出して保存する。
+"""
 from pathlib import Path
 import random
 
@@ -8,6 +13,7 @@ DEST = ROOT / 'deft-reversi-engine/tests/fixtures'
 DIRECTIONS = [(dx,dy) for dx in (-1,0,1) for dy in (-1,0,1) if dx or dy]
 
 def flips(board, turn, pos):
+    """8 方向を走査し、指定位置に着手したときに裏返る相手石の座標一覧を返す。"""
     if board[pos]: return []
     result=[]
     for dx,dy in DIRECTIONS:
@@ -25,6 +31,7 @@ def flips(board, turn, pos):
     return result
 
 def main():
+    """固定シードの対局から中盤・終盤の局面ファイルと FFO 40〜44 のテストフィクスチャを生成する。"""
     mid=[];end=[]
     for seed in range(1,9):
         rng=random.Random(seed)

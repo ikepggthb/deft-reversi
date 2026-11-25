@@ -1,3 +1,9 @@
+//! `deft-reversi-cli` のエントリーポイント。
+//!
+//! 対話対戦（`play`）、Book 生成・検査（`book`）、問題集解析（`solve`）、棋譜検討（`review`）、
+//! 自己対戦（`self-play`）、合法手展開数計測（`perft`）、GTP 対局（`gtp`）、
+//! FlipSight 対局（`flipsight`）の各サブコマンドを振り分ける。
+
 mod book;
 mod book_view;
 mod display;
@@ -17,13 +23,16 @@ use clap::{Args, Parser, Subcommand};
 use deft_reversi_engine::{Engine, EngineOptions, Goal, Model, SearchRequest};
 use std::{error::Error, path::PathBuf, time::Duration};
 
+/// CLI 全体で使う標準エラー型のエイリアス。
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+/// パッケージのバージョン文字列。
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Git リビジョンを含めた詳細バージョン文字列。
 static BUILD_VERSION: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| format!("{VERSION} (git {})", deft_reversi_engine::GIT_REVISION));
 
-/// Play, analyze and review Reversi from the terminal.
+/// ターミナルからリバーシの対局・解析・棋譜検討を行う CLI。
 #[derive(Parser, Debug)]
 #[command(author, version, long_version = BUILD_VERSION.as_str(), about)]
 struct Cli {
@@ -31,48 +40,51 @@ struct Cli {
     command: Command,
 }
 
+/// サブコマンドの一覧。
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Play against the engine.
+    /// エンジンと対局する。
     Play(play::PlayArgs),
-    /// Generate, resume, export or inspect an opening book.
+    /// Book（`.dbook` / `.dbook-work`）の生成・再開・書き出し・検査を行う。
     #[command(disable_help_flag = true)]
     Book(book::BookArgs),
-    /// Search every position of an OBF file and print a table.
+    /// OBF 形式の問題集ファイルを読み込み、全局面を探索して表形式で表示する。
     Solve(solve::SolveArgs),
-    /// Review records and compare played moves with the best moves.
+    /// 棋譜を解析し、実際に打たれた手と最善手を比較する。
     Review(review::ReviewArgs),
-    /// Play the engine against itself and write the game records.
+    /// エンジン同士を自己対戦させ、棋譜を書き出す。
     SelfPlay(self_play::SelfPlayArgs),
-    /// Count leaf positions from the initial position.
+    /// 初期局面からの末端局面数を数える（perft）。
     Perft(perft::PerftArgs),
-    /// Run the Go Text Protocol interface for automated matches.
+    /// 自動対局向けの GTP（Go Text Protocol）インターフェースを起動する。
     Gtp(gtp::GtpArgs),
-    /// Run the FlipSight bot connector's JSON-lines engine protocol.
+    /// FlipSight ボットコネクタ向けの JSON Lines プロトコルを起動する。
     Flipsight(flipsight::FlipsightArgs),
 }
 
-/// Model and engine settings shared by the commands that search.
+/// 探索を行うコマンドで共通に使うモデルとエンジン設定。
 #[derive(Args, Debug, Clone)]
 struct EngineArgs {
-    /// Evaluation model in DPR2 format.
+    /// DPR2 形式の評価モデルファイル。
     #[arg(short, long, env = "DEFT_MODEL")]
     model: PathBuf,
-    /// Search threads, including the calling thread. Defaults to every core.
+    /// 探索スレッド数（呼び出しスレッドを含む。省略時は利用可能な全コア）。
     #[arg(short, long)]
     threads: Option<usize>,
-    /// Transposition table size in MiB.
+    /// 置換表（過去の探索結果を保持するハッシュ表）のサイズ（MiB）。
     #[arg(long, default_value_t = 256)]
     tt_mib: usize,
 }
 
 impl EngineArgs {
+    /// 指定パスのモデルを読み込み、[`Engine`] を構築する。
     fn engine(&self) -> Result<Engine> {
         let model =
             Model::from_file(&self.model).map_err(|e| format!("{}: {e}", self.model.display()))?;
         self.with_model(model)
     }
 
+    /// 読み込み済みの [`Model`] を使って [`Engine`] を構築する。
     fn with_model(&self, model: Model) -> Result<Engine> {
         let threads = self
             .threads
@@ -84,36 +96,37 @@ impl EngineArgs {
     }
 }
 
-/// How far each search reads.
+/// 各探索でどこまで読むか（深さ・選択率・制限時間）を指定する共通引数。
 #[derive(Args, Debug, Clone)]
 struct GoalArgs {
-    /// Engine level, 1-60.
+    /// エンジンレベル（1〜60）。
     #[arg(short, long, value_parser = clap::value_parser!(u8).range(1..=60))]
     level: Option<u8>,
-    /// Fixed depth, 0-60.
+    /// 固定探索深さ（0〜60）。
     #[arg(short, long, conflicts_with = "level", value_parser = clap::value_parser!(u8).range(0..=60))]
     depth: Option<u8>,
-    /// Read to the end of the game without pruning.
+    /// 終局まで枝刈りなしで完全読みする。
     #[arg(long, conflicts_with_all = ["level", "depth"])]
     exact: bool,
-    /// Compact eval search settings: DEPTH[@PERCENT], e.g. 12@83.
+    /// 評価探索の簡略指定: `DEPTH[@PERCENT]`（例: `12@83`）。
     #[arg(long, conflicts_with_all = ["depth", "exact", "eval_depth", "eval_mpc"], value_parser = settings::eval_spec)]
     eval: Option<settings::EvalSpec>,
-    /// Override the eval search depth. Without --level, custom plans start at depth 10, MPC 100%, endgame off.
+    /// 評価探索の深さを上書きする（`--level` なしの場合は深さ 10・MPC 100%・終盤探索オフが基準）。
     #[arg(long, conflicts_with_all = ["depth", "exact"], value_parser = clap::value_parser!(u8).range(0..=60))]
     eval_depth: Option<u8>,
-    /// Eval search MPC: 83, 85, 95, 98, 99 or 100 (no pruning).
+    /// 評価探索の MPC（選択率）: 83, 85, 95, 98, 99, 100（100 は枝刈りなし）。
     #[arg(long, conflicts_with_all = ["depth", "exact"], value_parser = settings::selectivity)]
     eval_mpc: Option<deft_reversi_engine::Selectivity>,
-    /// Endgame stage PERCENT:EMPTIES. Repeat or separate by commas. Zero disables a stage.
+    /// 終盤ステージ `PERCENT:EMPTIES`（複数回またはカンマ区切りで指定可。0 で無効化）。
     #[arg(long, conflicts_with_all = ["depth", "exact"], value_delimiter = ',', value_parser = settings::endgame_stage)]
     endgame: Vec<settings::EndgameStage>,
-    /// Time limit per search in milliseconds; 0 means unlimited.
+    /// 1 探索あたりの時間制限（ミリ秒。0 で無制限）。
     #[arg(long)]
     time_ms: Option<u64>,
 }
 
 impl GoalArgs {
+    /// 指定されたオプションから [`Goal`] を組み立てる。何も指定がない場合は `default` を返す。
     fn goal(&self, default: Goal) -> Goal {
         if self.eval.is_some()
             || self.eval_depth.is_some()
@@ -154,10 +167,12 @@ impl GoalArgs {
         }
     }
 
+    /// 0 より大きい値が指定されている場合のみ制限時間 [`Duration`] を返す。
     fn time_limit(&self) -> Option<Duration> {
         self.time_ms.filter(|&ms| ms > 0).map(Duration::from_millis)
     }
 
+    /// `goal` と制限時間を反映した [`SearchRequest`] を生成する。
     fn request(&self, goal: Goal) -> SearchRequest {
         let request = SearchRequest::new(goal);
         match self.time_ms {
@@ -167,13 +182,14 @@ impl GoalArgs {
     }
 }
 
+/// 対話モード内の `search` コマンドで [`GoalArgs`] をそのまま解析するためのラッパー。
 #[derive(Parser)]
 struct SearchCommand {
     #[command(flatten)]
     goal: GoalArgs,
 }
 
-// The old --solve FILE spelling remains an entry point to the same solve command.
+// 旧来の `--solve FILE` / `-s FILE` 形式の呼び出しも `solve FILE` サブコマンドとして受け付けるための前処理。
 fn normalize_args(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
     let known = [
         "play",
@@ -212,6 +228,7 @@ fn normalize_args(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> 
     args
 }
 
+/// Ctrl-C ハンドラを登録し、引数を解析して各サブコマンドを実行する。
 fn main() {
     stop::install();
     let result = match Cli::parse_from(normalize_args(std::env::args_os().collect())).command {

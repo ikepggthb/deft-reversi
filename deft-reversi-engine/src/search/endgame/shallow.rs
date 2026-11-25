@@ -1,8 +1,14 @@
-//! Dedicated five- and six-empty null-window kernels.
+//! 空き 5 マスおよび 6 マス専用の Null-Window 終盤カーネルです。
+//!
+//! ## 出典
+//!
+//! 孤立した空きマスを先に読む並べ替えは、[Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later）の終盤探索（`endsearch_nws.hpp`）と同じ手法です。
 use super::parity::SQUARE_PARITY;
 use super::{Aborted, Board, Context};
 
 impl Context {
+    /// 空き 6 マス局面の Null-Window 探索（`[alpha, alpha + 1]`）を実行します。
+    /// 確定石による上界枝刈りを行ったあと、孤立空きマス（周囲に他の空きマスがないマス）を優先して探索します。
     pub(super) fn six_moves_score(
         &mut self,
         board: Board,
@@ -52,6 +58,7 @@ impl Context {
         }
         Ok(best)
     }
+    /// 空き 5 マス局面の Null-Window 探索（`[alpha, alpha + 1]`）を実行し、空き 4 マスカーネルへ繋ぎます。
     pub(super) fn five_empty_score(
         &mut self,
         board: Board,
@@ -90,7 +97,7 @@ impl Context {
                 return Ok(best);
             }
         }
-        // Kernel scores/bounds are in -64..=64; -65 means no legal move.
+        // カーネルのスコアおよび境界値は -64..=64 の範囲に収まるため、-65 は合法手がなかったことを意味します。
         if best != -65 {
             return Ok(best);
         }
@@ -104,9 +111,9 @@ impl Context {
     }
 }
 
-/// Empty squares without an empty king-move neighbour. Searching these first
-/// cut more five/six-empty nodes than odd-quadrant-first ordering; the parity
-/// is still carried for the four-empty kernel.
+/// 周囲 8 マス（キングの移動範囲）に他の空きマスが存在しない「孤立空きマス」のマスクを返します。
+/// 5〜6 マス域では奇数象限優先よりも孤立空きマス優先のほうが探索ノード数が減るため採用しています
+/// （4 マスカーネル用にパリティ自体は引き続き引き回します）。
 #[inline(always)]
 fn isolated_empties(board: Board) -> u64 {
     let empty = !(board.player_bits() | board.opponent_bits());

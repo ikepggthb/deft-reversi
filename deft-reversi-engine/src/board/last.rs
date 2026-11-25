@@ -1,7 +1,20 @@
-//! Last-empty flip counts. Line tables are generated from the rules at compile time.
+//! 残り 1 マス（最終手）で返る石数の 2 倍値を高速に計算するモジュールです。
+//!
+//! 4 軸（横・縦・斜め 2 方向）のラインテーブルをコンパイル時に生成しておき、
+//! BMI2（x86-64 のビット操作拡張命令セット）が有効な環境では
+//! `_pext_u64`（PEXT: マスクで指定したビット位置だけを抜き出して下位に詰める命令）で参照します。
+//!
+//! ## 出典
+//!
+//! [Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `count_last_flip_bmi2.c` と同じ手法（PEXT で 1 列を 8 ビットに詰めて表を引き、返る石数の 2 倍を返す）です。
+//! 表とマスクはこのモジュールでコンパイル時に作っています。
 #[cfg(any(test, not(target_feature = "bmi2")))]
 use crate::Board;
 
+/// 空きマス `square` に手番側が打ったときに返る相手石数の 2 倍（`2 * flips`）を返します。
+///
+/// リバーシでは石を 1 個裏返すと「自分の石が +1、相手の石が -1」になるため、
+/// 返した石数の 2 倍だけ手番側の石差が増えます。終盤の最終手計算でそのまま加算できるよう 2 倍値を直接返します。
 #[inline(always)]
 pub(crate) fn doubled_flips(square: usize, player: u64) -> i32 {
     #[cfg(target_feature = "bmi2")]
@@ -23,10 +36,13 @@ pub(crate) fn doubled_flips(square: usize, player: u64) -> i32 {
 #[cfg(target_feature = "bmi2")]
 mod bmi2 {
     use std::arch::x86_64::_pext_u64;
+    /// 8 マスのライン上の位置 `pos` と石パターン `bits` に対する「両側の反転数 × 2」を収めたテーブルです。
     const COUNTS: [[u8; 256]; 8] = counts();
-    // Three full-height extraction masks plus the actual four-axis union.
-    // Dummy bits outside a short diagonal are cleared by the union first.
+    // 縦・主対角・副対角の 8 ビット抽出マスク（`masks[..3]`）と、実際の 4 軸和集合マスク（`masks[3]`）です。
+    // 短い対角線では PEXT 結果の行位置を揃えるため無関係なダミービットを 1 つ立てますが、
+    // 先に `player & masks[3]` で和集合マスクに通すことでダミービットは確実に 0 になります。
     const MASKS: [[u64; 4]; 64] = masks();
+    /// コンパイル時に `COUNTS[pos][bits]` テーブルを構築します。
     const fn counts() -> [[u8; 256]; 8] {
         let mut out = [[0; 256]; 8];
         let mut pos = 0;
@@ -55,6 +71,7 @@ mod bmi2 {
         }
         out
     }
+    /// 各マスについて、横・縦・両斜めの 4 軸の抽出マスクをコンパイル時に構築します。
     const fn masks() -> [[u64; 4]; 64] {
         let mut out = [[0u64; 4]; 64];
         let mut square = 0;
@@ -89,8 +106,9 @@ mod bmi2 {
                 while r < 8 {
                     let row = 0xffu64 << (r * 8);
                     if padded & row == 0 {
-                        // This is outside the physical diagonal. Select one
-                        // unrelated square in that row; the union clears it.
+                        // 短い斜め線では対角線外の行にビットが存在しないため、
+                        // `COUNTS[rank]` の行インデックスと一致させる目的で和集合外のダミーマスを 1 つ補います。
+                        // 実際の探索時は先に `player & union` を取るため、ダミービットは常に 0 になります。
                         let available = row & !union;
                         assert!(available != 0);
                         padded |= available.isolate_lowest_one();
@@ -105,6 +123,7 @@ mod bmi2 {
         }
         out
     }
+    /// BMI2 の `_pext_u64` 命令を用いて 4 軸の反転数 × 2 を合計します。
     #[inline(always)]
     pub(super) fn doubled_flips(square: usize, player: u64) -> i32 {
         let masks = &MASKS[square];
@@ -113,7 +132,7 @@ mod bmi2 {
         let vertical = &COUNTS[square >> 3];
         let mut sum = i32::from(horizontal[usize::from((player >> (square & 56)) as u8)]);
         for &mask in &masks[..3] {
-            // SAFETY: BMI2 is enabled; every padded mask has exactly eight bits.
+            // SAFETY: BMI2 が有効であり、各パディング済みマスクには厳密に 8 ビットが立っています。
             let packed = unsafe { _pext_u64(player, mask) } as u8;
             sum += i32::from(vertical[usize::from(packed)]);
         }
@@ -137,8 +156,8 @@ mod tests {
                     doubled_flips(square, player),
                     2 * board.flip_mask(empty).count_ones() as i32
                 );
-                // The opponent-count path uses !player, which sets the last
-                // square's bit. That bit must not affect either line table.
+                // 相手石の個数を求める側では `!player` を渡すため、最後の空きマスのビットも 1 になります。
+                // そのビットがどちらのラインテーブルの計算にも影響しないことを確認します。
                 assert_eq!(
                     doubled_flips(square, player | empty),
                     doubled_flips(square, player)

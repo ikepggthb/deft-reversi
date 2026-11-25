@@ -1,8 +1,8 @@
-# Builds and starts the desktop app.
-#   tools/desktop/run.ps1           with the test home (local/desktop-home),
-#                                   so your own settings and games stay untouched
-#   tools/desktop/run.ps1 -UserHome with your usual settings and games
-#   tools/desktop/run.ps1 -NoBuild  start the last build
+﻿# デスクトップ版アプリをビルドして起動する。
+# 使い方:
+#   tools/desktop/run.ps1           テスト用ホーム（local/desktop-home）で起動し、普段の設定や棋譜を変更しない
+#   tools/desktop/run.ps1 -UserHome ユーザー自身の通常の設定と棋譜を使って起動する
+#   tools/desktop/run.ps1 -NoBuild  ビルドを省略し、前回のビルドを起動する
 param([switch]$UserHome, [switch]$NoBuild)
 . (Join-Path $PSScriptRoot 'env.ps1')
 

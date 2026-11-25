@@ -1,4 +1,4 @@
-//! The board with its coordinates, and the record navigation below it.
+//! 座標ラベル付きリバーシ盤面の描画と、盤面直下の棋譜ナビゲーション／対局操作バーを担うモジュール。
 use super::{
     animation::Frame,
     format::{reading_mark, signed},
@@ -14,9 +14,10 @@ use gpui::{
     ClickEvent, Context, Div, FontWeight, MouseButton, Pixels, Rgba, Window, div, prelude::*, px,
 };
 
+/// 盤面の外周に表示する座標ラベル列・行の幅/高さ（論理ピクセル）。
 pub(super) const LABEL: f32 = 18.;
 
-/// Wraps an 8×8 board `frame` with file and rank labels oriented by `view`.
+/// 8×8 の盤面フレームを [`BoardView`](crate::domain::BoardView) の向きに合わせた列（a〜h）・行（1〜8）ラベルで囲む。
 pub(super) fn labeled_board(view: crate::domain::BoardView, cell: Pixels, frame: Div) -> Div {
     let label = |text: String| {
         div()
@@ -27,8 +28,7 @@ pub(super) fn labeled_board(view: crate::domain::BoardView, cell: Pixels, frame:
             .text_color(theme::text_muted())
             .child(text)
     };
-    // A line of squares shares a file or a rank, whichever way the
-    // board is turned; its label is that one.
+    // 盤面が回転・反転していても、同じ列・行に並ぶマスは必ず同じ筋（x）または段（y）を共有する。
     let line_label = |a: Square, b: Square| {
         if a.x() == b.x() {
             ((b'a' + a.x()) as char).to_string()
@@ -64,6 +64,7 @@ pub(super) fn labeled_board(view: crate::domain::BoardView, cell: Pixels, frame:
 }
 
 impl RootView {
+    /// 8×8 盤面（石・アニメーション・最終手ドット・次手リング・合法手・解析評価値・キーボードカーソル）を描画する。
     pub(super) fn render_board(
         &self,
         cell: Pixels,
@@ -74,7 +75,7 @@ impl RootView {
         let position = history.current();
         let legal = position.legal_moves();
         let last_move = history.last_move();
-        // Going back through the record, the next move of the record is ringed.
+        // 棋譜を遡って閲覧しているときは、次の手となるマスにリングを表示する。
         let next_move = history.actions()[history.cursor()..]
             .iter()
             .take(2)
@@ -82,18 +83,13 @@ impl RootView {
                 Action::Place(square) => Some(*square),
                 Action::Pass => None,
             });
-        // While an AI plays this side the board takes no clicks; paused, the
-        // user may play either side.
+        // 対局中の AI 手番では盤面クリックを無効化する（一時停止中はどちらの手番でも操作可能）。
         let playable =
             self.controller.ai_to_move().is_none() || self.controller.status() == Status::Paused;
-        // In analysis mode the candidate moves carry their values, for the
-        // side to move; the best ones are highlighted.
-        // Not while the AI is about to move: the values would be a hint.
+        // AI の着手直前に評価値ヒントが見えてしまわないよう、AI 思考・対局中は盤面評価値を隠す。
         let ai_moving =
             self.controller.ai_to_move().is_some() && self.controller.status() == Status::Playing;
-        // Each move shows its newest value, with how that value was read: a
-        // move read again shows the new value as soon as it has one. A move
-        // in the opening book shows the book's value instead.
+        // 解析モードでは各合法手の最新評価値と読み深さを表示し、Book に登録がある手は Book 値で上書きする。
         let analysis = (self.controller.analyzing() && !ai_moving).then(|| {
             let analyzer = self.controller.analyzer();
             let mut values: Vec<(Action, i32, Option<Reading>)> = analyzer
@@ -122,7 +118,7 @@ impl RootView {
                     (action == Action::Place(square)).then_some((score, reading))
                 })
         };
-        // How each value was read, in a few characters under it.
+        // 評価値の下に、どの深さ・精度で読まれたかを短い記号（例: d24@83%）で添える。
         let s = self.settings.lang.strings();
         let mark_of = |reading: Reading| reading_mark(s, reading);
         let cursor = self
@@ -255,15 +251,14 @@ impl RootView {
             .p(px(2.))
             .bg(theme::board_line())
             .children(rows);
-        // A click plays without taking keyboard focus, so the arrow keys keep
-        // moving through the record; Tab gives the board its focus.
+        // マウスで盤面をクリックしたときにキーボードフォーカスを盤面へ奪われないようにする。
+        // （フォーカスが盤面へ移ると左右矢印キーが「棋譜送り」ではなく「盤面カーソル移動」に切り替わるため、
+        // キーボード操作したいときだけ Tab キーで明示的に盤面へフォーカスする設計にしている。）
         labeled_board(view, cell, frame)
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
     }
 
-    /// Moving through the record on the left, and the game's own controls
-    /// (pause, resume, one AI move) on the right: both act on what the
-    /// board shows.
+    /// 盤面直下のナビゲーションバー（左：初手・前後移動・終局、右：一時停止・再開・AI 1 手進め）を描画する。
     pub(super) fn render_navigation(
         &self,
         cell: Pixels,
@@ -282,8 +277,7 @@ impl RootView {
             ("forward-2", "»", forward, Command::Step(2)),
             ("last", "⇥", forward, Command::Last),
         ];
-        // The row stays one line as wide as the board: the buttons narrow
-        // first, then the "Paused" note gives way.
+        // 盤面幅 1 行に収まるよう、幅が狭い場合はナビゲーションボタンを縮め、次に「一時停止中」ラベルを省略する。
         let position = history.current();
         let shows_controls = c.has_ai() && !position.is_terminal();
         let step_ai = c.status() == Status::Paused && c.ai_to_move().is_some();
@@ -386,7 +380,7 @@ impl RootView {
             .gap(px(10.))
             .mt(px(12.))
             .pl(px(LABEL))
-            // As wide as the board, or wider and centred under it on a small one.
+            // 盤面と同じ幅に揃える（盤面が小さいときはボタンが収まる幅まで広げて中央に配置する）。
             .min_w(px(LABEL) + cell * 8. + px(7. + 4.))
             .map(|el| {
                 if controls.is_some() {
@@ -411,12 +405,11 @@ fn disc_color(color: Color) -> Rgba {
     }
 }
 
-/// The navigation buttons' width bounds.
+/// ナビゲーションボタンの最小・最大幅（論理ピクセル）。
 const NAV_MIN: f32 = 26.;
 const NAV_MAX: f32 = 44.;
 
-/// A rough width of a line of text, enough to share out a row: a full
-/// width character takes its font size, any other a bit over half.
+/// レイアウト配分用の概算テキスト幅（全角はフォントサイズ、ASCII はその 0.6 倍として計算）。
 fn text_width(text: &str, size: f32) -> f32 {
     text.chars()
         .map(|c| if c.is_ascii() { 0.6 * size } else { size })

@@ -1,3 +1,9 @@
+//! 全フェーズの学習（`train`）と、チェックポイントからのモデル書き出し（`export`）を行うモジュール。
+//!
+//! 石数ごとの各フェーズを並列に学習し、1 エポック終えるごとにチェックポイント（`phase_<stones>.ckpt`）と
+//! 学習ログ（`metrics.jsonl`）を保存する。これにより、途中で中断しても途中から再開（resume）したり、
+//! 完了後にエポック数を増やして追加学習したりできる。
+
 use crate::{
     Result, StoneRange, for_each_parallel,
     pen::{PenSettings, PenWeights},
@@ -15,90 +21,95 @@ use std::{
     time::Instant,
 };
 
+/// `train` サブコマンドの CLI 引数。
 #[derive(Args, Debug)]
 pub struct TrainArgs {
-    /// rdg dataset directory with `phase_<NN>/{train,valid}.rd`.
+    /// `phase_<NN>/{train,valid}.rd` を含む rdg データセットディレクトリ。
     #[arg(long)]
     data: PathBuf,
-    /// Checkpoints and metrics; an interrupted run resumes from here.
+    /// チェックポイントおよび `metrics.jsonl` の保存先。中断時はここから再開する。
     #[arg(long)]
     work: PathBuf,
-    /// The model to write when every phase is done (DPR2).
+    /// 全フェーズ完了時に書き出す出力モデルパス（DPR2）。
     #[arg(long)]
     out: PathBuf,
-    /// Disc counts to train, inclusive.
+    /// 学習対象の石数範囲（両端含む）。
     #[arg(long, default_value = "12..=63")]
     stones: StoneRange,
-    /// Passes over each phase's data. Raising it on a finished run trains
-    /// further from the checkpoints.
+    /// 各フェーズの学習エポック数。完了済みランで増やすとチェックポイントから追加学習する。
     #[arg(long, default_value_t = 4)]
     epochs: u32,
-    /// At most this many training positions per disc count, chosen at random.
+    /// 各石数あたりの学習局面数上限（ランダム抽出）。
     #[arg(long)]
     limit: Option<u64>,
+    /// 線形重み（AdaGrad）の学習率。
     #[arg(long, default_value_t = 0.05)]
     lr: f32,
+    /// 線形重みの L2 正則化係数。
     #[arg(long, default_value_t = 1e-4)]
     l2: f32,
+    /// Huber 損失の閾値（石数）。
     #[arg(long, default_value_t = 4.0)]
     huber_delta: f32,
-    /// See `export --shrink`.
+    /// 出現回数の少ない重みを 0 へ寄せて過学習を抑える係数（詳細は `export --shrink` を参照）。
     #[arg(long, default_value_t = 32.0)]
     shrink: f32,
-    /// See `export --no-shrink-stones`.
+    /// `shrink`（重みの縮小）を適用しない石数範囲（詳細は `export --no-shrink-stones` を参照）。
     #[arg(long)]
     no_shrink_stones: Option<StoneRange>,
+    /// 乱数シード。
     #[arg(long, default_value_t = 1)]
     seed: u64,
-    /// Keep a pattern state and its mirror image apart (as before): by
-    /// default they share one weight, and one embedding with `--pen`.
+    /// パターン状態とその鏡像での重み共有を無効化する。
+    /// 既定では線形重みおよび `--pen` の埋め込みを鏡像と共有する。
     #[arg(long)]
     no_mirror: bool,
-    /// Add a pattern embedding network (PEN) to the linear weights.
+    /// 線形パターン評価を補う小型ニューラルネットを追加して同時学習する。
     #[arg(long)]
     pen: bool,
-    /// With `--pen`, leave out the linear weights: the network alone fits
-    /// the positions (the exported linear tables are zero).
+    /// `--pen` 指定時に線形重みを学習せず、小型ニューラルネット単体で局面を学習する（出力の線形テーブルは 0 になる）。
     #[arg(long, requires = "pen")]
     pen_no_linear: bool,
-    /// AdaGrad step size of the PEN embeddings.
+    /// 補助ニューラルネットのパターン埋め込み（AdaGrad）の学習率。
     #[arg(long, default_value_t = 0.01)]
     pen_lr: f32,
-    /// Adam step size of the PEN dense layers.
+    /// 補助ニューラルネットの全結合層（Adam）の学習率。
     #[arg(long, default_value_t = 0.001)]
     pen_dense_lr: f32,
-    /// Samples per Adam step of the PEN dense layers.
+    /// 補助ニューラルネットの全結合層を Adam で 1 回更新する際のミニバッチサイズ。
     #[arg(long, default_value_t = 256)]
     pen_batch: u32,
-    /// Decoupled weight decay of the PEN dense weights. Off by default: on
-    /// four phases, 0.01 and 0.1 raised the test error by 0.005 and 0.05
-    /// discs once the offsets were recentred.
+    /// 補助ニューラルネットの全結合重みに掛ける Decoupled Weight Decay（重み減衰）。既定は 0
+    /// （オフセット中心化後の実験で 0.01 / 0.1 はテスト誤差をそれぞれ 0.005 / 0.05 石悪化させたため）。
     #[arg(long, default_value_t = 0.0)]
     pen_decay: f32,
-    /// Phases trained at once. Each holds its data in memory: 24 bytes a
-    /// position, up to about 1.2 GB for the largest phase of the full set.
+    /// 同時に学習するフェーズ数（スレッド数）。各フェーズは学習データをメモリに展開するため注意
+    /// （1 局面 24 バイト、最大フェーズで約 1.2 GB）。
     #[arg(short, long)]
     threads: Option<usize>,
 }
 
+/// `export` サブコマンドの CLI 引数。
 #[derive(Args, Debug)]
 pub struct ExportArgs {
+    /// チェックポイントが保存された作業ディレクトリ。
     #[arg(long)]
     work: PathBuf,
+    /// 出力モデルファイルのパス（DPR2 形式）。
     #[arg(long)]
     out: PathBuf,
-    /// Pulls weights seen in few positions toward 0: a weight seen n times
-    /// is multiplied by n / (n + shrink).
+    /// 出現回数の少ない重みを 0（またはテーブル平均）へ寄せて過学習を防ぐ縮小係数：
+    /// 出現回数 n の重みに `n / (n + shrink)` を掛ける。
     #[arg(long, default_value_t = 32.0)]
     shrink: f32,
-    /// Disc counts exported without shrinking: phases whose data holds
-    /// every position of their disc count (Egaroucid's enumerated openings),
-    /// where a rarely used weight is no less reliable than another.
+    /// 縮小（`shrink`）を行わずに出力する石数範囲。
+    /// 全局面が網羅されている序盤フェーズ（Egaroucid の列挙序盤など）では、
+    /// 出現回数の少ない重みも他と同じく信頼できるため指定する。
     #[arg(long)]
     no_shrink_stones: Option<StoneRange>,
 }
 
-/// What a checkpoint must match to resume.
+/// チェックポイントから再開するために一致が必須となる設定群。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 struct Identity {
     settings: Settings,
@@ -111,8 +122,7 @@ struct Identity {
 enum Weights {
     Linear(PhaseWeights),
     Pen(Box<PenWeights>),
-    /// PEN without the linear weights (`--pen-no-linear`). Last, so older
-    /// checkpoints keep their tags.
+    /// 線形重みなしの PEN（`--pen-no-linear`）。古いチェックポイントのタグ互換のため末尾に配置。
     PenOnly(Box<PenWeights>),
 }
 
@@ -155,6 +165,7 @@ struct EpochLog {
     seconds: f64,
 }
 
+/// `train` サブコマンドを実行し、対象全フェーズを並列学習したあとモデルを書き出す。
 pub fn run(args: TrainArgs) -> Result<()> {
     fs::create_dir_all(&args.work)?;
     let identity = Identity {
@@ -185,7 +196,7 @@ pub fn run(args: TrainArgs) -> Result<()> {
     for &s in &stones {
         rd::count(&rd::path(&args.data, s, "train"))?;
     }
-    // The largest phases first, so no thread is left with one at the end.
+    // レコード数が多いフェーズから順に投入し、終盤で一部スレッドだけが大きく残らないようにする。
     let mut order = stones.clone();
     order
         .sort_by_key(|&s| std::cmp::Reverse(rd::count(&rd::path(&args.data, s, "train")).unwrap()));
@@ -276,7 +287,7 @@ fn train_phase(
         records.truncate(limit as usize);
     }
     if records.is_empty() {
-        // No checkpoint, so the export copies a neighbouring phase.
+        // チェックポイントを残さないことで、export 時に近傍フェーズがコピーされるようにする。
         println!("stones {stones}: no training positions, skipped");
         return Ok(());
     }
@@ -306,8 +317,7 @@ fn train_phase(
             0,
         ),
     };
-    // Replay the finished epochs' shuffles so a resumed run sees the same
-    // orders as an uninterrupted one.
+    // 再開時にも連続実行時と完全に同じシャッフル順になるよう、完了済みエポック分の乱数を空回しする。
     for _ in 0..done {
         records.shuffle(&mut rng);
     }
@@ -347,7 +357,7 @@ fn train_phase(
     Ok(())
 }
 
-/// Writes the model from every checkpoint in the work directory.
+/// 作業ディレクトリ内の全チェックポイントを読み込み、DPR2 モデルファイルを書き出す。
 pub fn export(args: &ExportArgs) -> Result<()> {
     validate_shrink(args.shrink)?;
     let mut trained = vec![None; deft_reversi_engine::PHASE_COUNT];

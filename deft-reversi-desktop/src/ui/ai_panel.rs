@@ -1,5 +1,7 @@
-//! The right column: the analysis in analysis mode, and at the bottom a
-//! line on what the engine is doing with the controls for it.
+//! 右カラムの描画を担うモジュール。
+//!
+//! 解析モード中の局面解析パネルと、下部のエンジン稼働状況・思考中／解析中インジケータ
+//! （および「今すぐ打つ」「停止」リンク）を表示する。
 use super::{
     format::{action_text, nodes_text, reading_text},
     root::RootView,
@@ -13,6 +15,7 @@ use crate::{
 };
 use gpui::{Context, Div, SharedString, div, prelude::*, px};
 
+/// 探索レポートから「読み深さ · 経過時間 · ノード数 · NPS」の 1 行サマリ文字列を生成する。
 fn report_text(s: &Strings, report: &Report) -> String {
     let mut parts = Vec::new();
     if let Some(reading) = report.reading {
@@ -31,6 +34,7 @@ fn report_text(s: &Strings, report: &Report) -> String {
 }
 
 impl RootView {
+    /// 右カラム全体（解析パネルおよびエンジンステータス行）を描画する。
     pub(super) fn render_ai(&self, cx: &mut Context<Self>) -> Div {
         let s = self.settings.lang.strings();
         let c = &self.controller;
@@ -102,7 +106,7 @@ impl RootView {
             lines.push(muted(s.too_few_discs.into()));
         }
         if c.analyzing() && c.analyzer().is_searching(position) {
-            // The move being read, at what level, and how far it got.
+            // 現在探索中の手・目標レベル・経過時間・ノード数を表示する。
             let reading = c.analyzer().reading_move(position).map(|(level, action)| {
                 let level = level.map_or_else(|| s.exact_solve.to_string(), |l| format!("Lv {l}"));
                 format!("{level} · {}", action_text(action))

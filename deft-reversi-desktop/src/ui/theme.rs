@@ -1,24 +1,29 @@
-//! Colours by meaning, for a dark and a light page (§9.4). The board, the
-//! discs and the marks drawn on the green stay the same in both, so only
-//! the page around them changes.
+//! ダーク／ライト両テーマに対応した意味ベースの色パレット定義。
+//!
+//! 盤面・石・緑盤上のマーカー色はテーマに関わらず固定とし、周囲の UI 配色のみを切り替える。
 use gpui::{Rgba, rgb};
 use std::cell::Cell;
 
+/// 現在の描画テーマモード。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    /// ダークモード。
     Dark,
+    /// ライトモード。
     Light,
 }
 
 thread_local! {
-    // Views render on the main thread; the root sets this before each frame.
+    // ビューはすべてメインスレッドで描画されるため、`RootView::render` が毎フレーム先頭でモードを設定する。
     static MODE: Cell<Mode> = const { Cell::new(Mode::Dark) };
 }
 
+/// 現在のスレッドの描画テーマモードを設定する。
 pub fn set_mode(mode: Mode) {
     MODE.with(|m| m.set(mode));
 }
 
+/// 現在のテーマモードに応じてダーク色またはライト色を選択する。
 fn pick(dark: u32, light: u32) -> Rgba {
     rgb(match MODE.with(Cell::get) {
         Mode::Dark => dark,
@@ -59,15 +64,16 @@ pub fn border() -> Rgba {
 pub fn danger() -> Rgba {
     pick(0xf09595, 0xb3261e)
 }
-/// Notes such as the editor's caveats, on the page.
+/// エディタの注意点などページ上の警告色。
 pub fn warning() -> Rgba {
     pick(0xfac775, 0x8a5a00)
 }
+/// AI 思考中インジケータのドット色。
 pub fn thinking_dot() -> Rgba {
     rgb(0x1d9e75)
 }
 
-// On the board, the same in both modes.
+// 盤面上の配色はダーク／ライト共通で固定。
 pub fn board() -> Rgba {
     rgb(0x2e7d4f)
 }
@@ -89,18 +95,18 @@ pub fn legal_dot() -> Rgba {
 pub fn last_move_dot() -> Rgba {
     rgb(0xe24b4a)
 }
-/// The keyboard cursor and the best move, on the green.
+/// 盤面上のキーボードカーソルおよび最善手ハイライトの枠線色。
 pub fn focus_ring() -> Rgba {
     rgb(0xfac775)
 }
-/// The note under a value on the board of how it was read.
+/// 盤面候補手の下に表示する読みの深さ注記色。
 pub fn candidate_mark() -> Rgba {
     rgb(0x9fc2ad)
 }
 pub fn candidate_text() -> Rgba {
     rgb(0xd8e8de)
 }
-/// The three kinds of reading in a level's plan (§9.5).
+/// 解析時の読み種別（通常探索／選択的終局／完全終局）を表す色。
 pub fn reading_depth() -> Rgba {
     rgb(0x85b7eb)
 }

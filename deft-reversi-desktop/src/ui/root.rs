@@ -1,5 +1,8 @@
-//! The window: toolbar, the record on the left, the board in the middle and
-//! the AI on the right (§9.2 of the plan), and the dialogs over them.
+//! アプリケーションのルートビュー（[`RootView`]）とキーバインドを定義するモジュール。
+//!
+//! ツールバー・左カラム（棋譜/エディタツール）・中央（盤面/ナビゲーション/評価値グラフ）・
+//! 右カラム（解析パネル/AI ステータス）、および各種モーダルダイアログを統合し、
+//! GPUI の非同期イベントループ上でエンジン・ストレージスレッドとの連携を仲介する。
 use super::{animation::FlipAnimation, book_work::BookWork, editor::EditorState, theme, widgets};
 use crate::{
     app::{Command, Controller, Effect, Sound, Status},
@@ -53,9 +56,11 @@ actions!(
     ]
 );
 
-/// "Board" sits inside "Workspace", so its arrow keys win while the board
-/// has focus and the record's keys work everywhere else. A dialog has its
-/// own context, outside the workspace.
+/// キーボードショートカットを GPUI のキーコンテキストへ登録する。
+///
+/// `"Board"` コンテキストは `"Workspace"` の内側に配置されるため、盤面にフォーカスがある間は
+/// 矢印キー等が盤面カーソル移動を優先し、それ以外では棋譜送りとして機能する。
+/// ダイアログは `"Workspace"` の外側に独立した `"Dialog"` コンテキストを持つ。
 pub fn bind_keys(cx: &mut App) {
     let workspace = Some("Workspace");
     let board = Some("Board");
@@ -91,91 +96,99 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// 現在開いているモーダルダイアログの種類。
 pub(super) enum Dialog {
+    /// 新規対局設定ダイアログ。
     NewGame,
+    /// アプリケーション設定ダイアログ。
     Settings,
+    /// 保存済み対局一覧ダイアログ。
     Games,
+    /// 棋譜文字列入力ダイアログ。
     EnterRecord,
+    /// AI 思考ログ一覧ダイアログ。
     AiLog,
+    /// Book 作成・編集ダイアログ。
     BookWork,
 }
 
-/// How long "Black passes" stays up unless clicked away.
+/// パス通知オーバーレイをクリックなしで自動消去するまでの表示時間。
 const PASS_NOTICE: Duration = Duration::from_millis(600);
 
 const LEFT_WIDTH: f32 = 170.;
 const RIGHT_WIDTH: f32 = 240.;
 const GAP: f32 = 28.;
+/// ツールバーの高さ（論理ピクセル）。
 pub(super) const TOOLBAR_HEIGHT: f32 = 36.;
-/// Dialogs hang from here, so one that grows does not move what is above.
+/// モーダルダイアログの上端配置オフセット（高さが伸縮しても上端が動かないように固定）。
 pub(super) const DIALOG_TOP: f32 = 40.;
-/// Above and below the board: the toolbar, the page padding, the
-/// coordinates and the navigation row.
+/// 盤面上下の固定 UI 高さ合計（ツールバー＋ページ上下余白＋座標ラベル＋ナビゲーション行）。
 pub(super) const BOARD_CHROME: f32 = TOOLBAR_HEIGHT + 32. + 18. + 56.;
 
+/// デスクトップアプリケーションのルートビュー（GPUI が管理する画面全体の `Entity`）。
+///
+/// GPUI では `Render` トレイトを実装した構造体を `Entity` として登録し、
+/// 状態が変わったときに `cx.notify()` を呼ぶことで `render` が再実行されて画面が更新される。
+/// `Context<Self>` は非同期タスクの起動や再描画通知を担い、`Window` はフォーカスやアニメーションフレームを管理する。
 pub struct RootView {
     pub(super) controller: Controller,
-    /// None when the model was not found.
+    /// 評価モデルが見つからない場合は `None`。
     engine: Option<EngineService>,
-    /// What the engine thread said of the book; None while it reads one.
+    /// エンジンスレッドから受け取った Book の状態（読み込み中は `None`）。
     pub(super) book_status: Option<BookStatus>,
-    /// The evaluation model, once the engine has read it.
+    /// エンジン読み込み後に取得した評価モデルのメタ情報。
     pub(super) model_info: Option<ModelInfo>,
-    /// Incremented whenever the active play book selection changes.
+    /// 有効な対局用 Book が切り替わるたびに増加する世代番号。
     pub(super) book_selection_gen: u64,
     pub(super) book_work: BookWork,
     pub(super) settings: Settings,
     pub(super) dialog: Option<Dialog>,
-    /// None when the OS gives no folders; then nothing is saved.
+    /// OS から保存用ディレクトリを取得できない場合は `None`（永続化無効）。
     pub(super) storage: Option<StorageService>,
     pub(super) paths: Option<Paths>,
-    /// The controller revision last sent to storage; 0 is an untouched game.
+    /// 最後にストレージへ保存要求を送ったコントローラのリビジョン番号（0 は未操作の初期状態）。
     pub(super) saved_revision: u64,
     pub(super) saved_settings: Settings,
-    /// A message about files, until the next one.
+    /// ファイル操作エラーやエクスポート完了などを知らせる一時通知。
     pub(super) notice: Option<SharedString>,
     pub(super) menu_open: bool,
-    /// The saved games while the list is open.
+    /// 対局一覧ダイアログ表示中の保存済み対局リスト。
     pub(super) games: Option<Vec<GameSummary>>,
-    /// A game whose delete button was pressed once.
+    /// 削除確認待ち（1 回目の削除クリック済み）の対局 ID。
     pub(super) delete_pending: Option<String>,
-    /// The position editor, while it is open.
+    /// 局面エディタが開いている間の編集状態。
     pub(super) editor: Option<EditorState>,
-    /// The last move turning over, drawn on top of the position.
+    /// 直前の着手による石の反転アニメーション（盤面上に重ね描きする）。
     pub(super) animation: Option<FlipAnimation>,
-    /// Whether that move was the AI's.
+    /// 実行中のアニメーションが AI の着手によるものか。
     animation_by_ai: bool,
-    /// The AI's move, waiting for the animation of the move before it.
+    /// 前の人間手のアニメーション完了を待っている AI 着手イベント。
     held_move: Option<EngineEvent>,
-    /// The graph column under the pointer.
+    /// ポインタが乗っている評価値グラフ上の列インデックス。
     pub(super) graph_hover: Option<usize>,
-    /// The graph's grip being dragged: where the pointer and the height
-    /// were when it began, and the height meanwhile.
+    /// 評価値グラフのリサイズグリップドラッグ開始位置 `(pointer_y, initial_height)` とドラッグ中の仮高さ。
     pub(super) graph_drag: Option<(Pixels, u16)>,
     pub(super) graph_live: Option<u16>,
-    /// Who passed and when, while it is shown over the board.
+    /// 盤面上に表示中のパス通知（パスした色と表示開始時刻）。
     pub(super) pass_notice: Option<(Color, Instant)>,
-    /// The record being typed in its dialog (whole moves), its caret (in
-    /// moves), the first half of a move being typed there, and
-    /// whether all of it is selected.
+    /// 棋譜入力ダイアログの入力状態（確定済みの着手文字列・手数単位キャレット・全選択フラグ・入力途中の 1 文字）。
     pub(super) record_input: String,
     pub(super) record_caret: usize,
     pub(super) record_all: bool,
     pub(super) record_pending: Option<char>,
-    /// The record dialog chooses where a book grows from, not the game.
+    /// 棋譜入力ダイアログが対局読み込みではなく Book 展開起点の指定用として開かれているか。
     pub(super) record_for_book: bool,
-    /// The record was just copied; the token keeps overlapping timers apart.
+    /// 棋譜コピー完了表示の重複タイマーを識別するためのトークン。
     pub(super) record_copied: Option<u64>,
-    /// Shared by whichever modal dialog is open; reset on each open.
+    /// 現在開いているモーダルダイアログ間で共有するスクロールハンドル（開くたびにリセット）。
     pub(super) dialog_scroll: ScrollHandle,
-    /// The new game dialog's choice of book moves, from the settings.
+    /// 新規対局ダイアログで選択中の Book 使用フラグ（設定から初期値を引き継ぐ）。
     pub(super) new_game_book: bool,
     pub(super) scroll_drag: Option<widgets::ScrollDrag>,
     audio: AudioService,
-    /// The window size at the last frame, saved on quit.
+    /// 前フレームのウィンドウサイズ（終了時に設定へ保存する）。
     pub(super) viewport: Option<(u32, u32)>,
-    /// `DEFT_DESKTOP_TRACE=1`: frame times while discs turn and search
-    /// results go to stderr, for the measurements of §11.
+    /// `trace` フィーチャ有効時にアニメーション中のフレーム時刻を記録し、標準エラーへ出力する。
     trace: Option<Vec<Instant>>,
     _quit: Subscription,
     _appearance: Subscription,
@@ -188,6 +201,7 @@ pub struct RootView {
 }
 
 impl RootView {
+    /// ルートビューを初期化し、エンジン・ストレージのイベント受信タスクおよび終了時フックを登録する。
     pub fn new(
         launched: Instant,
         engine: Option<(EngineService, async_channel::Receiver<EngineEvent>)>,
@@ -213,8 +227,7 @@ impl RootView {
                 (Some(service), Some(paths))
             }
         };
-        // The last save and any running book generation finish before the
-        // process ends.
+        // アプリ終了前に未保存の棋譜・設定の書き出しと Book 生成・エンジンスレッドの終了を完了させる。
         let quit = cx.on_app_quit(|this: &mut Self, _| {
             if this.viewport.is_some() {
                 this.settings.window_size = this.viewport;
@@ -265,10 +278,8 @@ impl RootView {
                             EngineEvent::BookDone(done) => this.on_book_done(done.clone(), cx),
                             _ => {}
                         }
-                        // A move found while a person's move still turns its
-                        // discs (a book move comes at once) waits for it; one
-                        // after the AI's own move cuts that animation short,
-                        // so an AI game runs at the AI's pace.
+                        // 人間の手による石反転アニメーション中に AI の着手が返った場合（Book 即答など）は
+                        // アニメーション完了まで着手を保留する。AI 同士の対局ではテンポを保つため前アニメを打ち切る。
                         if this.animation.is_some()
                             && !this.animation_by_ai
                             && this.controller.is_ai_move(&event)
@@ -326,7 +337,7 @@ impl RootView {
             scroll_drag: None,
             audio: AudioService::spawn(),
             viewport: None,
-            trace: std::env::var_os("DEFT_DESKTOP_TRACE").map(|_| Vec::new()),
+            trace: cfg!(feature = "trace").then(Vec::new),
             _quit: quit,
             _appearance: cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
             focus,
@@ -348,13 +359,14 @@ impl RootView {
         self.engine.is_some()
     }
 
+    /// コントローラへコマンドを適用し、返された副作用を実行して再描画を通知する。
     pub(super) fn run(&mut self, command: Command, cx: &mut Context<Self>) {
-        // The game waits while the editor is open.
+        // 局面エディタが開いている間は本体の対局操作を抑止する。
         if self.editor.is_some() {
             return;
         }
         self.notice = None;
-        // Anything but a new move ends the running animation at once.
+        // 新しい着手以外の操作では進行中のアニメーションを即座に終了する。
         self.animation = None;
         self.pass_notice = None;
         let effects = self.controller.apply(command);
@@ -362,6 +374,7 @@ impl RootView {
         cx.notify();
     }
 
+    /// コントローラから返された副作用（エンジンコマンド・効果音・アニメーション・パス通知）を実行する。
     fn dispatch(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
         for effect in effects {
             let command = match effect {
@@ -376,7 +389,7 @@ impl RootView {
                             .play(sound, f32::from(self.settings.volume) / 100.);
                     }
                     self.start_animation();
-                    // A person playing sees who passed; AI games go on.
+                    // 人間が参加している対局では誰がパスしたかを画面中央に短時間表示する。
                     let history = self.controller.history();
                     if sound == Sound::Pass
                         && self.controller.players().iter().any(|p| !p.is_ai())
@@ -415,7 +428,7 @@ impl RootView {
         self.run(Command::SetAnalysis(on), cx);
     }
 
-    /// Frame intervals of the animation that just ended, when tracing.
+    /// `trace` フィーチャ有効時、終了した直前のアニメーションのフレーム間隔（中央値・p95・最大値）を標準エラーへ出力する。
     fn report_frames(&mut self) {
         let Some(frames) = self.trace.as_mut() else {
             return;
@@ -438,7 +451,7 @@ impl RootView {
         );
     }
 
-    /// Animates the move just recorded; the previous animation ends.
+    /// 直前に記録された着手に対する反転アニメーションを開始する（既存アニメーションは上書き）。
     fn start_animation(&mut self) {
         let scale = match self.settings.animation {
             Animation::Normal => 1.,
@@ -447,7 +460,7 @@ impl RootView {
         };
         let history = self.controller.history();
         let actions = &history.actions()[..history.cursor()];
-        // A forced pass may follow the move.
+        // 着手の直後に強制パスが連なっている場合があるため、末尾から直近の Place を探す。
         let index = actions.iter().rposition(|a| matches!(a, Action::Place(_)));
         self.animation = index.and_then(|i| match actions[i] {
             Action::Place(square) => FlipAnimation::new(history.position(i), square, scale),
@@ -460,7 +473,7 @@ impl RootView {
         });
     }
 
-    /// Focus follows on the next render.
+    /// モーダルダイアログを開く（フォーカス切替は次の `render` で行われる）。
     pub(super) fn open_dialog(&mut self, dialog: Dialog, cx: &mut Context<Self>) {
         if self.editor.is_some() || self.book_work.running.is_some() {
             return;
@@ -484,11 +497,11 @@ impl RootView {
     }
 
     pub(super) fn close_dialog(&mut self, cx: &mut Context<Self>) {
-        // A growing book keeps its dialog open until it is stopped.
+        // Book の生成中は進行状況を確認できるよう、停止するまでダイアログを閉じられないようにする。
         if self.book_work.running.is_some() {
             return;
         }
-        // A record for the book goes back to the book builder.
+        // Book の起点指定のために棋譜入力を開いていた場合は、閉じたあと Book 作成ダイアログへ戻る。
         if matches!(self.dialog, Some(Dialog::EnterRecord)) && self.record_for_book {
             self.record_for_book = false;
             if self.book_work.record.is_none() {
@@ -502,7 +515,7 @@ impl RootView {
         cx.notify();
     }
 
-    /// The arrows move the cursor as the board is shown, however it is turned.
+    /// 矢印キー入力に応じて、現在の盤面回転・反転の向き通りにボードカーソルを移動する。
     fn move_board_cursor(&mut self, dx: i8, dy: i8, cx: &mut Context<Self>) {
         let view = self.settings.board_view;
         let (x, y) = view.place_of(self.board_cursor);
@@ -512,17 +525,16 @@ impl RootView {
         cx.notify();
     }
 
-    /// The side of one square, in whole pixels so the grid lines stay even.
+    /// ウィンドウサイズとグラフ高さから盤面 1 マスの辺長を算出する（罫線が均等になるよう整数ピクセルへ切り下げ）。
     fn cell_size(window: &Window, graph: Option<f32>) -> Pixels {
         let viewport = window.viewport_size();
-        // Page padding, the coordinate labels, the navigation row, and the
-        // value graph in analysis mode.
+        // 左右カラム幅・余白・座標ラベル・ナビゲーション行・解析モード時のグラフ高さを差し引いて算出する。
         let width = f32::from(viewport.width) - LEFT_WIDTH - RIGHT_WIDTH - 2. * GAP - 40. - 18.;
         let graph = graph.map_or(0., |plot| {
             plot + super::analysis_panel::GRAPH_CHROME + super::analysis_panel::GRAPH_GRIP
         });
         let height = f32::from(viewport.height) - BOARD_CHROME - graph;
-        // Eight squares, seven inner lines and the frame.
+        // 8 マス分に加えて、マス間の内側の線 7 本と外枠の太さ分を差し引く。
         let side = width.min(height) - 7. - 4.;
         px((side / 8.).floor().max(28.))
     }
@@ -596,7 +608,7 @@ impl RootView {
                 }),
             )
             .child(div().flex_1())
-            // How the board is shown; kept in the settings.
+            // 盤面の回転・左右反転の向きを切り替え、設定として保存する。
             .child(widgets::link(
                 "turn-board",
                 s.turn_board,
@@ -649,7 +661,7 @@ impl Render for RootView {
         } else {
             theme::Mode::Light
         });
-        // Handlers have no window, so focus follows the dialog here.
+        // フォーカスはレンダー時に同期する（アクションハンドラが Window を直接持たないため）。
         if self.dialog.is_some() {
             if !self.dialog_focus.contains_focused(window, cx) {
                 window.focus(&self.dialog_focus, cx);
@@ -657,13 +669,13 @@ impl Render for RootView {
         } else if !self.focus.contains_focused(window, cx) {
             window.focus(&self.focus, cx);
         }
-        // Frames are asked for only while discs are turning.
+        // アニメーション実行中のみ次フレームを要求して描画負荷を抑える。
         if self.animation.as_ref().is_some_and(FlipAnimation::done) {
             self.animation = None;
             self.report_frames();
         }
-        // The AI's move held back for the last animation is played now; a
-        // search cancelled meanwhile (Undo, a new game) is ignored by it.
+        // 直前のアニメーション終了を待って保留していた AI 着手イベントをここで適用する
+        // （その間に Undo や新規対局でキャンセルされていれば Controller 側で安全に無視される）。
         if self.animation.is_none()
             && let Some(event) = self.held_move.take()
         {
@@ -720,7 +732,7 @@ impl Render for RootView {
                 window.focus(&this.board_focus, cx);
                 cx.notify();
             }))
-            // The graph's grip follows the pointer anywhere in the window.
+            // グラフのリサイズ中は、ポインタがグリップから外れてもウィンドウ全体でドラッグを追従する。
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                 if this.graph_drag.is_some() {
                     if event.dragging() {
@@ -776,7 +788,7 @@ impl Render for RootView {
                                 .items_center()
                                 .child(self.render_editor_board(cell, cx)),
                         )
-                        // The AI column stays empty, so the board does not move.
+                        // エディタ表示中も右カラム分の幅を空けておき、盤面の中央位置が左右にずれないようにする。
                         .child(div().w(px(RIGHT_WIDTH)))
                     })
                     .when(self.editor.is_none(), |el| {
@@ -815,7 +827,7 @@ impl Render for RootView {
                                 )
                                 .child(self.render_navigation(cell, cx))
                                 .when(self.controller.analyzing(), |el| {
-                                    // Under the board, from its coordinates to its edge.
+                                    // 盤面の左端（座標ラベルを含む）から右端までと同じ幅でグラフを配置する。
                                     let board = px(18.) + cell * 8. + px(7. + 4.);
                                     el.child(self.render_graph(board, cx))
                                 }),
@@ -843,7 +855,7 @@ impl Render for RootView {
                 .items_center()
                 .pt(px(DIALOG_TOP))
                 .bg(gpui::black().opacity(0.45))
-                // A press outside the dialog closes it; one inside stops there.
+                // ダイアログ外側のクリックで閉じ、内側のクリックは伝播を止める。
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _: &MouseDownEvent, _, cx| this.close_dialog(cx)),
@@ -861,7 +873,7 @@ impl Render for RootView {
                         .on_action(
                             cx.listener(|this, _: &CloseDialog, _, cx| this.close_dialog(cx)),
                         )
-                        // Enter does what the dialog's main button does.
+                        // Enter キーは各ダイアログの主要な確定アクションを実行する。
                         .on_action(cx.listener(
                             |this, _: &ConfirmDialog, _, cx| match this.dialog {
                                 Some(Dialog::NewGame) => this.start_new_game(cx),

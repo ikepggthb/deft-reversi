@@ -1,12 +1,14 @@
-//! Shared text formatting helpers for the desktop UI.
+//! デスクトップ UI 全体で共有するテキスト整形ヘルパー関数群。
 use crate::{domain::Strength, i18n::Strings, services::engine::Reading};
 use deft_reversi_engine::Action;
 use gpui::SharedString;
 
+/// 着手を小文字の座標文字列（例: `"f5"`, `"pass"`）へ整形する。
 pub(super) fn action_text(action: Action) -> String {
     action.to_string().to_lowercase()
 }
 
+/// 読みの深さ・精度情報（[`Reading`]）をパネル表示用の文字列へ整形する。
 pub(super) fn reading_text(s: &Strings, reading: Reading) -> String {
     match reading {
         Reading::Depth {
@@ -20,8 +22,7 @@ pub(super) fn reading_text(s: &Strings, reading: Reading) -> String {
     }
 }
 
-/// How a value was read, in a few characters: "d24@83%", "END@95%",
-/// "END@100%" or "Book".
+/// 読みの深さ・精度を盤面上の狭いスペース向けの短縮表記（例: `"d24@83%"`, `"END@95%"`, `"END@100%"`, `"Book"`）へ整形する。
 pub(super) fn reading_mark(s: &Strings, reading: Reading) -> String {
     match reading {
         Reading::Depth { depth, percent } => format!("d{depth}@{percent}%"),
@@ -30,6 +31,7 @@ pub(super) fn reading_mark(s: &Strings, reading: Reading) -> String {
     }
 }
 
+/// 探索ノード数を `K` / `M` / `G` 単位の読みやすい文字列へ整形する。
 pub(super) fn nodes_text(nodes: u64) -> String {
     match nodes {
         n if n >= 1_000_000_000 => format!("{:.1} G", n as f64 / 1e9),
@@ -39,13 +41,12 @@ pub(super) fn nodes_text(nodes: u64) -> String {
     }
 }
 
-/// "+6", "−6" or "0".
+/// 符号付き整数を `"+6"` / `"−6"` / `"0"` 形式（マイナスは全角マイナス記号）へ整形する。
 pub(super) fn signed(value: i32) -> String {
     format!("{value:+}").replace('-', "−").replace("+0", "0")
 }
 
-/// How a strength reads in a short label: a preset's name, a level, or a
-/// time per move.
+/// AI の強さ設定を短いラベル（プリセット名・`"Lv N"`・`"N 秒"`）へ整形する。
 pub(super) fn strength_label(s: &Strings, strength: Strength) -> SharedString {
     match strength {
         Strength::Preset(preset) => s.preset(preset).into(),
@@ -54,7 +55,7 @@ pub(super) fn strength_label(s: &Strings, strength: Strength) -> SharedString {
     }
 }
 
-/// The principal variation after the first move, space-separated.
+/// 読み筋（PV）の 2 手目以降を空白区切りの文字列へ整形する。
 pub(super) fn pv_tail(pv: &[Action]) -> String {
     pv.iter()
         .skip(1)
