@@ -43,7 +43,7 @@ FlipSight 接続プログラムの `--engine` に、次のようなコマンド�
 
 Book有効時の `hint` は、対局と同じ品質・損失条件を満たす最良のBook手を提示する。候補がない場合や終局まで読む設定を明示した場合は探索する。`analyze` は従来どおり全候補を探索し、各手の右にBook値を併記する。探索順は探索値に従う。
 
-Bookを自分で生成・再開・検査するには `deft-reversi-cli book --help` を使う。`book build --level 29` でエンジンと共通のレベル表を使い、空き28から完全読みする。生成条件と作業ファイルの扱いは [Bookの操作手順](../docs/book-v2/training.md) を参照。
+Bookを自分で生成・再開・検査するには `deft-reversi-cli book --help` を使う。`book build --level 29` でエンジンと共通のレベル表を使い、空き28から完全読みする。生成条件と作業ファイルの扱いは [Bookの操作手順](../deft-reversi-book/docs/training.md) を参照。
 
 広域学習の例。レベル22の終盤MPCは空き28、完全読みは空き21からです。
 
