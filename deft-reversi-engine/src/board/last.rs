@@ -3,6 +3,11 @@
 //! 4 軸（横・縦・斜め 2 方向）のラインテーブルをコンパイル時に生成しておき、
 //! BMI2（x86-64 のビット操作拡張命令セット）が有効な環境では
 //! `_pext_u64`（PEXT: マスクで指定したビット位置だけを抜き出して下位に詰める命令）で参照します。
+//!
+//! ## 出典
+//!
+//! [Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `count_last_flip_bmi2.c` と同じ手法（PEXT で 1 列を 8 ビットに詰めて表を引き、返る石数の 2 倍を返す）です。
+//! 表とマスクはこのモジュールでコンパイル時に作っています。
 #[cfg(any(test, not(target_feature = "bmi2")))]
 use crate::Board;
 

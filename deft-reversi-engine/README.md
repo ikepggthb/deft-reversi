@@ -4,6 +4,10 @@
 
 実装・元モデル直接読込・実データ照合・通常/並列ストレステストを用意しています。検証件数や測定結果は各時点のレポートを参照してください。ビルドにはルートの `rust-toolchain.toml` と `Cargo.lock` を使います。
 
+## 出典
+
+一部のモジュールは [Edax](https://github.com/abulmo/edax-reversi)（GPL-3.0）と [Egaroucid](https://github.com/Nyanyan/Egaroucid)（GPL-3.0-or-later）のコードを Rust に移植したものです。移植した箇所は各ソースファイルの先頭の「出典」に、一覧はルートの [README](../README.md#謝辞と出典) にあります。
+
 ## 構成
 
 - `board`: 非公開のビットボードと検証付き着手。内部探索は合法手と反転ビットを再利用。

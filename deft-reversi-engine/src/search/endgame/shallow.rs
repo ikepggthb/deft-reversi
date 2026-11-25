@@ -1,4 +1,8 @@
 //! 空き 5 マスおよび 6 マス専用の Null-Window 終盤カーネルです。
+//!
+//! ## 出典
+//!
+//! 孤立した空きマスを先に読む並べ替えは、[Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later）の終盤探索（`endsearch_nws.hpp`）と同じ手法です。
 use super::parity::SQUARE_PARITY;
 use super::{Aborted, Board, Context};
 

@@ -1,5 +1,9 @@
-//! 空き 1〜4 マス専用の Null-Window（幅 1 の探索窓）終盤ソルバカーネルです（参照実装 `leaf.rs` からの移植）。
+//! 空き 1〜4 マス専用の Null-Window（幅 1 の探索窓）終盤ソルバカーネルです。
 //! 中断要求やノード上限はラッパーの [`LeafSearch`] 経由で伝播し、境界値が公開される前に確実に中断します。
+//!
+//! ## 出典
+//!
+//! 空き 1〜4 マスのカーネル、象限パリティとマス価値（`SQUARE_VALUE`）による並べ替え、`NEIGHBOUR` 表は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `endgame.c`・`move.c` を移植した旧 Deft の実装を引き継いだものです。
 use super::parity::QUADRANT_ID;
 use super::*;
 const SCORE_MAX: i32 = 64;
@@ -232,7 +236,7 @@ fn solve_score_2_empties(
     }
 }
 
-// 参照カーネルとのアルゴリズム直接比較のため、スカラー引数をそのまま維持しています。
+// Edax のカーネルとアルゴリズムを直接比べられるよう、スカラー引数をそのまま維持しています。
 /// 空きマスが 3 マスの盤面を、象限パリティとマス価値で並べ替えて解きます。
 #[allow(clippy::too_many_arguments)]
 fn solve_score_3_empties(

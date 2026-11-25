@@ -1,5 +1,9 @@
 //! 中盤および終盤探索ノード向けのムーブオーダリング（有望そうな手から先に探索するための並び替えスコア算出）モジュールです。
 //! Alpha-Beta 法では、良い手から先に調べるほど枝刈り（カット）が増えて探索が速くなります。
+//!
+//! ## 出典
+//!
+//! 着手順序の評価に使う探索の深さ・窓・重みは、[Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later）の `move_ordering.hpp` の値を移植したものです。
 use super::*;
 use crate::board::CORNERS;
 

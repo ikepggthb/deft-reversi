@@ -2,6 +2,10 @@
 //!
 //! 辺テーブルから得られる辺上の確定石と、4 軸（横・縦・斜め 2 方向）がすべて埋まったライン上の石を起点として、
 //! 隣接する確定石から内側へ確定石を広げていく（不動点伝播）ことで、確定石の個数を求めます。
+//!
+//! ## 出典
+//!
+//! 確定石の伝播と、Null-Window 探索で確定石による枝刈りを試す閾値（`THRESHOLD`）は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `board.c`・`search.c` を Rust に移植したものです。
 use crate::Board;
 
 /// Null-Window Search（探索窓の幅を 1 に絞って「スコアが `alpha` を超えるか」だけを判定する高速探索）向けの

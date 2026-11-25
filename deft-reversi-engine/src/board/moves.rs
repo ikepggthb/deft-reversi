@@ -1,4 +1,9 @@
 //! ビット並列演算を使って 8 方向の合法手を一括生成するモジュールです（AVX2 版および汎用版）。
+//!
+//! ## 出典
+//!
+//! AVX2 版は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の合法手生成（奥原俊彦氏の手法）を Rust に移植したものです。
+//! 手法の解説は奥原氏の <http://www.amy.hi-ho.ne.jp/okuhara/bitboard.htm#mobility> にあります。
 
 #[cfg(target_feature = "avx2")]
 pub use avx2::get_moves;
@@ -6,10 +11,6 @@ pub use avx2::get_moves;
 pub use generic::get_moves;
 
 // AVX2（256 ビット幅の SIMD 命令）を用いた高速な合法手生成です。
-// 最適化手法の出典:
-//    edax-reversi (Richard Delorme, Toshihiko Okuhara)
-//    Edax src               : https://github.com/abulmo/edax-reversi
-//    奥原氏による解説        : http://www.amy.hi-ho.ne.jp/okuhara/bitboard.htm#mobility
 #[cfg(target_feature = "avx2")]
 mod avx2 {
     use std::arch::x86_64::*;

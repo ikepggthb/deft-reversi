@@ -1,4 +1,8 @@
 //! 空き 7〜13 マス向けの、ムーブオーダリング（候補手の並び替え）付き Null-Window 終盤探索モジュールです。
+//!
+//! ## 出典
+//!
+//! `endgame_ordering` の重みと隅の確定石の数え方は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `move.c`（高速な終盤の着手順序と `get_corner_stability`）に基づいています。
 use super::local_tt::EndProbe;
 use super::parity::odd_regions;
 use super::{Aborted, Board, Context, EvalState, LOCAL_END_MAX};
@@ -189,10 +193,10 @@ impl Context {
     }
 }
 
-/// 参照エンジン由来の高速な終盤ムーブオーダリングスコアを計算します。
+/// Edax 由来の高速な終盤ムーブオーダリングスコアを計算します。
 /// 相手の隅重み付き合法手数（少ないほど良い）を最も重視し、次いで自石の隅および隅に隣接する確定辺石、
 /// 同点時のタイブレークとしてマス価値と象限パリティ（奇数個空き領域の優先）を用います。
-/// （参照エンジンにあった開放度／潜在合法手項は計算コストに見合わないため省略しています。）
+/// （Edax にある開放度／潜在合法手項は計算コストに見合わないため省略しています。）
 pub(in crate::search) fn endgame_ordering(child: Board, legal: u64, bit: u64, odd: u64) -> i32 {
     const SQUARE_VALUE: [i32; 64] = [
         18, 4, 16, 12, 12, 16, 4, 18, 4, 2, 6, 8, 8, 6, 2, 4, 16, 6, 14, 10, 10, 14, 6, 16, 12, 8,

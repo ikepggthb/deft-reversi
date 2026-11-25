@@ -1,4 +1,10 @@
 //! 着手したときに裏返る 8 方向の石のビットマスクを計算するモジュールです（AVX2 版および汎用版）。
+//!
+//! ## 出典
+//!
+//! AVX2 版は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `flip_avx_acepck.c`（奥原俊彦氏作、acepck 氏の最適化
+//! <https://github.com/Nyanyan/Egaroucid/pull/293>）を Rust に移植したものです。
+//! `LR_MASK` は Edax の `MASK_LR` 表と同じ内容です。
 
 #[cfg(target_feature = "avx2")]
 pub use avx2::flip;

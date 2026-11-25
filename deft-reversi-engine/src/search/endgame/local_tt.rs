@@ -1,8 +1,12 @@
 //! スレッドローカルな終盤置換表（TT）です。
 //!
 //! 終盤の残り 13 マス以下では探索速度が非常に速く、共有置換表への原子操作や競合コストが目立ちます。
-//! そのため各スレッド上の [`Context`] がこの軽量キャッシュを専有し、
+//! そのため各スレッド上の `Context` がこの軽量キャッシュを専有し、
 //! 参照（`probe`）時はスロットのポインタではなく不変スナップショット（[`EndProbe`]）を返します。
+//!
+//! ## 出典
+//!
+//! 空きマス数ごとにスレッド専有の表を持つ構成とハッシュ関数の乗数は、[Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later）の `endsearch_nws.hpp` に基づいています。
 use super::{LOCAL_END_MAX, TAIL_EMPTIES};
 use crate::Board;
 use std::cell::RefCell;
