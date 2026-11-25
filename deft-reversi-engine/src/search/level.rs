@@ -43,7 +43,7 @@ const ENDGAME_LIMITS_11_20: [[i32; 5]; 10] = [
 ///   whole game at level 60.
 ///
 /// The measurements and matches behind the table are in
-/// docs/benchmarks/2026-11-15-level-table.
+/// deft-reversi-notes/benchmarks/2026-11-15-level-table.
 fn endgame_limits(level: i32) -> [i32; 5] {
     match level {
         ..=10 => [level + 6, level + 6, level + 6, level + 6, level + 9],

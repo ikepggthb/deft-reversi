@@ -10,8 +10,8 @@
 - [エンジンのAPI・設計・実行方法](deft-reversi-engine/README.md)
 - [対局用bookの参照・生成・更新](deft-reversi-book/README.md)
 - [リライト計画と移行範囲](docs/rewrite-plan.md)
-- [レビュー後の修正と性能確認](docs/benchmarks/2026-10-27-review-fixes/README.md)
-- [終盤探索の比較と差分調査](docs/benchmarks/2026-10-24-regression-investigation/README.md)
+- [レビュー後の修正と性能確認](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-10-27-review-fixes/README.md)
+- [終盤探索の比較と差分調査](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-10-24-regression-investigation/README.md)
 - [旧評価関数の説明](docs/old-evaluation-function.md)
 
 ## ビルドと検証
@@ -59,7 +59,7 @@ cargo run --locked --release -p deft_reversi_train -- --version
 
 ## 測定記録
 
-直近のFFO40–49・1コア比較は [Edax・Egaroucidとの測定記録](docs/benchmarks/2026-10-27-three-engines/README.md) を参照してください。過去の時間は、異なる実装・モデル・測定条件の結果を含むため、直接つなげて改善率を計算しません。
+直近のFFO40–49・1コア比較は [Edax・Egaroucidとの測定記録](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-10-27-three-engines/README.md) を参照してください。過去の時間は、異なる実装・モデル・測定条件の結果を含むため、直接つなげて改善率を計算しません。
 
 過去のレポート中の `deft_reversi_engine_v2` は移動前の名称です。測定時のハッシュ、コマンド、再現用ソースは当時の記録として保持しています。現在のディレクトリは `deft-reversi-engine`、クレート名は `deft_reversi_engine` です。
 

@@ -66,7 +66,7 @@
 - `6ms × 2^(e−17)` は、レベル表の測定での1スレッドの完全読みの時間（17空きで約6ms、1空きごとに2倍）。
 - 3倍は、遅いマシン・冷えた置換表・局面のばらつきの分。2ms は整数ミリ秒の時計での往復の分。
 - 今の手番は予約しない（今の局面は平均より重いことがある）。
-- スレッド数では割らない。割った版は FlipSight 6秒・4スレッドで −0.33石 [−0.63, −0.03] だった（`docs/benchmarks/2026-11-20-time-control-forecast/`）。
+- スレッド数では割らない。割った版は FlipSight 6秒・4スレッドで −0.33石 [−0.63, −0.03] だった（`deft-reversi-notes/benchmarks/2026-11-20-time-control-forecast/`）。
 
 ### 3.3 soft と hard
 
@@ -128,7 +128,7 @@ soft = min(soft, hard)
 | 選択的ステージ → 次のステージ | 1.25 |
 | 終盤 → 中盤（起きないはず） | ENTRY |
 
-ENTRY と EXACT は、置換表が空のとき（probe、1・4スレッド）と対局中（GTP ログ）に測った比の中央値に合わせてある（`docs/benchmarks/2026-11-20-time-control-forecast/ratios.txt`）。
+ENTRY と EXACT は、置換表が空のとき（probe、1・4スレッド）と対局中（GTP ログ）に測った比の中央値に合わせてある（`deft-reversi-notes/benchmarks/2026-11-20-time-control-forecast/ratios.txt`）。
 
 ### 5.2 止める条件
 
@@ -200,11 +200,11 @@ ENTRY と EXACT は、置換表が空のとき（probe、1・4スレッド）と
 
 ## 9. この方式の評価
 
-### 9.1 対局（`docs/benchmarks/2026-11-20-time-control-forecast/`）
+### 9.1 対局（`deft-reversi-notes/benchmarks/2026-11-20-time-control-forecast/`）
 
 `Forecast` を入れる前の `a21b8c9` との比較では、9条件のうち GTP 2秒・1スレッドだけが +0.10石 [+0.01, +0.18] で、ほかは信頼区間が0をまたぐ。捨てた時間（6章）は 5.0% → 0.5% に減った。
 
-### 9.2 打ち切り方は最適に近いか（`docs/benchmarks/2026-11-20-time-stopping-oracle/`）
+### 9.2 打ち切り方は最適に近いか（`deft-reversi-notes/benchmarks/2026-11-20-time-stopping-oracle/`）
 
 各反復の完了時刻が分かっている（予測が正確な）シミュレーションで、理論上最適な形の規則と比べた。
 
@@ -214,7 +214,7 @@ ENTRY と EXACT は、置換表が空のとき（probe、1・4スレッド）と
 
 予測が正確なら、今の打ち切り方（均等額 + 最善手の変化での延長）は、ほぼ最適と区別できない。
 
-### 9.3 損失の表（`docs/benchmarks/2026-11-20-time-allocation-loss-table/`）
+### 9.3 損失の表（`deft-reversi-notes/benchmarks/2026-11-20-time-allocation-loss-table/`）
 
 24〜28空きで終盤の最初のステージ（85%〜95%）に届くと、1手あたり0.2〜0.35石の得がある。完全読みまで届いても、それ以上の得はほぼない。表から計算した配分は、交差検証で今の配分との差が見えなかった。
 

@@ -1,3 +1,0 @@
-model = "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/models/deft-eval-v3-pen.dpr2"
-edax = "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/bench-engines/edax-reversi-4.7/bin/lEdax-native"
-egaroucid = "/home/azure/.codex/worktrees/2b32c738-41e2-4169-a35f-6436ea523f8b/deft-reversi/local/bench-engines/Egaroucid-console_v7.8.2/bin/Egaroucid_for_Console.out"

@@ -8,7 +8,7 @@
   - v4 は `train-v4-all` を使う（経緯と比較は研究ノート `local/notes/studies/2026-11-23-v4-eval/`）。石数14〜63 は学習データ v0002 の棋譜の、ランダム打ちの後の全局面（`convert --transcripts … --after-random 0 --stones 12..=63`、約13.7億局面）。石数4〜13 は 7.4.0 lv.17 の評価を negamax した v0001 の全局面（`convert --boards … --train 1 --valid 0`）を使い、`--no-shrink-stones 4..=13` で縮めずに書き出す。値は空きマスを勝った側に数えた終局石差。
   - ランダム打ちの後の手を除いたデータ（`--after-random 16 --after-random-ramp 21`）で学習したモデルは、中盤の局面が半分以下になり、v3 より弱く遅くなった。データは減らさない。
   - 以前の `egaroucid-rd`（v0002 の全局面、空きマスはどちらにも数えない）は v3 まで使った。局面は `train-v4-all` の石数14〜63 と同じ。
-- PEN（`train --pen`）を足すと精度が上がる（[PEN の測定](benchmarks/2026-11-06-pen/README.md)）。
+- PEN（`train --pen`）を足すと精度が上がる（[PEN の測定](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-11-06-pen/README.md)）。
 - メモリ：1局面24バイト。同時に学習する段階の数（`-t`）だけデータを載せる。最大の段階は約1.2 GB で、16スレッドでも約20 GB に収まる。
 - 時間：Core Ultra 7 265K・16スレッドで、全データ1エポックあたり約2分40秒。段階ごとの所要時間はデータ量に比例し、石数の多い段階ほど長い。
 - ビルド：
@@ -74,19 +74,19 @@ ProbCut の係数は評価の精度で変わるので、採用するモデルご
 $T mpc -m runs/NAME/model.dpr2 --data $D --out runs/NAME/mpc --positions 1000 -t 8
 ```
 
-できた `runs/NAME/mpc/model.dpr2`（重みと校正の1ファイル）を、そのままエンジンに渡して使う。止めても同じコマンドで続きから測る。比べるときは、同じ規則どうし、または校正後と main の規則（`set_legacy_main_mpc`）を並べる。lr 0.3 のモデルでは、固定レベルの探索が約6%速くなり、強さと完全読みの速さは変わらなかった（[記録](benchmarks/2026-10-31-mpc-calibration/README.md)）。
+できた `runs/NAME/mpc/model.dpr2`（重みと校正の1ファイル）を、そのままエンジンに渡して使う。止めても同じコマンドで続きから測る。比べるときは、同じ規則どうし、または校正後と main の規則（`set_legacy_main_mpc`）を並べる。lr 0.3 のモデルでは、固定レベルの探索が約6%速くなり、強さと完全読みの速さは変わらなかった（[記録](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-10-31-mpc-calibration/README.md)）。
 
 ## 6. 探索の強さを確かめる
 
 誤差が小さいことと探索が強いことは同じではない。採用する前に次を確かめる。
 
 - FFO 40〜49：`tools/bench/positions/ffo40-59.obf` の最初の10問（`tools/bench/ffo.py --only 40-49`）と全問の石差が一致すること、ノード数と時間が今のモデルから悪化していないこと。
-- FFO は `tools/bench/compare_versions.py` で測る。`--before`・`--after` には、同じ `solve` にそれぞれのモデルを渡すシェルスクリプトを指定する（[例](benchmarks/2026-10-31-pattern-lr0.3/README.md#ffo-4049)）。
+- FFO は `tools/bench/compare_versions.py` で測る。`--before`・`--after` には、同じ `solve` にそれぞれのモデルを渡すシェルスクリプトを指定する（[例](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-10-31-pattern-lr0.3/README.md#ffo-4049)）。
 - 自己対戦：今のモデルと、先手後手を入れ替えて対局する。[tools/bench/match.py](../tools/bench/match.py) を使う（`DEFT_MODEL=新モデル OPP_MODEL=今のモデル XOT=tools/bench/positions/xot-openingslarge.txt python3 tools/bench/match.py deft level12 250 出力.tsv`。同じ持ち時間なら `time1` など）。
 
 ## 7. 記録する
 
-`docs/benchmarks/<日付>-<名前>/` に次を置く。
+`deft-reversi-notes/benchmarks/<日付>-<名前>/` に次を置く。
 
 - `README.md`：コマンド、設定、実行環境、所要時間、誤差の表、結論
 - `metrics.jsonl`：学習の記録
@@ -112,14 +112,14 @@ $T mpc -m runs/NAME/model.dpr2 --data $D --out runs/NAME/mpc --positions 1000 -t
 
 ## 推奨する設定
 
-[2026-10-31 の比較](benchmarks/2026-10-31-pattern-lr/README.md)から、本格的な学習には次を使う。
+[2026-10-31 の比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-10-31-pattern-lr/README.md)から、本格的な学習には次を使う。
 
 ```sh
 $T train --data $D --work runs/NAME/work --out runs/NAME/model.dpr2 --lr 0.3 --epochs 6 -t 16
 ```
 
 - **`--lr 0.3`**：既定の 0.05 は小さすぎる。AdaGrad は使われるたびに歩幅が小さくなるので、学習率が小さいと最適な値に届かない。lr 0.05 では12エポック目でも誤差が下がり続けた。一方 lr 0.2〜0.4 では、2エポックで lr 0.05 の12エポックより誤差が小さくなった。0.2〜0.8 の差は 0.015 石以内で、0.8 では石数の多い段階がわずかに悪くなる。
-- **`--epochs 6`**：lr 0.2〜0.4 では、4エポック目以降の改善は1エポックあたり約 0.005 石以下。時間に余裕があれば8でもよい。全段階・16スレッドで1エポック約2分40秒。lr 0.3 の全段階の valid 平均は 4・6・8エポックで 5.184・5.178・5.175 だった（[記録](benchmarks/2026-10-31-pattern-lr0.3/README.md)）。
+- **`--epochs 6`**：lr 0.2〜0.4 では、4エポック目以降の改善は1エポックあたり約 0.005 石以下。時間に余裕があれば8でもよい。全段階・16スレッドで1エポック約2分40秒。lr 0.3 の全段階の valid 平均は 4・6・8エポックで 5.184・5.178・5.175 だった（[記録](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-10-31-pattern-lr0.3/README.md)）。
 - **`--shrink`**：0〜32 の差は 0.003 石以内。既定の32のままでよい。
 - **`--l2`・`--huber-delta`**：まだ比べていない。学習率を上げると train と valid の差が少し広がる（lr 0.4 で 0.02〜0.04 石）。次に調整するなら L2 を強める（1e-3 程度）のを試す。
 

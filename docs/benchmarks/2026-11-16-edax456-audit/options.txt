@@ -1,6 +1,0 @@
-	size (in number of bits) of the hash table: 23
-	task number for parallel search: 8
-	search level: 60
-	search selectivity: -1
-	eval file: data/eval.dat
-	book allowed: false

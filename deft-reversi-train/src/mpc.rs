@@ -15,7 +15,7 @@
 //! `deviation² = (c0 + c1·s + c2·s²)·(1 − exp(−(e − s)/λ))`. The rules then
 //! hold for any shallow depth within the measured ones; `exact_shallow`
 //! chooses them. The derivation and its checks are in
-//! docs/benchmarks/2026-11-02-exact-mpc-formula.
+//! deft-reversi-notes/benchmarks/2026-11-02-exact-mpc-formula.
 use crate::{Result, for_each_parallel, rd};
 use clap::Args;
 use deft_reversi_engine::{
@@ -103,7 +103,7 @@ const SHALLOW_BY_DEPTH: [u8; 61] = [
 ];
 
 /// The shallow depth for an exact solve, chosen by FFO 40-59 solve times
-/// (docs/benchmarks/2026-11-02-exact-mpc-formula).
+/// (deft-reversi-notes/benchmarks/2026-11-02-exact-mpc-formula).
 fn exact_shallow(empties: u8) -> u8 {
     match empties {
         ..=15 => 1,

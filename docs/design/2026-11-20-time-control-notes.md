@@ -24,7 +24,7 @@
   - 調整に使う開局と、評価に使う開局を分ける。
 - 時間切れは1件でも重大な問題として扱う。
 - エンジンの探索本体と公開 API の互換性は保つ（追加はよい）。エンジン内部の値（上位2手の差など）は、探索の動作を変えずに数えられる場合だけ追加する。
-- 実験は research/* ブランチで行う。記録は `docs/benchmarks/` の日付フォルダに置く（README と結果だけ、索引に1行）。
+- 実験は research/* ブランチで行う。記録は 研究ノート（deft-reversi-notes）の `benchmarks/` の日付フォルダに置く（README と結果だけ、索引に1行）。
 - 延長モードのデータは、1局につき1手番だけ延長し、その局はそこで打ち切る（エンジンに置換表を複製する API はない）。
 
 ## 3. 分かったこと（段階1より前）
@@ -47,8 +47,8 @@
 
 ```sh
 python3 tools/time-control/features.py \
-  docs/benchmarks/2026-11-20-time-allocation-loss-table/{games,probe}.txt \
-  --offset 1000 docs/benchmarks/2026-11-20-time-stopping-oracle/{games,probe}.txt > table.tsv
+  deft-reversi-notes/benchmarks/2026-11-20-time-allocation-loss-table/{games,probe}.txt \
+  --offset 1000 deft-reversi-notes/benchmarks/2026-11-20-time-stopping-oracle/{games,probe}.txt > table.tsv
 python3 tools/time-control/cost_fit.py table.tsv
 ```
 
@@ -72,7 +72,7 @@ python3 tools/time-control/cost_fit.py table.tsv
 
 ## 5. 段階1の結論（1-7）
 
-まとめは `docs/benchmarks/2026-11-20-time-prediction-features/README.md`。4章の probe の結果に加えて、次のことが分かった。
+まとめは `deft-reversi-notes/benchmarks/2026-11-20-time-prediction-features/README.md`。4章の probe の結果に加えて、次のことが分かった。
 
 - 対局ログでも、中盤→中盤の今の式は定数より外れる（0.92 と 0.70）。前の比の係数は −0.37 で、probe と同じ。4スレッドでも同じ。
 - 対局中の EXACT は、今の式が約2〜2.5倍多く見積もる（置換表が温まっているため）。ENTRY も4スレッドで多く見積もる。
@@ -143,7 +143,7 @@ python3 tools/time-control/cost_fit.py table.tsv
 
 ## 6d. 段階3-1 の結果（2026-11-23）
 
-- 詳細は `docs/benchmarks/2026-11-23-time-control-stage3/README.md`。
+- 詳細は `deft-reversi-notes/benchmarks/2026-11-23-time-control-stage3/README.md`。
 - v4 の実行は 17:04〜21:41。データは `local/time-control/stage3/run-v4/`（121 MB）、v3 は `run/`。時間切れは0件。
 - v3 と v4 で、反復の倍率とノード速度に差は見えない（25項目中23項目で、95%区間が「差なし」をまたぐ）。評価関数を変えたときに時間の予測を作り直す必要は、今回の程度の変更ならない。
 - 延長モードの ENTRY は、20秒・60秒・4スレッドで約7割が延長の上限で打ち切られた。ENTRY を狙った追加の延長を依頼者に提案中。
@@ -163,7 +163,7 @@ python3 tools/time-control/cost_fit.py table.tsv
 
 - 20,561局面を止めずに最後まで読んだ（22:27〜01:18、2時間51分）。試しの局面から出した見積もり（約2.5時間）より少し長かった。
 - `tools/time-control/refer_loss.py` で、参照を各手番の反復に戻した（`table` で反復ごとの損失、`summary` で集計）。実際に指した手で参照の値がない手番は0件。
-- 主な数字（詳しくは `docs/benchmarks/2026-11-24-time-control-stage3-2/`）：
+- 主な数字（詳しくは `deft-reversi-notes/benchmarks/2026-11-24-time-control-stage3-2/`）：
   - 1局・片方あたりの指した手の損失（最初の版。下の訂正を参照）：2秒 4.0、FlipSight 6秒 2.8、20秒 1.6、60秒 0.87、20秒・4スレッド 0.74 石。20空き以下は全条件で0。
   - 次の反復の値：中盤→中盤 0.10〜0.16 石、ENTRY 1.0〜1.4 石、選択的→選択的 0.09〜0.13 石、EXACT 0.03〜0.05 石。
   - 延長した手番で、時計の判断の時点と延長の最後の損失の差は 0.00〜0.05 石で、区間は4条件とも0をまたぐ。

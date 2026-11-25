@@ -15,7 +15,7 @@ pub(super) const SPLIT_EMPTIES: u8 = 10;
 /// helper jobs at 14 empties and 67,000 at 17, and FFO 40-59 took 10% less
 /// time; at 4 threads 14 stays the fastest. The selective stages prune too
 /// much to keep 20 threads busy at 17, and keep `SPLIT_EMPTIES`
-/// (docs/benchmarks/2026-11-07-parallel).
+/// (deft-reversi-notes/benchmarks/2026-11-07-parallel).
 pub(super) fn split_empties(threads: usize) -> u8 {
     if threads < 8 {
         SPLIT_EMPTIES
@@ -27,12 +27,12 @@ pub(super) fn split_empties(threads: usize) -> u8 {
 /// below `ORDERED_SEARCH_DEPTH` without move ordering too, like main's
 /// `SWITCH_SIMPLE_SEARCH_LEVEL` and `SWITCH_NEGAALPHA_SEARCH_LEVEL`. With
 /// the PEN evaluation 4 and 3 were the fastest (5 and 3 with the linear
-/// one; docs/benchmarks/2026-11-06-pen-tuning).
+/// one; deft-reversi-notes/benchmarks/2026-11-06-pen-tuning).
 pub(super) const SIMPLE_SEARCH_DEPTH: u8 = 4;
 pub(super) const ORDERED_SEARCH_DEPTH: u8 = 3;
 /// A ProbCut test runs only when the rule's prediction from the static
 /// evaluation is within these margins (discs) of its bound; Egaroucid uses 4.
-/// Chosen for the PEN evaluation (docs/benchmarks/2026-11-06-pen-tuning).
+/// Chosen for the PEN evaluation (deft-reversi-notes/benchmarks/2026-11-06-pen-tuning).
 const PROBCUT_MIDGAME_UPPER_MARGIN: f64 = 8.0;
 const PROBCUT_EXACT_UPPER_MARGIN: f64 = 2.0;
 const PROBCUT_LOWER_MARGIN: f64 = 4.0;
