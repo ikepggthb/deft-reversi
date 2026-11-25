@@ -1,8 +1,12 @@
 [package]
 name = "deft_reversi_desktop"
 version = "1.0.0-dev.1"
-edition = "2024"
-publish = false
+description = "Desktop application of Deft Reversi"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "deft-reversi"

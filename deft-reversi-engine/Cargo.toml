@@ -1,8 +1,13 @@
 [package]
 name = "deft_reversi_engine"
 version = "2.0.0-dev.1"
-edition = "2024"
+description = "Othello (reversi) engine of Deft Reversi: pattern evaluation and parallel midgame and endgame search"
 readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
 
 [features]
 # Model construction, MPC configuration and ProbCut rules, for tuning tools.

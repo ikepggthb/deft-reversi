@@ -1,8 +1,13 @@
 [package]
 name = "deft_reversi_train"
 version = "1.0.0-dev.1"
-edition = "2024"
+description = "Trainer of the pattern evaluation models of Deft Reversi"
 readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "deft-reversi-train"
