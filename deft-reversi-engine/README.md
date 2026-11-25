@@ -115,15 +115,15 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_BUILD_JOBS=1 cargo test -p deft_reversi_en
 検証ケース: 座標参照実装との照合、perft、差分特徴量、スコア・フェーズ、モデル往復、不正入力、単純完全読みとの一致、合法PV、停止・再利用、MPC分離、TT同時アクセス、祖先ハンドオフ、1/2/4/8/20スレッド反復。
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo run --locked --release -p deft_reversi_engine --example solve -- MODEL.bin POSITIONS.obf exact 4 256
+RUSTFLAGS="-Ctarget-cpu=native" cargo run --locked --release -p deft-reversi-cli -- solve POSITIONS.obf --model MODEL.dpr2 --exact --threads 4 --tt-mib 256 --tsv
 ```
 
-OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・時間をTSV出力する。任意の末尾引数で1局面の時間上限（ミリ秒）を指定できる。
+CLIの `solve` がOBFの盤面64文字と手番X/Oを読み、結果・ノード数・時間を出力する。`--time-ms` で1局面の時間上限（ミリ秒）を指定できる。
 `PatternModel::zero()` はルール・探索テスト用。棋力のあるモデルではない。
 
 ## 比較
 
-速さの比較（変更の前後、Edax・Egaroucid）と対局は [tools/bench](../tools/bench/README.md) を使う。`examples/solve` が完全読みと固定レベルの探索、`examples/gtp` が対局用の GTP である。
+速さの比較（変更の前後、Edax・Egaroucid）と対局は [tools/bench](../tools/bench/README.md) を使う。CLIの `solve` が完全読みと固定レベルの探索、`gtp` が対局用の GTP である。
 
 ## 並列測定
 
@@ -146,7 +146,7 @@ OBFの盤面64文字と手番X/Oを読み、結果・ノード数・分割数・
 `--features endgame-pattern-ordering` は、残り11〜13マスのゼロ窓探索にパターン評価を追加する実験用機能。7〜10マスは合法手数とparityによる軽い手順付けを使う。既存モデルの44パターンを使い、特徴量を差分更新し、候補評価では子の片側の特徴量だけを計算する。終盤手順付け専用に学習した係数ではなく、既定では無効。比較と試作の経緯は[測定レポート](../docs/benchmarks/2026-10-27-endgame-implementation/README.md)を参照。
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release --example solve --features endgame-pattern-ordering
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release -p deft-reversi-cli --features endgame-pattern-ordering
 ```
 
 現deft・Edax・Egaroucidの通常SIMD版／AVX-512版を、FFO40〜49・1コア・主TT約839万項目で比較した。[3エンジンの比較](../docs/benchmarks/2026-10-27-three-engines/README.md)に8周分の時間、局面別の差、評価データ・ハッシュ・計時条件を記録した。
