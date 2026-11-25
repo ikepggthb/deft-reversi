@@ -2,6 +2,9 @@ target
 /target-*/
 __pycache__/
 
+# Editor settings are per developer.
+/.vscode/
+
 todo_list.md
 
 # Models come from GitHub releases (model-*), not from git.
