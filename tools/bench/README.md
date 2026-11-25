@@ -47,7 +47,7 @@ Deft の設定は `NAME:key=value,...` で書きます。キーは `solve`（バ
 
 ## 中盤：[midgame.py](midgame.py)
 
-中盤150局面（[positions/mid150.obf](positions/mid150.obf)、空き32・40・48 を各50）を、レベル21 と18 で読む時間と、選んだ手の質を比べます。手の質は、レベル24 の結果（[positions/mid150-level24.tsv](positions/mid150-level24.tsv)、PEN のモデル・MPC 250局面校正）と同じ手を選んだ割合と、石差の差の平均です。
+中盤150局面（[positions/mid150.obf](positions/mid150.obf)、空き32・40・48 を各50）を、レベル21 と18 で読む時間と、選んだ手の質を比べます。手の質は、レベル24 の結果（[positions/mid150-level24.tsv](positions/mid150-level24.tsv)、小型ニューラルネット併用モデル・MPC 250局面校正）と同じ手を選んだ割合と、石差の差の平均です。
 
 ```sh
 python3 tools/bench/midgame.py --cpus 2 --rounds 3 --out OUT base:solve=/path/to/cli-base new:solve=/path/to/cli-new
