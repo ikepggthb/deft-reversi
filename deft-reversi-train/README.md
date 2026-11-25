@@ -1,6 +1,6 @@
 # deft-reversi-train
 
-`deft_reversi_engine` のパターン評価（線形、または PEN を足したもの）を `.rd` データセットから学習する。学習から採用までの手順と推奨する設定は [docs/pattern-training.md](../docs/pattern-training.md) にある。
+`deft_reversi_engine` のパターン評価（線形、または PEN を足したもの）を `.rd` データセットから学習する。学習から採用までの手順と推奨する設定は [docs/pattern-training.md](docs/pattern-training.md) にある。
 
 ```sh
 cargo build --release -p deft_reversi_train

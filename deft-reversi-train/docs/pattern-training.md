@@ -1,6 +1,6 @@
 # パターン評価の学習手順
 
-`deft-reversi-train` でエンジンのパターン評価（DPR2）を学習し、評価し、採用するまでの手順。学習器の設計とファイル形式は [deft-reversi-train/README.md](../deft-reversi-train/README.md) にある。
+`deft-reversi-train` でエンジンのパターン評価（DPR2）を学習し、評価し、採用するまでの手順。学習器の設計とファイル形式は [deft-reversi-train/README.md](../README.md) にある。
 
 ## 準備
 
@@ -68,7 +68,7 @@ $T eval -m CURRENT.dpr2 -m runs/NAME/model.dpr2 --data $D > eval-test.txt
 
 ## 5. MPC を校正する
 
-ProbCut の係数は評価の精度で変わるので、採用するモデルごとに測る（[設計](../deft-reversi-train/README.md#mpc-の校正)）。
+ProbCut の係数は評価の精度で変わるので、採用するモデルごとに測る（[設計](../README.md#mpc-の校正)）。
 
 ```sh
 $T mpc -m runs/NAME/model.dpr2 --data $D --out runs/NAME/mpc --positions 1000 -t 8
@@ -82,7 +82,7 @@ $T mpc -m runs/NAME/model.dpr2 --data $D --out runs/NAME/mpc --positions 1000 -t
 
 - FFO 40〜49：`tools/bench/positions/ffo40-59.obf` の最初の10問（`tools/bench/ffo.py --only 40-49`）と全問の石差が一致すること、ノード数と時間が今のモデルから悪化していないこと。
 - FFO は `tools/bench/compare_versions.py` で測る。`--before`・`--after` には、同じ `solve` にそれぞれのモデルを渡すシェルスクリプトを指定する（[例](https://github.com/ikepggthb/deft-reversi-notes/blob/main/benchmarks/2026-10-31-pattern-lr0.3/README.md#ffo-4049)）。
-- 自己対戦：今のモデルと、先手後手を入れ替えて対局する。[tools/bench/match.py](../tools/bench/match.py) を使う（`DEFT_MODEL=新モデル OPP_MODEL=今のモデル XOT=tools/bench/positions/xot-openingslarge.txt python3 tools/bench/match.py deft level12 250 出力.tsv`。同じ持ち時間なら `time1` など）。
+- 自己対戦：今のモデルと、先手後手を入れ替えて対局する。[tools/bench/match.py](../../tools/bench/match.py) を使う（`DEFT_MODEL=新モデル OPP_MODEL=今のモデル XOT=tools/bench/positions/xot-openingslarge.txt python3 tools/bench/match.py deft level12 250 出力.tsv`。同じ持ち時間なら `time1` など）。
 
 ## 7. 記録する
 
