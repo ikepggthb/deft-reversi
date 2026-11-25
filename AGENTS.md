@@ -17,11 +17,6 @@ tools/desktop/book-verify.ps1 <path>   # .dbook / .dbook-work をCLIで読み込
 - 実行ポリシーで拒否されたら `powershell -ExecutionPolicy Bypass -File tools/desktop/check.ps1` のように実行する。
 - Git Bashからは `powershell -ExecutionPolicy Bypass -File tools/desktop/<script>.ps1` で呼ぶ。
 
-## 注意
-
-- この環境の `python` はMicrosoftストアの案内用スタブで、何も実行せずに終わる（エラーにならない）。スクリプトやファイル編集に使わない。
-- `tools/desktop/*.ps1` はWindows PowerShell 5.1で動くよう英語のみで書く（BOMなしの日本語は文字化けする）。
-
 ## 研究ノート
 
 `local/notes/` は、オセロAIエンジンの研究ノートを置く別リポジトリ（`deft-reversi-notes`）。評価関数・探索・枝刈り・Bookの精度や強さ、速度の実験と、その考察を記録する。新しい環境ではクローンしておく。

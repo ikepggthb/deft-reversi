@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
-"""Matches between Deft and Edax 4.5.5 or Egaroucid 7.8.1 over GTP.
+"""Deft と Edax 4.5.5 / Egaroucid 7.8.1（または別の Deft 構成）を GTP で対戦させる。
 
-usage: match.py OPPONENT MODE OPENINGS OUT.tsv [WORKERS]
-  OPPONENT  edax | egaroucid | deft (Deft with the model OPP_MODEL)
-  MODE      levelN (every engine at level N) | levelD:E (Deft at level D, the
-            opponent at level E) | timeS (S seconds per side per game)
-            | timeS:D (the opponent S seconds, Deft D seconds, to even the time used)
-  OPENINGS  number of random openings; each is played twice with colours swapped
+使い方:
+  match.py OPPONENT MODE OPENINGS OUT.tsv [WORKERS]
 
-Openings: 8 random plies from the initial position (seed 1, distinct), or
-with XOT=FILE, OPENINGS lines drawn from that XOT list (seed 1;
-positions/xot-openingslarge.txt is the large XOT list).
-Deft is the CLI `gtp` subcommand (DEFT_MODEL, default the release model of
-common.py); with OPPONENT deft, the other side uses OPP_MODEL.
-OPP_GTP is another CLI binary for the other Deft side (e.g. an older build).
-Every engine runs single-threaded; the two engines of a game share one
-physical core (they never search at the same time; no pondering). WORKERS
-games run at once on CPUs 0, 2, 4, 6, or the list MATCH_CPUS=0,1,..
-(default 1; time modes only 1,
-since games running beside each other change the engines' speed).
-With MATCH_THREADS=N every engine searches with N threads instead: one game
-at a time, on all CPUs or the set MATCH_CPUS (as for taskset -c). Hash: Deft 64 MiB, Edax and
-Egaroucid 2^21 entries. Writes one line per game (resumes OUT.tsv) and a
-summary at the end.
+引数:
+  OPPONENT  edax | egaroucid | deft（OPP_MODEL で指定したモデルを使う Deft）
+  MODE      levelN（両者レベル N）
+            | levelD:E（Deft がレベル D、相手がレベル E）
+            | timeS（1 局あたり持ち時間 S 秒）
+            | timeS:D（相手 S 秒、Deft D 秒。実時間の差を均す用途）
+  OPENINGS  対局に使う開始局面の数。各局面を先手・後手を入れ替えて 2 局ずつ対局する。
+
+開始局面:
+  既定では初期局面からランダムに 8 手進めた重複のない局面（シード 1）を使う。
+  環境変数 XOT=FILE を指定すると、XOT リストから OPENINGS 行を抽出する（シード 1。
+  positions/xot-openingslarge.txt が大規模 XOT リスト）。
+
+エンジンと並列実行:
+  Deft は CLI の `gtp` サブコマンドで起動する（モデルは DEFT_MODEL、既定は common.py の
+  リリースモデル）。OPPONENT に deft を指定した場合、相手側は OPP_MODEL を使い、
+  OPP_GTP で別の CLI バイナリ（旧ビルドなど）も指定できる。
+  各エンジンは 1 スレッドで動作し、1 局の 2 エンジンは同じ物理コアを共有する
+  （先読みなしのため同時に探索しない）。WORKERS 局を既定の CPU 0, 2, 4, 6 または
+  MATCH_CPUS=0,1,.. 上で並列対局する（既定は 1。時間制限モードでは他対局が速度に
+  影響するため 1 のみ許可）。
+  MATCH_THREADS=N を指定すると 1 局ずつ N スレッドで探索する（CPU は全コアまたは
+  MATCH_CPUS）。ハッシュサイズは Deft が 64 MiB、Edax と Egaroucid が 2^21 エントリ。
+  1 局ごとに OUT.tsv へ追記し（既存ファイルがあれば続きから再開）、終了時に集計を表示する。
 """
 import math, os, random, subprocess, sys, threading, time
 from pathlib import Path
@@ -31,7 +36,7 @@ from common import paths
 
 TOOLS = paths()
 THREADS = os.environ.get("MATCH_THREADS", "1")
-# The CLI GTP interface, built with CARGO_TARGET_DIR=target-native.
+# CARGO_TARGET_DIR=target-native でビルドした CLI の GTP インターフェース。
 DEFT = [str(TOOLS["gtp"]), "gtp", "--model", os.environ.get("DEFT_MODEL", str(TOOLS["model"]))]
 EDAX = str(TOOLS["edax"])
 EGAR = str(TOOLS["egaroucid"])
@@ -79,16 +84,17 @@ def square(text):
 
 
 def xot(n, path, seed=1):
-    """n openings drawn without replacement from an XOT list (one move string per line)."""
+    """XOT リスト（1 行 1 棋譜）から重複なしで n 局面を抽出し、手番ごとのマス番号列で返す。"""
     lines = [l.strip() for l in open(path) if l.strip()]
     pick = random.Random(seed).sample(lines, n)
     return [[square(m[k:k + 2]) for k in range(0, len(m), 2)] for m in pick]
 
 
 def openings(n, plies=8, seed=1):
+    """初期局面からランダムに plies 手進めた重複のない開始局面を n 個生成する。"""
     rng, seen, out = random.Random(seed), set(), []
     while len(out) < n:
-        p, o = 0x0000000810000000, 0x0000001008000000  # black to move: d5 e4 black, d4 e5 white
+        p, o = 0x0000000810000000, 0x0000001008000000  # 黒番開始: d5・e4 が黒、d4・e5 が白
         line = []
         for _ in range(plies):
             m = moves(p, o)
@@ -104,6 +110,8 @@ def openings(n, plies=8, seed=1):
 
 
 class Gtp:
+    """指定した CPU コアに固定して GTP エンジンプロセスを起動し、対話するラッパー。"""
+
     def __init__(self, cmd, cpu, cwd=None, log=None):
         err = open(log, "a") if log else subprocess.DEVNULL
         self.proc = subprocess.Popen(["taskset", "-c", str(cpu), *cmd], stdin=subprocess.PIPE,
@@ -124,7 +132,7 @@ class Gtp:
                 break
             if r:
                 reply.append(r)
-        # Edax sometimes prints a warning line before the reply.
+        # Edax は応答行の前に警告行を出力することがあるため、先頭の '=' または '?' を探す。
         head = next((r for r in reply if r[:1] in "=?"), reply[0])
         if not head.startswith("="):
             raise RuntimeError(f"{line!r} -> {reply}")
@@ -153,37 +161,38 @@ def level_of(mode, kind):
 
 
 def engine(kind, mode, cpu):
+    """指定された種別・モード・CPU コアで GTP エンジンを起動し、Gtp インスタンスを返す。"""
     level = level_of(mode, kind)
     seconds = seconds_of(mode, kind)
     if kind == "deft":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
-        # DEFT_GTP_LOG=FILE: stderr of Deft goes there; a CLI built with the
-        # `trace` feature logs each move's budget and time.
+        # DEFT_GTP_LOG=FILE を指定すると Deft の stderr をそこへ書き出す。
+        # `trace` feature 付きでビルドした CLI は各手の配分時間と消費時間を記録する。
         return Gtp([*DEFT, *args, "--tt-mib", "64", "--threads", THREADS], cpu, log=os.environ.get("DEFT_GTP_LOG"))
     if kind == "deft-opp":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
         return Gtp([os.environ.get("OPP_GTP", DEFT[0]), "gtp", "--model", os.environ["OPP_MODEL"], *args, "--tt-mib", "64", "--threads", THREADS], cpu)
     if kind == "edax":
-        # EDAX_MOVE_TIME=S: a time per move instead of per game.
+        # EDAX_MOVE_TIME=S が設定されている場合は 1 局単位ではなく 1 手あたりの秒数を使う。
         if seconds and os.environ.get("EDAX_MOVE_TIME"):
             limit = ["-move-time", os.environ["EDAX_MOVE_TIME"]]
         else:
             limit = ["-t", f"{seconds:g}"] if seconds else ["-l", str(level)]
         return Gtp([EDAX, "-gtp", "-eval-file", "data/eval.dat", "-book-usage", "off", "-n", THREADS,
                     "-h", "21", "-ponder", "off", *limit], cpu, cwd=Path(EDAX).parent)
-    # Egaroucid's GTP genmove ignores -time: in time modes it plays at
-    # EGAR_LEVEL, and Deft's time is set to what Egaroucid used.
+    # Egaroucid の GTP genmove は -time を無視するため、時間制限モードでは
+    # EGAR_LEVEL で固定し、Deft 側の持ち時間を Egaroucid の消費時間に合わせる。
     extra = ["-l", str(EGAR_LEVEL if seconds else level)]
     return Gtp([EGAR, "-gtp", "-nobook", "-t", THREADS, "-hash", "21", *extra], cpu, cwd=Path(EGAR).parent)
 
 
 def play_game(engines, deft_black, opening, mode):
-    """engines: {'deft': Gtp, 'opp': Gtp}. Returns (deft disc diff, deft s, opp s, moves)."""
+    """1 局対局して `(Deft 視点の石差, Deft の消費秒数, 相手の消費秒数, 棋譜文字列)` を返す。"""
     seconds = seconds_of(mode, "deft")
     for key, e in engines.items():
         e.send("clear_board")
-        # Edax and Egaroucid get their game time on the command line
-        # (Edax -t, Egaroucid -time); Edax hangs after GTP time_settings.
+        # Edax と Egaroucid にはコマンドライン引数（Edax -t, Egaroucid -time）で持ち時間を渡す。
+        # Edax は GTP の time_settings を送ると応答しなくなるため Deft にのみ送る。
         if seconds and key == "deft":
             e.send(f"time_settings {seconds:g} 0 0")
     p, o, black = 0x0000000810000000, 0x0000001008000000, True
@@ -221,7 +230,7 @@ def play_game(engines, deft_black, opening, mode):
         engines[other].send(f"play {color} {reply}")
         record.append(name(sq))
         apply(sq)
-    # p is the side to move; final score from black's view
+    # p は手番側の石配置。終局スコアを黒視点にそろえてから Deft 視点の石差を計算する。
     bp, wp = (p, o) if black else (o, p)
     b, w = bin(bp).count("1"), bin(wp).count("1")
     e = 64 - b - w
@@ -241,7 +250,7 @@ def main():
     if mode.startswith("time") and workers != 1:
         sys.exit("time modes must run one game at a time: other games change the speed")
     games = [(i, deft_black) for i in range(n) for deft_black in (True, False)]
-    # XOT=FILE: openings drawn from an XOT list instead of random plies.
+    # XOT=FILE が指定されている場合は、ランダム手順の代わりに XOT リストから開始局面を抽出する。
     lines = xot(n, os.environ["XOT"]) if os.environ.get("XOT") else openings(n)
     done = set()
     if out.exists():

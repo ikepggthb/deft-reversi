@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Midgame speed and move quality of Deft configurations.
+"""Deft の複数構成について、中盤探索の速度と着手の質を比較する。
 
-Searches the 150 midgame positions (mid150.obf: 50 each at 32, 40 and 48
-empties) at the given levels, one process per configuration and level,
-one at a time; the order of the configurations alternates per round.
-Move quality is the share of moves equal to a reference search's and the
-mean |score difference| to it (default: positions/mid150-level24.tsv, the
-PEN model of model-v3-pen's training with 250-position MPC at level 24).
+150 局面の中盤テストセット（mid150.obf: 空きマス 32・40・48 を各 50 局面）を
+指定した各レベルで探索する。実行は構成・レベルごとに 1 プロセスずつ順番に行い、
+構成の実行順序はラウンドごとに反転する。
+着手の質は参照探索（既定は positions/mid150-level24.tsv: 小型ニューラルネット併用モデルで
+250 局面 MPC を用いたレベル 24 探索結果）と比べた一致手率および
+評価値差の絶対値平均で評価する。
 
-Writes OUT/NAME-rR-lL.tsv per search and prints, per configuration and
-level, the median seconds, nodes and the quality.
+各探索結果を OUT/NAME-rR-lL.tsv に書き出し、構成・レベルごとの所要時間中央値、
+総ノード数中央値、および着手の質を表示する。
 
-usage: midgame.py [--levels 21,18] [--threads N] [--cpus LIST] [--rounds R] --out DIR CONFIG...
-CONFIG: NAME[:key=value,...] as in ffo.py
+使い方:
+  midgame.py [--levels 21,18] [--threads N] [--cpus LIST] [--rounds R] --out DIR CONFIG...
+  CONFIG は ffo.py と同じ NAME[:key=value,...] 形式で指定する。
 """
 import argparse
 import csv

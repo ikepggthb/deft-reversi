@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Convert feature engine pattern JSON/bincode v3/v4 into DPR2. Never trains.
+"""特徴量エンジンのパターン評価モデル（JSON または bincode v3/v4）を DPR2 形式に変換する（学習は行わない）。
 
-Usage: python3 tools/convert_pattern_v2.py INPUT OUTPUT
-Writes OUTPUT.mpc.tsv when regression data is present. The engine reads only DPR2;
-attach a calibration with `deft-reversi-train pack` (`--legacy-main` for models from main).
-Also reads the legacy-pattern JSON of the removed tools/convert_legacy_eval.py
-(last in 3d6cbd2).
+使い方:
+  python3 tools/convert_pattern_v2.py INPUT OUTPUT
+
+入力に MPC の回帰データが含まれる場合は、OUTPUT.mpc.tsv もあわせて書き出す。
+エンジン本体は DPR2 形式のみを読み込む。キャリブレーションを付与するには
+`deft-reversi-train pack`（main ブランチ由来のモデルには `--legacy-main`）を使う。
+削除された旧 tools/convert_legacy_eval.py（最終コミット 3d6cbd2）が扱っていた
+レガシーパターン JSON も読み込める。
 """
 import argparse
 import hashlib
@@ -19,6 +22,8 @@ SIZES = [3**n for n in (10,10,10,8,8,9,10,9,6,7,8)]
 MAGIC = b'DPR2\x01\x00\x00\x00'
 
 class Binary:
+    """バイナリ形式の評価モデルをリトルエンディアンで順次読み取るヘルパー。"""
+
     def __init__(self, stream): self.stream = stream
     def read(self, n):
         value = self.stream.read(n)
@@ -35,6 +40,7 @@ class Binary:
         return self.read(n*2)
 
 def binary_model(stream):
+    """bincode v3/v4 形式のモデルを読み込み、60 フェーズ分の重みバイト列と MPC データを返す。"""
     source=Binary(stream)
     if source.number('I') not in (3,4): raise ValueError('only feature bincode versions 3/4 are supported')
     for _ in range(5): source.string()
@@ -58,6 +64,7 @@ def binary_model(stream):
     return phases,mpc
 
 def json_model(stream):
+    """JSON 形式のモデルを読み込み、スキーマと値域を検証したうえで重みバイト列と MPC データを返す。"""
     document=json.load(stream)
     if 'format_version' in document and document['format_version'] not in (3,4): raise ValueError('unsupported JSON version')
     metadata=document.get('metadata',{})
@@ -81,24 +88,27 @@ def json_model(stream):
     return result,document.get('mpc')
 
 def regress(coefficients, empties, depth, shallow, parity):
+    """MPC の回帰係数から、空きマス数・探索深さ・浅い探索深さ・パリティに応じた値を計算する。"""
     features=(1,empties,depth,shallow,parity,parity*empties,parity*shallow)
     keys=('constant','empties','depth','mpc_depth','parity','parity_times_empties','parity_times_mpc_depth')
     return sum(float(coefficients[key])*value for key,value in zip(keys,features))
 
 def rules(mpc):
+    """中盤探索（eval_search）と終盤完全探索（final_search）の MPC ルールを TSV 行として生成する。"""
     for exact,name,table in [(False,'eval_search','search_lv_by_depth'),(True,'final_search','search_lv_by_empties')]:
         config=mpc[name]
         for depth in range(12 if exact else 4,61):
             shallow=config[table][depth]
             if type(shallow) is not int or not 0<=shallow<depth: continue
-            # Midgame regression depends on empties: preserve it in the sidecar,
-            # rather than silently freezing a coefficient at one stage.
+            # 中盤探索の回帰値は空きマス数に依存するため、特定の局面に固定せず
+            # 全範囲の空きマス数分をサイドカーファイル（.mpc.tsv）に出力する。
             for empties in ([depth] if exact else range(depth,61)):
                 a,b,std=(regress(config[key],empties,0 if exact else depth,shallow,depth%2 if exact else 0) for key in ('a','b','e_std'))
                 if all(math.isfinite(v) for v in (a,b,std)) and a>0 and std>=0:
                     yield f'{int(exact)}\t{depth}\t{empties}\t{shallow}\t{a:.17g}\t{b:.17g}\t{std:.17g}\n'
 
 def main():
+    """CLI 引数を解析し、入出力の重複や既存ファイルがないか確認したうえで変換を実行する。"""
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input',type=Path);parser.add_argument('output',type=Path)
     args=parser.parse_args()
