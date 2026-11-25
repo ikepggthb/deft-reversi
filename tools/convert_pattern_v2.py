@@ -4,7 +4,8 @@
 Usage: python3 tools/convert_pattern_v2.py INPUT OUTPUT
 Writes OUTPUT.mpc.tsv when regression data is present. The engine reads only DPR2;
 attach a calibration with `deft-reversi-train pack` (`--legacy-main` for models from main).
-Also reads the JSON written by tools/convert_legacy_eval.py.
+Also reads the legacy-pattern JSON of the removed tools/convert_legacy_eval.py
+(last in 3d6cbd2).
 """
 import argparse
 import hashlib

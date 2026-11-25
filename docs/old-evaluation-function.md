@@ -257,7 +257,7 @@ X.......          .X......
 | 10 | G1, F2, E3, D4, C5, B6, A7 | 7 | 2,187 |
 | 11 | H1, G2, F3, E4, D5, C6, B7, A8 | 8 | 6,561 |
 
-1つの `EvaluationScores` は、合計298,161個のパターン重み、128個の合法手数差重み、1個の定数項を持ちます。これが `2 parity × 31 phase` 存在するため、論理上の重みは18,493,980個です。`i16` の値だけで約35.3 MiB、JSON形式の [`eval.json`](../data/eval/eval.json) は約49 MiBです。
+1つの `EvaluationScores` は、合計298,161個のパターン重み、128個の合法手数差重み、1個の定数項を持ちます。これが `2 parity × 31 phase` 存在するため、論理上の重みは18,493,980個です。`i16` の値だけで約35.3 MiB、JSON形式の [`eval.json`](https://github.com/ikepggthb/deft-reversi/blob/3d6cbd2/data/eval/eval.json) は約49 MiBです（2.0のベータ版で削除。`3d6cbd2` まで残っている）。
 
 ## データ構造と関数の対応
 
@@ -431,4 +431,4 @@ simple_score
 - [`deft-reversi-engine/src/eval_simple.rs`](https://github.com/ikepggthb/deft-reversi/blob/5a17bdce4a0803cb59e49c39977a5bfc0bb3f021/deft-reversi-engine/src/eval_simple.rs) — move ordering用の補助評価
 - [`deft-reversi-engine/src/eval_search.rs`](https://github.com/ikepggthb/deft-reversi/blob/5a17bdce4a0803cb59e49c39977a5bfc0bb3f021/deft-reversi-engine/src/eval_search.rs) — 主評価の呼び出し元
 - [`deft-reversi-engine/src/move_list.rs`](https://github.com/ikepggthb/deft-reversi/blob/5a17bdce4a0803cb59e49c39977a5bfc0bb3f021/deft-reversi-engine/src/move_list.rs) — 補助評価の呼び出し元
-- [`data/eval/eval.json`](../data/eval/eval.json) — 学習済み重み
+- [`data/eval/eval.json`](https://github.com/ikepggthb/deft-reversi/blob/3d6cbd2/data/eval/eval.json) — 学習済み重み（削除済み。`3d6cbd2` まで）
