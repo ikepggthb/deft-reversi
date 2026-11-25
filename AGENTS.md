@@ -19,7 +19,7 @@ tools/desktop/book-verify.ps1 <path>   # .dbook / .dbook-work をCLIで読み込
 
 ## 研究ノート
 
-`local/notes/` は、オセロAIエンジンの研究ノートを置く別リポジトリ（`deft-reversi-notes`）。評価関数・探索・枝刈り・Bookの精度や強さ、速度の実験と、その考察を記録する。新しい環境ではクローンしておく。
+`local/notes/` は、リバーシAIエンジンの研究ノートを置く別リポジトリ（`deft-reversi-notes`）。評価関数・探索・枝刈り・Bookの精度や強さ、速度の実験と、その考察を記録する。新しい環境ではクローンしておく。
 
 ```powershell
 git clone git@github.com:ikepggthb/deft-reversi-notes.git local/notes

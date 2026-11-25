@@ -70,7 +70,7 @@ impl Turn {
             || self.board_size.unwrap_or(8) != 8
             || !self.blocked_squares.is_empty()
         {
-            return Err("FlipSight engine supports standard 8x8 Othello only".into());
+            return Err("FlipSight engine supports the standard 8x8 board only".into());
         }
         if self.board.len() != 64 {
             return Err("FlipSight board must have 64 cells".into());
