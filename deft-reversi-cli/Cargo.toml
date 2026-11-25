@@ -14,4 +14,6 @@ serde_json = "1"
 sha2 = "0.10"
 
 [features]
+# GTP logs each move's time budget and completed iterations to stderr.
+trace = []
 endgame-pattern-ordering = ["deft_reversi_book/endgame-pattern-ordering"]

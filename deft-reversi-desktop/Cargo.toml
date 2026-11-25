@@ -24,6 +24,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # Sound effects are made in code, so only playback is needed.
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
 
+[features]
+# Frame times while discs turn and search results go to stderr.
+trace = []
+
 [build-dependencies]
 # The icon and version information of the Windows executable.
 winresource = "0.1"

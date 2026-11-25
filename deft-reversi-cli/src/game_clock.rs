@@ -186,7 +186,7 @@ impl Ratio {
 }
 
 // Median ratios measured on cold tables (probe, 1 and 4 threads) and in
-// games (DEFT_GTP_LOG), see docs/benchmarks/2026-11-20-time-control-forecast.
+// games (GTP built with the `trace` feature), see docs/benchmarks/2026-11-20-time-control-forecast.
 // The soft target leaves room up to the hard limit for the upper tail. The
 // thread count barely changes the medians.
 /// Last midgame depth -> first endgame stage: about 5 from 20 to 31

@@ -220,6 +220,8 @@ perftはモデル不要。初期局面から深さ1〜Nまでの葉・パス・�
 
 対応コマンドは `protocol_version`・`name`・`version`・`known_command`・`list_commands`・`boardsize`・`clear_board`・`komi`・`play`・`genmove`・`time_settings`・`time_left`・`showboard`・`final_score`・`quit`。コマンド番号と `#` コメントを扱い、成功は `=番号`、失敗は `?番号` で返す。
 
+`--features trace` を付けてビルドすると、GTPは各手の時間の枠、使った時間、終えた反復を標準エラーへ出す（時間管理の調査用）。
+
 盤面サイズは8、コミは0のみ。`boardsize 8` と `clear_board` は盤面・TT・時計をリセットする。`time_settings MAIN 0 0` と `time_left COLOR REMAINING 0` に対応し、秒読みは扱わない。不正な引数、非数・負の時間、不正な着手や手番にはエラーを返して状態を維持する。`final_score` は終局後だけ、黒勝ちなら `B+差`、白勝ちなら `W+差`、引き分けなら `0`。時間設定の指定後は、その持ち時間を次のリセット時の基準にする。
 
 ## 検証

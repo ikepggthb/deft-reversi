@@ -247,7 +247,7 @@ fn generate(
         return Ok("pass".into());
     }
     let start = Instant::now();
-    let log = std::env::var_os("DEFT_GTP_LOG").is_some();
+    let log = cfg!(feature = "trace");
     let mut last = None;
     let mut steps = String::new();
     let tag = |kind: &ResultKind| match kind {

@@ -174,7 +174,7 @@ pub struct RootView {
     audio: AudioService,
     /// The window size at the last frame, saved on quit.
     pub(super) viewport: Option<(u32, u32)>,
-    /// `DEFT_DESKTOP_TRACE=1`: frame times while discs turn and search
+    /// With the `trace` feature, frame times while discs turn and search
     /// results go to stderr, for the measurements of §11.
     trace: Option<Vec<Instant>>,
     _quit: Subscription,
@@ -326,7 +326,7 @@ impl RootView {
             scroll_drag: None,
             audio: AudioService::spawn(),
             viewport: None,
-            trace: std::env::var_os("DEFT_DESKTOP_TRACE").map(|_| Vec::new()),
+            trace: cfg!(feature = "trace").then(Vec::new),
             _quit: quit,
             _appearance: cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
             focus,

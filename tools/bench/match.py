@@ -157,7 +157,8 @@ def engine(kind, mode, cpu):
     seconds = seconds_of(mode, kind)
     if kind == "deft":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
-        # DEFT_GTP_LOG=FILE: Deft logs each move's budget and time there.
+        # DEFT_GTP_LOG=FILE: stderr of Deft goes there; a CLI built with the
+        # `trace` feature logs each move's budget and time.
         return Gtp([*DEFT, *args, "--tt-mib", "64", "--threads", THREADS], cpu, log=os.environ.get("DEFT_GTP_LOG"))
     if kind == "deft-opp":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
