@@ -24,7 +24,7 @@
 
 ---
 
-Deft Reversi は、リバーシ（オセロ）の探索エンジンと関連ツール一式を収めたリポジトリです。探索エンジン本体をはじめ、Book ライブラリ、GPUI を使ったデスクトップアプリ、CLI、評価関数の学習ツールを同じワークスペースに置いています。
+Deft Reversi は、リバーシの探索エンジンと関連ツール一式を収めたリポジトリです。探索エンジン本体をはじめ、Book ライブラリ、GPUI を使ったデスクトップアプリ、CLI、評価関数の学習ツールを同じワークスペースに置いています。
 
 ## 構成
 
@@ -143,6 +143,43 @@ cargo run -p deft_reversi_train --release -- <サブコマンド>
 | ベンチマークの使い方 | [tools/bench/README.md](tools/bench/README.md) |
 | デスクトップ開発スクリプト | [tools/desktop/README.md](tools/desktop/README.md) |
 
+## 謝辞と出典
+
+### 移植したコード
+
+探索エンジンの一部は、次のリバーシエンジンのコードを Rust に移植したものです。移植した箇所は、各ソースファイルの先頭に「出典」として書いています。
+
+| 出典 | 移植したもの | Deft のファイル（`deft-reversi-engine/src/`） |
+| --- | --- | --- |
+| [Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0） | 合法手生成と着手の AVX2 版（奥原氏の手法と acepck 氏の最適化）、最終手で返る石数の計算（BMI2）、辺の確定石の表と確定石による枝刈り、空き 1〜4 マスのソルバ、高速な終盤の着手順序 | `board/moves.rs`、`board/flip.rs`、`board/last.rs`、`board/edge_stability.rs`、`board/stability.rs`、`search/endgame/last_four.rs`、`search/endgame/ordered.rs` |
+| [Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later） | 着手順序の深さ・窓・重み、スレッド専有の終盤置換表、孤立した空きマスを先に読む並べ替え | `search/ordering.rs`、`search/endgame/local_tt.rs`、`search/endgame/shallow.rs` |
+
+このほか、ProbCut を Null-Window のノードだけで試す（Edax）、静的評価が境界から遠いときは ProbCut の浅い探索を省く（Egaroucid）といった設計も参考にしています。ビットボードの手法は、奥原俊彦さんの解説（[bitboard tricks](http://www.amy.hi-ho.ne.jp/okuhara/bitboard.htm)）に多くを負っています。
+
+### 評価関数の学習データ
+
+評価モデル（`deft-eval-v4.dpr2`）は、山名琢翔さんが公開している [Egaroucid 学習データ](https://www.egaroucid.nyanyan.dev/ja/technology/train-data/) で学習しました。
+
+- Egaroucid 7.8.0 レベル11 と Edax 4.5.5 レベル11 の対戦棋譜（v0002）
+- Egaroucid 7.4.0 / 7.5.1 レベル17 によるデータ（石数 4〜13 の局面）
+
+これだけの量と質のデータを自由に使える形で公開していただいたおかげで、評価関数を作れました。心から感謝します。学習データは再配布が禁止されているため、このリポジトリにもリリースにも含めていません。使うときは配布ページから取得してください。
+
+> 山名琢翔: Egaroucid 学習データ, https://www.egaroucid.nyanyan.dev/ja/technology/train-data/
+
+### 定石名
+
+デスクトップ版の定石名リスト（[openings.txt](deft-reversi-desktop/assets/openings.txt)）は、うえのんさんの「[オセロ定石一覧(250種以上)](https://evaccaneer.livedoor.blog/archives/11101657.html)」（ブログ「レコちゃんも頑張ってるのに」）を使わせていただいています。ページには著作権を主張しないと書かれています。
+
+### 局面と開局
+
+- FFO の終盤問題（`ffo*.obf`、`fforum-*.obf`）は、フランスの連盟（Fédération Française d'Othello）の会誌 FFORUM に掲載された、プログラム向けの問題です。Edax にも同じものが同梱されています。
+- 対局のベンチマークに使う XOT の開局リストは、Matthias Berg さんの [XOT](https://berg.earthlingz.de/xot/) から取得します（リポジトリには含めていません。[tools/bench](tools/bench/README.md) を参照）。
+
+## 商標
+
+「オセロ」「Othello」は株式会社メガハウスの登録商標です。Deft Reversi は株式会社メガハウスおよび Othello Co. とは関係ありません。
+
 ## ライセンス
 
-[GPL-3.0-or-later](LICENSE)
+[GPL-3.0-or-later](LICENSE)（全文は [COPYING](COPYING)）。依存クレートのライセンスは、リリースに同梱する `THIRD-PARTY-NOTICES.txt` にまとめています（[tools/release](tools/release/README.md)）。
