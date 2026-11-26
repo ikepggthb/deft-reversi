@@ -135,7 +135,11 @@ struct Reply {
 /// エンジンおよび Book の初期化状態。
 enum SearchEngine {
     /// 別スレッドでモデルと Book を読み込み中。
-    Loading(Receiver<std::result::Result<ReadyEngine, String>>),
+    Loading {
+        receive: Receiver<std::result::Result<ReadyEngine, String>>,
+        /// 読み込み完了後にすぐ先読みを開始する保留局面。
+        pending_ponder: Option<Position>,
+    },
     // Box 化する理由: Engine はチャネル型に比べてサイズが非常に大きいため。
     /// 読み込みが完了し探索可能な状態。
     Ready(Box<ReadyEngine>),
@@ -200,11 +204,7 @@ impl ReadyEngine {
         if result.stop_reason == StopReason::WorkerFailed {
             return Err("ponder worker failed".into());
         }
-        let hit = match (next_position, result.best_move) {
-            (Some(actual), _) if actual == state.position => true,
-            (Some(actual), Some(predicted)) => state.position.play(predicted).ok() == Some(actual),
-            _ => false,
-        };
+        let hit = is_ponder_hit(state.position, next_position, result.kind, result.best_move);
         Ok(Some(PonderOutcome {
             hit,
             elapsed: result.elapsed,
@@ -212,23 +212,45 @@ impl ReadyEngine {
     }
 }
 
+/// 先読みが少なくとも 1 反復完了しており、予測した相手最善応手（またはパス後局面）が
+/// 実際の手番局面と一致した場合に `true` を返す。
+fn is_ponder_hit(
+    ponder_position: Position,
+    next_position: Option<Position>,
+    kind: Option<deft_reversi_engine::ResultKind>,
+    best_move: Option<Action>,
+) -> bool {
+    match (next_position, kind, best_move) {
+        (Some(actual), Some(_), _) if actual == ponder_position => true,
+        (Some(actual), Some(_), Some(predicted)) => {
+            ponder_position.play(predicted).ok() == Some(actual)
+        }
+        _ => false,
+    }
+}
+
 impl SearchEngine {
-    /// バックグラウンドスレッドでエンジンと Book の読み込みを開始する。
-    fn start(args: FlipsightArgs) -> Result<Self> {
+    /// バックグラウンドスレッドでエンジンと Book の読み込みを開始し、完了時に `notify` へ通知する。
+    fn start(args: FlipsightArgs, notify: mpsc::Sender<LoopEvent>) -> Result<Self> {
         let (send, receive) = mpsc::channel();
         thread::Builder::new()
             .name("flipsight-model".into())
             .spawn(move || {
-                let _ = send.send(ReadyEngine::load(args).map_err(|error| error.to_string()));
+                let loaded = ReadyEngine::load(args).map_err(|error| error.to_string());
+                let _ = send.send(loaded);
+                let _ = notify.send(LoopEvent::ModelReady);
             })?;
-        Ok(Self::Loading(receive))
+        Ok(Self::Loading {
+            receive,
+            pending_ponder: None,
+        })
     }
 
     /// 最大 `timeout` まで初期化完了を待ち、間に合えば [`ReadyEngine`] を返す。
     ///
     /// タイムアウトした場合は `Ok(None)` を返し、呼び出し側でフォールバック手を返せるようにする。
     fn wait(&mut self, timeout: Duration) -> Result<Option<&mut ReadyEngine>> {
-        if let Self::Loading(receive) = self {
+        if let Self::Loading { receive, .. } = self {
             match receive.recv_timeout(timeout) {
                 Ok(engine) => *self = Self::Ready(Box::new(engine?)),
                 Err(RecvTimeoutError::Timeout) => return Ok(None),
@@ -239,24 +261,62 @@ impl SearchEngine {
         }
         match self {
             Self::Ready(engine) => Ok(Some(engine)),
-            Self::Loading(_) => Ok(None),
+            Self::Loading { .. } => Ok(None),
+        }
+    }
+
+    /// モデル読み込み完了通知を受け取り、保留中の先読み局面があれば即座に開始する。
+    fn on_model_ready(&mut self) -> Result<()> {
+        let Self::Loading {
+            receive,
+            pending_ponder,
+        } = self
+        else {
+            return Ok(());
+        };
+        let pending = *pending_ponder;
+        match receive.try_recv() {
+            Ok(engine) => {
+                let mut ready = Box::new(engine?);
+                if let Some(position) = pending {
+                    ready.start_ponder(position);
+                }
+                *self = Self::Ready(ready);
+                Ok(())
+            }
+            Err(mpsc::TryRecvError::Empty) => Ok(()),
+            Err(mpsc::TryRecvError::Disconnected) => Err("engine initialization failed".into()),
         }
     }
 
     /// エンジンが初期化済みであれば実行中の先読み探索を停止し、結果を返す。
+    /// 読み込み中の場合は保留していた先読み局面を取り消す。
     fn stop_ponder(&mut self, next_position: Option<Position>) -> Result<Option<PonderOutcome>> {
         match self {
             Self::Ready(engine) => engine.stop_ponder(next_position),
-            Self::Loading(_) => Ok(None),
+            Self::Loading { pending_ponder, .. } => {
+                *pending_ponder = None;
+                Ok(None)
+            }
         }
     }
 
-    /// エンジンが初期化済みであれば指定局面での先読み探索を開始する。
+    /// 指定局面での先読み探索を開始する。モデル読み込み中の場合は完了時に開始できるよう保留する。
     fn start_ponder(&mut self, position: Position) -> Result<()> {
-        if let Self::Loading(receive) = self {
+        if position.is_terminal() {
+            return Ok(());
+        }
+        if let Self::Loading {
+            receive,
+            pending_ponder,
+        } = self
+        {
             match receive.try_recv() {
                 Ok(engine) => *self = Self::Ready(Box::new(engine?)),
-                Err(mpsc::TryRecvError::Empty) => return Ok(()),
+                Err(mpsc::TryRecvError::Empty) => {
+                    *pending_ponder = Some(position);
+                    return Ok(());
+                }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     return Err("engine initialization failed".into());
                 }
@@ -269,39 +329,47 @@ impl SearchEngine {
     }
 }
 
-/// 標準入力リーダースレッドからメインループへ送るイベント。
-enum StdinEvent {
+/// メインループで処理するイベント。
+enum LoopEvent {
     Line(String, Instant),
-    Error(io::Error),
+    StdinError(io::Error),
+    StdinClosed,
+    ModelReady,
 }
 
 /// 標準入力から手番リクエストを逐次読み取り、決定した手を標準出力へ書き出すメインループ。
 pub fn run(args: FlipsightArgs) -> Result<()> {
     let comm_per_turn = Duration::from_millis(args.comm_ms);
     let ponder = args.ponder;
+    let (event_tx, event_rx) = mpsc::channel();
     // 初手 JSON 到着前からモデルと Book の読み込みをバックグラウンドで先行開始する。
-    let mut engine = SearchEngine::start(args)?;
-    let (stdin_tx, stdin_rx) = mpsc::channel();
+    let mut engine = SearchEngine::start(args, event_tx.clone())?;
     thread::Builder::new()
         .name("flipsight-stdin".into())
         .spawn(move || {
             for line in io::stdin().lock().lines() {
                 let event = match line {
-                    Ok(line) => StdinEvent::Line(line, Instant::now()),
-                    Err(err) => StdinEvent::Error(err),
+                    Ok(line) => LoopEvent::Line(line, Instant::now()),
+                    Err(err) => LoopEvent::StdinError(err),
                 };
-                if stdin_tx.send(event).is_err() {
-                    break;
+                if event_tx.send(event).is_err() {
+                    return;
                 }
             }
+            let _ = event_tx.send(LoopEvent::StdinClosed);
         })?;
 
     let mut out = io::stdout().lock();
     let result = (|| -> Result<()> {
-        while let Ok(event) = stdin_rx.recv() {
+        while let Ok(event) = event_rx.recv() {
             let (line, received) = match event {
-                StdinEvent::Line(line, received) => (line, received),
-                StdinEvent::Error(err) => return Err(err.into()),
+                LoopEvent::Line(line, received) => (line, received),
+                LoopEvent::StdinError(err) => return Err(err.into()),
+                LoopEvent::StdinClosed => break,
+                LoopEvent::ModelReady => {
+                    engine.on_model_ready()?;
+                    continue;
+                }
             };
             if line.trim().is_empty() {
                 continue;
@@ -380,6 +448,16 @@ fn choose(
     let keep_generation = ponder_outcome.is_some();
     let result = engine.worker.with(|eng| {
         if budget.hard.is_zero() {
+            if reuse_pv {
+                let cached = SearchRequest::timed_levels(60, Duration::ZERO)
+                    .skip_pv_recovery()
+                    .reuse_pv()
+                    .keep_generation();
+                let res = eng.search(position, &cached)?;
+                if res.warm_score.is_some() {
+                    return Ok(res);
+                }
+            }
             game_clock::reflex(eng, position)
         } else {
             budget.search_with_options(eng, position, reuse_pv, keep_generation, |_| {})
@@ -471,5 +549,60 @@ mod tests {
         assert!(outcome.hit);
         assert!(ready.ponder.is_none());
         assert!(!ready.worker.is_busy());
+    }
+
+    #[test]
+    fn ponder_hit_requires_completed_iteration() {
+        let pos = Position::initial()
+            .play(Action::Place(Square::new(19).unwrap()))
+            .unwrap();
+        let first_reply = Action::Place(pos.legal_moves().next().unwrap());
+        let after_reply = pos.play(first_reply).unwrap();
+        assert!(!is_ponder_hit(
+            pos,
+            Some(after_reply),
+            None,
+            Some(first_reply)
+        ));
+        let completed = Some(deft_reversi_engine::ResultKind::Depth {
+            depth: 6,
+            selectivity: deft_reversi_engine::Selectivity::Full,
+        });
+        assert!(is_ponder_hit(
+            pos,
+            Some(after_reply),
+            completed,
+            Some(first_reply)
+        ));
+    }
+
+    #[test]
+    fn pending_ponder_starts_when_model_finishes_loading() {
+        let (send, receive) = mpsc::channel();
+        let mut search_engine = SearchEngine::Loading {
+            receive,
+            pending_ponder: None,
+        };
+        let pos = Position::initial()
+            .play(Action::Place(Square::new(19).unwrap()))
+            .unwrap();
+        search_engine.start_ponder(pos).unwrap();
+        let engine = Engine::new(
+            Model::from_pattern(PatternModel::zero()),
+            EngineOptions::default().threads(1).tt_mib(1),
+        )
+        .unwrap();
+        send.send(Ok(ReadyEngine {
+            worker: EngineWorker::new(engine),
+            book: None,
+            ponder: None,
+        }))
+        .unwrap();
+        search_engine.on_model_ready().unwrap();
+        let SearchEngine::Ready(ready) = &search_engine else {
+            panic!("engine should be ready");
+        };
+        assert!(ready.ponder.is_some());
+        let _ = search_engine.stop_ponder(None).unwrap();
     }
 }
