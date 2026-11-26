@@ -280,6 +280,32 @@ mod tests {
                 .is_err()
         );
         assert!(Cli::try_parse_from(["cli", "play", "-m", "m", "-l", "61"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "cli",
+                "gtp",
+                "-m",
+                "m",
+                "--level",
+                "5",
+                "--endgame",
+                "100:10"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "cli",
+                "gtp",
+                "-m",
+                "m",
+                "--game-ms",
+                "1",
+                "--endgame",
+                "100:10"
+            ])
+            .is_err()
+        );
         let cli = Cli::try_parse_from(["cli", "perft", "9", "--count-pass"]).unwrap();
         assert!(matches!(cli.command, Command::Perft(_)));
     }

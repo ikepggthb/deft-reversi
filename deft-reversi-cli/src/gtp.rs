@@ -1,6 +1,6 @@
 //! CLI ベースの自動対局向けに GTP（Go Text Protocol v2）を提供するモジュール。
 //!
-//! 固定レベル探索（`--level`）または持ち時間制（`--game-ms` / `time_settings` / `time_left`）で動作し、
+//! 固定レベル探索（`--level`、`--endgame` で終盤の段階を上書きできる）または持ち時間制（`--game-ms` / `time_settings` / `time_left`）で動作し、
 //! 8x8 盤面・コミ 0・切れ負けルールのコマンドを受け付ける。
 
 use crate::{
@@ -19,8 +19,8 @@ use std::{
 
 /// GTP セッションの時間／探索制御モード。
 enum Mode {
-    /// 固定エンジンレベル（1〜60）で探索するモード。
-    Level(u8),
+    /// 固定エンジンレベル（1〜60。終盤の段階を上書きした探索計画を含む）で探索するモード。
+    Level(Goal),
     /// 黒番・白番の残り持ち時間に応じて時間配分するモード。
     Time {
         /// 黒番（添字 0）と白番（添字 1）の残り時間。
@@ -81,12 +81,27 @@ pub struct GtpArgs {
     /// 1 人あたりの総持ち時間（ミリ秒）。
     #[arg(long)]
     game_ms: Option<u64>,
+    /// `--level` の終盤の段階を上書きする `PERCENT:EMPTIES`（複数回またはカンマ区切りで指定可。0 で無効化）。
+    #[arg(long, conflicts_with = "game_ms", value_delimiter = ',', value_parser = crate::settings::endgame_stage)]
+    endgame: Vec<crate::settings::EndgameStage>,
+}
+
+/// `--level` と `--endgame` から固定レベルの探索目標を作る。上書きがなければレベルそのまま。
+fn level_goal(level: u8, stages: &[crate::settings::EndgameStage]) -> Goal {
+    if stages.is_empty() {
+        return Goal::Level(level);
+    }
+    let mut plan = crate::settings::plan(Goal::Level(level));
+    for stage in stages {
+        plan = plan.endgame(stage.selectivity, stage.empties);
+    }
+    Goal::Plan(plan)
 }
 
 /// 標準入力から GTP コマンドを 1 行ずつ読み取り、応答（`=id ...` / `?id ...`）を標準出力へ返す。
 pub fn run(args: GtpArgs) -> Result<()> {
     let mut mode = match args.level {
-        Some(level) => Mode::Level(level),
+        Some(level) => Mode::Level(level_goal(level, &args.endgame)),
         None => Mode::Time {
             remaining: [Duration::from_millis(args.game_ms.unwrap()); 2],
         },
@@ -277,8 +292,8 @@ fn generate(
     };
     let mut limit = Duration::ZERO;
     let action = match mode {
-        Mode::Level(l) => {
-            let request = SearchRequest::new(Goal::Level(*l));
+        Mode::Level(goal) => {
+            let request = SearchRequest::new(*goal);
             let _armed = stop::arm(request.stop_handle());
             searched_action(engine.search_with(next, &request, report))
         }
@@ -345,5 +360,27 @@ mod tests {
             assert!(seconds(Some(&text)).is_err());
         }
         assert_eq!(seconds(Some(&"0.125")).unwrap(), Duration::from_millis(125));
+    }
+    #[test]
+    fn endgame_stages_override_the_level() {
+        use deft_reversi_engine::Selectivity;
+        assert_eq!(level_goal(5, &[]), Goal::Level(5));
+        let stages: Vec<_> = ["85:0", "95:0", "98:0", "99:0", "100:10"]
+            .iter()
+            .map(|s| crate::settings::endgame_stage(s).unwrap())
+            .collect();
+        let plan = crate::settings::plan(level_goal(5, &stages));
+        let level = crate::settings::plan(Goal::Level(5));
+        assert_eq!(plan.midgame_depth(), level.midgame_depth());
+        assert_eq!(plan.midgame_selectivity(), level.midgame_selectivity());
+        assert_eq!(plan.endgame_limit(Selectivity::Full), 10);
+        for selectivity in [
+            Selectivity::Percent85,
+            Selectivity::Percent95,
+            Selectivity::Percent98,
+            Selectivity::Percent99,
+        ] {
+            assert_eq!(plan.endgame_limit(selectivity), 0);
+        }
     }
 }
