@@ -26,7 +26,7 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native \
 
 FFO・中盤の計測では、Deftの設定ごとにCLI・Engine・BookライブラリのバージョンとGitコミットを標準エラーに表示します。GTP対局ではエンジン側の標準エラーをログに記録します。
 
-場所を変えるときは `local/bench.toml` に同じキーで書きます（リポジトリからの相対パスか絶対パス）。`edax` / `egaroucid` で始まる別のキー（`edax-4.7` など）を足すと、そのキーをエンジン名として `ffo.py`・`match.py` に渡せます。Edax の2つの版を同じ測定に並べるときに使います。
+場所を変えるときは `local/bench.toml` に同じキーで書きます（リポジトリからの相対パスか絶対パス）。`edax` / `egaroucid` で始まる別のキー（`"edax-4.7" = "..."` など。TOML では `.` を含むキーを引用符で囲む）を足すと、そのキーをエンジン名として `ffo.py`・`match.py` に渡せます。Edax の2つの版を同じ測定に並べるときに使います。
 
 ## 完全読み：[ffo.py](ffo.py)
 
