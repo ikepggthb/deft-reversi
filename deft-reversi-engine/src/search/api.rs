@@ -261,6 +261,7 @@ pub struct SearchRequest {
     pub(super) preferred_move: Option<crate::Square>,
     pub(super) minimum_score: Option<i32>,
     pub(super) reuse_pv: bool,
+    pub(super) keep_generation: bool,
     pub(super) recover_endgame_pv: bool,
     pub(super) recover_pv: bool,
     pub(super) skip_pv_recovery: bool,
@@ -281,6 +282,7 @@ impl SearchRequest {
             preferred_move: None,
             minimum_score: None,
             reuse_pv: false,
+            keep_generation: false,
             recover_endgame_pv: false,
             recover_pv: false,
             skip_pv_recovery: false,
@@ -324,6 +326,11 @@ impl SearchRequest {
     /// 目標イテレーション自体は要求されたルートマスクで引き続き探索します。
     pub fn reuse_pv(mut self) -> Self {
         self.reuse_pv = true;
+        self
+    }
+    /// 探索開始時に置換表の世代番号を進めず、直前の探索（先読みなど）と同一世代として扱います。
+    pub fn keep_generation(mut self) -> Self {
+        self.keep_generation = true;
         self
     }
     /// 完了した終盤選択ステージで短くなった PV（最善応手手順）の延長を試みます。
@@ -463,6 +470,9 @@ pub struct SearchResult {
     pub best_move: Option<Action>,
     /// 1 つもイテレーションが完了しなかった場合は `None` になります。
     pub score: Option<i32>,
+    /// ウォームスタート（`reuse_pv`）で置換表から再利用した評価値です。
+    /// 最初の反復完了前に中断して `score` が `None` になった場合でも、暫定評価値として参照できます。
+    pub warm_score: Option<i32>,
     /// 最終イテレーションがマスク全体に対する上界だけを証明した場合に `true` になります。
     pub score_is_upper_bound: bool,
     /// 最後に完了したイテレーション種別です（`score` が `None` なら `None`）。

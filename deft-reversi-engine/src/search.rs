@@ -264,6 +264,7 @@ impl Engine {
         Ok(Job {
             minimum_score: request.minimum_score,
             reuse_pv: request.reuse_pv,
+            keep_generation: request.keep_generation,
             recover_endgame_pv: request.recover_endgame_pv,
             recover_pv: request.recover_pv,
             skip_pv_recovery: request.skip_pv_recovery,
@@ -312,6 +313,7 @@ impl Engine {
             };
             let mut result = self.run(passed, &mut forward)?;
             result.score = result.score.map(|score| -score);
+            result.warm_score = result.warm_score.map(|score| -score);
             result.best_move = Some(Action::Pass);
             if result.kind.is_some_and(searched) {
                 result.pv.insert(0, Action::Pass);
@@ -341,7 +343,9 @@ impl Engine {
         // 各 TT エントリは自身の品質タグ (`quality`) と完全読みモードを保持しており、
         // 同一条件のエントリだけが枝刈りに使われます。そのため異なるステージ間でも置換表をクリアせずに維持できます
         // （較正パラメータが変更された場合だけクリアします）。
-        self.generation = self.generation.wrapping_add(1);
+        if !job.keep_generation {
+            self.generation = self.generation.wrapping_add(1);
+        }
         let start = Instant::now();
         let deadline = match job.time_limit {
             Some(d) => Some(
@@ -381,6 +385,7 @@ impl Engine {
             // キャッシュされていない最初の反復中に時間切れになった場合、
             // 最小合法マスよりも互換性のあるキャッシュ済みの手のほうがよい暫定手になります。
             result.best_move = Some(Action::Place(square));
+            result.warm_score = Some(score);
             root.restrict(mask, Some(square));
             context.stats.reused_iterations += skip as u64;
             (skip, score)
@@ -642,6 +647,7 @@ impl Engine {
 struct Job {
     minimum_score: Option<i32>,
     reuse_pv: bool,
+    keep_generation: bool,
     recover_endgame_pv: bool,
     recover_pv: bool,
     skip_pv_recovery: bool,
@@ -680,6 +686,7 @@ fn initial_result(board: Board) -> SearchResult {
     SearchResult {
         best_move,
         score: None,
+        warm_score: None,
         score_is_upper_bound: false,
         kind: None,
         pv: Vec::new(),
@@ -999,6 +1006,7 @@ mod warm_start_tests {
         assert_eq!(stopped.best_move, Some(Action::Place(best)));
         assert_eq!(stopped.kind, None);
         assert_eq!(stopped.score, None);
+        assert_eq!(stopped.warm_score, Some(0));
 
         let excluded = engine
             .search(
@@ -1019,5 +1027,27 @@ mod warm_start_tests {
         );
         assert_eq!(warmed.score, Some(0));
         assert!(!warmed.score_is_upper_bound);
+    }
+
+    #[test]
+    fn keep_generation_preserves_tt_generation() {
+        let mut engine = Engine::new(
+            crate::Model::from_pattern(crate::PatternModel::zero()),
+            EngineOptions::default().tt_mib(1),
+        )
+        .unwrap();
+        let board = Board::new();
+        engine
+            .search(board, &SearchRequest::new(Goal::Depth(2)))
+            .unwrap();
+        let gen_after_first = engine.generation;
+        engine
+            .search(board, &SearchRequest::new(Goal::Depth(2)).keep_generation())
+            .unwrap();
+        assert_eq!(engine.generation, gen_after_first);
+        engine
+            .search(board, &SearchRequest::new(Goal::Depth(2)))
+            .unwrap();
+        assert_eq!(engine.generation, gen_after_first.wrapping_add(1));
     }
 }

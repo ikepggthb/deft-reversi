@@ -50,20 +50,41 @@ impl Budget {
         }
     }
 
+    /// 先読みで相手の最善応手（PV）が的中した場合に、先読み済み時間に応じて `soft` 目標を短縮し
+    /// 持ち時間を終盤へ温存する（`hard` 上限は維持し、最善手が揺らいだ際の延長余地は残す）。
+    pub fn with_ponder_hit(mut self, ponder_elapsed: Duration) -> Self {
+        let min_soft = self.soft / 2;
+        self.soft = self.soft.saturating_sub(ponder_elapsed / 2).max(min_soft);
+        self
+    }
+
     /// 予算 `self` に従って反復深化探索を実行し、次段階が予算を超えると予測した時点で停止する。
     pub fn search(
         self,
         engine: &mut Engine,
         pos: Position,
         reuse_pv: bool,
+        report: impl FnMut(&Progress),
+    ) -> Result<SearchResult, EngineError> {
+        self.search_with_options(engine, pos, reuse_pv, false, report)
+    }
+
+    /// `reuse_pv` と `keep_generation` を指定して反復深化探索を実行する。
+    pub fn search_with_options(
+        self,
+        engine: &mut Engine,
+        pos: Position,
+        reuse_pv: bool,
+        keep_generation: bool,
         mut report: impl FnMut(&Progress),
     ) -> Result<SearchResult, EngineError> {
-        let request = SearchRequest::timed_levels(60, self.hard).skip_pv_recovery();
-        let request = if reuse_pv {
-            request.reuse_pv()
-        } else {
-            request
-        };
+        let mut request = SearchRequest::timed_levels(60, self.hard).skip_pv_recovery();
+        if reuse_pv {
+            request = request.reuse_pv();
+        }
+        if keep_generation {
+            request = request.keep_generation();
+        }
         let handle = request.stop_handle();
         let _armed = stop::arm(handle.clone());
         let mut forecast = Forecast {
@@ -448,5 +469,20 @@ mod tests {
         }
         assert!(Budget::new(22, left, left).hard < left);
         assert_eq!(Budget::new(1, left, left).soft, left);
+    }
+
+    #[test]
+    fn ponder_hit_trims_soft_budget_without_lowering_hard_cap() {
+        let ms = Duration::from_millis;
+        let base = Budget {
+            soft: ms(2000),
+            hard: ms(4000),
+        };
+        let partial = base.with_ponder_hit(ms(1000));
+        assert_eq!(partial.soft, ms(1500));
+        assert_eq!(partial.hard, ms(4000));
+        let capped = base.with_ponder_hit(ms(10_000));
+        assert_eq!(capped.soft, ms(1000));
+        assert_eq!(capped.hard, ms(4000));
     }
 }
