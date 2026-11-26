@@ -3,7 +3,7 @@
 //! ## 出典
 //!
 //! AVX2 版は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `flip_avx_acepck.c`（奥原俊彦氏作、acepck 氏の最適化
-//! <https://github.com/Nyanyan/Egaroucid/pull/293>）を Rust に移植したものです。
+//! <https://github.com/Nyanyan/Egaroucid/pull/293>）を参考にして書いたものです。
 //! `LR_MASK` は Edax の `MASK_LR` 表と同じ内容です。
 
 #[cfg(target_feature = "avx2")]

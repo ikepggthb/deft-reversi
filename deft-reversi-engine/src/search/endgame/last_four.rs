@@ -3,7 +3,7 @@
 //!
 //! ## 出典
 //!
-//! 空き 1〜4 マスのカーネル、象限パリティとマス価値（`SQUARE_VALUE`）による並べ替え、`NEIGHBOUR` 表は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `endgame.c`・`move.c` を移植した旧 Deft の実装を引き継いだものです。
+//! 空き 1〜4 マスのカーネル、象限パリティとマス価値（`SQUARE_VALUE`）による並べ替え、`NEIGHBOUR` 表は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `endgame.c`・`move.c` を参考に旧 Deft で書いた実装を引き継いだものです。
 use super::parity::QUADRANT_ID;
 use super::*;
 const SCORE_MAX: i32 = 64;
