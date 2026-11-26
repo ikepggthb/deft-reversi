@@ -1,0 +1,106 @@
+name: Release CLI
+
+# On a pull request to main, build the CLI archives to check the packaging.
+# On a cli-v* tag, also attach them to a draft pre-release for review.
+on:
+  push:
+    tags: ["cli-v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Zed's repository is large; the git CLI fetches it faster than libgit2.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  # The engine picks its AVX2 and BMI2 kernels at compile time.
+  RUSTFLAGS: -Ctarget-cpu=x86-64-v3
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe: deft-reversi-cli.exe
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            exe: deft-reversi-cli
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # rust-toolchain.toml selects the version.
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-cli
+      - name: Version
+        id: version
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps --locked \
+            | python -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "deft-reversi-cli"))')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "cli-v$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the CLI version $version"
+            exit 1
+          fi
+      - name: Build
+        run: cargo build --release --locked -p deft-reversi-cli
+      - name: Smoke test
+        run: |
+          cli=target/release/${{ matrix.exe }}
+          "$cli" --version
+          "$cli" perft 8 | grep -E '^ +8 \| +390216 \|'
+      - name: Package
+        id: package
+        run: |
+          name=deft-reversi-cli-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          mkdir -p "dist/$name"
+          cp target/release/${{ matrix.exe }} COPYING "dist/$name/"
+          cp deft-reversi-cli/README.md "dist/$name/README.md"
+          python tools/release/third_party_notices.py --package deft-reversi-cli \
+            --target ${{ matrix.target }} --out "dist/$name/THIRD-PARTY-NOTICES.txt"
+          cd dist
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+            echo "file=$name.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar czf "$name.tar.gz" "$name"
+            echo "file=$name.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/${{ steps.package.outputs.file }}
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --draft --prerelease --title "$GITHUB_REF_NAME" \
+            --notes "Draft: write the release notes before publishing."
