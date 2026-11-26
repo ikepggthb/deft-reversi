@@ -1,0 +1,527 @@
+//! ルート局面における探索制御を担当するモジュールです。
+//!
+//! - PVS（Principal Variation Search：最初の有力な手だけを広い探索窓で調べ、2 番目以降の手はまず幅 1 の狭い窓で
+//!   「最善手を更新しないか」だけを高速に確認し、更新しそうな場合だけ広い窓で探索し直す手法）
+//! - 各候補手の上界・下界キャッシュ（[`RootBound`]）
+//! - Aspiration Window（前の深さで得た予測スコアの周辺に狭い探索窓を設定し、外れた場合だけ窓を段階的に広げて
+//!   再探索する手法）
+use super::*;
+
+/// ルート候補手ごとのスコア下界・上界ペアです。
+/// Aspiration Window の再探索で同じ手を調べ直す際に、前回の探索で確定した境界を再利用して探索窓を狭めます。
+#[derive(Clone, Copy)]
+pub(super) struct RootBound {
+    lower: i32,
+    upper: i32,
+}
+impl RootBound {
+    /// 未探索時の初期境界（-64..=64）です。
+    const UNBOUNDED: Self = Self {
+        lower: -64,
+        upper: 64,
+    };
+    /// 現在の `[alpha, beta]` 窓に対して既に境界が確定している場合はそのスコアを返します。
+    fn cutoff(self, alpha: i32, beta: i32) -> Option<i32> {
+        if self.lower == self.upper || self.lower >= beta {
+            Some(self.lower)
+        } else if self.upper <= alpha {
+            Some(self.upper)
+        } else {
+            None
+        }
+    }
+    /// `[alpha, beta]` 窓の探索結果 `score` で上下界を更新し、値が確定していればその正確な値を返します。
+    pub(super) fn update(&mut self, score: i32, alpha: i32, beta: i32) -> i32 {
+        if score <= alpha {
+            self.upper = self.upper.min(score);
+        } else if score >= beta {
+            self.lower = self.lower.max(score);
+        } else {
+            self.lower = score;
+            self.upper = score;
+        }
+        debug_assert!(self.lower <= self.upper);
+        if self.lower == self.upper {
+            self.lower
+        } else {
+            score
+        }
+    }
+}
+
+/// ルート局面の探索状態（候補手リストと各マスごとの境界テーブル）を管理する構造体です。
+pub(super) struct RootSearch {
+    position: Position,
+    candidates: Vec<Candidate>,
+    bounds: [RootBound; 64],
+}
+impl RootSearch {
+    /// ルート局面の全合法手を候補リストとして初期化します。
+    pub(super) fn new(position: Position) -> Self {
+        let mut moves = position.board.get_moves();
+        let mut candidates = Vec::new();
+        while moves != 0 {
+            let bit = moves.isolate_lowest_one();
+            moves &= moves - 1;
+            candidates.push(Candidate {
+                square: Square::lowest(bit),
+                flips: position.board.flip_mask(bit),
+                ordering: 0,
+            });
+        }
+        Self {
+            position,
+            candidates,
+            bounds: [RootBound::UNBOUNDED; 64],
+        }
+    }
+    /// 候補手を `mask` に含まれるマスだけに絞り、`preferred` が含まれていれば先頭へ移動します。
+    pub(super) fn restrict(&mut self, mask: u64, preferred: Option<Square>) {
+        self.candidates
+            .retain(|c| mask & (1u64 << c.square.index()) != 0);
+        if let Some(square) = preferred
+            && let Some(i) = self.candidates.iter().position(|c| c.square == square)
+        {
+            self.candidates.swap(0, i);
+        }
+    }
+    /// 1 イテレーション分のルート探索を実行します。
+    /// 途中で中断された場合は、直前の先頭候補（前回までの最善手）が別の手に意図せず入れ替わらないよう順序を元に戻します。
+    pub(super) fn iteration(
+        &mut self,
+        context: &mut Context,
+        spec: SearchSpec,
+        prediction: i32,
+    ) -> Result<Line, Aborted> {
+        self.bounds.fill(RootBound::UNBOUNDED);
+        let previous = self.candidates.first().copied();
+        let outcome = self.aspiration(context, spec, prediction);
+        if outcome.is_err()
+            && let Some(previous) = previous
+            && let Some(index) = self
+                .candidates
+                .iter()
+                .position(|c| c.square == previous.square)
+        {
+            self.candidates.swap(0, index);
+        }
+        outcome
+    }
+    /// 選択されたルート手のいずれも `minimum` 以上に届かないかを Null-Window（`[minimum-1, minimum]`）で判定します。
+    pub(super) fn below_minimum(
+        &mut self,
+        context: &mut Context,
+        spec: SearchSpec,
+        minimum: i32,
+    ) -> Result<bool, Aborted> {
+        self.bounds.fill(RootBound::UNBOUNDED);
+        Ok(self.window(context, spec, minimum - 1, minimum)?.score < minimum)
+    }
+    /// `mask` で指定されたルート合法手をそれぞれフルウィンドウ（`-64..=64`）で評価し、スコア降順で返します。
+    /// `on_move` にはその時点までに評価完了した手が良い順で逐次渡されます。
+    pub(super) fn move_scores(
+        &self,
+        context: &mut Context,
+        spec: SearchSpec,
+        mask: u64,
+        keep_pv: bool,
+        on_move: OnMove<'_>,
+    ) -> Result<Vec<ScoredMove>, Aborted> {
+        let candidates: Vec<_> = self
+            .candidates
+            .iter()
+            .copied()
+            .filter(|c| c.square.bit() & mask != 0)
+            .collect();
+        let can_split = context.runtime.parallel && candidates.len() >= 3 && spec.depth >= 8;
+        let mut moves = if can_split {
+            score_parallel(context, self.position, spec, candidates, keep_pv, on_move)?
+        } else {
+            let mut moves = Vec::with_capacity(candidates.len());
+            for candidate in candidates {
+                moves.push(score_candidate(
+                    context,
+                    self.position,
+                    spec,
+                    candidate,
+                    keep_pv,
+                )?);
+                on_move(context, &best_first(moves.iter().map(|(entry, _)| *entry)));
+            }
+            moves
+        };
+        moves.sort_by_key(|(entry, _)| std::cmp::Reverse(entry.score));
+        Ok(moves)
+    }
+    /// 予測値 `prediction` を中心に Aspiration Window を設定し、スコアが窓内に収まって収束するまで再探索します。
+    fn aspiration(
+        &mut self,
+        context: &mut Context,
+        spec: SearchSpec,
+        prediction: i32,
+    ) -> Result<Line, Aborted> {
+        if spec.depth <= 10 {
+            return self.window(context, spec, -64, 64);
+        }
+        let radius = if spec.exact {
+            (10 - i32::from(self.position.board.empty_count())).max(2 + prediction.rem_euclid(2))
+        } else if spec.depth > 16 {
+            2
+        } else {
+            6
+        };
+        let mut score = prediction;
+        let mut best = Line::leaf(score);
+        for retry in 0..10 {
+            let previous = score;
+            let width = retry.max(1) * radius;
+            let (mut left, mut right) = (width, width);
+            loop {
+                let (alpha, beta) = aspiration_window(score, left, right, spec.exact);
+                let (alpha, beta) = (alpha.max(-64), beta.min(64));
+                if alpha >= beta {
+                    break;
+                }
+                best = self.window(context, spec, alpha, beta)?;
+                score = best.score;
+                if (score <= -64 && alpha == -64) || (score >= 64 && beta == 64) {
+                    break;
+                }
+                if score <= alpha && left != 0 {
+                    left = (left * 2).min(128);
+                    right = 0;
+                } else if score >= beta && right != 0 {
+                    right = (right * 2).min(128);
+                    left = 0;
+                } else {
+                    break;
+                }
+            }
+            if score == previous {
+                break;
+            }
+        }
+        Ok(best)
+    }
+    fn candidate(
+        &mut self,
+        context: &mut Context,
+        index: usize,
+        spec: SearchSpec,
+        alpha: i32,
+        beta: i32,
+    ) -> Result<Line, Aborted> {
+        let candidate = self.candidates[index];
+        let bound = &mut self.bounds[candidate.square.index() as usize];
+        let reuse = spec.exact && !context.runtime.selective();
+        if reuse && let Some(score) = bound.cutoff(alpha, beta) {
+            return Ok(root_line(candidate.action(), score));
+        }
+        let (low, high) = if reuse {
+            (alpha.max(bound.lower), beta.min(bound.upper))
+        } else {
+            (alpha, beta)
+        };
+        let child = context.node(
+            candidate.child(self.position, true),
+            -high,
+            -low,
+            SearchSpec {
+                depth: spec.depth - 1,
+                ..spec
+            },
+        )?;
+        let mut line = Line::prepend(candidate.action(), &child);
+        if reuse {
+            line.score = bound.update(line.score, low, high);
+        }
+        Ok(line)
+    }
+    fn window(
+        &mut self,
+        context: &mut Context,
+        spec: SearchSpec,
+        mut alpha: i32,
+        beta: i32,
+    ) -> Result<Line, Aborted> {
+        if context.aborted() {
+            return Err(Aborted);
+        }
+        if self.candidates.is_empty() || spec.depth == 0 {
+            return context.node(self.position, alpha, beta, spec);
+        }
+        context.enter()?;
+        let reuse = spec.exact && !context.runtime.selective();
+        let mut best = self.candidate(context, 0, spec, alpha, beta)?;
+        if best.score >= beta {
+            return Ok(best);
+        }
+        alpha = alpha.max(best.score);
+        // ルートノードでも YBWC による並列分割を行います（各ワーカーはスコア専用の置換表ルールを共有します）。
+        let split = context.runtime.parallel
+            && self.candidates.len() >= 3
+            && if spec.exact {
+                self.position.board.empty_count() >= context.exact_split_empties()
+            } else {
+                spec.depth >= tree::SPLIT_DEPTH
+            };
+        if split && context.runtime.pool.can_offer(&context.ancestors) {
+            let bounds = reuse.then(|| Arc::new(Mutex::new(self.bounds)));
+            let line = context.split(
+                self.position,
+                self.candidates[1..].to_vec(),
+                (alpha, beta),
+                SearchSpec {
+                    depth: spec.depth - 1,
+                    ..spec
+                },
+                best,
+                bounds.clone(),
+            )?;
+            if let Some(bounds) = bounds {
+                self.bounds = *parallel::lock(&bounds);
+            }
+            if let Some(action) = line.actions[0]
+                && let Some(index) = self.candidates.iter().position(|c| c.action() == action)
+            {
+                self.candidates.swap(0, index);
+            }
+            return Ok(line);
+        }
+        let mut best_index = 0;
+        for index in 1..self.candidates.len() {
+            if context.aborted() {
+                return Err(Aborted);
+            }
+            let candidate = self.candidates[index];
+            let bound = self.bounds[candidate.square.index() as usize];
+            if reuse && bound.lower >= beta {
+                self.candidates.swap(0, index);
+                return Ok(root_line(candidate.action(), bound.lower));
+            }
+            if reuse && bound.upper <= alpha {
+                if bound.upper > best.score {
+                    best = root_line(candidate.action(), bound.upper);
+                    best_index = index;
+                }
+                continue;
+            }
+            let child = context.node(
+                candidate.child(self.position, true),
+                -alpha - 1,
+                -alpha,
+                SearchSpec {
+                    depth: spec.depth - 1,
+                    ..spec
+                },
+            )?;
+            let mut line = Line::prepend(candidate.action(), &child);
+            if reuse {
+                line.score = self.bounds[candidate.square.index() as usize].update(
+                    line.score,
+                    alpha,
+                    alpha + 1,
+                );
+            }
+            if line.score >= beta {
+                self.candidates.swap(0, index);
+                return Ok(line);
+            }
+            if line.score > alpha {
+                line = self.candidate(context, index, spec, alpha, beta)?;
+                if line.score >= beta {
+                    self.candidates.swap(0, index);
+                    return Ok(line);
+                }
+                if line.score > alpha {
+                    alpha = line.score;
+                    best = line;
+                    best_index = index;
+                }
+            }
+        }
+        self.candidates.swap(0, best_index);
+        Ok(best)
+    }
+}
+fn root_line(action: Action, score: i32) -> Line {
+    let mut line = Line::leaf(score);
+    line.actions[0] = Some(action);
+    line.len = 1;
+    line
+}
+
+type ScoredMove = (MoveScore, Vec<Action>);
+/// それまでに評価完了したルート手（良い順）を受け取るコールバック型です。
+type OnMove<'a> = &'a mut dyn FnMut(&Context, &[MoveScore]);
+
+/// スコア済み候補手をスコア降順に並べて返します。
+fn best_first(moves: impl Iterator<Item = MoveScore>) -> Vec<MoveScore> {
+    let mut moves: Vec<_> = moves.collect();
+    moves.sort_by_key(|entry| std::cmp::Reverse(entry.score));
+    moves
+}
+
+/// 1 つのルート候補手をフルウィンドウ（`-64..=64`）で評価し、必要なら PV も返します。
+fn score_candidate(
+    context: &mut Context,
+    position: Position,
+    spec: SearchSpec,
+    candidate: Candidate,
+    keep_pv: bool,
+) -> Result<ScoredMove, Aborted> {
+    let child = context.node(
+        candidate.child(position, true),
+        -64,
+        64,
+        SearchSpec {
+            depth: spec.depth - 1,
+            ..spec
+        },
+    )?;
+    let action = candidate.action();
+    let pv = if keep_pv {
+        std::iter::once(action)
+            .chain(child.actions[..child.len].iter().flatten().copied())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok((
+        MoveScore {
+            action,
+            score: -child.score,
+        },
+        pv,
+    ))
+}
+
+// 各候補手は独立した探索窓を持つため、候補ごとにエンジンを複製せず、
+// 通常のワーカープールと共有の停止制御を再利用して並列評価します。
+struct CandidateBatch {
+    position: Position,
+    spec: SearchSpec,
+    candidates: Vec<Candidate>,
+    keep_pv: bool,
+    next: AtomicUsize,
+    results: Mutex<Vec<Option<ScoredMove>>>,
+}
+
+impl CandidateBatch {
+    /// 呼び出し元スレッドは `on_move` を渡し、自身の手が 1 つ終わるたびに
+    /// 他スレッド分も含めた完了済み結果を通知します。
+    fn run(&self, context: &mut Context, mut on_move: Option<OnMove<'_>>) -> Result<(), Aborted> {
+        while !context.aborted() {
+            let index = self.next.fetch_add(1, Ordering::Relaxed);
+            let Some(&candidate) = self.candidates.get(index) else {
+                return Ok(());
+            };
+            let result =
+                score_candidate(context, self.position, self.spec, candidate, self.keep_pv)?;
+            let done = {
+                let mut results = parallel::lock(&self.results);
+                results[index] = Some(result);
+                on_move
+                    .is_some()
+                    .then(|| best_first(results.iter().flatten().map(|(entry, _)| *entry)))
+            };
+            if let (Some(on_move), Some(done)) = (on_move.as_mut(), done) {
+                on_move(context, &done);
+            }
+        }
+        Err(Aborted)
+    }
+}
+
+fn score_parallel(
+    context: &mut Context,
+    position: Position,
+    spec: SearchSpec,
+    candidates: Vec<Candidate>,
+    keep_pv: bool,
+    on_move: OnMove<'_>,
+) -> Result<Vec<ScoredMove>, Aborted> {
+    let count = candidates.len();
+    let batch = Arc::new(CandidateBatch {
+        position,
+        spec,
+        candidates,
+        keep_pv,
+        next: AtomicUsize::new(0),
+        results: Mutex::new(vec![None; count]),
+    });
+    let runtime = context.runtime.clone();
+    for _ in 1..count {
+        let batch = batch.clone();
+        let worker = runtime.clone();
+        runtime.pending.fetch_add(1, Ordering::AcqRel);
+        let job = Box::new(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut context = Context::new(worker.clone(), Vec::new(), Vec::new());
+                let epoch = worker.cache_epoch;
+                context.end_cache = EndgameCache::take_thread(epoch);
+                context.stats.helper_jobs += 1;
+                let _ = batch.run(&mut context, None);
+                std::mem::take(&mut context.end_cache).put_thread(epoch);
+            }));
+            if outcome.is_err() {
+                worker.control.fail();
+            }
+            worker.finish_pending();
+        });
+        if runtime.pool.offer(job, &[]).is_err() {
+            runtime.finish_pending();
+            break;
+        }
+        context.stats.worker_dispatches += 1;
+    }
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        batch.run(context, Some(on_move))
+    }));
+    if outcome.is_err() {
+        runtime.control.fail();
+    }
+    runtime.drain();
+    outcome.map_err(|_| Aborted)??;
+    if context.aborted() {
+        return Err(Aborted);
+    }
+    parallel::lock(&batch.results)
+        .drain(..)
+        .map(|result| result.ok_or(Aborted))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn root_bounds_combine_research_and_reset_between_iterations() {
+        let mut bound = RootBound::UNBOUNDED;
+        assert_eq!(bound.update(8, 0, 4), 8);
+        assert_eq!(bound.cutoff(0, 6), Some(8));
+        assert_eq!(bound.cutoff(0, 10), None);
+        assert_eq!(bound.update(8, 8, 10), 8);
+        assert_eq!((bound.lower, bound.upper), (8, 8));
+        let board = Board::new();
+        let mut root = RootSearch::new(Position {
+            board,
+            state: EvalState::from_board(board),
+        });
+        root.bounds.fill(bound);
+        let mut context = super::super::session::test_context();
+        let line = root
+            .iteration(
+                &mut context,
+                SearchSpec {
+                    depth: 3,
+                    exact: false,
+                    probcut: true,
+                },
+                30,
+            )
+            .unwrap();
+        assert_eq!(line.score, 0);
+        assert_eq!(root.bounds[19].lower, -64);
+    }
+}

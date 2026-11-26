@@ -1,0 +1,560 @@
+//! 新規対局ダイアログ（黒白プレイヤー種別・AI 強さ・開始局面・Book 使用）と
+//! 探索レベルの読み計画チャートを描画するモジュール。
+use super::{root::RootView, theme, widgets};
+use crate::{
+    app::{Command, NewGame},
+    domain::{
+        Preset,
+        player::MOVE_TIMES,
+        settings::{AiChoice, ManualMode},
+    },
+    i18n::Strings,
+};
+use deft_reversi_engine::{Color, Position, ResultKind, Selectivity, level_reading};
+use gpui::{ClickEvent, Context, Div, FontWeight, Rgba, SharedString, div, prelude::*, px};
+
+fn side_index(color: Color) -> usize {
+    match color {
+        Color::Black => 0,
+        Color::White => 1,
+    }
+}
+
+/// 空きマス数の連続区間ごとに同じ探索戦略（読み方）になるフェーズを表す。
+struct Phase {
+    from: u8,
+    to: u8,
+    reading: ResultKind,
+}
+
+/// 指定レベルの 60 空きマスから 1 空きマスまでの探索計画をフェーズ一覧へまとめる。
+fn phases(level: u8) -> Vec<Phase> {
+    let mut phases: Vec<Phase> = Vec::new();
+    for empties in (1..=60).rev() {
+        let reading = level_reading(level, empties);
+        match phases.last_mut() {
+            Some(last) if last.reading == reading => last.to = empties,
+            _ => phases.push(Phase {
+                from: empties,
+                to: empties,
+                reading,
+            }),
+        }
+    }
+    phases
+}
+
+fn reading_color(reading: ResultKind) -> Rgba {
+    match reading {
+        ResultKind::Depth { .. } => theme::reading_depth(),
+        ResultKind::Endgame {
+            selectivity: Selectivity::Full,
+        } => theme::reading_exact(),
+        ResultKind::Endgame { .. } => theme::reading_selective(),
+    }
+}
+
+/// 枝刈りが強い（選択率が低い）ほど薄い不透明度で表示する。
+fn reading_opacity(reading: ResultKind) -> f32 {
+    let percent = f32::from(reading.selectivity().percent());
+    0.45 + 0.55 * (percent - 83.) / 17.
+}
+
+const STRIP_WIDTH: f32 = 500.;
+
+impl RootView {
+    /// ダイアログの入力内容で新しい対局を開始し、ダイアログを閉じる。
+    pub(super) fn start_new_game(&mut self, cx: &mut Context<Self>) {
+        let form = self.settings.new_game;
+        let start = if form.from_current {
+            self.controller.history().current()
+        } else {
+            Position::initial()
+        };
+        // ダイアログで切り替えた Book 使用フラグを今後の設定としても保存する。
+        if self.settings.book.enabled != self.new_game_book {
+            self.set_book_use(self.new_game_book, cx);
+        }
+        self.close_dialog(cx);
+        self.run(
+            Command::NewGame(NewGame {
+                players: [form.sides[0].player(), form.sides[1].player()],
+                start,
+            }),
+            cx,
+        );
+    }
+
+    /// 新規対局モーダルダイアログを描画する。
+    pub(super) fn render_new_game(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let s = self.settings.lang.strings();
+        let form = self.settings.new_game;
+        let current = self.controller.history().current();
+        let move_number = crate::ui::record::move_number(current);
+        let start_items = vec![
+            (
+                s.initial_position.into(),
+                !form.from_current,
+                widgets::handler(|this, _| this.settings.new_game.from_current = false),
+            ),
+            (
+                s.current_position(move_number).into(),
+                form.from_current,
+                widgets::handler(|this, _| this.settings.new_game.from_current = true),
+            ),
+        ];
+        let start = widgets::handler(|this, cx| this.start_new_game(cx));
+        let manual = [Color::Black, Color::White]
+            .into_iter()
+            .filter(|&color| {
+                let side = form.sides[side_index(color)];
+                side.ai && side.choice == AiChoice::Manual
+            })
+            .map(|color| self.render_manual(color, cx))
+            .collect::<Vec<_>>();
+        // ヘッダと開始・キャンセルボタンは固定し、フォーム本体だけをスクロール可能にする。
+        // Book トグルは Book ファイルが選択されている場合のみ表示する。
+        let book_row = self.settings.book.path.is_some().then(|| {
+            let book = self.new_game_book;
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(16.))
+                .pt(px(12.))
+                .child(div().text_color(theme::text_secondary()).child(s.book_use))
+                .child(widgets::toggle(
+                    "new-game-book",
+                    s.on,
+                    s.off,
+                    book,
+                    |this, on, _| this.new_game_book = on,
+                    cx,
+                ))
+        });
+        let body = div()
+            .flex()
+            .flex_col()
+            .pb(px(4.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(20.))
+                    .pt(px(14.))
+                    .child(self.render_side(Color::Black, cx))
+                    .child(self.render_side(Color::White, cx)),
+            )
+            .children(manual)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(16.))
+                    .pt(px(16.))
+                    .child(
+                        div()
+                            .text_color(theme::text_secondary())
+                            .child(s.start_position),
+                    )
+                    .child(widgets::segmented("start-position", start_items, cx)),
+            )
+            .children(book_row);
+        let height = self
+            .viewport
+            .map_or(900., |(_, h)| h as f32 - super::root::DIALOG_TOP - 20.);
+        div()
+            .w(px(594.))
+            .max_h(px(height))
+            .flex()
+            .flex_col()
+            .bg(theme::surface())
+            .border_1()
+            .border_color(theme::border())
+            .rounded(px(10.))
+            .child(
+                div()
+                    .px(px(20.))
+                    .pt(px(16.))
+                    .text_base()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(s.new_game),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .pl(px(20.))
+                    .pr(px(6.))
+                    .child(widgets::scroll_area(
+                        "new-game-body",
+                        &self.dialog_scroll,
+                        body,
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .mt(px(16.))
+                    .px(px(20.))
+                    .py(px(12.))
+                    .border_t_1()
+                    .border_color(theme::hairline())
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(widgets::link(
+                        "cancel",
+                        s.cancel,
+                        widgets::handler(|this, cx| this.close_dialog(cx)),
+                        cx,
+                    ))
+                    .child(widgets::primary("start", s.start_game, start, cx)),
+            )
+    }
+
+    fn render_side(&self, color: Color, cx: &mut Context<Self>) -> Div {
+        let s = self.settings.lang.strings();
+        let i = side_index(color);
+        let side = self.settings.new_game.sides[i];
+        let mut header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .h(px(28.))
+            .mb(px(6.))
+            .child(super::analysis_panel::disc(16., color))
+            .child(div().font_weight(FontWeight::MEDIUM).child(s.color(color)));
+        if color == Color::Black {
+            header = header
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(s.first_player),
+                )
+                .child(div().flex_1())
+                .child(widgets::link(
+                    "swap",
+                    format!("⇄ {}", s.swap),
+                    widgets::handler(|this, _| this.settings.new_game.sides.swap(0, 1)),
+                    cx,
+                ));
+        }
+        let kind = widgets::segmented(
+            if i == 0 { "black-kind" } else { "white-kind" },
+            vec![
+                (
+                    s.human.into(),
+                    !side.ai,
+                    widgets::handler(move |this, _| this.settings.new_game.sides[i].ai = false),
+                ),
+                (
+                    s.ai.into(),
+                    side.ai,
+                    widgets::handler(move |this, _| this.settings.new_game.sides[i].ai = true),
+                ),
+            ],
+            cx,
+        );
+        let options = side.ai.then(|| {
+            let manual_summary: SharedString = match side.mode {
+                ManualMode::Level => format!("Lv {}", side.level).into(),
+                ManualMode::Time => s.seconds(MOVE_TIMES[side.time].as_secs()).into(),
+            };
+            let rows = Preset::ALL
+                .into_iter()
+                .map(|preset| {
+                    (
+                        AiChoice::Preset(preset),
+                        SharedString::from(s.preset(preset)),
+                        SharedString::from(format!("Lv {}", preset.level())),
+                    )
+                })
+                .chain([(AiChoice::Manual, s.manual.into(), manual_summary)]);
+            div()
+                .mt(px(8.))
+                .flex()
+                .flex_col()
+                .children(rows.enumerate().map(|(row, (choice, name, detail))| {
+                    let on = side.choice == choice;
+                    div()
+                        .id((if i == 0 { "black-ai" } else { "white-ai" }, row))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .px(px(6.))
+                        .py(px(3.))
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .when(on, |el| el.bg(theme::hover()))
+                        .hover(|style| style.bg(theme::hover()))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.settings.new_game.sides[i].choice = choice;
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .size(px(12.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(theme::border())
+                                .when(on, |el| el.border_4().border_color(theme::accent())),
+                        )
+                        .child(div().flex_1().child(name))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(detail),
+                        )
+                }))
+        });
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(kind)
+            .children(options)
+    }
+
+    fn render_manual(&self, color: Color, cx: &mut Context<Self>) -> Div {
+        let s = self.settings.lang.strings();
+        let i = side_index(color);
+        let side = self.settings.new_game.sides[i];
+        let id = |name: &'static str, black: &'static str| if i == 0 { black } else { name };
+        let mode = widgets::segmented(
+            id("white-mode", "black-mode"),
+            vec![
+                (
+                    s.by_level.into(),
+                    side.mode == ManualMode::Level,
+                    widgets::handler(move |this, _| {
+                        this.settings.new_game.sides[i].mode = ManualMode::Level
+                    }),
+                ),
+                (
+                    s.by_time.into(),
+                    side.mode == ManualMode::Time,
+                    widgets::handler(move |this, _| {
+                        this.settings.new_game.sides[i].mode = ManualMode::Time
+                    }),
+                ),
+            ],
+            cx,
+        );
+        let body = match side.mode {
+            ManualMode::Level => {
+                let step = move |delta: i8| {
+                    widgets::handler(move |this, _| {
+                        let level = &mut this.settings.new_game.sides[i].level;
+                        *level = (*level as i8 + delta).clamp(1, 60) as u8;
+                    })
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(10.))
+                            .child(widgets::stepper(
+                                id("white-level", "black-level"),
+                                format!("Lv {}", side.level),
+                                step(-1),
+                                step(1),
+                                cx,
+                            ))
+                            .child(widgets::link(
+                                id("white-level-down", "black-level-down"),
+                                "−5",
+                                step(-5),
+                                cx,
+                            ))
+                            .child(widgets::link(
+                                id("white-level-up", "black-level-up"),
+                                "+5",
+                                step(5),
+                                cx,
+                            )),
+                    )
+                    .child(self.render_phases(side.level))
+            }
+            ManualMode::Time => {
+                let items = MOVE_TIMES
+                    .iter()
+                    .enumerate()
+                    .map(|(t, limit)| {
+                        (
+                            s.seconds(limit.as_secs()).into(),
+                            side.time == t,
+                            widgets::handler(move |this, _| {
+                                this.settings.new_game.sides[i].time = t
+                            }),
+                        )
+                    })
+                    .collect();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(div().flex().child(widgets::segmented(
+                        id("white-time", "black-time"),
+                        items,
+                        cx,
+                    )))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_secondary())
+                            .child(s.time_note),
+                    )
+            }
+        };
+        div()
+            .mt(px(12.))
+            .p(px(12.))
+            .rounded(px(6.))
+            .bg(theme::background())
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_1()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(s.manual_title(color)),
+                    )
+                    .child(mode),
+            )
+            .child(body)
+    }
+
+    /// 指定探索レベルが空きマス数 60→1 の各区間でどのように読むかを帯グラフと表で表示する。
+    fn render_phases(&self, level: u8) -> Div {
+        level_chart(self.settings.lang.strings(), level, STRIP_WIDTH)
+    }
+}
+
+const PHASE_ROW: f32 = 18.;
+
+/// 指定探索レベル `level` の読み計画を幅 `width` の帯グラフと詳細テーブルとして生成する。
+///
+/// 新規対局ダイアログ・設定画面・Book 作成ダイアログで共有して使用する。
+pub(super) fn level_chart(s: &Strings, level: u8, width: f32) -> Div {
+    let phases = phases(level);
+    let strip = div()
+        .flex()
+        .flex_row()
+        .h(px(10.))
+        .w(px(width))
+        .rounded(px(3.))
+        .overflow_hidden()
+        .children(phases.iter().map(|phase| {
+            let width = width * f32::from(phase.from - phase.to + 1) / 60.;
+            div()
+                .w(px(width))
+                .h_full()
+                .bg(reading_color(phase.reading))
+                .opacity(reading_opacity(phase.reading))
+        }));
+    let rows = phases.iter().map(|phase| {
+        let range = if phase.from == phase.to {
+            phase.from.to_string()
+        } else {
+            format!("{}–{}", phase.from, phase.to)
+        };
+        let (what, percent): (SharedString, SharedString) = match phase.reading {
+            ResultKind::Depth { depth, selectivity } => (
+                s.depth(depth).into(),
+                if selectivity == Selectivity::Full {
+                    s.no_pruning.into()
+                } else {
+                    format!("{}%", selectivity.percent()).into()
+                },
+            ),
+            ResultKind::Endgame {
+                selectivity: Selectivity::Full,
+            } => (s.exact.into(), "".into()),
+            ResultKind::Endgame { selectivity } => (
+                s.selective_endgame.into(),
+                format!("{}%", selectivity.percent()).into(),
+            ),
+        };
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .h(px(PHASE_ROW))
+            .text_xs()
+            .child(
+                div()
+                    .w(px(64.))
+                    .text_color(theme::text_muted())
+                    .child(range),
+            )
+            .child(
+                div()
+                    .size(px(8.))
+                    .mr(px(6.))
+                    .rounded(px(2.))
+                    .bg(reading_color(phase.reading))
+                    .opacity(reading_opacity(phase.reading)),
+            )
+            .child(div().w(px(150.)).child(what))
+            .child(div().text_color(theme::text_secondary()).child(percent))
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .mt(px(10.))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .w(px(width))
+                .text_xs()
+                .text_color(theme::text_muted())
+                .child(div().flex_1().child(format!("{} 60", s.empties)))
+                .child("1"),
+        )
+        .child(strip)
+        .child(div().mt(px(6.)).flex().flex_col().children(rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phases_cover_every_empty_count_in_order() {
+        for level in 1..=60 {
+            let phases = phases(level);
+            assert_eq!(phases.first().map(|p| p.from), Some(60));
+            assert_eq!(phases.last().map(|p| p.to), Some(1));
+            assert!(phases.windows(2).all(|w| w[0].to == w[1].from + 1));
+        }
+        // Level 24: the midgame, four selective stages (85, 95, 98 and
+        // 99%), then the exact solve from 23 empties.
+        let p = phases(24);
+        assert_eq!(p.len(), 6);
+        assert_eq!((p[0].from, p[0].to), (60, 31));
+        assert_eq!((p[5].from, p[5].to), (23, 1));
+    }
+}

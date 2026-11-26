@@ -1,19 +1,26 @@
 [workspace]
-members = [ "deft-reversi-cli",
-    "deft-reversi-engine", "deft-reversi-learn",
-    "deft-reversi-web"
-]
-
+members = ["deft-reversi-engine", "deft-reversi-book", "deft-reversi-train", "deft-reversi-cli", "deft-reversi-desktop"]
+# The web application still uses the legacy API and requires migration.
+exclude = ["deft-reversi-web"]
 resolver = "2"
+
+# Versions are per crate (see README.md).
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/ikepggthb/deft-reversi"
+publish = false
 
 [profile.release]
 lto = "fat"
 opt-level = 3
-panic = 'abort'
+# YBWC jobs drain their children and report worker failures on unwind.
+panic = 'unwind'
 codegen-units = 1
 
-
-# ビルド時に環境変数を使って設定する
-# 例: 
-#     RUSTFLAGS="-Ctarget-cpu=native" cargo build -p deft-reversi-console
-#     $env:RUSTFLAGS="-Ctarget-cpu=native -Cpanic=abort"
+# GPUI builds against these forks in Zed; patches do not carry over from a
+# dependency's workspace.
+[patch.crates-io]
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+calloop = { git = "https://github.com/zed-industries/calloop" }

@@ -1,37 +1,166 @@
-
 # Deft Reversi Engine
 
-<img src="https://img.shields.io/badge/-Rust-000000.svg?logo=rust&style=plastic">
+ネイティブ向けのリライト実装。旧エンジン（基準コミット `f4192a0`）を参照しています。
 
-Rustで書かれたオセロAI。
+実装・元モデル直接読込・実データ照合・通常/並列ストレステストを用意しています。検証件数や測定結果は各時点のレポートを参照してください。ビルドにはルートの `rust-toolchain.toml` と `Cargo.lock` を使います。
 
-## Deft Reversi Web
-Deft Reversi Engineを搭載したオセロゲームは、以下のウェブサイトでプレイできます
+## 出典
 
-[ Deft Reversi](https://az.recazbowl.net/deft-reversi-web/index.html)
+一部のモジュールは [Edax](https://github.com/abulmo/edax-reversi)（GPL-3.0）と [Egaroucid](https://github.com/Nyanyan/Egaroucid)（GPL-3.0-or-later）のコードを Rust に移植したものです。移植した箇所は各ソースファイルの先頭の「出典」に、一覧はルートの [README](../README.md#謝辞と出典) にあります。
 
-ソースコード: 
-[ Deft Reversi (Github)](https://github.com/ikepggthb/deft_web)
+## 構成
 
-## 使用した技術
- - bitboard
- - negascout探索 (PVS)
- - 置換表
- - Multi Prob Cut
- - Move ordering
-   - 評価関数による浅い探索を使用したMove ordering
-   - 速さ優先探索
-     - 相手の合法手が少ない手から探索する
-     - 終盤で使用される
-   - 反復深化探索
-     - キラー応手を置換表に保存し、次の探索に利用
- - 機械学習(線形回帰)を用いた評価関数
-   - 学習データは、Egaroucid 自己対戦の棋譜を使用
-     - https://www.egaroucid.nyanyan.dev/ja/technology/transcript/
-   - 特徴量として盤面の部分パターンと、合法手数差を使用した。
+- `board`: 非公開のビットボードと検証付き着手。内部探索は合法手と反転ビットを再利用。
+- `evaluation`: 11パターン×4回転、60フェーズ、合法手数差、バイアス。両手番の特徴量を差分更新。モデルがパターン埋め込みネット（PEN、`evaluation/pen.rs`）を持つときは、その出力を線形の和に足す（[PEN の測定](https://github.com/ikepggthb/deft-reversi-notes/blob/main/evaluation-model/2026-11-06-pen/README.md)）。
+- `position`: 手番の色を持つ局面と、その文字列形式。
+- `worker`: 探索を別スレッドで動かす `EngineWorker`。
+- `search/api`: 要求・結果・進捗・停止・統計・エラー。
+- `search.rs`: モデルと資源の所有、反復深化、最大24手の終盤準備探索と選択性の段階移行、アスピレーション窓。
+- `model`: DPR2 形式のモデル（重みと、版2では ProbCut の校正、版3・版4では PEN）の読み書き。
+- `mpc`: 旧 main の ProbCut 規則（旧 main から変換したモデル用）。
+- `search/root`: ルート候補ごとの境界、アスピレーションの安定化、最善手順の継承。
+- `search/level`: レベルごとの深さ・選択率・終盤への移行。
+- `search/tree`: PVS/NWS、TT、手順付け、深さ1の評価、MPC。中盤のヌルウィンドウ探索は、残り4手未満で TT を使わず（評価値と着手可能数で手順付け）、残り3手未満で手順付けもしない（旧 main の `SWITCH_SIMPLE_SEARCH_LEVEL`・`SWITCH_NEGAALPHA_SEARCH_LEVEL` と同じ仕組みで、深さは PEN のモデルで測って決めた。[PEN に合わせた調整](https://github.com/ikepggthb/deft-reversi-notes/blob/main/evaluation-model/2026-11-06-pen-tuning/README.md)）。MPC の浅い探索は、MPC を使わない中盤探索である。MPC はゼロ窓のノードだけで試す（Edax と同じ。[終盤 MPC の悪手の調査](https://github.com/ikepggthb/deft-reversi-notes/blob/main/mpc/2026-11-05-endgame-mpc-quality/README.md)）。MPC の判定は、静的評価から規則で予測した値が境界から離れすぎていれば浅い探索を省く（上側は中盤8石・終盤2石、下側は4石。[中盤探索の高速化](https://github.com/ikepggthb/deft-reversi-notes/blob/main/search-control/2026-11-03-midgame-speed/README.md)、[PEN に合わせた調整](https://github.com/ikepggthb/deft-reversi-notes/blob/main/evaluation-model/2026-11-06-pen-tuning/README.md)）。
+- `board/stability`: 元実装の辺の全パターン表・満杯のライン・接触による確定石判定。
+- `search/endgame/mod`: 終盤探索の入口と通常窓の処理。
+- `search/endgame/local_tt`: 空き6〜13ごとの局所TT。境界・候補手・選択率を保持し、照会結果は値として再帰へ渡す。
+- `search/endgame/ordered`: 空き7〜13の手順付けと探索。
+- `search/endgame/shallow`: 空き5〜6の専用探索。
+- `search/endgame/last_four` / `small`: 空き4以下の展開済みカーネルと小局面の直接入口。
+- `search/endgame/parity`: 四分割領域とパリティの共通定義。
+- `board/last`: コンパイル時生成の反転数表。BMI2構成では最後の1マスの計算に使用。
+- `search/ybwc`: 最初の候補を先に探索し、残りを共有分割点から配布。
+- `parallel`: 常駐ワーカーのメールボックスと、待機中の祖先への直接ハンドオフ。
+- `transposition`: 64バイトクラスタ、完全な盤面照合、atomicスナップショット。通常窓・ゼロ窓のカット、両境界の絞り込み、ETC、候補2手。PV専用表は主表の1/16（最低1 MiB）。
 
+UI、対局履歴、定石、持ち時間の配分、ファイルパスの決定、環境変数、標準出力は探索ランタイムの責務に含めない。呼び出し側が指定したモデルファイルの読込はEngine APIで提供する。
 
-## ライセンス
-このプロジェクトは [GNU General Public License v3.0](LICENSE) の下で公開されています。
+## API
 
-詳細については [LICENSE](LICENSE) ファイルを参照してください。
+設計と使い方の全体は [docs/api.md](docs/api.md) にある。
+
+```rust,no_run
+use deft_reversi_engine::{Engine, EngineOptions, Goal, Model, Position, SearchRequest};
+use std::time::Duration;
+
+let mut engine = Engine::new(Model::from_file("model.dpr2")?, EngineOptions::default().threads(4))?;
+let position: Position = "---------------------------OX------XO--------------------------- X".parse()?;
+let request = SearchRequest::new(Goal::Level(16)).time_limit(Duration::from_secs(1));
+let result = engine.search(&position, &request)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+- スレッド数は呼び出し元を含む。既定値1ではワーカーを作らない。
+- 同じEngineへの要求は直列。別Engineは独立したTTとワーカーを持つ。別スレッドで探索するには `EngineWorker` を使う。
+- `Board::from_bits` と `Position::from_colors` は石の重複を拒否する。A1が最下位ビット。
+- `Action::Place(Square)` と `Action::Pass` を区別。`result.best_move == None` は終局。
+- `Goal::Level(n)` は1〜60のレベルごとの探索方式と選択率を適用する。範囲外はエラー。
+- `Goal::Plan(SearchPlan)` は、レベルが決めている内容を自由に指定する。`SearchPlan::midgame(深さ, 選択率)` が中盤探索、`.endgame(選択率, 空きマス)` が「空きがこの数以下なら終盤探索をこの選択率で行う」段階（`Selectivity::Full` が完全読み）。複数の段階が当てはまる局面では、選択率の高い段階を使う。`SearchPlan::level(n)` はレベル n の内容で、そこから一部だけ変えられる。
+
+```rust
+use deft_reversi_engine::{Goal, SearchPlan, SearchRequest, Selectivity};
+
+// レベル24のまま、完全読みを空き26からにする。
+let plan = SearchPlan::level(24)?.endgame(Selectivity::Full, 26);
+// すべて自分で決める：中盤は深さ20（83%）、空き24以下は終盤95%、空き20以下は完全読み。
+let plan = SearchPlan::midgame(20, Selectivity::Percent83)
+    .endgame(Selectivity::Percent95, 24)
+    .endgame(Selectivity::Full, 20);
+let request = SearchRequest::new(Goal::Plan(plan));
+# Ok::<(), deft_reversi_engine::EngineError>(())
+```
+
+- `selectivity` は 83/85/95/98/99/100% の6段階（`Selectivity::ALL`）。名前の数字がそのまま枝刈りの確率で、各段の倍率はモデルの校正が持つ。レベルの中盤探索は83%（エンジンの規定）、レベルの終盤探索は85%以上を使う。元実装の68%・77%は選べない。`result.kind` は最後に完了した反復の深さと選択率を表す。
+- `Goal::Depth(n)` は着手数基準。パスでは深さを減らさない。
+- 中盤探索と終盤の準備探索の反復深化は、目標深さの偶奇に合わせて通常5または6から2手ずつ進む。`time_limit` で時間切れになると、最後に完了した反復の結果を返す。
+- `Goal::Endgame` を選択率 `Full` で要求すると、最終段階でMPCを使わない終盤完全読みになる。モデルに校正があれば、その前に83%の中盤探索で準備し、85%から要求の選択率まで段階的に終盤探索する。ただし準備探索の局所終盤ではMPCを13マス以上に限り、12マス以下の結果を完全読みの値として局所TTに残して最終段階で再利用する（選択率を下げた終盤探索は従来どおり12マスからMPC）。
+- 選択率を下げた `Goal::Endgame` はMPCを使う終盤探索で、完全読みの保証を持たない。
+- 中断した完全読み要求の結果は、準備段階の `Depth` や選択的な `Endgame` になることがある。完全読みかどうかは `result.is_solved()` で判定する。
+- `score == None` は完了反復がない状態。合法な代替手は返す。深さ0の着手は探索で選んだ最善手ではない。
+- スコアは入力手番側から見た石単位の整数。終局時は空きマスを勝者に加算する。
+- ノード上限は全ワーカー・反復を通じた再帰入口の総数。手順付けの浅い探索もノード上限に含み、評価回数も別カウンタへ記録する。
+- 停止要求と並列カットは別状態。配布した仕事を回収してから戻る。停止・時刻の確認は最大256ノード間隔。ノード上限は各ノードで予約し、超過しない。
+- StopHandleは一方向。再要求には新しいSearchRequestを使う。
+- 局所TTは要求中のContextが所有し、主スレッド分をEngineで再利用する。各層は必要時に確保し、最大約384 KiB。メインTTのMiB指定とは別の作業領域。
+- `clear_tt` は主表・PV表・局所表を無効化する。`set_model` は全表を無効化し、新しいモデルの校正に切り替える。
+- 通常窓のTTカット後もPVを返せるよう、PV表・主表の候補を使って確定値に到達する手を検証する。この復元も探索時間とノード予算に含む。スコア確定後、PV復元中に上限へ達した場合は、確定スコアを保持したまま停止理由と取得済みPVを返す。
+- `all_moves()` は最後に完了した反復と同じ深さ・選択率で、ルートの全手を窓 [-64, 64] で探索し直す。途中で止まった場合は `moves` を空にする。
+
+## モデルとMPC
+
+モデルは DPR2 形式の1ファイルで、`Model::from_file` / `Model::from_bytes` で読む。形式の詳細は `src/model.rs` の先頭にある。
+
+- 版1：重みだけ。60段階の i16 の重み（パターン表・合法手数差・バイアス）。
+- 版2：重みのあとに ProbCut の校正（`MPC2`：段の数、段ごとに確率・中盤の倍率・終盤の倍率、規則の表）を持つ。`deft-reversi-train mpc` と `pack` が書き出す。段の並びがエンジンの段（`ProbCutSigmas::STAGES`）と違う校正は読まない。
+- 以前の校正（`MPC1`、68〜99%の倍率）を持つモデルは読めない。重みと規則はそのままで、`deft-reversi-train mpc --model 旧モデル --out 出力先 --fit-only` を測定済みの `positions.tsv` がある出力先で実行すると校正を付け直せる（同じ測定から 85〜99% の倍率と規則は以前と同じ値になる）。
+- 版3：重みのあとに `PEN1` と60段階の PEN（パターンの状態ごとの8個の i8、90→32→1 の MLP。入力は埋め込み88個と両者の合法手数）を持ち、その後に版2と同じ校正を置ける。
+- 版4：版3の `PEN1` の代わりに `PEN2`。MLP は 91→32→1 で、手番側の石数も入力にする（`global_inputs`）。`deft-reversi-train train --pen` が書き出す。確定石数も入力にしていたが、評価のたびに数えるため中盤探索の1秒あたりのノード数が約13%落ち、外した。版3のモデルは、新しい入力の重みが0の版4として読み、書き出すと版3のまま元と同じバイト列になる。
+
+校正のあるモデルは、`Engine::new` するだけで、その規則と倍率で選択的に探索する。校正のないモデル（版1、校正のない版3・版4）は、枝刈りなしの探索だけができる。選択的な探索（レベル、選択率を下げた要求）は、校正不足のエラーになる。NNUE は対象外。
+
+旧エンジンの v3/v4 形式（JSON・bincode）は読まない。必要なら `tools/convert_pattern_v2.py` で DPR2 の重みに変換し、`deft-reversi-train pack` で校正を付ける。
+
+以下は `tuning` feature を有効にしたときだけ使える。
+
+- `Model::from_pattern(PatternModel)` は校正のないモデルを作る。`Model::weights_from_file` は校正を読まずに重みだけを読む（校正の付け直し用）。`Model::with_calibration(rules, sigmas)` で校正を付け、`Model::write_to` で書き出す。`Model::calibration()` で中身を読む。
+- `set_probcut_rules`・`set_probcut_calibration` は、エンジンの規則を差し替える（比較・診断用）。`set_probcut_rules(Vec::new())` は校正を空にする。
+- `set_legacy_main_mpc` は、旧 main の規則に差し替える。旧 main から変換したモデルは、`deft-reversi-train pack --legacy-main` で規則を埋め込んでおけば、指定しなくてよい。例の solve では `--legacy-main-mpc` で指定できる。
+- `legacy_main_rules()` は旧 main の規則を返す。
+
+## 検証
+
+まず1ビルドジョブ・1テストスレッドで通常検証する。
+
+```sh
+CARGO_BUILD_JOBS=1 cargo test -p deft_reversi_engine -- --test-threads=1
+RUSTFLAGS="-Ctarget-cpu=native" CARGO_BUILD_JOBS=1 cargo test -p deft_reversi_engine --release -- --include-ignored --test-threads=1
+```
+
+検証ケース: 座標参照実装との照合、perft、差分特徴量、スコア・フェーズ、モデル往復、不正入力、単純完全読みとの一致、合法PV、停止・再利用、MPC分離、TT同時アクセス、祖先ハンドオフ、1/2/4/8/20スレッド反復。
+
+```sh
+RUSTFLAGS="-Ctarget-cpu=native" cargo run --locked --release -p deft-reversi-cli -- solve POSITIONS.obf --model MODEL.dpr2 --exact --threads 4 --tt-mib 256 --tsv
+```
+
+CLIの `solve` がOBFの盤面64文字と手番X/Oを読み、結果・ノード数・時間を出力する。`--time-ms` で1局面の時間上限（ミリ秒）を指定できる。
+`PatternModel::zero()` はルール・探索テスト用。棋力のあるモデルではない。
+
+## 比較
+
+速さの比較（変更の前後、Edax・Egaroucid）と対局は [tools/bench](../tools/bench/README.md) を使う。CLIの `solve` が完全読みと固定レベルの探索、`gtp` が対局用の GTP である。
+
+## 並列測定
+
+スレッド数ごとの完全読みの速さは [tools/bench/ffo.py](../tools/bench/README.md) で測る（`--threads` と `--cpus` でスレッド数とCPU割当を決める）。完全読みの値がスレッド数によらず同じになることは、探索のテスト（1/2/4/8/20スレッド）で確かめている。MPC を使う探索や時間・ノードで止めた探索、同点の手の選び方は、スレッド数や実行ごとに変わり得る。
+
+## 終盤探索の最適化と実験
+
+既定の汎用探索では、子TTのETCを確認してからTT候補を他候補の評価前に探索する。局所TTの照会結果は子へ渡し、同じ照会を繰り返さない。選択率タグと中断時の保存条件は維持する。
+
+末端のゼロ窓探索では、6マス側で既知の合法手を再利用し、5マス側は空きマスから合法手を順に確認して専用4マス探索へ直接つなぐ。6→5→4マスの四分割parityは差分更新する。手順付け規則とノード上限・中断処理は維持している。[末端カーネルの比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-27-tail-kernels/README.md)に段階的な試作と測定条件を記録した。
+
+最終1マスでは、BMI2の抽出結果を8ビットに限定し、縦・斜線の表引き行を共通化して、不要な範囲検査と位置情報の読出しを削減した。最終1マスを2マス側へインライン展開し、安定石表のLazyLock参照は判定あたり1回にまとめる。[最終1マスの比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-27-last-empty-optimization/README.md)に機械語の確認、正しさの検証、採用・保留した試作と測定上の制約を記録した。
+
+評価と手順付けでは、通常評価がmobility項のために計算した合法手を共有する。既定の完全読みでは、ゼロ窓の14→13マスで不要な評価状態の更新を省き、広い窓で再探索する場合に状態を作る。[合法手共有と評価状態更新の比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-27-ordering-reuse/README.md)に2方式の試作、正しさの検証、局面別の性能差を記録した。
+
+14マス以上のゼロ窓の完全読みでは、子局面の評価値と着手可能数で手を並べる。空き20マス以上では、評価値の代わりに子局面から1手読んだ値を使う（Egaroucid と同じ深さ。[空きの多い完全読みの調査](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-11-03-endgame-large-empties/README.md)）。
+
+7〜13マスのゼロ窓探索は、相手の着手可能数（隅を2倍）、自分の隅の確定石、升の価値、四分割パリティの順で手を並べる（Edaxの軽量手順付けから潜在合法手を除いたもの）。評価特徴の差分更新は升ごとの差分ベクトルの加算で行う。5〜6マスのゼロ窓探索でも、7〜13マス・4マスと同じ閾値で安定石カットを行い、8近傍に他の空きがない升を先に探索する。局所TTは各層1024スロット。14マスのゼロ窓節点では、局所TTにしか保存されない13マスの子について主TTのETCを省く。安定石判定はカットに必要な安定石数が確定した時点で伝播を打ち切り、辺の安定石表はコンパイル時に生成する。[Edax・Egaroucidとの差の調査](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-28-engine-gap/README.md)と[続き](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-28-edax-gap/README.md)に、空き数別の節点分布、各試作の単独比較、採用・保留の理由と測定条件を記録した。
+
+`--features endgame-pattern-ordering` は、残り11〜13マスのゼロ窓探索にパターン評価を追加する実験用機能。7〜10マスは合法手数とparityによる軽い手順付けを使う。既存モデルの44パターンを使い、特徴量を差分更新し、候補評価では子の片側の特徴量だけを計算する。終盤手順付け専用に学習した係数ではなく、既定では無効。比較と試作の経緯は[測定レポート](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-27-endgame-implementation/README.md)を参照。
+
+```sh
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --locked --release -p deft-reversi-cli --features endgame-pattern-ordering
+```
+
+現deft・Edax・Egaroucidの通常SIMD版／AVX-512版を、FFO40〜49・1コア・主TT約839万項目で比較した。[3エンジンの比較](https://github.com/ikepggthb/deft-reversi-notes/blob/main/engine-comparison/2026-10-27-three-engines/README.md)に8周分の時間、局面別の差、評価データ・ハッシュ・計時条件を記録した。
+
+## 対象外と制約
+
+初回はネイティブエンジンのみ。Web/WASM、対局CLI、学習処理、NNUE、対局履歴の移行は含めていない。
+速度は測定対象とCPUに依存する。特定の集合での改善を、全局面の改善とは扱わない。
+過去の旧版比較は [調査レポート](https://github.com/ikepggthb/deft-reversi-notes/blob/main/endgame/2026-10-24-regression-investigation/README.md) に、その時点の条件とともに保存しています。
+
+## 対局用book
+
+bookの参照・生成・更新・対局選択は、別クレート [deft-reversi-book](../deft-reversi-book/README.md) が提供する。エンジン本体はbookに依存しない。
