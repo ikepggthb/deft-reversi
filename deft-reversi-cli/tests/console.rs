@@ -403,3 +403,40 @@ fn commands_work_through_the_binary() {
             .success()
     );
 }
+
+/// 配布アーカイブと同じ配置（実行ファイルの横にモデル）なら、引数なしで対局が始まる。
+#[test]
+fn bundled_model_and_no_arguments_start_play() {
+    let f = Fixture(std::env::temp_dir().join(format!("deft-bundle-{}", std::process::id())));
+    fs::create_dir_all(&f.0).unwrap();
+    let exe =
+        f.0.join(format!("deft-reversi-cli{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(env!("CARGO_BIN_EXE_deft-reversi-cli"), &exe).unwrap();
+    Model::from_pattern(PatternModel::zero())
+        .with_calibration(legacy_main_rules(), ProbCutSigmas::NORMAL)
+        .unwrap()
+        .write_to(fs::File::create(f.0.join("deft-eval-v4.dpr2")).unwrap())
+        .unwrap();
+    let mut child = Command::new(&exe)
+        .env_remove("DEFT_MODEL")
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"settings\nquit\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("deft-eval-v4.dpr2"), "{stdout}");
+}

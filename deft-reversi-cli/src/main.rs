@@ -62,11 +62,22 @@ enum Command {
     Flipsight(flipsight::FlipsightArgs),
 }
 
+/// 配布アーカイブで実行ファイルと同じフォルダに置く評価モデルのファイル名。
+const BUNDLED_MODEL: &str = "deft-eval-v4.dpr2";
+
+/// `--model` も `DEFT_MODEL` もないときに読む、実行ファイルと同じフォルダの評価モデル。
+fn bundled_model() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join(BUNDLED_MODEL)))
+        .unwrap_or_else(|| PathBuf::from(BUNDLED_MODEL))
+}
+
 /// 探索を行うコマンドで共通に使うモデルとエンジン設定。
 #[derive(Args, Debug, Clone)]
 struct EngineArgs {
-    /// DPR2 形式の評価モデルファイル。
-    #[arg(short, long, env = "DEFT_MODEL")]
+    /// DPR2 形式の評価モデルファイル（省略時は実行ファイルと同じフォルダの deft-eval-v4.dpr2）。
+    #[arg(short, long, env = "DEFT_MODEL", default_value_os_t = bundled_model())]
     model: PathBuf,
     /// 探索スレッド数（呼び出しスレッドを含む。省略時は利用可能な全コア）。
     #[arg(short, long)]
@@ -189,8 +200,13 @@ struct SearchCommand {
     goal: GoalArgs,
 }
 
+// 引数がなければ `play` として扱う（配布版を Windows でダブルクリックしたときに対局を始めるため）。
 // 旧来の `--solve FILE` / `-s FILE` 形式の呼び出しも `solve FILE` サブコマンドとして受け付けるための前処理。
 fn normalize_args(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    if args.len() == 1 {
+        args.push("play".into());
+        return args;
+    }
     let known = [
         "play",
         "book",
