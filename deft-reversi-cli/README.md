@@ -2,6 +2,18 @@
 
 端末から対局・局面解析・棋譜の検討・自己対戦・perft・GTPを使うアプリケーション。
 
+## リリース版
+
+[Releases](https://github.com/ikepggthb/deft-reversi/releases) の `cli-v*` に、Windows 版（`.zip`）と Linux 版（`.tar.gz`）を置いている。
+
+- 中身は実行ファイル、この README、ライセンス全文（`COPYING`）、依存クレートのライセンス一覧（`THIRD-PARTY-NOTICES.txt`）。
+- 評価モデルは同梱していない。Release [`model-v4`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v4) の `deft-eval-v4.dpr2` を取得し、`--model` か環境変数 `DEFT_MODEL` で指定する。
+- x86-64-v3 向けにビルドしているので、AVX2 と BMI2 を持つ CPU（Intel Haswell・AMD Zen 以降）が必要。Linux 版は Ubuntu 24.04 でビルドしており、glibc 2.39 以降が必要。
+
+```sh
+./deft-reversi-cli play --model deft-eval-v4.dpr2
+```
+
 ## 起動
 
 ```sh

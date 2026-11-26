@@ -63,6 +63,10 @@ deft-reversi
 
 ## ビルドと実行
 
+### ビルド済みの CLI
+
+CLI は、Windows 版と Linux 版のビルド済みバイナリを [Releases](https://github.com/ikepggthb/deft-reversi/releases) の `cli-v*` で配布しています。評価モデルは Release [`model-v4`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v4) から取得してください。動作に必要な CPU などは [CLI の README](deft-reversi-cli/README.md#リリース版) にまとめています。
+
 ### 動作環境
 
 - Rust `1.99.1`（[rust-toolchain.toml](rust-toolchain.toml) で固定。`rustfmt` と `clippy` を含む）
