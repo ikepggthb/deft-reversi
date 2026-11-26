@@ -3,7 +3,7 @@
 //!
 //! ## 出典
 //!
-//! 辺の確定石の表とその作り方は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `board.c`（`edge_stability_init`・`get_stable_edge`）を Rust に移植したものです。
+//! 辺の確定石の表とその作り方は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `board.c`（`edge_stability_init`・`get_stable_edge`）を参考にして書いたものです。
 
 /// 探索実行時の初期化コストをなくすため、コンパイル時に事前計算しておく 65,536 エントリの辺確定石テーブルです。
 /// 自分の石配置（8 ビット）と相手の石配置（8 ビット）の組をインデックスとして、確定石のビットマスクを返します。

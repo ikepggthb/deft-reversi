@@ -6,7 +6,7 @@
 
 ## 出典
 
-一部のモジュールは [Edax](https://github.com/abulmo/edax-reversi)（GPL-3.0）と [Egaroucid](https://github.com/Nyanyan/Egaroucid)（GPL-3.0-or-later）のコードを Rust に移植したものです。移植した箇所は各ソースファイルの先頭の「出典」に、一覧はルートの [README](../README.md#謝辞と出典) にあります。
+一部のモジュールは [Edax](https://github.com/abulmo/edax-reversi)（GPL-3.0）と [Egaroucid](https://github.com/Nyanyan/Egaroucid)（GPL-3.0-or-later）の手法とコードを参考にして書いたものです。該当する箇所は各ソースファイルの先頭の「出典」に、一覧はルートの [README](../README.md#謝辞と出典) にあります。
 
 ## 構成
 

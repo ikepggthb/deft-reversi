@@ -3,7 +3,7 @@
 //!
 //! ## 出典
 //!
-//! 着手順序の評価に使う探索の深さ・窓・重みは、[Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later）の `move_ordering.hpp` の値を移植したものです。
+//! 着手順序の評価に使う探索の深さ・窓・重みは、[Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later）の `move_ordering.hpp` の値を使っています。
 use super::*;
 use crate::board::CORNERS;
 

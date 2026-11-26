@@ -2,7 +2,7 @@
 //!
 //! ## 出典
 //!
-//! AVX2 版は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の合法手生成（奥原俊彦氏の手法）を Rust に移植したものです。
+//! AVX2 版は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の合法手生成（奥原俊彦氏の手法）を参考にして書いたものです。
 //! 手法の解説は奥原氏の <http://www.amy.hi-ho.ne.jp/okuhara/bitboard.htm#mobility> にあります。
 
 #[cfg(target_feature = "avx2")]

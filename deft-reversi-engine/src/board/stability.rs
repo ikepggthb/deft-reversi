@@ -5,7 +5,7 @@
 //!
 //! ## 出典
 //!
-//! 確定石の伝播と、Null-Window 探索で確定石による枝刈りを試す閾値（`THRESHOLD`）は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `board.c`・`search.c` を Rust に移植したものです。
+//! 確定石の伝播と、Null-Window 探索で確定石による枝刈りを試す閾値（`THRESHOLD`）は、[Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0）の `board.c`・`search.c` を参考にして書いたものです。
 use crate::Board;
 
 /// Null-Window Search（探索窓の幅を 1 に絞って「スコアが `alpha` を超えるか」だけを判定する高速探索）向けの

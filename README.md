@@ -149,11 +149,11 @@ cargo run -p deft_reversi_train --release -- <サブコマンド>
 
 ## 謝辞と出典
 
-### 移植したコード
+### 参考にしたコード
 
-探索エンジンの一部は、次のリバーシエンジンのコードを Rust に移植したものです。移植した箇所は、各ソースファイルの先頭に「出典」として書いています。
+探索エンジンの一部は、次のリバーシエンジンの手法とコードを参考にして書いたものです。該当する箇所は、各ソースファイルの先頭に「出典」として書いています。
 
-| 出典 | 移植したもの | Deft のファイル（`deft-reversi-engine/src/`） |
+| 出典 | 参考にしたもの | Deft のファイル（`deft-reversi-engine/src/`） |
 | --- | --- | --- |
 | [Edax](https://github.com/abulmo/edax-reversi)（Richard Delorme・奥原俊彦、GPL-3.0） | 合法手生成と着手の AVX2 版（奥原氏の手法と acepck 氏の最適化）、最終手で返る石数の計算（BMI2）、辺の確定石の表と確定石による枝刈り、空き 1〜4 マスのソルバ、高速な終盤の着手順序 | `board/moves.rs`、`board/flip.rs`、`board/last.rs`、`board/edge_stability.rs`、`board/stability.rs`、`search/endgame/last_four.rs`、`search/endgame/ordered.rs` |
 | [Egaroucid](https://github.com/Nyanyan/Egaroucid)（山名琢翔、GPL-3.0-or-later） | 着手順序の深さ・窓・重み、スレッド専有の終盤置換表、孤立した空きマスを先に読む並べ替え | `search/ordering.rs`、`search/endgame/local_tt.rs`、`search/endgame/shallow.rs` |
