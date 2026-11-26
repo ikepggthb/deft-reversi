@@ -1,6 +1,7 @@
 name: Release CLI
 
-# On a pull request to main, build the CLI archives to check the packaging.
+# On a pull request to main, build the CLI archives (with the model-v4 model)
+# and check the unpacked folders.
 # On a cli-v* tag, also attach them to a draft pre-release for review.
 on:
   push:
@@ -56,20 +57,23 @@ jobs:
           fi
       - name: Build
         run: cargo build --release --locked -p deft-reversi-cli
-      - name: Smoke test
+      - name: Model
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cli=target/release/${{ matrix.exe }}
-          "$cli" --version
-          "$cli" perft 8 | grep -E '^ +8 \| +390216 \|'
+          mkdir -p model && cd model
+          gh release download model-v4 --repo "$GITHUB_REPOSITORY" -p deft-eval-v4.dpr2 -p SHA256SUMS
+          sha256sum -c SHA256SUMS
       - name: Package
         id: package
         run: |
           name=deft-reversi-cli-${{ steps.version.outputs.version }}-${{ matrix.target }}
           mkdir -p "dist/$name"
-          cp target/release/${{ matrix.exe }} COPYING "dist/$name/"
+          cp target/release/${{ matrix.exe }} COPYING model/deft-eval-v4.dpr2 "dist/$name/"
           cp deft-reversi-cli/README.md "dist/$name/README.md"
           python tools/release/third_party_notices.py --package deft-reversi-cli \
             --target ${{ matrix.target }} --out "dist/$name/THIRD-PARTY-NOTICES.txt"
+          echo "dir=dist/$name" >> "$GITHUB_OUTPUT"
           cd dist
           if [[ "$RUNNER_OS" == Windows ]]; then
             7z a -tzip "$name.zip" "$name" > /dev/null
@@ -78,6 +82,9 @@ jobs:
             tar czf "$name.tar.gz" "$name"
             echo "file=$name.tar.gz" >> "$GITHUB_OUTPUT"
           fi
+      # Runs the packaged folder as a user would: no --model, no DEFT_MODEL.
+      - name: Smoke test
+        run: python tools/release/smoke_cli.py "${{ steps.package.outputs.dir }}"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}

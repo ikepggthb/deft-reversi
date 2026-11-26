@@ -23,16 +23,17 @@ python3 tools/release/third_party_notices.py --package deft-reversi-cli         
 - `COPYING`
 - `THIRD-PARTY-NOTICES.txt`（配布するバイナリのターゲットとパッケージで作ったもの）
 
-評価モデル（`deft-eval-v4.dpr2`）は Release `model-v4` のアセットとして別に配布します。
+評価モデル（`deft-eval-v4.dpr2`）は Release `model-v4` のアセットです。CLI のアーカイブには、そこから取って同梱します。
 
 ## CLI のリリース：[release-cli.yml](../../.github/workflows/release-cli.yml)
 
 CLI は GitHub Actions でビルドします。Windows 版はこのワークフローで作ります。
 
-- **`main` への PR：** Windows（`x86_64-pc-windows-msvc`）と Linux（`x86_64-unknown-linux-gnu`、Ubuntu 24.04）でビルドし、`perft 8` で動作を確かめてから、アーカイブを Actions の成果物に置きます。
+- **`main` への PR：** Windows（`x86_64-pc-windows-msvc`）と Linux（`x86_64-unknown-linux-gnu`、Ubuntu 24.04）でビルドし、アーカイブを Actions の成果物に置きます。モデルは Release `model-v4` から取り、`SHA256SUMS` で確かめてから入れます。
 - **`cli-v<版>` のタグ：** 同じアーカイブと `SHA256SUMS` を、下書きのプレリリースに添付します。タグと `deft-reversi-cli` の版が違うと止まります。
 - **ビルド設定：** エンジンは AVX2・BMI2 の実装をコンパイル時に選ぶので、`-Ctarget-cpu=x86-64-v3` でビルドします。
-- **アーカイブ：** `deft-reversi-cli-<版>-<ターゲット>.zip`（Windows）または `.tar.gz`（Linux）。中身は実行ファイル、CLI の README、`COPYING`、`THIRD-PARTY-NOTICES.txt` です。
+- **アーカイブ：** `deft-reversi-cli-<版>-<ターゲット>.zip`（Windows）または `.tar.gz`（Linux）。中身は実行ファイル、`deft-eval-v4.dpr2`、CLI の README、`COPYING`、`THIRD-PARTY-NOTICES.txt` です。CLI は `--model` がなければ実行ファイルの横のモデルを読み、引数なしなら `play` を始めるので、展開すればそのまま使えます。
+- **確認：[smoke_cli.py](smoke_cli.py)：** アーカイブにするフォルダで、`--model` も `DEFT_MODEL` も渡さずに `perft 8` と FFO 1〜19 の完全読みを実行し、正解と照らし合わせます。手元で作ったフォルダにも `python3 tools/release/smoke_cli.py DIR` で使えます。
 
 手順:
 

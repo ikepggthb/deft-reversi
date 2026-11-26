@@ -4,14 +4,17 @@
 
 ## リリース版
 
-[Releases](https://github.com/ikepggthb/deft-reversi/releases) の `cli-v*` に、Windows 版（`.zip`）と Linux 版（`.tar.gz`）を置いている。
+[Releases](https://github.com/ikepggthb/deft-reversi/releases) の `cli-v*` に、Windows 版（`.zip`）と Linux 版（`.tar.gz`）を置いている。展開すればそのまま使える。
 
-- 中身は実行ファイル、この README、ライセンス全文（`COPYING`）、依存クレートのライセンス一覧（`THIRD-PARTY-NOTICES.txt`）。
-- 評価モデルは同梱していない。Release [`model-v4`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v4) の `deft-eval-v4.dpr2` を取得し、`--model` か環境変数 `DEFT_MODEL` で指定する。
+- 中身は実行ファイル、評価モデル（`deft-eval-v4.dpr2`、Release [`model-v4`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v4) と同じもの）、この README、ライセンス全文（`COPYING`）、依存クレートのライセンス一覧（`THIRD-PARTY-NOTICES.txt`）。
+- `--model` も環境変数 `DEFT_MODEL` も指定しなければ、実行ファイルと同じフォルダの `deft-eval-v4.dpr2` を読む。
+- 引数なしで起動すると `play`（人が黒、AIが白、レベル10）を始める。Windows では `deft-reversi-cli.exe` をダブルクリックすれば対局できる。
 - x86-64-v3 向けにビルドしているので、AVX2 と BMI2 を持つ CPU（Intel Haswell・AMD Zen 以降）が必要。Linux 版は Ubuntu 24.04 でビルドしており、glibc 2.39 以降が必要。
 
 ```sh
-./deft-reversi-cli play --model deft-eval-v4.dpr2
+./deft-reversi-cli                      # 対局を始める（play と同じ）
+./deft-reversi-cli play --level 20      # レベルを指定して対局する
+./deft-reversi-cli --help               # サブコマンドの一覧
 ```
 
 ## 起動
@@ -24,7 +27,7 @@ export DEFT_MODEL=path/to/model.dpr2
 
 既定は人が黒、AIが白、レベル10。`f5` のように座標を入力して着手する。`help` で操作一覧、`quit` またはEOFで終了する。
 
-モデルはDPR2形式。環境変数の代わりに各コマンドで `--model FILE` を指定できる。`--threads N` は呼び出し元を含むスレッド数で、省略すると利用可能な全論理CPU。`--tt-mib N` は主置換表の要求容量（既定256 MiB）で、実際の主表容量は2の累乗に切り下げる。例えば3 MiB指定では2 MiB。補助表のメモリは別に必要になる。
+モデルはDPR2形式。環境変数の代わりに各コマンドで `--model FILE` を指定できる。どちらもなければ実行ファイルと同じフォルダの `deft-eval-v4.dpr2` を読む（`book` コマンドは `--model` が必須）。`--threads N` は呼び出し元を含むスレッド数で、省略すると利用可能な全論理CPU。`--tt-mib N` は主置換表の要求容量（既定256 MiB）で、実際の主表容量は2の累乗に切り下げる。例えば3 MiB指定では2 MiB。補助表のメモリは別に必要になる。
 
 ## FlipSight Bot API
 

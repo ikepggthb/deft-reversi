@@ -65,7 +65,7 @@ deft-reversi
 
 ### ビルド済みの CLI
 
-CLI は、Windows 版と Linux 版のビルド済みバイナリを [Releases](https://github.com/ikepggthb/deft-reversi/releases) の `cli-v*` で配布しています。評価モデルは Release [`model-v4`](https://github.com/ikepggthb/deft-reversi/releases/tag/model-v4) から取得してください。動作に必要な CPU などは [CLI の README](deft-reversi-cli/README.md#リリース版) にまとめています。
+CLI は、Windows 版と Linux 版のビルド済みバイナリを [Releases](https://github.com/ikepggthb/deft-reversi/releases) の `cli-v*` で配布しています。評価モデルも同梱しているので、展開すればそのまま対局できます。使い方と動作に必要な CPU は [CLI の README](deft-reversi-cli/README.md#リリース版) にまとめています。
 
 ### 動作環境
 
