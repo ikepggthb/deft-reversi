@@ -94,7 +94,7 @@ let request = SearchRequest::new(Goal::Plan(plan));
 
 レベル表の内容と決め方は [deft-reversi-notes/search-control/2026-11-15-level-table](https://github.com/ikepggthb/deft-reversi-notes/blob/main/search-control/2026-11-15-level-table/README.md) に記録している。
 
-このほか、持ち時間内でレベルを順に上げる `SearchRequest::timed_levels(level, limit)`、候補手を絞る `root_moves(mask)`、特定の手を詳しく評価する `review_move(square)`、全合法手の PV も返す `all_moves_with_pv()` などのビルダーメソッドがある。
+このほか、持ち時間内でレベルを順に上げる `SearchRequest::timed_levels(level, limit)`、置換表から初期反復を省略する `reuse_pv()`、直前の探索（先読みなど）と置換表世代を共有する `keep_generation()`、候補手を絞る `root_moves(mask)`、特定の手を詳しく評価する `review_move(square)`、全合法手の PV も返す `all_moves_with_pv()` などのビルダーメソッドがある。
 
 ### 結果と進捗（`SearchResult`・`Progress`）
 
@@ -106,6 +106,7 @@ let result = engine.search_with(&pos, &request, |p: &Progress| {
 
 result.best_move;       // Option<Action>。None は終局。途中で止まっても合法手を 1 つ返す
 result.score;           // Option<i32>。手番側から見た石差。完了した反復が無ければ None
+result.warm_score;      // Option<i32>。reuse_pv で再利用した置換表の暫定評価値
 result.kind;            // Option<ResultKind>。Depth { depth, selectivity } または Endgame { selectivity }
 result.is_solved();     // 全合法手に対して選択率 Full の終盤読みが完了したか
 result.pv;              // Vec<Action>（PV：最善応手手順）
