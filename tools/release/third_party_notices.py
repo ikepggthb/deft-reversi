@@ -2,10 +2,10 @@
 """リリースのバイナリに含まれる依存クレートのライセンス一覧（THIRD-PARTY-NOTICES.txt）を作る。
 
 使い方:
-  python3 tools/release/third_party_notices.py [--target TRIPLE] [--out FILE]
+  python3 tools/release/third_party_notices.py [--target TRIPLE] [--package NAME ...] [--out FILE]
 
-Cargo.lock の依存関係（`cargo metadata --locked`）から、デスクトップ版と CLI が通常の依存として
-リンクするクレートを集め、各クレートのソースにあるライセンスファイルの本文を載せる。
+Cargo.lock の依存関係（`cargo metadata --locked`）から、配布するパッケージ（既定はデスクトップ版と
+CLI）が通常の依存としてリンクするクレートを集め、各クレートのソースにあるライセンスファイルの本文を載せる。
 同じ本文は 1 回だけ載せ、適用するクレートを列挙する。ライセンスファイルを同梱していない
 クレートは、MIT を選べるものなら Cargo の authors から著作権表示を作って MIT の本文を、
 Apache-2.0 なら他のクレートが同梱している Apache-2.0 の標準の本文を載せる。
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-ROOTS = ("deft_reversi_desktop", "deft-reversi-cli")
+ROOTS = ("deft_reversi_desktop", "deft-reversi-cli")  # --package の既定値
 LICENSE_FILE = re.compile(r"^(licen[cs]e|copying|notice|copyright|unlicense)([-_.].*)?$", re.I)
 MIT = """Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -45,18 +45,21 @@ def metadata(target):
     return json.loads(subprocess.run(command, cwd=REPO, check=True, capture_output=True, text=True).stdout)
 
 
-def shipped(meta):
-    """ROOTS から通常の依存（dev・build を除く）でたどれる、ワークスペース外のパッケージを返す。"""
+def shipped(meta, roots):
+    """roots から通常の依存でたどれる、ワークスペース外のパッケージを返す。
+
+    dev・build の依存と、コンパイル時にだけ動く proc-macro（とその依存）はバイナリに入らないので除く。
+    """
     packages = {p["id"]: p for p in meta["packages"]}
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
     workspace = set(meta["workspace_members"])
-    stack = [i for i in workspace if packages[i]["name"] in ROOTS]
-    if len(stack) != len(ROOTS):
-        sys.exit(f"ルートのパッケージが見つかりません: {ROOTS}")
+    stack = [i for i in workspace if packages[i]["name"] in roots]
+    if len(stack) != len(set(roots)):
+        sys.exit(f"ワークスペースにないパッケージがあります: {', '.join(roots)}")
     seen = set()
     while stack:
         node = stack.pop()
-        if node in seen:
+        if node in seen or any("proc-macro" in t["kind"] for t in packages[node]["targets"]):
             continue
         seen.add(node)
         for dep in nodes[node]["deps"]:
@@ -100,10 +103,11 @@ def standard_apache(packages):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--target", default="x86_64-pc-windows-msvc", help="配布するバイナリのターゲット")
+    parser.add_argument("--package", action="append", help=f"配布するパッケージ（複数可、既定は {' と '.join(ROOTS)}）")
     parser.add_argument("--out", type=Path, default=REPO / "target" / "THIRD-PARTY-NOTICES.txt")
     args = parser.parse_args()
 
-    packages = shipped(metadata(args.target))
+    packages = shipped(metadata(args.target), args.package or ROOTS)
     apache = standard_apache(packages)
     groups = {}
     for package in packages:

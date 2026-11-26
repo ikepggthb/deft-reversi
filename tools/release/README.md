@@ -4,12 +4,15 @@
 
 ## 依存クレートのライセンス一覧：[third_party_notices.py](third_party_notices.py)
 
-`Cargo.lock` からデスクトップ版と CLI が通常の依存としてリンクするクレートを集め、各クレートのソースにあるライセンスファイルの本文を1つのファイルにまとめます。依存が変わるたびに作り直すので、リポジトリには置きません。
+`Cargo.lock` から、配布するパッケージ（既定はデスクトップ版と CLI）が通常の依存としてリンクするクレートを集め、各クレートのソースにあるライセンスファイルの本文を1つのファイルにまとめます。依存が変わるたびに作り直すので、リポジトリには置きません。
 
 ```sh
 python3 tools/release/third_party_notices.py                                   # Windows 向け → target/THIRD-PARTY-NOTICES.txt
 python3 tools/release/third_party_notices.py --target x86_64-unknown-linux-gnu --out OUT.txt
+python3 tools/release/third_party_notices.py --package deft-reversi-cli          # CLI だけを配布するとき
 ```
+
+- dev・build の依存と proc-macro（`clap_derive` や `serde_derive` と、それらだけが使う `syn` など）は、バイナリに入らないので載せません。
 
 - 依存のソースが手元にないと読めないので、先に一度ビルドするか `cargo fetch --locked` を実行しておきます。
 - ライセンスファイルを同梱していないクレートは、MIT を選べるなら Cargo の `authors` から著作権表示を作って MIT の本文を載せ、Apache-2.0 なら標準の本文を載せます。どちらも選べないクレートがあると止まるので、そのときは手で確かめます。
