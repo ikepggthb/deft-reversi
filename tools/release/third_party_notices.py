@@ -42,7 +42,9 @@ SOFTWARE.
 
 def metadata(target):
     command = ["cargo", "metadata", "--format-version", "1", "--locked", "--filter-platform", target]
-    return json.loads(subprocess.run(command, cwd=REPO, check=True, capture_output=True, text=True).stdout)
+    # Windows の Python の既定の文字コード（cp1252 など）ではなく、cargo が出す UTF-8 で読む。
+    result = subprocess.run(command, cwd=REPO, check=True, capture_output=True, encoding="utf-8")
+    return json.loads(result.stdout)
 
 
 def shipped(meta, roots):

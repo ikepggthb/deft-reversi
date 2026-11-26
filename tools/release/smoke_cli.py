@@ -31,7 +31,8 @@ def main():
     env = {k: v for k, v in os.environ.items() if k != "DEFT_MODEL"}
 
     def run(*args):
-        result = subprocess.run([str(exe), *args], cwd=REPO, env=env, capture_output=True, text=True)
+        result = subprocess.run([str(exe), *args], cwd=REPO, env=env, capture_output=True,
+                                encoding="utf-8", errors="replace")
         if result.returncode != 0:
             sys.exit(f"{' '.join(args)} が失敗しました:\n{result.stderr}")
         return result.stdout
@@ -39,7 +40,7 @@ def main():
     if not re.search(r"^\s*8 \|\s*390216 \|", run("perft", "8"), re.M):
         sys.exit("perft 8 の末端数が 390216 ではありません")
     answers = [max(int(s) for s in re.findall(r":([+-]\d+)", line))
-               for line in PROBLEMS.read_text().splitlines() if line.strip()]
+               for line in PROBLEMS.read_text(encoding="utf-8").splitlines() if line.strip()]
     rows = list(csv.DictReader(io.StringIO(run("solve", str(PROBLEMS), "--exact", "--tsv")), delimiter="\t"))
     wrong = [(i + 1, a, r["score"]) for i, (a, r) in enumerate(zip(answers, rows)) if int(r["score"]) != a]
     if len(rows) != len(answers) or wrong:

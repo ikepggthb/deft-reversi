@@ -18,6 +18,8 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   # The engine picks its AVX2 and BMI2 kernels at compile time.
   RUSTFLAGS: -Ctarget-cpu=x86-64-v3
+  # Python on Windows otherwise decodes cargo's UTF-8 output as cp1252.
+  PYTHONUTF8: "1"
 
 jobs:
   build:
