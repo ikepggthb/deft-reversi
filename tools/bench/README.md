@@ -26,7 +26,7 @@ RUSTFLAGS="-Ctarget-cpu=native" CARGO_TARGET_DIR=target-native \
 
 FFO・中盤の計測では、Deftの設定ごとにCLI・Engine・BookライブラリのバージョンとGitコミットを標準エラーに表示します。GTP対局ではエンジン側の標準エラーをログに記録します。
 
-場所を変えるときは `local/bench.toml` に同じキーで書きます（リポジトリからの相対パスか絶対パス）。
+場所を変えるときは `local/bench.toml` に同じキーで書きます（リポジトリからの相対パスか絶対パス）。`edax` / `egaroucid` で始まる別のキー（`edax-4.7` など）を足すと、そのキーをエンジン名として `ffo.py`・`match.py` に渡せます。Edax の2つの版を同じ測定に並べるときに使います。
 
 ## 完全読み：[ffo.py](ffo.py)
 
@@ -64,6 +64,15 @@ DEFT_MODEL=NEW.dpr2 OPP_MODEL=OLD.dpr2 XOT=large \
 ```
 
 XOT の開局リストはリポジトリに含めていません。`XOT=large` を指定すると、初回に配布元（[XOT](https://berg.earthlingz.de/xot/)、Matthias Berg 氏）から [openingslarge.txt](https://berg.earthlingz.de/xot/downloads/openingslarge.txt) を `local/xot/` に取得し、SHA-256 を確かめてから使います。手元の別のリストは `XOT=FILE` で指定できます。
+
+`XOT_FIRST=K` を足すと、XOT をシード 20261120 で並べ替えて対称形の重複を除いた一覧の K 番から使い、結果の `opening` 列にその番号を書きます。調整に使う開局と最終評価の開局を分けるための番号で、0〜999 は調整用、1000 以降は評価用です（1000〜1299 は時間管理の評価、2000〜2249 は CLI 1.0.0-beta.1 のリリース前の測定で使いました）。
+
+```sh
+XOT=large XOT_FIRST=2000 MATCH_CPUS=0,1,2,3,4,5,6,7 \
+  python3 tools/bench/match.py edax-4.7 level12 250 OUT.tsv 8
+```
+
+集計には、石差の平均と、開局ペア（同じ開局の先手・後手2局の平均）を単位にした95% t 区間を出します。
 
 別のビルドの Deft を相手にするときは、`OPP_GTP` にそのCLIバイナリを指定します。`MATCH_THREADS=N` で各エンジンを N スレッドで動かします（1局ずつ）。使い方の詳細はファイルの先頭にあります。
 

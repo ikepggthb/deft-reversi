@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Deft と Edax 4.5.5 / Egaroucid 7.8.1（または別の Deft 構成）を GTP で対戦させる。
+"""Deft と Edax / Egaroucid（または別の Deft 構成）を GTP で対戦させる。
 
 使い方:
   match.py OPPONENT MODE OPENINGS OUT.tsv [WORKERS]
 
 引数:
   OPPONENT  edax | egaroucid | deft（OPP_MODEL で指定したモデルを使う Deft）
+            | local/bench.toml で足した edax* / egaroucid* のキー（edax-4.7 など、別の版）
   MODE      levelN（両者レベル N）
             | levelD:E（Deft がレベル D、相手がレベル E）
             | timeS（1 局あたり持ち時間 S 秒）
@@ -17,6 +18,12 @@
   環境変数 XOT=large を指定すると、XOT の開局リスト（large）から OPENINGS 行を抽出する
   （シード 1）。リストは同梱せず、初回に配布元から local/xot/ へ取得する（common.fetch_xot）。
   XOT=FILE で手元の別のリストも指定できる。
+  XOT_FIRST=K を併せて指定すると、XOT をシード 20261120 で並べ替えて対称形の重複を除いた一覧の
+  K 番から OPENINGS 個を使う（OUT.tsv の opening 列はこの番号）。調整と最終評価で開局を
+  分けるための番号で、0〜999 は調整用、1000 以降は評価用（1000〜1299 は時間管理の評価で使用済み）。
+
+集計:
+  石差の平均と、開局ペア（同じ開局の先手・後手 2 局の平均）を単位にした 95% t 区間を表示する。
 
 エンジンと並列実行:
   Deft は CLI の `gtp` サブコマンドで起動する（モデルは DEFT_MODEL、既定は common.py の
@@ -39,8 +46,7 @@ TOOLS = paths()
 THREADS = os.environ.get("MATCH_THREADS", "1")
 # CARGO_TARGET_DIR=target-native でビルドした CLI の GTP インターフェース。
 DEFT = [str(TOOLS["gtp"]), "gtp", "--model", os.environ.get("DEFT_MODEL", str(TOOLS["model"]))]
-EDAX = str(TOOLS["edax"])
-EGAR = str(TOOLS["egaroucid"])
+START = (0x0000000810000000, 0x0000001008000000)  # 黒番開始: d5・e4 が黒、d4・e5 が白
 FULL = (1 << 64) - 1
 OPP = None
 EGAR_LEVEL = int(os.environ.get("EGAR_LEVEL", "5"))
@@ -96,11 +102,48 @@ def xot(n, path, seed=1):
     return [[square(m[k:k + 2]) for k in range(0, len(m), 2)] for m in pick]
 
 
+def symmetries():
+    """盤の 8 通りの対称変換を、マス番号の対応表のリストで返す。"""
+    maps = []
+    for t in range(8):
+        m = []
+        for sq in range(64):
+            r, c = divmod(sq, 8)
+            if t & 1:
+                c = 7 - c
+            if t & 2:
+                r = 7 - r
+            if t & 4:
+                r, c = c, r
+            m.append(r * 8 + c)
+        maps.append(m)
+    return maps
+
+
+def xot_numbered(path):
+    """XOT リストをシード 20261120 で並べ替え、対称形の重複を除いた一覧（番号 = 添字）を返す。"""
+    lines = [l.strip() for l in open(path) if l.strip()]
+    random.Random(20261120).shuffle(lines)
+    maps, seen, out = symmetries(), set(), []
+    for line in lines:
+        p, o = START
+        for k in range(0, len(line), 2):
+            sq = square(line[k:k + 2])
+            f = flips(p, o, sq)
+            p, o = o ^ f, p | f | (1 << sq)
+        key = min((sum(1 << m[s] for s in range(64) if p >> s & 1), sum(1 << m[s] for s in range(64) if o >> s & 1))
+                  for m in maps)
+        if key not in seen:
+            seen.add(key)
+            out.append([square(line[k:k + 2]) for k in range(0, len(line), 2)])
+    return out
+
+
 def openings(n, plies=8, seed=1):
     """初期局面からランダムに plies 手進めた重複のない開始局面を n 個生成する。"""
     rng, seen, out = random.Random(seed), set(), []
     while len(out) < n:
-        p, o = 0x0000000810000000, 0x0000001008000000  # 黒番開始: d5・e4 が黒、d4・e5 が白
+        p, o = START
         line = []
         for _ in range(plies):
             m = moves(p, o)
@@ -178,18 +221,20 @@ def engine(kind, mode, cpu):
     if kind == "deft-opp":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
         return Gtp([os.environ.get("OPP_GTP", DEFT[0]), "gtp", "--model", os.environ["OPP_MODEL"], *args, "--tt-mib", "64", "--threads", THREADS], cpu)
-    if kind == "edax":
+    if kind.startswith("edax"):
+        edax = str(TOOLS[kind])
         # EDAX_MOVE_TIME=S が設定されている場合は 1 局単位ではなく 1 手あたりの秒数を使う。
         if seconds and os.environ.get("EDAX_MOVE_TIME"):
             limit = ["-move-time", os.environ["EDAX_MOVE_TIME"]]
         else:
             limit = ["-t", f"{seconds:g}"] if seconds else ["-l", str(level)]
-        return Gtp([EDAX, "-gtp", "-eval-file", "data/eval.dat", "-book-usage", "off", "-n", THREADS,
-                    "-h", "21", "-ponder", "off", *limit], cpu, cwd=Path(EDAX).parent)
+        return Gtp([edax, "-gtp", "-eval-file", "data/eval.dat", "-book-usage", "off", "-n", THREADS,
+                    "-h", "21", "-ponder", "off", *limit], cpu, cwd=Path(edax).parent)
     # Egaroucid の GTP genmove は -time を無視するため、時間制限モードでは
     # EGAR_LEVEL で固定し、Deft 側の持ち時間を Egaroucid の消費時間に合わせる。
+    egar = str(TOOLS[kind])
     extra = ["-l", str(EGAR_LEVEL if seconds else level)]
-    return Gtp([EGAR, "-gtp", "-nobook", "-t", THREADS, "-hash", "21", *extra], cpu, cwd=Path(EGAR).parent)
+    return Gtp([egar, "-gtp", "-nobook", "-t", THREADS, "-hash", "21", *extra], cpu, cwd=Path(egar).parent)
 
 
 def play_game(engines, deft_black, opening, mode):
@@ -201,7 +246,7 @@ def play_game(engines, deft_black, opening, mode):
         # Edax は GTP の time_settings を送ると応答しなくなるため Deft にのみ送る。
         if seconds and key == "deft":
             e.send(f"time_settings {seconds:g} 0 0")
-    p, o, black = 0x0000000810000000, 0x0000001008000000, True
+    (p, o), black = START, True
     used = {"deft": 0.0, "opp": 0.0}
     record = []
 
@@ -255,9 +300,19 @@ def main():
     workers = int(sys.argv[5]) if len(sys.argv) > 5 else 1
     if mode.startswith("time") and workers != 1:
         sys.exit("time modes must run one game at a time: other games change the speed")
-    games = [(i, deft_black) for i in range(n) for deft_black in (True, False)]
+    if opp != "deft" and not (opp.startswith(("edax", "egaroucid")) and opp in TOOLS):
+        sys.exit(f"unknown opponent {opp!r}")
     # XOT が指定されている場合は、ランダム手順の代わりに XOT リストから開始局面を抽出する。
-    lines = xot(n, xot_path(os.environ["XOT"])) if os.environ.get("XOT") else openings(n)
+    # XOT_FIRST があれば、番号付きの一覧の XOT_FIRST 番から n 個を使い、番号を opening 列に書く。
+    if os.environ.get("XOT") and os.environ.get("XOT_FIRST"):
+        first = int(os.environ["XOT_FIRST"])
+        numbered = xot_numbered(xot_path(os.environ["XOT"]))
+        if first + n > len(numbered):
+            sys.exit(f"the numbered XOT list has only {len(numbered)} openings")
+        lines = {first + i: numbered[first + i] for i in range(n)}
+    else:
+        lines = dict(enumerate(xot(n, xot_path(os.environ["XOT"])) if os.environ.get("XOT") else openings(n)))
+    games = [(i, deft_black) for i in lines for deft_black in (True, False)]
     done = set()
     if out.exists():
         for l in out.read_text().splitlines()[1:]:
@@ -298,20 +353,40 @@ def main():
     summary(out, opp, mode)
 
 
+def t975(df):
+    """自由度 df の t 分布の 97.5% 点（Cornish-Fisher 展開の近似。df >= 10 で誤差 0.003 未満）。"""
+    z = 1.959964
+    return z + (z ** 3 + z) / (4 * df) + (5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df ** 2)
+
+
+def pair_interval(rows):
+    """先手・後手がそろった開局ごとに 2 局の石差の平均をとり、`(ペア数, 平均, 95% t 区間の半幅)` を返す。"""
+    games = {}
+    for r in rows:
+        games.setdefault(r[0], []).append(int(r[2]))
+    pairs = [sum(d) / 2 for d in games.values() if len(d) == 2]
+    n = len(pairs)
+    if n < 2:
+        return n, float("nan"), float("nan")
+    mean = sum(pairs) / n
+    sd = math.sqrt(sum((x - mean) ** 2 for x in pairs) / (n - 1))
+    return n, mean, t975(n - 1) * sd / math.sqrt(n)
+
+
 def summary(out, opp, mode):
     rows = [l.split("\t") for l in out.read_text().splitlines()[1:]]
     d = [int(r[2]) for r in rows]
     n = len(d)
     w, dr = sum(x > 0 for x in d), sum(x == 0 for x in d)
     score = (w + dr / 2) / n
-    mean = sum(d) / n
-    sd = math.sqrt(sum((x - mean) ** 2 for x in d) / (n - 1)) / math.sqrt(n)
+    pairs, mean, half = pair_interval(rows)
     elo = lambda s: -400 * math.log10(1 / s - 1) if 0 < s < 1 else float("inf")
     se = math.sqrt(score * (1 - score) / n)
     ds, os_ = sum(float(r[3]) for r in rows), sum(float(r[4]) for r in rows)
     print(f"deft vs {opp} {mode}: games {n}  wins {w} draws {dr} losses {n - w - dr}  score {score:.1%}  "
           f"elo {elo(score):+.0f} [{elo(max(score - 2 * se, 1e-9)):+.0f}, {elo(min(score + 2 * se, 1 - 1e-9)):+.0f}]  "
-          f"mean disc diff {mean:+.2f} ± {sd:.2f}  time deft {ds:.0f}s opp {os_:.0f}s (ratio {ds / max(os_, 1e-9):.2f})")
+          f"mean disc diff {mean:+.2f} [{mean - half:+.2f}, {mean + half:+.2f}] (95% t, {pairs} opening pairs)  "
+          f"time deft {ds:.0f}s opp {os_:.0f}s (ratio {ds / max(os_, 1e-9):.2f})")
 
 
 if __name__ == "__main__":

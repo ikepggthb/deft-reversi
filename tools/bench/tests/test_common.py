@@ -5,6 +5,7 @@
 """
 import contextlib
 import io
+import random
 import sys
 import tempfile
 import unittest
@@ -44,6 +45,10 @@ class Common(unittest.TestCase):
         with self.assertRaises(SystemExit):
             Deft("bad:depth=3", tools)
         self.assertEqual(engine("edax", tools).binary, tools["edax"])
+        extra = {**tools, "edax-4.7": Path("/e47"), "egaroucid-old": Path("/eo")}
+        self.assertEqual((engine("edax-4.7", extra).name, engine("edax-4.7", extra).binary), ("edax-4.7", Path("/e47")))
+        self.assertEqual(engine("egaroucid-old", extra).kind, "egaroucid")
+        self.assertEqual(engine("edax-4.7", tools).kind, "deft")
 
     def test_searches_use_the_cli_and_keep_machine_results(self):
         """solve_file が正しい CLI 引数を組み立て、TSV の高精度な値とバージョン表示を保持することを確認する。"""
@@ -94,6 +99,39 @@ class Common(unittest.TestCase):
                     contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 fetch_xot(other)
             self.assertFalse(other.exists())
+
+
+class Match(unittest.TestCase):
+    """match.py の開局の番号付けと集計を検証するテスト群。"""
+
+    def setUp(self):
+        with patch.object(sys, "argv", ["match.py"]):
+            import match
+        self.match = match
+
+    def test_pair_interval_uses_opening_pairs(self):
+        """95% 区間が開局ペアの平均を単位にし、片方しかない開局を除くことを確認する。"""
+        rows = [["1", "black", "4"], ["1", "white", "2"], ["2", "black", "-2"], ["2", "white", "0"],
+                ["3", "black", "10"]]
+        n, mean, half = self.match.pair_interval(rows)
+        self.assertEqual((n, mean), (2, 1.0))
+        # ペアの平均は 3 と -1、標準偏差 2√2、t(1) の近似値に √2 を掛けて 2 で割る。
+        self.assertAlmostEqual(half, self.match.t975(1) * 2 * 2 ** 0.5 / 2 ** 0.5)
+        self.assertAlmostEqual(self.match.t975(30), 2.0423, places=3)
+
+    def test_numbered_xot_is_shuffled_and_symmetry_free(self):
+        """番号付きの一覧が、シード 20261120 の並べ替えと、対称形の重複の除去で作られることを確認する。"""
+        lines = ["f5d6c3d3", "f5f4e3f6", "f5f6e6f4", "e6f4c3c4", "f5d6c5f4"]  # 4 行目は 1 行目を転置したもの
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "xot.txt"
+            p.write_text("\n".join(lines) + "\n")
+            numbered = self.match.xot_numbered(p)
+        shuffled = list(lines)
+        random.Random(20261120).shuffle(shuffled)
+        later = max(shuffled.index(lines[0]), shuffled.index(lines[3]))
+        as_moves = lambda l: [self.match.square(l[k:k + 2]) for k in range(0, len(l), 2)]
+        expected = [as_moves(l) for i, l in enumerate(shuffled) if i != later]
+        self.assertEqual(numbered, expected)
 
 
 if __name__ == "__main__":

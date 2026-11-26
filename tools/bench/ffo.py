@@ -11,7 +11,8 @@ OUT/results.tsv（1 局面ごとに追記）と OUT/summary.txt（局面ごと�
   ffo.py [--threads N] [--cpus LIST] [--rounds R] [--positions FILE] [--only A-B] --out DIR ENGINE...
 
 ENGINE の指定:
-  edax | egaroucid | NAME[:key=value,...]（Deft 構成。solve=BINARY, model=FILE, tt=MIB,
+  edax | egaroucid | local/bench.toml で足した edax* / egaroucid* のキー（別の版を並べるとき）
+  | NAME[:key=value,...]（Deft 構成。solve=BINARY, model=FILE, tt=MIB,
   または環境変数用の UPPER_CASE=value を指定できる）
 
 実行例:

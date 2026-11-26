@@ -122,21 +122,25 @@ class Deft:
 
 
 def engine(spec, tools):
-    """指定文字列（`edax`、`egaroucid`、または Deft 構成文字列）に応じたエンジンラッパーを返す。"""
-    if spec == "edax":
-        return Edax(tools)
-    if spec == "egaroucid":
-        return Egaroucid(tools)
+    """指定文字列に応じたエンジンラッパーを返す。
+
+    `edax`・`egaroucid` と、local/bench.toml で足した `edax` / `egaroucid` で始まるキー（`edax-4.7` など、
+    別の版を並べて測るとき）はそのバイナリのラッパー、それ以外は Deft 構成文字列として扱う。
+    """
+    if spec.startswith("edax") and spec in tools:
+        return Edax(tools, spec)
+    if spec.startswith("egaroucid") and spec in tools:
+        return Egaroucid(tools, spec)
     return Deft(spec, tools)
 
 
 class Edax:
     """Edax 4.5.6 を外部プロセスとして呼び出し、完全読み結果を解析するラッパー。"""
 
-    kind = name = "edax"
+    kind = "edax"
 
-    def __init__(self, tools):
-        self.binary = tools["edax"]
+    def __init__(self, tools, key="edax"):
+        self.name, self.binary = key, tools[key]
 
     def exact(self, case, threads, cpus, hash_bits=23):
         """Book なしで完全読みを実行し、`(深さ, 石差スコア, 秒数, ノード数)` を返す。"""
@@ -150,10 +154,10 @@ class Edax:
 class Egaroucid:
     """Egaroucid for Console 7.8.2 を外部プロセスとして呼び出し、完全読み結果を解析するラッパー。"""
 
-    kind = name = "egaroucid"
+    kind = "egaroucid"
 
-    def __init__(self, tools):
-        self.binary = tools["egaroucid"]
+    def __init__(self, tools, key="egaroucid"):
+        self.name, self.binary = key, tools[key]
 
     def exact(self, case, threads, cpus, hash_bits=23):
         """Book なしで完全読みを実行し、`(深さ, 石差スコア, 秒数, ノード数)` を返す。"""
