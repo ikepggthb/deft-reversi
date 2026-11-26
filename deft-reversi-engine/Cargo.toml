@@ -1,6 +1,6 @@
 [package]
 name = "deft_reversi_engine"
-version = "2.0.0-dev.1"
+version = "2.0.0-beta.1"
 description = "Reversi engine of Deft Reversi: pattern evaluation and parallel midgame and endgame search"
 readme = "README.md"
 edition.workspace = true

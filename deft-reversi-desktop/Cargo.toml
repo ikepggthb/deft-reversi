@@ -1,6 +1,6 @@
 [package]
 name = "deft_reversi_desktop"
-version = "1.0.0-dev.1"
+version = "1.0.0-beta.1"
 description = "Desktop application of Deft Reversi"
 edition.workspace = true
 rust-version.workspace = true

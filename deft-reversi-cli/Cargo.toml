@@ -1,6 +1,6 @@
 [package]
 name = "deft-reversi-cli"
-version = "1.0.0-dev.1"
+version = "1.0.0-beta.1"
 description = "Command-line interface of Deft Reversi: play, analysis, books, GTP and the FlipSight bot"
 readme = "README.md"
 edition.workspace = true

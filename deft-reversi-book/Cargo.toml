@@ -1,6 +1,6 @@
 [package]
 name = "deft_reversi_book"
-version = "1.0.0-dev.1"
+version = "1.0.0-beta.1"
 description = "Opening book of Deft Reversi: building, storage and lookup"
 readme = "README.md"
 edition.workspace = true

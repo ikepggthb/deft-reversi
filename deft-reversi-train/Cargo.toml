@@ -1,6 +1,6 @@
 [package]
 name = "deft_reversi_train"
-version = "1.0.0-dev.1"
+version = "1.0.0-beta.1"
 description = "Trainer of the pattern evaluation models of Deft Reversi"
 readme = "README.md"
 edition.workspace = true
