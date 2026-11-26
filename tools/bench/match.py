@@ -33,6 +33,9 @@
   （先読みなしのため同時に探索しない）。WORKERS 局を既定の CPU 0, 2, 4, 6 または
   MATCH_CPUS=0,1,.. 上で並列対局する（既定は 1。時間制限モードでは他対局が速度に
   影響するため 1 のみ許可）。
+  DEFT_ENDGAME=STAGES を指定すると、レベル対局の Deft に `--endgame STAGES` を渡し、終盤の段階を
+  相手に合わせられる（例：Edax・Egaroucid のレベル 5 は空き 10 以下で完全読みなので
+  `83:0,85:0,95:0,98:0,99:0,100:10`）。
   MATCH_THREADS=N を指定すると 1 局ずつ N スレッドで探索する（CPU は全コアまたは
   MATCH_CPUS）。ハッシュサイズは Deft が 64 MiB、Edax と Egaroucid が 2^21 エントリ。
   1 局ごとに OUT.tsv へ追記し（既存ファイルがあれば続きから再開）、終了時に集計を表示する。
@@ -215,6 +218,8 @@ def engine(kind, mode, cpu):
     seconds = seconds_of(mode, kind)
     if kind == "deft":
         args = ["--level", str(level)] if not seconds else ["--game-ms", str(round(seconds * 1000))]
+        if not seconds and os.environ.get("DEFT_ENDGAME"):
+            args += ["--endgame", os.environ["DEFT_ENDGAME"]]
         # DEFT_GTP_LOG=FILE を指定すると Deft の stderr をそこへ書き出す。
         # `trace` feature 付きでビルドした CLI は各手の配分時間と消費時間を記録する。
         return Gtp([*DEFT, *args, "--tt-mib", "64", "--threads", THREADS], cpu, log=os.environ.get("DEFT_GTP_LOG"))

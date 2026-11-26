@@ -8,6 +8,7 @@ import io
 import random
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import common  # noqa: E402
+import clock_match  # noqa: E402
 from common import POSITIONS, Deft, DEFAULTS, empties, engine, fetch_xot, paths, read_answers  # noqa: E402
 
 
@@ -132,6 +134,49 @@ class Match(unittest.TestCase):
         as_moves = lambda l: [self.match.square(l[k:k + 2]) for k in range(0, len(l), 2)]
         expected = [as_moves(l) for i, l in enumerate(shuffled) if i != later]
         self.assertEqual(numbered, expected)
+
+
+class ClockMatch(unittest.TestCase):
+    """clock_match.py の時計と終局の判定を、偽のエンジンで検証するテスト群。"""
+
+    class Fake:
+        """最初の合法手を、指定した秒数だけ待ってから返す偽のエンジン。"""
+
+        def __init__(self, delay=0.0):
+            self.delay, self.seen = delay, []
+
+        def move(self, p, o, black, remaining_ms, sent=None):
+            self.seen.append(remaining_ms)
+            time.sleep(self.delay)
+            m = clock_match.moves(p, o)
+            return (m & -m).bit_length() - 1
+
+        def opponent_moved(self, black, sq):
+            pass
+
+        def close(self):
+            pass
+
+    def play(self, deft, opp, seconds, deft_black=True):
+        with patch.object(clock_match, "Deft", lambda cpu: deft), \
+                patch.object(clock_match, "opponent", lambda key, cpu, s: opp):
+            return clock_match.play_game("edax", 0, seconds, [], deft_black)
+
+    def test_finished_game_is_scored_from_deft(self):
+        """時間切れのない対局では、両者の消費時間と Deft から見た石差を返すことを確認する。"""
+        deft, opp = self.Fake(), self.Fake()
+        diff, ds, os_, timeout, record = self.play(deft, opp, 60)
+        self.assertEqual(timeout, "")
+        self.assertEqual(len(record) % 2, 0)
+        self.assertTrue(-64 <= diff <= 64 and 0 <= ds < 60 and 0 <= os_ < 60)
+        self.assertEqual(deft.seen[0], 60000)
+
+    def test_running_out_of_time_loses_by_64(self):
+        """残り時間を使い切った側が、相手から見て +64 で負けることを確認する。"""
+        diff, _, _, timeout, _ = self.play(self.Fake(), self.Fake(delay=0.05), 0.02)
+        self.assertEqual((timeout, diff), ("opp", 64))
+        diff, _, _, timeout, _ = self.play(self.Fake(delay=0.05), self.Fake(), 0.02)
+        self.assertEqual((timeout, diff), ("deft", -64))
 
 
 if __name__ == "__main__":
